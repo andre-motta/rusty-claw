@@ -1,0 +1,17 @@
+[package]
+name = "claw-acceptance"
+description = "End-to-end acceptance tests."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+claw-assets.workspace = true
+claw-frame.workspace = true
+claw-render.workspace = true
+claw-sim.workspace = true
+
+[lints]
+workspace = true

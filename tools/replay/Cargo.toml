@@ -1,0 +1,19 @@
+[package]
+name = "claw-replay"
+description = "Replays recorded input through the simulation and writes traces."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "claw-replay"
+path = "src/main.rs"
+
+[dependencies]
+claw-assets.workspace = true
+claw-sim.workspace = true
+
+[lints]
+workspace = true

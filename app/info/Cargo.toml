@@ -1,0 +1,20 @@
+[package]
+name = "claw-info"
+description = "Prints the planes, tile sets, objects and start position of a level."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "claw-info"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+claw-assets.workspace = true
+
+[lints]
+workspace = true

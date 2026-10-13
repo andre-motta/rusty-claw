@@ -1,0 +1,15 @@
+[package]
+name = "claw-render"
+description = "Palette renderer for the level viewer and the game."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+claw-assets.workspace = true
+claw-frame.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "claw-viewer"
+description = "Level viewer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "claw-viewer"
+path = "src/main.rs"
+
+[dependencies]
+claw-frame.workspace = true
+claw-render.workspace = true
+
+[lints]
+workspace = true
