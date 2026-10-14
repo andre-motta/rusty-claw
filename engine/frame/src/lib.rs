@@ -6,10 +6,31 @@
 //! the current snapshot at the display rate. Both sides only meet through the
 //! types in this crate, so neither depends on the other.
 //!
-//! This change defines the types only. The tick accumulator and the
-//! interpolation helpers land with the renderer.
+//! Besides the types, the crate holds the frame driver:
+//!
+//! - [`step`]: the 18 ms accumulator with its catch-up limit and the
+//!   interpolation factor alpha;
+//! - [`input`]: per-tick input built from key events, with presses latched so
+//!   that none is lost or doubled at any display rate;
+//! - [`interp`]: drawing positions between the previous and the current
+//!   snapshot, with the snap rules for jumps;
+//! - [`refresh`]: a deterministic simulated display clock for tests and
+//!   benchmarks;
+//! - [`driver`]: the three combined into one per-frame call.
 
 #![forbid(unsafe_code)]
+
+pub mod driver;
+pub mod input;
+pub mod interp;
+pub mod refresh;
+pub mod step;
+
+pub use driver::{FrameDriver, FrameReport};
+pub use input::InputLatch;
+pub use interp::{InterpolatedFrame, InterpolatedRenderable, interpolate};
+pub use refresh::SimulatedRefresh;
+pub use step::{Advance, FixedStep, FrameClock};
 
 /// Length of one simulation tick in milliseconds.
 pub const TICK_MS: u32 = 18;
@@ -116,6 +137,27 @@ pub struct DrawMode(pub u32);
 impl DrawMode {
     /// Opaque pixels replace the destination.
     pub const NORMAL: DrawMode = DrawMode(0);
+    /// Also opaque pixels over the destination; the image sets' own default
+    /// mode number.
+    pub const NORMAL_ALT: DrawMode = DrawMode(1);
+    /// Translucent: each pixel becomes the table entry for the pair
+    /// (destination, sprite), by default the level's averaging table.
+    pub const GHOST: DrawMode = DrawMode(2);
+    /// Shadow: the sprite gives only the shape; each covered pixel becomes the
+    /// table entry for (destination, colour).
+    pub const SHADOW: DrawMode = DrawMode(3);
+    /// Recolour: each sprite pixel becomes the table entry for (sprite,
+    /// colour). There is no default table, so without one nothing is drawn.
+    pub const REMAP: DrawMode = DrawMode(4);
+    /// Solid colour in the sprite's shape.
+    pub const COLOR_FILL: DrawMode = DrawMode(5);
+    /// Blend between destination and sprite in brightness order, by the
+    /// colour value (0 shows the destination, 255 the sprite).
+    pub const BLEND: DrawMode = DrawMode(6);
+
+    /// The colour value a sprite uses with the shadow, recolour, fill and
+    /// blend modes when nothing else is given.
+    pub const DEFAULT_COLOR: u8 = 0x80;
 }
 
 /// One sprite to draw.
@@ -222,6 +264,68 @@ pub struct ViewConfig {
     pub scale_mode: ScaleMode,
 }
 
+impl ViewConfig {
+    /// The same view presented on an output of `width` x `height` pixels.
+    pub fn with_render_size(mut self, width: u32, height: u32) -> ViewConfig {
+        self.render_width = width.max(1);
+        self.render_height = height.max(1);
+        self
+    }
+
+    /// Size in level pixels of the area that is drawn: the logic view for
+    /// [`AspectPolicy::Pillarbox`], otherwise the logic height and the width
+    /// that fills the output's shape, rounded up to an even number and never
+    /// narrower than the logic view.
+    pub fn presentation_size(&self) -> (u32, u32) {
+        let lw = self.logic_width.max(1);
+        let lh = self.logic_height.max(1);
+        if self.aspect_policy == AspectPolicy::Pillarbox {
+            return (lw, lh);
+        }
+        let rw = u64::from(self.render_width.max(1));
+        let rh = u64::from(self.render_height.max(1));
+        let wide = (u64::from(lh) * rw).div_ceil(rh);
+        let wide = wide + (wide & 1);
+        let wide = u32::try_from(wide).unwrap_or(!1);
+        (wide.max(lw), lh)
+    }
+
+    /// How far, in level pixels, every activity area reaches beyond its
+    /// normal half size on each side (horizontal, vertical).
+    ///
+    /// Non-zero only for [`AspectPolicy::WidenedActivation`], where it is the
+    /// presentation's extra half size over the logic view, so that what is on
+    /// screen keeps the same margin to the area edges as in the logic view.
+    pub fn activation_margin(&self) -> (u32, u32) {
+        if self.aspect_policy != AspectPolicy::WidenedActivation {
+            return (0, 0);
+        }
+        let (pw, ph) = self.presentation_size();
+        (
+            pw.saturating_sub(self.logic_width) / 2,
+            ph.saturating_sub(self.logic_height) / 2,
+        )
+    }
+
+    /// The centre of the logic view for a snapshot camera, which names the
+    /// view's top-left corner.
+    pub fn logic_center(&self, camera: Point) -> Point {
+        Point {
+            x: camera.x + f64::from(self.logic_width / 2),
+            y: camera.y + f64::from(self.logic_height / 2),
+        }
+    }
+
+    /// The snapshot camera (top-left of the logic view) whose view is centred
+    /// on `center`.
+    pub fn camera_for_center(&self, center: Point) -> Point {
+        Point {
+            x: center.x - f64::from(self.logic_width / 2),
+            y: center.y - f64::from(self.logic_height / 2),
+        }
+    }
+}
+
 impl Default for ViewConfig {
     fn default() -> Self {
         ViewConfig {
@@ -262,6 +366,52 @@ mod tests {
         assert!(both.contains(Buttons::JUMP));
         assert!(!both.contains(Buttons::RIGHT));
         assert!(Buttons::NONE.is_empty());
+    }
+
+    #[test]
+    fn presentation_follows_the_output_shape() {
+        let base = ViewConfig::default();
+        let cases = [
+            ((640, 480), (640, 480)),
+            ((1920, 1200), (768, 480)),
+            ((1920, 1080), (854, 480)),
+            ((3840, 2160), (854, 480)),
+            ((2560, 1080), (1138, 480)),
+            ((3440, 1440), (1148, 480)),
+            ((5120, 1440), (1708, 480)),
+            ((1280, 800), (768, 480)),
+            ((480, 640), (640, 480)),
+        ];
+        for ((rw, rh), want) in cases {
+            let view = base.with_render_size(rw, rh);
+            assert_eq!(view.presentation_size(), want, "{rw}x{rh}");
+            let pillar = ViewConfig {
+                aspect_policy: AspectPolicy::Pillarbox,
+                ..view
+            };
+            assert_eq!(pillar.presentation_size(), (640, 480));
+        }
+    }
+
+    #[test]
+    fn activation_margin_only_when_widened() {
+        let view = ViewConfig::default().with_render_size(5120, 1440);
+        assert_eq!(view.activation_margin(), (0, 0));
+        let wide = ViewConfig {
+            aspect_policy: AspectPolicy::WidenedActivation,
+            ..view
+        };
+        assert_eq!(wide.activation_margin(), (534, 0));
+        let wide_169 = wide.with_render_size(1920, 1080);
+        assert_eq!(wide_169.activation_margin(), (107, 0));
+    }
+
+    #[test]
+    fn camera_and_center_round_trip() {
+        let view = ViewConfig::default();
+        let center = view.logic_center(Point { x: 10.0, y: 20.0 });
+        assert_eq!(center, Point { x: 330.0, y: 260.0 });
+        assert_eq!(view.camera_for_center(center), Point { x: 10.0, y: 20.0 });
     }
 
     #[test]

@@ -1,4 +1,36 @@
-//! Palette renderer: indexed textures, a palette lookup on the GPU and
-//! interpolated drawing of simulation snapshots.
+//! Palette renderer: indexed images composed on the GPU, with the palette
+//! applied in the final pass.
 //!
-//! This crate is a placeholder; the renderer lands in a later change.
+//! The game draws 8-bit palette indices, never colours, and its fades and
+//! translucency effects work on those indices. This renderer keeps that
+//! model on the GPU so every effect stays exact at any output resolution:
+//!
+//! - [`images`]: tiles and sprite frames as index images, and the graphics
+//!   of one level ([`LevelGraphics`]);
+//! - [`view`]: which part of each plane is visible for a camera position;
+//! - [`scene`]: one frame as an ordered list of plane and sprite draws, with
+//!   the composition and output geometry for a [`ViewConfig`];
+//! - [`effects`] and [`palette`]: draw modes, lookup tables and fades;
+//! - [`gpu`]: the Vulkan renderer;
+//! - [`cpu`]: a pixel-exact reference of everything the shaders do;
+//! - [`pack`]: optional higher-resolution replacement images.
+//!
+//! [`ViewConfig`]: claw_frame::ViewConfig
+
+#![forbid(unsafe_code)]
+
+pub mod cpu;
+pub mod effects;
+pub mod gpu;
+pub mod images;
+pub mod pack;
+pub mod palette;
+pub mod scene;
+pub mod view;
+
+pub use gpu::{Gpu, GpuError, Offscreen, Renderer};
+pub use images::{ImageSource, LevelGraphics, MemoryImages, StoreImages};
+pub use pack::HdPack;
+pub use scene::{Composition, FrameInput, Scene, SceneBuilder, SpriteInput};
+pub use view::{PlaneView, WorldView};
+pub use wgpu;
