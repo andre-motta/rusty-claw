@@ -45,10 +45,10 @@ run-viewer:
 	$(CARGO) run --release --locked -p claw-viewer -- $(ARGS)
 
 run-game:
-	$(CARGO) run --release --locked -p claw-game --bin claw -- $(ARGS)
+	$(CARGO) run --release --locked -p claw-game --bin rusty-claw -- $(ARGS)
 
 bench:
-	$(CARGO) run --release --locked -p claw-game --bin claw -- $(ARGS)
+	$(CARGO) run --release --locked -p claw-game --bin rusty-claw -- $(ARGS)
 
 replay:
 	$(CARGO) run --release --locked -p claw-replay -- $(ARGS)

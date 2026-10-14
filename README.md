@@ -1,8 +1,7 @@
-# claw
+# rusty-claw
 
 An open-source engine for playing Captain Claw (Monolith, 1997) natively on
-modern Linux, with high-resolution and high-refresh output. The project name
-is not final.
+modern Linux, with high-resolution and high-refresh output.
 
 ## You need your own copy of the game
 
@@ -62,7 +61,7 @@ cargo run --release -p claw-info -- --install /path/to/your/install --custom "My
 | `engine/sim` | `claw-sim` | headless simulation |
 | `app/info` | `claw-info` | level summary tool |
 | `app/viewer` | `claw-viewer` | level viewer |
-| `app/game` | `claw-game` | the game (`claw` binary) |
+| `app/game` | `claw-game` | the game (`rusty-claw` binary) |
 | `tools/replay` | `claw-replay` | input replay and traces |
 | `tests/acceptance` | `claw-acceptance` | end-to-end tests |
 

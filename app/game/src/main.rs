@@ -3,6 +3,6 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    eprintln!("claw is not available yet");
+    eprintln!("rusty-claw is not available yet");
     ExitCode::FAILURE
 }
