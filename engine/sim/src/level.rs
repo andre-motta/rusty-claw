@@ -44,6 +44,26 @@ impl ObjectSpec {
     }
 }
 
+/// Image sets the simulation's own logics switch objects to at run time.
+///
+/// A logic that sets an object's `image_set` to anything other than the set
+/// the object was placed with must list that set here and assign it with
+/// [`runtime_image_set`], so that [`SimLevel::image_sets`] names it and its
+/// graphics are loaded with the level instead of while drawing. Debug
+/// builds check the assignment against this list.
+pub const RUNTIME_IMAGE_SETS: [&str; 1] = [player::IMAGE_SET];
+
+/// `name` as an object's image set, for a logic switching an object's set
+/// at run time. The set must be in [`RUNTIME_IMAGE_SETS`]; debug builds
+/// check it.
+pub fn runtime_image_set(name: &str) -> String {
+    debug_assert!(
+        RUNTIME_IMAGE_SETS.contains(&name),
+        "image set {name:?} is switched to at run time but not listed in RUNTIME_IMAGE_SETS"
+    );
+    name.to_string()
+}
+
 /// A level prepared for the simulation.
 #[derive(Debug, Clone)]
 pub struct SimLevel {
@@ -123,13 +143,20 @@ impl SimLevel {
     }
 
     /// Every image set the level's objects can show, sorted and without
-    /// duplicates: the sets placed objects start with, the sets named by
-    /// the loaded animations and the sets the simulation's own logics
-    /// switch to at run time (Claw's). Meant for loading graphics at level
-    /// load, so that drawing never has to read or decode a set.
+    /// duplicates: the sets placed objects start with, the sets the
+    /// simulation's own logics switch to at run time
+    /// ([`RUNTIME_IMAGE_SETS`]) and the sets named in the loaded animations'
+    /// headers. Meant for loading graphics at level load, so that drawing
+    /// never has to read or decode a set.
+    ///
+    /// The animation header names are best-effort: no object takes its
+    /// image set from an animation, so a header name may not be a set the
+    /// renderer draws with. Listing one costs a lookup at load and nothing
+    /// else. The sets that matter are the placed ones and
+    /// [`RUNTIME_IMAGE_SETS`].
     pub fn image_sets(&self) -> Vec<String> {
         let mut sets: BTreeSet<&str> = BTreeSet::new();
-        sets.insert(player::IMAGE_SET);
+        sets.extend(RUNTIME_IMAGE_SETS);
         for o in &self.objects {
             sets.insert(&o.image_set);
         }

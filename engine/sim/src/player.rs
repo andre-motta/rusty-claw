@@ -585,7 +585,7 @@ pub fn init(c: &mut Ctx) {
         ..Claw::default()
     };
     c.p.health = tp.respawn_health;
-    c.o.image_set = IMAGE_SET.to_string();
+    c.o.image_set = crate::level::runtime_image_set(IMAGE_SET);
     c.o.x = c.plane_centre.0;
     c.o.y = c.plane_centre.1;
     c.o.z = tp.z;
@@ -615,7 +615,7 @@ pub fn respawn(c: &mut Ctx) {
     let tp = &c.t.player;
     c.p.health = tp.respawn_health;
     let (x, y) = c.p.checkpoint.unwrap_or(c.p.spawn_point);
-    c.o.image_set = IMAGE_SET.to_string();
+    c.o.image_set = crate::level::runtime_image_set(IMAGE_SET);
     c.o.x = x;
     c.o.y = y;
     c.o.z = tp.z;

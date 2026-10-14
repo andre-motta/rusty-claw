@@ -15,15 +15,24 @@
 //! scale = "fit"             # fit or integer
 //! widen_activation = false
 //! vsync = true
+//! fps_cap = 300             # with vsync off; 0 for no cap
 //! interpolation = true
 //! ```
+//!
+//! With vsync on, the display's refresh paces drawing. With vsync off,
+//! drawing is capped at `fps_cap` frames per second (300 by default);
+//! `--fps-cap 0` or `--uncapped` removes the cap, which is meant only for
+//! measuring throughput. The cap also paces headless benchmarks, which
+//! draw at their simulated display rate unless `--uncapped` is given.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgGroup, Parser, ValueEnum};
-use claw_frame::{AspectPolicy, DEFAULT_LOGIC_HEIGHT, DEFAULT_LOGIC_WIDTH, ScaleMode, ViewConfig};
+use claw_frame::{
+    AspectPolicy, DEFAULT_FPS_CAP, DEFAULT_LOGIC_HEIGHT, DEFAULT_LOGIC_WIDTH, ScaleMode, ViewConfig,
+};
 use claw_sim::SimConfig;
 
 /// Default window size: the original view at twice its size.
@@ -159,6 +168,14 @@ pub struct Args {
     /// Wait for the display's refresh: on or off.
     #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
     pub vsync: Option<bool>,
+    /// With vsync off: the most frames drawn per second (default 300); 0
+    /// means no cap, for measuring throughput only.
+    #[arg(long, value_name = "N", conflicts_with = "uncapped")]
+    pub fps_cap: Option<u32>,
+    /// No frame-rate cap with vsync off, and no pacing of a headless
+    /// benchmark: for measuring throughput only.
+    #[arg(long)]
+    pub uncapped: bool,
     /// Draw the latest tick only, without interpolating between ticks.
     #[arg(long)]
     pub no_interp: bool,
@@ -181,12 +198,14 @@ pub struct Args {
     /// `--trace`, 144 for `--bench --headless`).
     #[arg(long, value_name = "HZ")]
     pub render_hz: Option<f64>,
-    /// Run a benchmark for this many seconds with Claw on a fixed route and
-    /// print frame statistics as JSON.
+    /// Run a benchmark for this many seconds with Claw on a fixed route,
+    /// print frame statistics as JSON and a PASS or FAIL verdict; exits
+    /// with status 3 when a budget is missed.
     #[arg(long, value_name = "SECONDS", conflicts_with = "replay")]
     pub bench: Option<f64>,
     /// With `--bench`: render offscreen at `--res` with a simulated display
-    /// clock instead of in a window.
+    /// clock instead of in a window, paced to that clock unless
+    /// `--uncapped` is given.
     #[arg(long, requires = "bench")]
     pub headless: bool,
 }
@@ -222,6 +241,20 @@ pub fn parse_on_off(s: &str) -> Result<bool, String> {
         "on" | "true" => Ok(true),
         "off" | "false" => Ok(false),
         _ => Err(format!("expected on or off, got {s:?}")),
+    }
+}
+
+/// Largest frame-rate cap accepted.
+pub const MAX_FPS_CAP: u32 = 10_000;
+
+/// Checks a frame-rate cap: 0 means no cap.
+pub fn fps_cap(n: u32) -> Result<Option<u32>, String> {
+    match n {
+        0 => Ok(None),
+        n if n <= MAX_FPS_CAP => Ok(Some(n)),
+        _ => Err(format!(
+            "expected a frame rate up to {MAX_FPS_CAP}, or 0 for no cap, got {n}"
+        )),
     }
 }
 
@@ -269,6 +302,9 @@ pub struct Settings {
     pub widen_activation: bool,
     /// Wait for the display refresh.
     pub vsync: bool,
+    /// Frame-rate cap when the display refresh does not pace drawing, and
+    /// the switch for pacing headless benchmarks; `None` means no cap.
+    pub fps_cap: Option<u32>,
     /// Interpolate between ticks.
     pub interpolation: bool,
     /// Image pack folder.
@@ -292,6 +328,7 @@ impl Settings {
             scale: Scale::default(),
             widen_activation: false,
             vsync: true,
+            fps_cap: Some(DEFAULT_FPS_CAP),
             interpolation: true,
             pack: None,
             start: None,
@@ -351,6 +388,12 @@ impl Settings {
         if let Some(v) = args.vsync {
             s.vsync = v;
         }
+        if let Some(n) = args.fps_cap {
+            s.fps_cap = fps_cap(n).map_err(|e| anyhow!("--fps-cap: {e}"))?;
+        }
+        if args.uncapped {
+            s.fps_cap = None;
+        }
         if args.no_interp {
             s.interpolation = false;
         }
@@ -395,6 +438,11 @@ impl Settings {
         view_for(self.aspect, self.scale, self.widen_activation, size)
     }
 
+    /// True when the active area follows the first output's shape.
+    pub fn widens(&self) -> bool {
+        self.widen_activation && self.aspect == Aspect::Fill
+    }
+
     /// The simulation settings for a first output of `size` pixels.
     ///
     /// The game view is always 640x480. Without widened activation the
@@ -402,18 +450,25 @@ impl Settings {
     /// are drawn still up to the width of a 32:9 display (or the output, if
     /// wider), so the display shape can change at run time. With widened
     /// activation the active area follows the first output's width and stays
-    /// so until the level is loaded again.
+    /// so until the level is loaded again; objects outside it are drawn
+    /// still across the same reach as without widening, so a wider shape
+    /// chosen at run time still shows them.
     pub fn sim_config(&self, size: (u32, u32)) -> SimConfig {
-        if self.widen_activation && self.aspect == Aspect::Fill {
-            return SimConfig::for_view(self.view(size));
-        }
-        let view = ViewConfig {
+        let frozen = ViewConfig {
             aspect_policy: AspectPolicy::FrozenEdgeClamped,
             ..ViewConfig::default()
         };
-        let (pw, _) = view.with_render_size(size.0, size.1).presentation_size();
+        let (pw, _) = frozen.with_render_size(size.0, size.1).presentation_size();
         let reach = pw.max(FROZEN_EDGE_REACH);
-        SimConfig::for_view(view.with_render_size(reach, DEFAULT_LOGIC_HEIGHT))
+        if self.widens() {
+            // The activation comes from the first output; the drawing reach
+            // is the one the frozen-edge simulation uses.
+            let first = self.view(size);
+            let mut cfg = SimConfig::for_view(first);
+            cfg.view = first.with_render_size(reach, DEFAULT_LOGIC_HEIGHT);
+            return cfg;
+        }
+        SimConfig::for_view(frozen.with_render_size(reach, DEFAULT_LOGIC_HEIGHT))
     }
 }
 
@@ -456,7 +511,7 @@ pub struct ConfigFile {
 }
 
 /// Keys a config file may hold.
-pub const CONFIG_KEYS: [&str; 11] = [
+pub const CONFIG_KEYS: [&str; 12] = [
     "install",
     "level",
     "custom",
@@ -466,6 +521,7 @@ pub const CONFIG_KEYS: [&str; 11] = [
     "scale",
     "widen_activation",
     "vsync",
+    "fps_cap",
     "interpolation",
     "pack",
 ];
@@ -530,6 +586,12 @@ impl ConfigFile {
                 "scale" => s.scale = Scale::from_str(v, true).map_err(|e| err(key, e))?,
                 "widen_activation" => s.widen_activation = flag(key, v)?,
                 "vsync" => s.vsync = flag(key, v)?,
+                "fps_cap" => {
+                    let n = v
+                        .parse()
+                        .map_err(|_| err(key, format!("bad frame rate {v:?}")))?;
+                    s.fps_cap = fps_cap(n).map_err(|e| err(key, e))?;
+                }
                 "interpolation" => s.interpolation = flag(key, v)?,
                 "pack" => s.pack = Some(PathBuf::from(v)),
                 _ => {}
@@ -717,6 +779,10 @@ mod tests {
         assert_eq!(cfg.activation.mode, ActivationMode::Widened);
         assert_eq!(cfg.activation.view, (1708, 480));
         assert_eq!(cfg.view.logic_width, 640);
+        assert_eq!(
+            claw_sim::sim::presentation_width(&cfg.view),
+            FROZEN_EDGE_REACH
+        );
         // Widening needs the fill policy; the other policies draw only
         // the original view's width of live objects.
         s.aspect = Aspect::Classic;
@@ -724,5 +790,62 @@ mod tests {
             s.sim_config((5120, 1440)).activation.mode,
             ActivationMode::FrozenEdge
         );
+    }
+
+    #[test]
+    fn widened_activation_draws_still_objects_across_any_later_shape() {
+        use claw_sim::ActivationMode;
+        let mut s = Settings::new("/i", LevelChoice::Retail(1));
+        s.widen_activation = true;
+        // A 4:3 first window: nothing to widen, but the drawing reach
+        // covers a 32:9 shape chosen later, as without widening.
+        let cfg = s.sim_config(DEFAULT_WINDOW);
+        assert_eq!(cfg.activation.mode, ActivationMode::Widened);
+        assert_eq!(cfg.activation.view, (640, 480));
+        assert_eq!(
+            claw_sim::sim::presentation_width(&cfg.view),
+            FROZEN_EDGE_REACH
+        );
+        s.widen_activation = false;
+        assert_eq!(
+            s.sim_config(DEFAULT_WINDOW).view.render_width,
+            cfg.view.render_width
+        );
+        // A 16:9 first window widens to its own shape and still draws to
+        // the 32:9 reach; an output wider than that sets both.
+        s.widen_activation = true;
+        let cfg = s.sim_config((3840, 2160));
+        assert_eq!(cfg.activation.view, (854, 480));
+        assert_eq!(
+            claw_sim::sim::presentation_width(&cfg.view),
+            FROZEN_EDGE_REACH
+        );
+        let cfg = s.sim_config((7680, 1080));
+        assert_eq!(cfg.activation.view, (3414, 480));
+        assert_eq!(claw_sim::sim::presentation_width(&cfg.view), 3414);
+    }
+
+    #[test]
+    fn frame_rate_cap() {
+        let cap = |a: &str| Settings::resolve(&args(&format!("--install /i {a}")), None);
+        assert_eq!(cap("").unwrap().fps_cap, Some(DEFAULT_FPS_CAP));
+        assert_eq!(cap("--fps-cap 144").unwrap().fps_cap, Some(144));
+        assert_eq!(cap("--fps-cap 0").unwrap().fps_cap, None);
+        assert_eq!(cap("--uncapped").unwrap().fps_cap, None);
+        assert!(cap("--fps-cap 20000").is_err());
+        assert!(Args::try_parse_from(["rusty-claw", "--fps-cap", "60", "--uncapped"]).is_err());
+        let file = ConfigFile::parse("install = /i\nvsync = off\nfps_cap = 240\n", "cfg").unwrap();
+        let s = Settings::resolve(&Args::default(), Some(&file)).unwrap();
+        assert!(!s.vsync);
+        assert_eq!(s.fps_cap, Some(240));
+        let s = Settings::resolve(&args("--fps-cap 120"), Some(&file)).unwrap();
+        assert_eq!(s.fps_cap, Some(120));
+        let s = Settings::resolve(&args("--uncapped"), Some(&file)).unwrap();
+        assert_eq!(s.fps_cap, None);
+        let file = ConfigFile::parse("install = /i\nfps_cap = 0\n", "cfg").unwrap();
+        let s = Settings::resolve(&Args::default(), Some(&file)).unwrap();
+        assert_eq!(s.fps_cap, None);
+        let file = ConfigFile::parse("install = /i\nfps_cap = fast\n", "cfg").unwrap();
+        assert!(Settings::resolve(&Args::default(), Some(&file)).is_err());
     }
 }

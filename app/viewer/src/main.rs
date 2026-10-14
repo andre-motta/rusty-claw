@@ -6,10 +6,16 @@
 //! integer scaling, A cycles the aspect policy, F11 toggles fullscreen and
 //! Escape quits.
 //!
+//! With vsync on (the default) the display's refresh paces the frames; with
+//! `--vsync off` drawing is capped at `--fps-cap` frames per second (300 by
+//! default). `--fps-cap 0` or `--uncapped` removes the cap, for measuring
+//! throughput only.
+//!
 //! Without a window: `--headless-bench SECONDS` renders offscreen at `--res`
 //! and prints frame-time statistics as JSON, `--screenshot FILE.png` saves
 //! one frame, and `--dump-visible-tiles` prints the visible tile grid of
-//! every plane for `--camera X,Y`.
+//! every plane for `--camera X,Y`. The headless benchmark draws at its
+//! simulated display rate (`--bench-hz`) unless `--uncapped` is given.
 
 mod bench;
 mod stub;
@@ -20,9 +26,9 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use clap::{ArgGroup, Parser, ValueEnum};
+use clap::{ArgAction, ArgGroup, Parser, ValueEnum};
 use claw_assets::{Install, LevelData, LevelSource, Source};
-use claw_frame::{AspectPolicy, ScaleMode, ViewConfig};
+use claw_frame::{AspectPolicy, DEFAULT_FPS_CAP, ScaleMode, ViewConfig};
 use claw_render::{HdPack, LevelGraphics};
 
 /// How the picture fills an output of another shape.
@@ -82,9 +88,23 @@ pub struct Args {
     /// Gameplay view in game pixels (default 640x480).
     #[arg(long, value_parser = parse_size)]
     pub logic: Option<(u32, u32)>,
-    /// Wait for the display's refresh (on or off).
-    #[arg(long, default_value = "on", value_parser = parse_on_off)]
+    /// Wait for the display's refresh: on or off.
+    #[arg(
+        long,
+        value_name = "on|off",
+        default_value = "on",
+        value_parser = parse_on_off,
+        action = ArgAction::Set
+    )]
     pub vsync: bool,
+    /// With vsync off: the most frames drawn per second; 0 means no cap,
+    /// for measuring throughput only.
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_FPS_CAP, conflicts_with = "uncapped")]
+    pub fps_cap: u32,
+    /// No frame-rate cap with vsync off, and no pacing of the headless
+    /// benchmark: for measuring throughput only.
+    #[arg(long)]
+    pub uncapped: bool,
     /// Draw without interpolation (the latest tick only).
     #[arg(long)]
     pub no_interp: bool,
@@ -135,16 +155,30 @@ fn parse_point(s: &str) -> Result<(i32, i32), String> {
 }
 
 fn parse_on_off(s: &str) -> Result<bool, String> {
-    match s {
-        "on" => Ok(true),
-        "off" => Ok(false),
+    match s.trim() {
+        "on" | "true" => Ok(true),
+        "off" | "false" => Ok(false),
         _ => Err(format!("expected on or off, got {s:?}")),
     }
 }
 
+/// Largest frame-rate cap accepted.
+pub const MAX_FPS_CAP: u32 = 10_000;
+
 impl Args {
+    /// The frame-rate cap, or `None` for no cap.
+    pub fn frame_cap(&self) -> Option<u32> {
+        (!self.uncapped && self.fps_cap > 0).then_some(self.fps_cap)
+    }
+
     /// Rejects option combinations that cannot be honoured.
     pub fn validate(&self) -> Result<()> {
+        if self.fps_cap > MAX_FPS_CAP {
+            bail!("--fps-cap takes a frame rate up to {MAX_FPS_CAP}, or 0 for no cap");
+        }
+        if !(self.bench_hz.is_finite() && (1.0..=10_000.0).contains(&self.bench_hz)) {
+            bail!("--bench-hz needs a rate between 1 and 10000 Hz");
+        }
         if self.widen_activation && self.aspect != Aspect::Native {
             bail!(
                 "--widen-activation needs --aspect native: widened activation fills the \
@@ -352,6 +386,30 @@ mod tests {
             assert!(err.contains("--aspect native"), "{err}");
             assert!(args(&["--aspect", aspect]).validate().is_ok());
         }
+    }
+
+    #[test]
+    fn vsync_and_the_frame_rate_cap() {
+        let a = args(&[]);
+        assert!(a.vsync);
+        assert_eq!(a.frame_cap(), Some(DEFAULT_FPS_CAP));
+        assert!(args(&["--vsync", "off"]).validate().is_ok());
+        assert!(!args(&["--vsync", "off"]).vsync);
+        assert_eq!(args(&["--fps-cap", "144"]).frame_cap(), Some(144));
+        assert_eq!(args(&["--fps-cap", "0"]).frame_cap(), None);
+        assert_eq!(args(&["--uncapped"]).frame_cap(), None);
+        assert!(args(&["--fps-cap", "20000"]).validate().is_err());
+        assert!(args(&["--bench-hz", "0"]).validate().is_err());
+        let both = [
+            "claw-viewer",
+            "--install",
+            "/i",
+            "--level",
+            "1",
+            "--fps-cap",
+            "60",
+        ];
+        assert!(Args::try_parse_from(both.iter().chain(&["--uncapped"])).is_err());
     }
 
     #[test]

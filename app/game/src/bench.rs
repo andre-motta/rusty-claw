@@ -5,10 +5,17 @@
 //! look up) repeated for the length of the run. Two ways to run it:
 //!
 //! - in a window ([`crate::window`]): real presentation at the display's
-//!   refresh, which also counts frames that missed their refresh;
+//!   refresh (or at the frame-rate cap with vsync off), which also counts
+//!   frames that missed their refresh;
 //! - headless ([`run_headless`]): offscreen at `--res` with a simulated
-//!   display clock, rendering as fast as the machine allows and waiting for
-//!   the GPU after each frame, which also measures GPU time.
+//!   display clock, waiting for the GPU after each frame, which also
+//!   measures GPU time. Frames are paced to the simulated display rate, so
+//!   the run draws as many frames as that display would; `--uncapped`
+//!   draws as fast as the machine allows, for throughput runs. Either way
+//!   the work of a frame is timed around the frame alone, never the wait.
+//!
+//! The route loops for as long as the run lasts; the report records its
+//! length and that no tick ran past it (`route.ticks_past_route`).
 //!
 //! The report is one JSON object. Times are milliseconds, each with `p50`,
 //! `p99` and `max`:
@@ -26,18 +33,23 @@
 //!   refresh periods apart) after a one-second warm-up; when the desktop
 //!   cannot hold a window of the requested size, every frame is also drawn
 //!   offscreen at that size and counted in the frame work
-//!   (`offscreen_copy`);
+//!   (`offscreen_copy`); `missed_vblank_detail` describes the frame of each
+//!   missed refresh (see [`PresentDetail`]), to tell a slow frame of the
+//!   game from a stall outside it;
 //! - headless runs: `gpu_ms` and `frame_ms` (work plus GPU).
 //!
 //! `budget` checks the targets: frame work p99 under [`FRAME_BUDGET_MS`]
-//! (a 144 Hz refresh), no missed refresh in a window run, and the handheld
-//! estimate under [`DECK_BUDGET_MS`] (half a 60 Hz refresh).
+//! (a 144 Hz refresh), the handheld estimate under [`DECK_BUDGET_MS`] (half
+//! a 60 Hz refresh) and no missed refresh. Missed refreshes can only be
+//! measured in a window with vsync on; elsewhere they are reported as not
+//! measurable, never as passed. [`Report::summary`] is the one-line PASS
+//! or FAIL verdict naming each budget.
 
 use std::fmt::Write as _;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use claw_frame::{Buttons, SimulatedRefresh};
+use claw_frame::{Buttons, FramePacer, SimulatedRefresh};
 use claw_render::gpu::COLOR_FORMAT;
 use claw_render::{FrameInput, Gpu, Offscreen, Renderer, SceneBuilder};
 use claw_sim::InputScript;
@@ -59,6 +71,10 @@ pub const DECK_BUDGET_MS: f64 = 8.3;
 /// Seconds at the start of a window run left out of the present
 /// statistics (window mapping and the first swapchain images).
 pub const WARMUP_S: f64 = 1.0;
+
+/// A present more than this many refresh periods after the previous one
+/// missed a refresh.
+pub const MISS_FACTOR: f64 = 1.5;
 
 /// The benchmark route as a script of at least `seconds`.
 pub fn route(seconds: f64) -> InputScript {
@@ -131,6 +147,74 @@ impl Summary {
     }
 }
 
+/// What happened in the frame of one present of a window run, to tell why
+/// a refresh was missed.
+///
+/// The time between two presents is `gap_ms` (from the previous present to
+/// the start of this frame's work: event handling and any pacing wait),
+/// then `work_ms`, `acquire_ms` and `present_call_ms`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PresentDetail {
+    /// From the previous present to the start of this frame's work, ms.
+    pub gap_ms: f64,
+    /// CPU work of the frame, ms.
+    pub work_ms: f64,
+    /// Waiting for a swapchain image, ms.
+    pub acquire_ms: f64,
+    /// The present call itself, ms.
+    pub present_call_ms: f64,
+    /// Ticks the frame ran.
+    pub ticks: u32,
+    /// Sprite sets read and decoded while this frame was drawn.
+    pub sets_loaded: usize,
+    /// Images added to the image store while this frame was drawn.
+    pub images_loaded: usize,
+    /// Window events since the previous present that reallocate GPU or
+    /// drawing resources: `resize`, `view rebuilt`, `surface reconfigured`,
+    /// `frame skipped`.
+    pub events: Vec<&'static str>,
+}
+
+impl PresentDetail {
+    /// The most likely reason a present came late, for a display period of
+    /// `period_ms`.
+    pub fn likely_cause(&self, period_ms: f64) -> &'static str {
+        if self.sets_loaded > 0 || self.images_loaded > 0 {
+            "sprite loading in the game"
+        } else if !self.events.is_empty() {
+            "window change in the game"
+        } else if self.work_ms > 0.5 * period_ms {
+            "frame work in the game"
+        } else if self.acquire_ms + self.present_call_ms >= self.gap_ms {
+            "waiting on the display (compositor or driver)"
+        } else {
+            "between frames (event loop or scheduler)"
+        }
+    }
+
+    fn json(&self, at_s: f64, interval_ms: f64, period_ms: f64) -> String {
+        format!(
+            "{{\"at_s\": {at_s:.3}, \"interval_ms\": {interval_ms:.3}, \"gap_ms\": {:.3}, \
+             \"work_ms\": {:.3}, \"acquire_ms\": {:.3}, \"present_call_ms\": {:.3}, \
+             \"ticks\": {}, \"sets_loaded\": {}, \"images_loaded\": {}, \"events\": [{}], \
+             \"likely_cause\": \"{}\"}}",
+            self.gap_ms,
+            self.work_ms,
+            self.acquire_ms,
+            self.present_call_ms,
+            self.ticks,
+            self.sets_loaded,
+            self.images_loaded,
+            self.events
+                .iter()
+                .map(|e| format!("\"{e}\""))
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.likely_cause(period_ms),
+        )
+    }
+}
+
 /// Raw measurements of a run.
 #[derive(Debug, Clone, Default)]
 pub struct Samples {
@@ -146,6 +230,8 @@ pub struct Samples {
     pub present_ms: Vec<f64>,
     /// When each interval ended, s after the warm-up (window runs).
     pub present_at_s: Vec<f64>,
+    /// The frame that ended each interval (window runs).
+    pub present_detail: Vec<PresentDetail>,
     /// Window size changes after the warm-up (window runs).
     pub resizes: usize,
     /// Frames drawn.
@@ -161,6 +247,28 @@ impl Samples {
             self.tick_work_ms.push(work_ms);
         }
     }
+}
+
+/// The outcome of one budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// Measured and inside the budget.
+    Pass,
+    /// Measured and over the budget.
+    Fail,
+    /// Not measurable in this kind of run.
+    NotMeasurable,
+}
+
+/// One budget of a benchmark and its outcome.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BudgetCheck {
+    /// Budget name.
+    pub name: &'static str,
+    /// Outcome.
+    pub verdict: Verdict,
+    /// Measured value against the budget, or why it was not measured.
+    pub text: String,
 }
 
 /// A benchmark result.
@@ -185,6 +293,9 @@ pub struct Report {
     pub adapter: String,
     /// Presentation mode of a window run.
     pub present_mode: String,
+    /// What paced the frames: the display refresh, a frame-rate cap, the
+    /// simulated display, or nothing.
+    pub pacing: String,
     /// Display refresh rate (reported by the monitor, or simulated).
     pub display_hz: f64,
     /// Where `display_hz` came from.
@@ -203,6 +314,10 @@ pub struct Report {
     pub images_loaded_during_run: usize,
     /// Load time up to the first drawn frame, ms.
     pub load_ms: f64,
+    /// Length of the route, in ticks; it loops for the length of the run.
+    pub route_ticks: usize,
+    /// Ticks that found no route input (should be 0).
+    pub ticks_past_route: u64,
     /// Frame measurements.
     pub samples: Samples,
     /// Tick measurements.
@@ -244,13 +359,13 @@ impl Report {
         (sum as f64 / n, max)
     }
 
-    /// Presents more than 1.5 refresh periods apart (window runs).
+    /// Presents more than [`MISS_FACTOR`] refresh periods apart (window
+    /// runs).
     pub fn missed_vblanks(&self) -> usize {
-        self.missed_vblank_times().len()
+        self.missed_vblank_indices().len()
     }
 
-    /// When each missed refresh happened, s after the warm-up.
-    pub fn missed_vblank_times(&self) -> Vec<f64> {
+    fn missed_vblank_indices(&self) -> Vec<usize> {
         if self.display_hz <= 0.0 {
             return Vec::new();
         }
@@ -259,9 +374,101 @@ impl Report {
             .present_ms
             .iter()
             .enumerate()
-            .filter(|&(_, &d)| d > 1.5 * period)
-            .map(|(i, _)| self.samples.present_at_s.get(i).copied().unwrap_or(-1.0))
+            .filter(|&(_, &d)| d > MISS_FACTOR * period)
+            .map(|(i, _)| i)
             .collect()
+    }
+
+    /// When each missed refresh happened, s after the warm-up.
+    pub fn missed_vblank_times(&self) -> Vec<f64> {
+        self.missed_vblank_indices()
+            .into_iter()
+            .map(|i| self.samples.present_at_s.get(i).copied().unwrap_or(-1.0))
+            .collect()
+    }
+
+    /// Why missed refreshes cannot be measured in this run, or `None` when
+    /// they can: only a window run waiting for a display of known rate
+    /// shows them.
+    pub fn missed_vblanks_unmeasurable(&self) -> Option<&'static str> {
+        if self.mode != "window" {
+            Some("offscreen")
+        } else if !matches!(self.present_mode.as_str(), "Fifo" | "FifoRelaxed") {
+            Some("without vsync")
+        } else if self.display_hz <= 0.0 {
+            Some("at an unknown display rate")
+        } else {
+            None
+        }
+    }
+
+    /// Each budget with its outcome.
+    pub fn checks(&self) -> Vec<BudgetCheck> {
+        let verdict = |ok: bool| if ok { Verdict::Pass } else { Verdict::Fail };
+        let mut out = vec![
+            BudgetCheck {
+                name: "frame work p99",
+                verdict: verdict(self.work_within_budget()),
+                text: format!(
+                    "{:.3} ms (under {FRAME_BUDGET_MS} ms)",
+                    self.frame_work().p99
+                ),
+            },
+            BudgetCheck {
+                name: "deck proxy",
+                verdict: verdict(self.deck_within_budget()),
+                text: format!("{:.3} ms (under {DECK_BUDGET_MS} ms)", self.deck_proxy_ms()),
+            },
+        ];
+        out.push(match self.missed_vblanks_unmeasurable() {
+            Some(why) => BudgetCheck {
+                name: "missed vblanks",
+                verdict: Verdict::NotMeasurable,
+                text: format!("not measurable {why}"),
+            },
+            None => {
+                let times = self.missed_vblank_times();
+                let mut text = format!("{} at {:.2} Hz (want 0)", times.len(), self.display_hz);
+                if !times.is_empty() {
+                    let shown: Vec<String> =
+                        times.iter().take(8).map(|t| format!("{t:.2}")).collect();
+                    let more = if times.len() > 8 { ", ..." } else { "" };
+                    let _ = write!(text, " at {}{more} s", shown.join(", "));
+                }
+                BudgetCheck {
+                    name: "missed vblanks",
+                    verdict: verdict(times.is_empty()),
+                    text,
+                }
+            }
+        });
+        out
+    }
+
+    /// True when no measured budget failed.
+    pub fn passed(&self) -> bool {
+        self.checks().iter().all(|c| c.verdict != Verdict::Fail)
+    }
+
+    /// One line: PASS or FAIL, then each budget with its outcome.
+    pub fn summary(&self) -> String {
+        let parts: Vec<String> = self
+            .checks()
+            .iter()
+            .map(|c| {
+                let tag = match c.verdict {
+                    Verdict::Pass => " ok",
+                    Verdict::Fail => " FAIL",
+                    Verdict::NotMeasurable => "",
+                };
+                format!("{} {}{tag}", c.name, c.text)
+            })
+            .collect();
+        format!(
+            "bench {}: {}",
+            if self.passed() { "PASS" } else { "FAIL" },
+            parts.join("; ")
+        )
     }
 
     /// Frames per second over the run.
@@ -310,6 +517,15 @@ impl Report {
         }
         let _ = write!(
             s,
+            "\"pacing\": {}, \"route\": {{\"ticks\": {}, \"loops\": {:.2}, \
+             \"ticks_past_route\": {}}}, ",
+            json_string(&self.pacing),
+            self.route_ticks,
+            self.ticks as f64 / self.route_ticks.max(1) as f64,
+            self.ticks_past_route,
+        );
+        let _ = write!(
+            s,
             "\"display_hz\": {:.2}, \"display_hz_source\": \"{}\", \"activation\": \"{}\", \
              \"seconds\": {:.2}, \"frames\": {}, \"fps\": {:.1}, \"ticks\": {}, \
              \"images\": {}, \"preloaded_sets\": {}, \"images_loaded_during_run\": {}, \
@@ -335,10 +551,25 @@ impl Report {
             self.deck_proxy_ms(),
         );
         if self.mode == "window" {
+            let period = if self.display_hz > 0.0 {
+                1000.0 / self.display_hz
+            } else {
+                0.0
+            };
+            let detail: Vec<String> = self
+                .missed_vblank_indices()
+                .into_iter()
+                .filter_map(|i| {
+                    let d = self.samples.present_detail.get(i)?;
+                    let at = self.samples.present_at_s.get(i).copied().unwrap_or(-1.0);
+                    Some(d.json(at, self.samples.present_ms[i], period))
+                })
+                .collect();
             let _ = write!(
                 s,
                 "\"acquire_ms\": {}, \"present_interval_ms\": {}, \"missed_vblanks\": {}, \
-                 \"missed_vblank_at_s\": [{}], \"resizes_during_run\": {}, ",
+                 \"missed_vblank_at_s\": [{}], \"missed_vblank_detail\": [{}], \
+                 \"resizes_during_run\": {}, ",
                 Summary::of(&self.samples.acquire_ms).json(),
                 Summary::of(&self.samples.present_ms).json(),
                 self.missed_vblanks(),
@@ -347,6 +578,7 @@ impl Report {
                     .map(|t| format!("{t:.2}"))
                     .collect::<Vec<_>>()
                     .join(", "),
+                detail.join(", "),
                 self.samples.resizes,
             );
         } else {
@@ -371,9 +603,18 @@ impl Report {
             self.work_within_budget(),
             self.deck_within_budget(),
         );
-        if self.mode == "window" {
-            let _ = write!(s, ", \"missed_vblanks_ok\": {}", self.missed_vblanks() == 0);
+        match self.missed_vblanks_unmeasurable() {
+            None => {
+                let _ = write!(s, ", \"missed_vblanks_ok\": {}", self.missed_vblanks() == 0);
+            }
+            Some(why) => {
+                let _ = write!(
+                    s,
+                    ", \"missed_vblanks_ok\": null, \"missed_vblanks_not_measurable\": \"{why}\""
+                );
+            }
         }
+        let _ = write!(s, ", \"pass\": {}", self.passed());
         s.push_str("}}");
         s
     }
@@ -396,7 +637,8 @@ pub fn json_string(s: &str) -> String {
 
 /// Runs the headless benchmark: loads the level, draws offscreen at
 /// `settings.res` for `seconds` of wall time with a simulated `hz` display
-/// clock, and returns the report.
+/// clock, and returns the report. Frames are paced to `hz` unless
+/// `settings.fps_cap` is `None` (a throughput run).
 pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report> {
     let started = Instant::now();
     let bundle = load_level(&settings.install, &settings.level)?;
@@ -419,9 +661,11 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
     renderer.set_level(&graphics);
     let mut builder = SceneBuilder::new(&graphics, view, max);
     let output = Offscreen::new(&gpu, size);
-    // The simulated clock runs faster than the wall clock when frames are
-    // quick, so the route covers many times the run.
-    let mut session = Session::new(sim).with_replay(route(seconds * 50.0 + 10.0));
+    // The route loops, so an unpaced run whose simulated clock runs ahead
+    // of the wall clock never runs out of it.
+    let script = route(seconds);
+    let route_ticks = script.ticks.len();
+    let mut session = Session::new(sim).with_looped_replay(script);
     {
         let frame = session.interpolated(false);
         let scene = builder.build(&mut graphics, &FrameInput::from_frame(&frame, &view));
@@ -433,9 +677,20 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
     session.time_ticks();
 
     let mut refresh = SimulatedRefresh::new(hz);
+    let mut pacer = match settings.fps_cap {
+        Some(_) => FramePacer::new(hz),
+        None => FramePacer::uncapped(),
+    };
+    let pacing = match pacer.hz() {
+        Some(hz) => format!("simulated {hz:.0} Hz display"),
+        None => "none (throughput run)".to_string(),
+    };
     let mut samples = Samples::default();
     let run = Instant::now();
     while run.elapsed().as_secs_f64() < seconds {
+        // The wait comes before the frame's clock starts: it is never
+        // counted as work.
+        pacer.wait();
         let t0 = Instant::now();
         let dt = refresh.next().unwrap_or_default();
         let f = session.frame(dt);
@@ -460,6 +715,7 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
         scale: comp.scale,
         adapter: gpu.describe(),
         present_mode: String::new(),
+        pacing,
         display_hz: hz,
         display_hz_source: "simulated",
         seconds,
@@ -469,6 +725,8 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
         preloaded_sets: preloaded,
         images_loaded_during_run: graphics.images.records.len() - images,
         load_ms,
+        route_ticks,
+        ticks_past_route: session.ticks_past_script(),
         samples,
         ticks_measured: session.tick_samples().to_vec(),
     })
@@ -519,5 +777,120 @@ mod tests {
         assert!(json.contains("\"missed_vblanks\": 1"), "{json}");
         assert!(json.contains("\"deck_proxy_ok\": false"), "{json}");
         assert!(json.starts_with('{') && json.ends_with('}'));
+    }
+
+    fn passing_window_run() -> Report {
+        let mut r = Report {
+            mode: "window",
+            present_mode: "Fifo".into(),
+            display_hz: 100.0,
+            seconds: 1.0,
+            route_ticks: 50,
+            ..Report::default()
+        };
+        for i in 0..100 {
+            r.samples.frame(0.5, (i % 2) as u32);
+            r.samples.present_ms.push(10.0);
+            r.samples.present_at_s.push(f64::from(i) / 100.0);
+            r.samples.present_detail.push(PresentDetail::default());
+        }
+        r
+    }
+
+    #[test]
+    fn the_verdict_names_every_budget() {
+        let r = passing_window_run();
+        assert!(r.passed());
+        let line = r.summary();
+        assert!(line.starts_with("bench PASS: "), "{line}");
+        for name in ["frame work p99", "deck proxy", "missed vblanks 0"] {
+            assert!(line.contains(name), "{line}");
+        }
+        assert!(!line.contains('\n'));
+        assert!(r.to_json().contains("\"pass\": true"));
+    }
+
+    #[test]
+    fn a_missed_refresh_fails_the_run_and_is_described() {
+        let mut r = passing_window_run();
+        r.samples.present_ms[40] = 25.0;
+        r.samples.present_detail[40] = PresentDetail {
+            gap_ms: 0.2,
+            work_ms: 0.3,
+            acquire_ms: 24.0,
+            present_call_ms: 0.1,
+            ticks: 1,
+            ..PresentDetail::default()
+        };
+        r.samples.present_ms[70] = 30.0;
+        r.samples.present_detail[70] = PresentDetail {
+            sets_loaded: 1,
+            ..PresentDetail::default()
+        };
+        assert!(!r.passed());
+        let line = r.summary();
+        assert!(line.starts_with("bench FAIL: "), "{line}");
+        assert!(line.contains("missed vblanks 2 at 100.00 Hz (want 0) at 0.40, 0.70 s FAIL"));
+        let json = r.to_json();
+        assert!(json.contains("\"missed_vblanks_ok\": false"), "{json}");
+        assert!(json.contains("\"pass\": false"), "{json}");
+        assert!(
+            json.contains("\"likely_cause\": \"waiting on the display"),
+            "{json}"
+        );
+        assert!(json.contains("\"likely_cause\": \"sprite loading in the game\""));
+        // A slow frame of work fails its own budget too.
+        let mut r = passing_window_run();
+        r.samples.work_ms[3] = 50.0;
+        r.samples.work_ms[4] = 50.0;
+        assert!(!r.passed());
+        assert!(
+            r.summary()
+                .contains("frame work p99 50.000 ms (under 6.9 ms) FAIL")
+        );
+    }
+
+    #[test]
+    fn missed_refreshes_are_not_measurable_offscreen_or_without_vsync() {
+        let mut r = passing_window_run();
+        r.samples.present_ms[10] = 40.0;
+        r.mode = "headless";
+        assert!(r.passed());
+        assert!(
+            r.summary()
+                .contains("missed vblanks not measurable offscreen"),
+            "{}",
+            r.summary()
+        );
+        let json = r.to_json();
+        assert!(json.contains("\"missed_vblanks_ok\": null"), "{json}");
+        r.mode = "window";
+        r.present_mode = "Immediate".into();
+        assert!(r.summary().contains("not measurable without vsync"));
+        assert!(r.passed());
+        r.present_mode = "Fifo".into();
+        assert!(!r.passed());
+    }
+
+    #[test]
+    fn likely_causes() {
+        let d = |f: fn(&mut PresentDetail)| {
+            let mut d = PresentDetail {
+                gap_ms: 1.0,
+                work_ms: 0.5,
+                acquire_ms: 0.2,
+                ..PresentDetail::default()
+            };
+            f(&mut d);
+            d.likely_cause(7.0)
+        };
+        assert_eq!(d(|_| {}), "between frames (event loop or scheduler)");
+        assert_eq!(
+            d(|d| d.acquire_ms = 12.0),
+            "waiting on the display (compositor or driver)"
+        );
+        assert_eq!(d(|d| d.work_ms = 9.0), "frame work in the game");
+        assert_eq!(d(|d| d.events.push("resize")), "window change in the game");
+        assert_eq!(d(|d| d.images_loaded = 3), "sprite loading in the game");
     }
 }

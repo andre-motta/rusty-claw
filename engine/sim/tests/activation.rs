@@ -308,4 +308,18 @@ fn level_lists_every_image_set_its_objects_can_show() {
         level.image_sets(),
         vec!["CLAW", "CLAW_EXTRA", "GAME_TREASURE"]
     );
+    // Every set a logic switches to at run time is listed, even for a
+    // level with no objects or animations.
+    let empty = claw_sim::SimLevel::synthetic(claw_sim::TileMap::new(1, 1, 64, 64), (0, 0));
+    for set in claw_sim::level::RUNTIME_IMAGE_SETS {
+        assert!(empty.image_sets().iter().any(|s| s == set), "{set}");
+        assert_eq!(claw_sim::level::runtime_image_set(set), set);
+    }
+}
+
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "not listed in RUNTIME_IMAGE_SETS")]
+fn switching_to_an_unlisted_image_set_is_caught_in_debug_builds() {
+    let _ = claw_sim::level::runtime_image_set("SOME_OTHER_SET");
 }
