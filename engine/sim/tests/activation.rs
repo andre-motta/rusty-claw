@@ -229,35 +229,52 @@ fn level_objects_load_dormant_and_wake_near_the_camera() {
 
 #[test]
 fn frozen_edge_snapshots_draw_dormant_objects_in_the_wide_view() {
+    // The 640x480 view around Claw spans x 680..=1319. One pickup sits
+    // 100 px past its right edge, one 264 px past it; both are dormant.
     let mut level = level_with_objects();
-    let mut side = ObjectSpec::at("TreasurePowerup", 1000 + 384 + 200, 900, 0);
-    side.image_set = "GAME_TREASURE".into();
-    level.objects.push(side);
-    let view = ViewConfig {
+    for x in [1320 + 100, 1320 + 264] {
+        let mut side = ObjectSpec::at("TreasurePowerup", x, 900, 0);
+        side.image_set = "GAME_TREASURE".into();
+        level.objects.push(side);
+    }
+    let treasures = |snap: &claw_sim::SimSnapshot| {
+        snap.renderables
+            .iter()
+            .filter(|r| r.image_set_key == "GAME_TREASURE")
+            .count()
+    };
+    let wide = ViewConfig {
         render_width: 3440,
         render_height: 1440,
         aspect_policy: AspectPolicy::FrozenEdgeClamped,
         ..ViewConfig::default()
     };
-    let mut sim = Sim::new(level.clone(), SimConfig::for_view(view));
+    let mut sim = Sim::new(level.clone(), SimConfig::for_view(wide));
     let snap = sim.step(TickInput::default());
-    let treasures = snap
-        .renderables
-        .iter()
-        .filter(|r| r.image_set_key == "GAME_TREASURE")
-        .count();
     assert_eq!(
-        treasures, 2,
-        "the dormant one in the side band is drawn frozen"
+        treasures(&snap),
+        3,
+        "the dormant ones in and near the side band are drawn frozen"
     );
-    let mut original = Sim::new(level, SimConfig::default());
-    let snap = original.step(TickInput::default());
-    let treasures = snap
-        .renderables
-        .iter()
-        .filter(|r| r.image_set_key == "GAME_TREASURE")
-        .count();
-    assert_eq!(treasures, 1);
+
+    // A 4:3 presentation has no extra width: frozen-edge draws exactly
+    // what the original draws, and nothing dormant beyond the view.
+    let frozen_cfg = SimConfig::default();
+    assert_eq!(frozen_cfg.activation.mode, ActivationMode::FrozenEdge);
+    let mut frozen = Sim::new(level.clone(), frozen_cfg);
+    let original_cfg = SimConfig {
+        activation: ActivationConfig::original(),
+        ..SimConfig::default()
+    };
+    let mut original = Sim::new(level, original_cfg);
+    for _ in 0..2 {
+        let frozen_snap = frozen.step(TickInput::default());
+        let original_snap = original.step(TickInput::default());
+        assert_eq!(frozen_snap.renderables, original_snap.renderables);
+    }
+    // By the second tick the pickup near Claw is awake and drawn; the two
+    // beyond the view stay dormant and undrawn.
+    assert_eq!(treasures(&original.snapshot()), 1);
 }
 
 #[test]
@@ -276,4 +293,19 @@ fn widened_view_follows_the_aspect_policy() {
         ..view
     });
     assert_eq!(pillar.activation, ActivationConfig::original());
+}
+
+#[test]
+fn level_lists_every_image_set_its_objects_can_show() {
+    let mut level = level_with_objects();
+    let anim = claw_sim::anim::Animation {
+        key: "CLAW_STAND".into(),
+        image_set: "CLAW_EXTRA".into(),
+        frames: Vec::new(),
+    };
+    level.animations.insert(anim.key.clone(), Arc::new(anim));
+    assert_eq!(
+        level.image_sets(),
+        vec!["CLAW", "CLAW_EXTRA", "GAME_TREASURE"]
+    );
 }

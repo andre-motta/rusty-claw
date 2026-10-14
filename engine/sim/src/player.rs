@@ -75,14 +75,18 @@ pub mod state {
     pub const FREEZE: i32 = 5009;
 }
 
+/// Image set Claw is drawn from.
+pub const IMAGE_SET: &str = "CLAW";
+
 /// How far a state table row is implemented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RowKind {
     /// Implemented in this milestone.
     Implemented,
     /// Belongs to a later milestone: the handler returns Claw to standing
-    /// (or falling, see [`crate::tuning::Behaviour::fix_double_jump`]) and
-    /// the entry is counted.
+    /// (or, for a hit ending in mid-air, landing, see
+    /// [`crate::tuning::Behaviour::fix_double_jump`]) and the entry is
+    /// counted.
     Fallback,
     /// The game has no behaviour for this id: only the post-tick step runs.
     Unused,
@@ -581,7 +585,7 @@ pub fn init(c: &mut Ctx) {
         ..Claw::default()
     };
     c.p.health = tp.respawn_health;
-    c.o.image_set = "CLAW".to_string();
+    c.o.image_set = IMAGE_SET.to_string();
     c.o.x = c.plane_centre.0;
     c.o.y = c.plane_centre.1;
     c.o.z = tp.z;
@@ -611,7 +615,7 @@ pub fn respawn(c: &mut Ctx) {
     let tp = &c.t.player;
     c.p.health = tp.respawn_health;
     let (x, y) = c.p.checkpoint.unwrap_or(c.p.spawn_point);
-    c.o.image_set = "CLAW".to_string();
+    c.o.image_set = IMAGE_SET.to_string();
     c.o.x = x;
     c.o.y = y;
     c.o.z = tp.z;
@@ -1136,24 +1140,33 @@ fn on_edge_update(c: &mut Ctx) {
 // ----------------------------------------------------------------------
 // Fallback and unused rows
 
-/// Fallback for states of later milestones: back to standing. A hit
-/// reaction that ends in mid-air falls instead when the double-jump fix is
-/// on.
+/// Fallback for states of later milestones: back to standing.
+///
+/// A hit reaction ends with the stand reset. With the double-jump fix on
+/// (the default), a hit that ends in mid-air then sets the state to Land
+/// instead of Stand, keeping the stand animation; Land accepts no jump
+/// press and turns into a fall on its next tick when there is no floor.
+/// Without the fix Claw is left standing in mid-air, where a jump press
+/// starts a second jump, as in the original.
 pub fn fallback_tick(c: &mut Ctx) {
     c.p.fallback_entries += 1;
-    if c.o.state == state::HIT && c.t.behaviour.fix_double_jump {
-        let saved = c.o.physics_type;
-        c.o.physics_type = ptype::STAND;
-        let (x, y) = (c.o.x, c.o.y);
-        c.physics(x, y, opt::PLATFORMS);
-        let airborne = c.o.physics_type == ptype::FALL;
-        c.o.physics_type = saved;
-        if airborne {
-            begin_fall(c, false);
-            return;
-        }
-    }
+    let land = c.o.state == state::HIT && c.t.behaviour.fix_double_jump && hit_ends_airborne(c);
     enter_stand(c);
+    if land {
+        c.o.state = state::LAND;
+    }
+}
+
+/// True when Claw has no floor under him: a standing move in place would
+/// start a fall. The probe runs on a copy, so Claw is left untouched.
+fn hit_ends_airborne(c: &mut Ctx) -> bool {
+    let saved = c.o.clone();
+    c.o.physics_type = ptype::STAND;
+    let (x, y) = (c.o.x, c.o.y);
+    c.physics(x, y, opt::PLATFORMS);
+    let airborne = c.o.physics_type == ptype::FALL;
+    *c.o = saved;
+    airborne
 }
 
 fn no_tick(_: &mut Ctx) {}

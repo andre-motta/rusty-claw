@@ -3,6 +3,7 @@
 
 mod common;
 
+use claw_frame::interpolate;
 use claw_sim::player::state;
 use claw_sim::{Sim, SimConfig, TickInput};
 use common::*;
@@ -45,11 +46,18 @@ fn jumps_over_500_px_snap_in_one_tick() {
         let o = sim.player().unwrap();
         (o.x, o.y)
     };
+    let prev = sim.snapshot();
+    assert!(!prev.camera_teleported);
     sim.teleport_player(x + 900, y);
     let snap = sim.step(TickInput::default());
     let after = sim.camera().current;
     assert!(sim.camera().teleported);
+    assert!(snap.camera_teleported, "the snapshot reports the snap");
     assert!(snap.renderables.iter().any(|r| r.teleported));
+    // Drawn between the two ticks, the view is already at the new place.
+    for alpha in [0.0, 0.3, 0.7] {
+        assert_eq!(interpolate(&prev, &snap, alpha).camera, snap.camera);
+    }
     check(&[
         ("cam_snap_first_step_px", f64::from(after.0 - before.0)),
         (
@@ -59,9 +67,10 @@ fn jumps_over_500_px_snap_in_one_tick() {
     ]);
     // Within 500 px the camera approaches at 9 px per tick instead.
     sim.teleport_player(x + 1300, y);
-    sim.step(TickInput::default());
+    let snap = sim.step(TickInput::default());
     assert_eq!(sim.camera().current.0, x + 909);
     assert!(!sim.camera().teleported);
+    assert!(!snap.camera_teleported);
 }
 
 fn pan(mask: u32) -> (Vec<Row>, i32, u64, u64) {

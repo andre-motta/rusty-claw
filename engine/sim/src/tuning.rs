@@ -216,9 +216,10 @@ impl Default for PhysicsTuning {
 /// default. Each keeps the original behaviour available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Behaviour {
-    /// When a hit reaction ends in mid-air, Claw falls instead of returning
-    /// to the standing state, where the original lets him jump a second
-    /// time. `false` restores the original double jump.
+    /// When a hit reaction ends in mid-air, Claw goes to the Land state
+    /// (which drops into a fall on its next tick) instead of the standing
+    /// state, where the original lets him jump a second time. On the ground
+    /// he stands either way. `false` restores the original double jump.
     pub fix_double_jump: bool,
 }
 

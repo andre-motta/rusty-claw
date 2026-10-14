@@ -14,7 +14,12 @@
 //! - `deck_proxy_ms`: `tick_frame_work_ms.p99` times 3.0, an estimate of the
 //!   same work on a handheld-class CPU.
 //!
-//! Each statistic has `p50`, `p99` and `max`.
+//! Each statistic has `p50`, `p99` and `max`. `sets_loaded_while_drawing`
+//! counts sprite sets that were read and decoded during a frame instead of
+//! at level load; it stays 0 when the preload is complete.
+//!
+//! An output size larger than the GPU can create is refused with an error
+//! before anything is drawn.
 
 use std::path::Path;
 use std::time::Instant;
@@ -69,6 +74,8 @@ pub fn run(args: &Args, seconds: f64) -> Result<()> {
     let size = args.size();
     let view = args.view(size);
     let gpu = Gpu::headless().context("opening the GPU")?;
+    gpu.check_output(size, false)
+        .context("choose a smaller --res")?;
     let mut renderer = Renderer::new(&gpu);
     renderer.set_level(&loaded.graphics);
     let mut builder = SceneBuilder::new(&loaded.graphics, view, gpu.max_target());
@@ -77,7 +84,7 @@ pub fn run(args: &Args, seconds: f64) -> Result<()> {
     stub.autopilot = true;
     let mut driver = FrameDriver::new(stub.snapshot());
     {
-        // First frame: loads the object sprites and builds the pipelines.
+        // First frame: builds the pipelines (the sprites are preloaded).
         let frame = driver.latest();
         let input = FrameInput::from_frame(&frame, &view);
         let scene = builder.build(&mut loaded.graphics, &input);
@@ -122,7 +129,8 @@ pub fn run(args: &Args, seconds: f64) -> Result<()> {
     println!(
         "{{\"res\": \"{}x{}\", \"presentation\": \"{}x{}\", \"scale\": {}, \"adapter\": {}, \
          \"seconds\": {seconds}, \"display_hz\": {}, \"interpolation\": {}, \"frames\": {frames}, \
-         \"ticks\": {ticks}, \"images\": {}, \"load_ms\": {load_ms:.1}, \"frame_work_ms\": {}, \
+         \"ticks\": {ticks}, \"images\": {}, \"sets_loaded_while_drawing\": {}, \
+         \"load_ms\": {load_ms:.1}, \"frame_work_ms\": {}, \
          \"tick_frame_work_ms\": {}, \"gpu_ms\": {}, \"frame_ms\": {}, \"deck_proxy_ms\": {deck:.4}}}",
         size.0,
         size.1,
@@ -133,6 +141,7 @@ pub fn run(args: &Args, seconds: f64) -> Result<()> {
         args.bench_hz,
         !args.no_interp,
         loaded.graphics.images.records.len(),
+        loaded.graphics.loaded_while_drawing(),
         stats(&mut work),
         stats(&mut tick_work),
         stats(&mut gpu_ms),
@@ -147,6 +156,8 @@ pub fn screenshot(args: &Args, path: &Path) -> Result<()> {
     let size = args.size();
     let view = args.view(size);
     let gpu = Gpu::headless().context("opening the GPU")?;
+    gpu.check_output(size, true)
+        .context("choose a smaller --res")?;
     let mut renderer = Renderer::new(&gpu);
     renderer.set_level(&loaded.graphics);
     let mut builder = SceneBuilder::new(&loaded.graphics, view, gpu.max_target());

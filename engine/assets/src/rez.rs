@@ -8,8 +8,9 @@
 //! little-endian.
 //!
 //! Archives are untrusted input. The reader checks every range against the
-//! archive size, bounds names, entry counts and nesting depth, and refuses a
-//! directory block that is reached twice.
+//! archive size, bounds names, entry counts and nesting depth, refuses a
+//! directory block that is reached twice, and caps the directory bytes read
+//! in total.
 
 use crate::bytes::{cstr_field, latin1, slice, to_usize, u8_at, u32_at};
 use crate::error::{Result, format_error};
@@ -25,6 +26,11 @@ pub const MAX_DEPTH: usize = 64;
 pub const MAX_ENTRIES: usize = 1 << 20;
 /// Largest directory block accepted.
 pub const MAX_BLOCK_SIZE: usize = 64 << 20;
+/// Most directory-block bytes read while walking one archive, as a multiple
+/// of the archive size. Blocks of a well-formed archive do not overlap, so
+/// together they are smaller than the archive; folders that point into the
+/// same region again and again exceed this long before the walk gets slow.
+pub const MAX_DIRECTORY_READ_FACTOR: u64 = 2;
 
 const ENTRY_DIRECTORY: u32 = 1;
 const FORMAT: &str = "REZ archive";

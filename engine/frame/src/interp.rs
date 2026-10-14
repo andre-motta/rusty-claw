@@ -6,7 +6,8 @@
 //! - object and camera positions are interpolated;
 //! - a renderable flagged `teleported`, or one that moved more than 500 px on
 //!   either axis in one tick, is drawn at its current position, and so is the
-//!   camera when it moved more than 500 px;
+//!   camera when the snapshot flags it `camera_teleported` or it moved more
+//!   than 500 px;
 //! - a renderable only in the current snapshot is drawn there; one only in
 //!   the previous snapshot is not drawn;
 //! - animation frame, image set, mirror, invert, draw mode and draw order are
@@ -102,7 +103,11 @@ pub fn interpolate<'a>(
     InterpolatedFrame {
         tick: curr.tick,
         time_ms: time_ms(prev, curr, alpha),
-        camera: lerp_point(prev.camera, curr.camera, alpha),
+        camera: if curr.camera_teleported {
+            curr.camera
+        } else {
+            lerp_point(prev.camera, curr.camera, alpha)
+        },
         renderables,
         palette_fade: curr.palette_fade,
     }
@@ -135,6 +140,7 @@ mod tests {
             camera: Point { x: cam.0, y: cam.1 },
             renderables: rs,
             palette_fade: None,
+            camera_teleported: false,
         }
     }
 
@@ -170,6 +176,42 @@ mod tests {
         assert_eq!((by_id(2).x, by_id(2).y), (10.0, 10.0));
         assert_eq!((by_id(3).x, by_id(3).y), (1000.0, 0.0));
         assert_eq!((by_id(4).x, by_id(4).y), (7.0, 7.0));
+    }
+
+    #[test]
+    fn a_teleported_camera_snaps_at_any_distance() {
+        // A 900 px snap whose visible move is cut to 400 px by the level
+        // edge: without the flag it would blend.
+        let prev = snap(7, (0.0, 0.0), Vec::new());
+        let mut curr = snap(8, (400.0, 0.0), Vec::new());
+        assert_eq!(
+            interpolate(&prev, &curr, 0.5).camera,
+            Point { x: 200.0, y: 0.0 }
+        );
+        curr.camera_teleported = true;
+        for alpha in [0.0, 0.25, 0.5, 1.0] {
+            assert_eq!(
+                interpolate(&prev, &curr, alpha).camera,
+                Point { x: 400.0, y: 0.0 }
+            );
+        }
+        // The full 900 px jump snaps with or without the flag.
+        let mut far = snap(8, (900.0, 0.0), Vec::new());
+        assert_eq!(
+            interpolate(&prev, &far, 0.25).camera,
+            Point { x: 900.0, y: 0.0 }
+        );
+        far.camera_teleported = true;
+        assert_eq!(
+            interpolate(&prev, &far, 0.25).camera,
+            Point { x: 900.0, y: 0.0 }
+        );
+        // Renderables still interpolate on their own rules.
+        let prev = snap(7, (0.0, 0.0), vec![sprite(1, 0.0, 0.0, 0)]);
+        let mut curr = snap(8, (400.0, 0.0), vec![sprite(1, 8.0, 0.0, 0)]);
+        curr.camera_teleported = true;
+        let f = interpolate(&prev, &curr, 0.5);
+        assert_eq!(f.renderables[0].x, 4.0);
     }
 
     #[test]

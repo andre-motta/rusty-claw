@@ -179,3 +179,24 @@ fn long_falls_reach_the_capped_speed_and_land() {
     assert_eq!(rows[landed].y + 60, 61 * 64 - 64 - 1);
     assert_eq!(rows.last().unwrap().state, state::STAND);
 }
+
+#[test]
+fn built_in_table_flags_the_provisional_targets() {
+    let table = builtin();
+    let provisional: Vec<&str> = table
+        .iter()
+        .filter(|(_, t)| t.provisional)
+        .map(|(k, _)| k.as_str())
+        .collect();
+    assert_eq!(
+        provisional,
+        vec![
+            "climb_down_speed",
+            "climb_speed",
+            "jump_hold_216_peak",
+            "lookup_pan_delay_ms",
+            "run_speed",
+            "walk_speed",
+        ]
+    );
+}

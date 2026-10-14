@@ -180,7 +180,10 @@ pub struct Renderable {
     pub mirror: bool,
     /// Flipped vertically.
     pub invert: bool,
-    /// Drawn as a solid flash colour this frame.
+    /// Blinking: the renderer alternates visible and hidden phases of a
+    /// fixed length it chooses itself, timed from the frame's simulation
+    /// time, so every blinking object blinks in step. The flag carries no
+    /// colour and no period of its own.
     pub flash: bool,
     /// How the sprite combines with the destination.
     pub draw_mode: DrawMode,
@@ -213,6 +216,10 @@ pub struct SimSnapshot {
     pub renderables: Vec<Renderable>,
     /// Palette fade in progress, if any.
     pub palette_fade: Option<PaletteFade>,
+    /// The camera jumped this tick (for example a snap to a far target or a
+    /// level start); the frame is drawn at the current camera instead of
+    /// interpolating from the previous one, whatever the distance.
+    pub camera_teleported: bool,
 }
 
 /// How the presentation fills a display whose shape differs from the logic
@@ -296,6 +303,13 @@ impl ViewConfig {
     /// Non-zero only for [`AspectPolicy::WidenedActivation`], where it is the
     /// presentation's extra half size over the logic view, so that what is on
     /// screen keeps the same margin to the area edges as in the logic view.
+    ///
+    /// This is the single source of the widened window size: the widened
+    /// activation view is `logic + 2 * margin` on each axis. Take it from
+    /// here rather than recomputing it from the render size, because the
+    /// presentation width is rounded up to an even number (at 5120x1440 the
+    /// margin is 534 px, not 533), and a recomputed value would let
+    /// activation and drawing differ by a pixel.
     pub fn activation_margin(&self) -> (u32, u32) {
         if self.aspect_policy != AspectPolicy::WidenedActivation {
             return (0, 0);

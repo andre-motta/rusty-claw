@@ -109,6 +109,18 @@ pub fn decode(data: &[u8]) -> Result<PidImage> {
         palette = Some(Palette::parse(&data[end..])?);
     }
     let body = &data[HEADER_SIZE..end];
+    // Refuse a stream too short to cover the declared size before the
+    // pixel buffers are allocated, so a tiny file cannot claim a huge image.
+    let least = min_stream_len(flags, w, h);
+    if body.len() < least {
+        return Err(format_error(
+            FORMAT,
+            format!(
+                "stream of {} bytes cannot cover {width}x{height} (needs at least {least})",
+                body.len()
+            ),
+        ));
+    }
     let key = (flags & FLAG_KEY_BYTE != 0).then(|| word(0x18) as u8);
     let mut image = PidImage {
         width: w as u32,
@@ -138,6 +150,25 @@ pub fn decode(data: &[u8]) -> Result<PidImage> {
     };
     image.trailing = body.len() - used;
     Ok(image)
+}
+
+/// The shortest stream that can cover a `width` x `height` image. Sprite
+/// RLE needs a control byte per 127 pixels of every row (the longest skip);
+/// the PCX-style code covers at most 63 pixels per two-byte run, or one per
+/// literal byte, and a run never covers more than its count even when it
+/// carries into the next row.
+fn min_stream_len(flags: u32, width: usize, height: usize) -> usize {
+    if flags & FLAG_RLE != 0 {
+        height * width.div_ceil(0x7F)
+    } else {
+        let n = width * height;
+        2 * (n / 63)
+            + match n % 63 {
+                0 => 0,
+                1 => 1,
+                _ => 2,
+            }
+    }
 }
 
 struct Rle {
@@ -282,6 +313,25 @@ pub fn encode_pcx(pixels: &[u8], width: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streams_too_short_for_their_size_are_refused_up_front() {
+        for flags in [0, FLAG_RLE] {
+            let err = decode(&build(32768, 2048, flags, (0, 0), &[0; 64])).unwrap_err();
+            assert!(err.to_string().contains("cannot cover"), "{err}");
+        }
+        // The shortest possible streams still decode.
+        let img = decode(&build(254, 2, FLAG_RLE, (0, 0), &[0xFF; 4])).unwrap();
+        assert_eq!(img.pixels.len(), 508);
+        assert!(decode(&build(254, 2, FLAG_RLE, (0, 0), &[0xFF; 3])).is_err());
+        let img = decode(&build(64, 1, 0, (0, 0), &[0xFF, 7, 9])).unwrap();
+        assert_eq!(&img.pixels[62..], &[7, 9]);
+        assert!(decode(&build(64, 1, 0, (0, 0), &[0xFF, 7])).is_err());
+        assert_eq!(min_stream_len(0, 4, 1), 2);
+        assert_eq!(min_stream_len(0, 63, 1), 2);
+        assert_eq!(min_stream_len(0, 127, 1), 5);
+        assert_eq!(min_stream_len(0, 128, 1), 6);
+    }
 
     #[test]
     fn sprite_rle_with_the_skip_boundary() {

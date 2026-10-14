@@ -2,8 +2,9 @@
 //!
 //! An install root holds an `Assets` folder (the extracted asset tree), an
 //! optional `CLAW.REZ` archive and an optional `Custom` folder with community
-//! custom levels. Names are matched case-insensitively. A missing or empty
-//! archive is fine; an install with neither an archive nor `Assets` is not.
+//! custom levels. Names are matched case-insensitively, and the archive and
+//! `Assets` may be symbolic links. A missing or empty archive is fine; an
+//! install with neither an archive nor `Assets` is not.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,8 +40,8 @@ impl Install {
                 given.display()
             )));
         }
-        let archive = find_child(&root, ARCHIVE_NAME, false);
-        let assets = find_child(&root, ASSETS_DIR, true);
+        let archive = find_part(&root, ARCHIVE_NAME, false);
+        let assets = find_part(&root, ASSETS_DIR, true);
         let custom = find_child(&root, CUSTOM_DIR, true);
         if archive.is_none() && assets.is_none() {
             return Err(AssetError::Invalid(format!(
@@ -141,4 +142,24 @@ impl Install {
         out.sort();
         Ok(out)
     }
+}
+
+/// Finds the archive or the asset folder at the install root by name, any
+/// case. Unlike lookups inside a mount, a symbolic link is followed here:
+/// the install root is the user's own choice, and its parts may live
+/// elsewhere (for example in another game library). What a mounted folder
+/// may read is still confined to the folder the link resolves to.
+fn find_part(root: &Path, name: &str, want_dir: bool) -> Option<PathBuf> {
+    let want = fold(name);
+    let mut found: Vec<(std::ffi::OsString, PathBuf)> = fs::read_dir(root)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_str().is_some_and(|n| fold(n) == want))
+        .filter(|e| {
+            fs::metadata(e.path()).is_ok_and(|m| if want_dir { m.is_dir() } else { m.is_file() })
+        })
+        .map(|e| (e.file_name(), e.path()))
+        .collect();
+    found.sort();
+    found.into_iter().next().map(|(_, p)| p)
 }
