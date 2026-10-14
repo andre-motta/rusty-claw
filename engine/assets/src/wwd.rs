@@ -13,7 +13,11 @@
 //!
 //! Levels, community custom levels included, are untrusted input: inflate is
 //! bounded by the declared size and a hard cap, every offset and count is
-//! checked, and malformed files return an error.
+//! checked, and malformed files return an error. Planes, objects and tile
+//! descriptors may point at any bytes, so the parser also keeps one decode
+//! budget for the whole file: together they may not decode more bytes than
+//! the buffer holds, which keeps memory use linear in the file size even when
+//! many planes point at the same region.
 
 use flate2::{Decompress, FlushDecompress, Status};
 
@@ -263,18 +267,19 @@ impl Wwd {
                 format!("{} planes, at most {MAX_PLANES}", header.plane_count),
             ));
         }
+        let mut budget = Budget::new(buf.len());
         let mut planes = Vec::new();
         let mut objects = Vec::new();
         for i in 0..to_usize(header.plane_count) {
             let off = to_usize(header.planes_offset)
                 .checked_add(i * PLANE_HEADER_SIZE)
                 .ok_or_else(|| format_error(FORMAT, "plane offset overflows"))?;
-            let (plane, objs) = parse_plane(buf, off, i)?;
+            let (plane, objs) = parse_plane(buf, off, i, &mut budget)?;
             planes.push(plane);
             objects.extend(objs);
         }
         let tile_descriptors = if header.tile_descs_offset != 0 {
-            parse_tile_descriptors(buf, to_usize(header.tile_descs_offset))?
+            parse_tile_descriptors(buf, to_usize(header.tile_descs_offset), &mut budget)?
         } else {
             Vec::new()
         };
@@ -285,6 +290,41 @@ impl Wwd {
             tile_descriptors,
             unused_input,
         })
+    }
+}
+
+/// Bytes the parser may still decode from the body. Every tile grid,
+/// image-set name scan, object record and tile descriptor is charged here
+/// before it is copied, so the total decoded never exceeds the buffer size.
+#[derive(Debug)]
+struct Budget {
+    remaining: usize,
+}
+
+impl Budget {
+    fn new(total: usize) -> Self {
+        Budget { remaining: total }
+    }
+
+    /// Fails when `len` more bytes do not fit, without charging them.
+    fn check(&self, len: usize, what: &str) -> Result<()> {
+        if len > self.remaining {
+            return Err(format_error(
+                FORMAT,
+                format!(
+                    "{what} of {len} bytes exceeds the remaining decode budget of {} bytes",
+                    self.remaining
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Charges `len` bytes, or fails when they do not fit.
+    fn charge(&mut self, len: usize, what: &str) -> Result<()> {
+        self.check(len, what)?;
+        self.remaining -= len;
+        Ok(())
     }
 }
 
@@ -416,7 +456,7 @@ fn to_usize_u64(v: u64) -> usize {
 /// every further pass finds nothing; the scan stops at the first pass that
 /// consumes no bytes, which bounds the work by the buffer size instead of
 /// the untrusted count.
-fn parse_image_set_names(buf: &[u8], off: usize, count: u32) -> Result<Vec<String>> {
+fn parse_image_set_names(buf: &[u8], off: usize, count: u32) -> Result<(Vec<String>, usize)> {
     let mut names = Vec::new();
     let mut pos = off;
     let n = buf.len();
@@ -440,10 +480,15 @@ fn parse_image_set_names(buf: &[u8], off: usize, count: u32) -> Result<Vec<Strin
             break;
         }
     }
-    Ok(names)
+    Ok((names, pos - off))
 }
 
-fn parse_plane(buf: &[u8], off: usize, index: usize) -> Result<(Plane, Vec<ObjectRecord>)> {
+fn parse_plane(
+    buf: &[u8],
+    off: usize,
+    index: usize,
+    budget: &mut Budget,
+) -> Result<(Plane, Vec<ObjectRecord>)> {
     let head = need(buf, off, PLANE_HEADER_SIZE, "plane header")?;
     let u = |o| u32_at(head, o).unwrap_or(0);
     let i = |o| i32_at(head, o).unwrap_or(0);
@@ -490,28 +535,43 @@ fn parse_plane(buf: &[u8], off: usize, index: usize) -> Result<(Plane, Vec<Objec
         .and_then(|c| c.checked_mul(4))
         .ok_or_else(|| format_error(FORMAT, format!("plane {index} size overflows")))?;
     let raw = need(buf, tiles_offset, cells, "tile grid")?;
+    budget.charge(cells, &format!("plane {index} tile grid"))?;
     plane.tiles = raw
         .chunks_exact(4)
         .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
     if image_set_count != 0 {
         need(buf, image_sets_offset, 1, "image-set names")?;
-        plane.image_sets = parse_image_set_names(buf, image_sets_offset, image_set_count)?;
+        // Scan no further than the budget allows, then charge what was read.
+        let end = image_sets_offset.saturating_add(budget.remaining);
+        let limited = end < buf.len();
+        let window = &buf[..end.min(buf.len())];
+        let (names, consumed) = parse_image_set_names(window, image_sets_offset, image_set_count)
+            .map_err(|e| {
+            if limited {
+                format_error(
+                    FORMAT,
+                    format!("plane {index} image-set names exceed the decode budget"),
+                )
+            } else {
+                e
+            }
+        })?;
+        budget.charge(consumed, &format!("plane {index} image-set names"))?;
+        plane.image_sets = names;
     }
     let mut objects = Vec::new();
     if objects_offset != 0 && object_count != 0 {
-        let fits = object_count
-            .checked_mul(OBJECT_FIXED_SIZE)
-            .is_some_and(|total| total <= buf.len());
-        if !fits {
-            return Err(format_error(
+        let total = object_count.checked_mul(OBJECT_FIXED_SIZE).ok_or_else(|| {
+            format_error(
                 FORMAT,
                 format!("plane {index} object count {object_count} cannot fit"),
-            ));
-        }
+            )
+        })?;
+        budget.check(total, &format!("plane {index} object records"))?;
         let mut pos = objects_offset;
         for _ in 0..object_count {
-            let (record, size) = parse_object(buf, pos, index)?;
+            let (record, size) = parse_object(buf, pos, index, budget)?;
             objects.push(record);
             pos += size;
         }
@@ -519,14 +579,22 @@ fn parse_plane(buf: &[u8], off: usize, index: usize) -> Result<(Plane, Vec<Objec
     Ok((plane, objects))
 }
 
-fn parse_object(buf: &[u8], off: usize, plane: usize) -> Result<(ObjectRecord, usize)> {
+fn parse_object(
+    buf: &[u8],
+    off: usize,
+    plane: usize,
+    budget: &mut Budget,
+) -> Result<(ObjectRecord, usize)> {
     let fixed = need(buf, off, OBJECT_FIXED_SIZE, "object record")?;
+    budget.charge(OBJECT_FIXED_SIZE, "object record")?;
     let ints: [i32; OBJECT_INTS] = std::array::from_fn(|k| i32_at(fixed, k * 4).unwrap_or(0));
     let mut pos = off + OBJECT_FIXED_SIZE;
     let mut strings: [String; 4] = Default::default();
     for (k, s) in strings.iter_mut().enumerate() {
         let len = to_usize(u32_at(fixed, 4 + k * 4).unwrap_or(0));
-        *s = latin1(need(buf, pos, len, "object string")?);
+        let raw = need(buf, pos, len, "object string")?;
+        budget.charge(len, "object string")?;
+        *s = latin1(raw);
         pos += len;
     }
     let [name, logic, image_set, anim] = strings;
@@ -543,15 +611,17 @@ fn parse_object(buf: &[u8], off: usize, plane: usize) -> Result<(ObjectRecord, u
     ))
 }
 
-fn parse_tile_descriptors(buf: &[u8], off: usize) -> Result<Vec<TileDescriptor>> {
+fn parse_tile_descriptors(
+    buf: &[u8],
+    off: usize,
+    budget: &mut Budget,
+) -> Result<Vec<TileDescriptor>> {
     let block = need(buf, off, TILE_DESC_BLOCK_HEADER, "tile descriptor block")?;
     let count = to_usize(u32_at(block, 0x08).unwrap_or(0));
-    if count.checked_mul(0x10).is_none_or(|n| n > buf.len()) {
-        return Err(format_error(
-            FORMAT,
-            format!("tile descriptor count {count} cannot fit"),
-        ));
-    }
+    let total = count
+        .checked_mul(0x10)
+        .ok_or_else(|| format_error(FORMAT, format!("tile descriptor count {count} cannot fit")))?;
+    budget.check(total, "tile descriptors")?;
     let mut out = Vec::with_capacity(count);
     let mut pos = off + TILE_DESC_BLOCK_HEADER;
     for n in 0..count {
@@ -604,7 +674,9 @@ fn parse_tile_descriptors(buf: &[u8], off: usize) -> Result<Vec<TileDescriptor>>
                 let len = (width as usize)
                     .checked_mul(height as usize)
                     .ok_or_else(|| format_error(FORMAT, "mask size overflows"))?;
-                let mask = need(buf, pos + 0x10, len, "tile mask")?.to_vec();
+                let raw = need(buf, pos + 0x10, len, "tile mask")?;
+                budget.charge(0x10 + len, "tile descriptor")?;
+                let mask = raw.to_vec();
                 (
                     TileDescriptor::Mask {
                         width,
@@ -621,6 +693,9 @@ fn parse_tile_descriptors(buf: &[u8], off: usize) -> Result<Vec<TileDescriptor>>
                 ));
             }
         };
+        if !matches!(desc, TileDescriptor::Mask { .. }) {
+            budget.charge(size, "tile descriptor")?;
+        }
         out.push(desc);
         pos += size;
     }
@@ -1009,16 +1084,123 @@ mod tests {
     #[test]
     fn image_set_names_scan() {
         let buf = b"\x01\x02ACTION\0BACK\0";
-        assert_eq!(parse_image_set_names(buf, 0, 5).unwrap(), vec!["ACTION"]);
+        assert_eq!(
+            parse_image_set_names(buf, 0, 5).unwrap(),
+            (vec!["ACTION".to_string()], 8)
+        );
         let buf = b"ONE TWO\0";
         assert_eq!(
-            parse_image_set_names(buf, 0, 2).unwrap(),
+            parse_image_set_names(buf, 0, 2).unwrap().0,
             vec!["ONE", "TWO"]
         );
         let buf = b"\x01\x01";
         assert!(parse_image_set_names(buf, 0, 1).is_err());
         // A huge count stops as soon as a pass consumes nothing.
         let buf = b"A\0";
-        assert_eq!(parse_image_set_names(buf, 0, u32::MAX).unwrap(), vec!["A"]);
+        assert_eq!(
+            parse_image_set_names(buf, 0, u32::MAX).unwrap(),
+            (vec!["A".to_string()], 1)
+        );
+    }
+
+    /// Body of `planes` plane headers that all point at one shared region:
+    /// a `w` by `h` tile grid at the start of the region, image-set names
+    /// after it and, when `objects` is set, one object record after those.
+    fn shared_region_body(planes: usize, w: u32, h: u32, objects: bool) -> Vec<u8> {
+        let region = HEADER_SIZE + planes * PLANE_HEADER_SIZE;
+        let grid = (w * h * 4) as usize;
+        let names = region + grid;
+        let object = names + 8;
+        let mut body = vec![0u8; planes * PLANE_HEADER_SIZE];
+        for p in 0..planes {
+            let head = &mut body[p * PLANE_HEADER_SIZE..(p + 1) * PLANE_HEADER_SIZE];
+            let mut put = |off: usize, v: u32| head[off..off + 4].copy_from_slice(&v.to_le_bytes());
+            put(0x00, PLANE_HEADER_SIZE as u32);
+            put(0x58, 64);
+            put(0x5C, 64);
+            put(0x60, w);
+            put(0x64, h);
+            put(0x7C, 1);
+            put(0x80, u32::from(objects));
+            put(0x84, region as u32);
+            put(0x88, names as u32);
+            put(0x8C, if objects { object as u32 } else { 0 });
+        }
+        body.resize(body.len() + grid, 0x11);
+        body.extend_from_slice(b"SHARED\0\0");
+        let mut record = vec![0u8; OBJECT_FIXED_SIZE];
+        record[4..8].copy_from_slice(&4u32.to_le_bytes());
+        body.extend_from_slice(&record);
+        body.extend_from_slice(b"Name");
+        body
+    }
+
+    fn level_with_body(planes: usize, body: &[u8], compress: bool) -> Vec<u8> {
+        let mut data = level("Level 1", (0, 0), &[], &[], compress);
+        data.truncate(HEADER_SIZE);
+        data[0x2DC..0x2E0].copy_from_slice(&(planes as u32).to_le_bytes());
+        data[0x2E0..0x2E4].copy_from_slice(&(HEADER_SIZE as u32).to_le_bytes());
+        data[0x2E8..0x2EC].copy_from_slice(&(body.len() as u32).to_le_bytes());
+        if compress {
+            data.extend_from_slice(&zlib(body));
+        } else {
+            data.extend_from_slice(body);
+        }
+        data
+    }
+
+    #[test]
+    fn planes_sharing_one_region_are_refused() {
+        // One plane over the region is fine.
+        let body = shared_region_body(1, 256, 256, true);
+        let wwd = Wwd::parse(&level_with_body(1, &body, true)).unwrap();
+        assert_eq!(wwd.planes[0].tiles.len(), 256 * 256);
+        assert_eq!(wwd.planes[0].image_sets, vec!["SHARED"]);
+        assert_eq!(wwd.objects.len(), 1);
+
+        // Many planes over the same grid would decode it many times over.
+        for compress in [true, false] {
+            let body = shared_region_body(MAX_PLANES as usize, 256, 256, false);
+            let data = level_with_body(MAX_PLANES as usize, &body, compress);
+            let err = Wwd::parse(&data).unwrap_err();
+            assert!(err.to_string().contains("decode budget"), "{err}");
+        }
+
+        // Small grids but one large object region shared by every plane.
+        let body = shared_region_body(MAX_PLANES as usize, 1, 1, true);
+        let mut big = body.clone();
+        let object = HEADER_SIZE + MAX_PLANES as usize * PLANE_HEADER_SIZE + 4 + 8;
+        let string_len = 64 * 1024u32;
+        big[object - HEADER_SIZE + 4..object - HEADER_SIZE + 8]
+            .copy_from_slice(&string_len.to_le_bytes());
+        big.truncate(object - HEADER_SIZE + OBJECT_FIXED_SIZE);
+        big.resize(big.len() + string_len as usize, b'x');
+        let err = Wwd::parse(&level_with_body(MAX_PLANES as usize, &big, true)).unwrap_err();
+        assert!(err.to_string().contains("decode budget"), "{err}");
+    }
+
+    #[test]
+    fn descriptors_share_the_budget() {
+        let descs = vec![TileDescriptor::Mask {
+            width: 64,
+            height: 64,
+            mask: vec![1; 64 * 64],
+        }];
+        let alone = level("Level 1", (0, 0), &[], &descs, false);
+        assert_eq!(Wwd::parse(&alone).unwrap().tile_descriptors, descs);
+
+        // One plane whose grid spans the whole buffer, followed by the same
+        // descriptor block: the grid uses up the budget the block needs.
+        let mut body = shared_region_body(1, 1, 1, false);
+        let descs_off = (HEADER_SIZE + body.len()) as u32;
+        body.extend_from_slice(&alone[HEADER_SIZE..]);
+        let cells = ((HEADER_SIZE + body.len()) / 4) as u32;
+        body[0x60..0x64].copy_from_slice(&cells.to_le_bytes());
+        body[0x7C..0x80].copy_from_slice(&0u32.to_le_bytes());
+        body[0x84..0x88].copy_from_slice(&0u32.to_le_bytes());
+        let mut data = level_with_body(1, &body, false);
+        data[0x2E4..0x2E8].copy_from_slice(&descs_off.to_le_bytes());
+        let err = Wwd::parse(&data).unwrap_err();
+        assert!(err.to_string().contains("decode budget"), "{err}");
     }
 }
