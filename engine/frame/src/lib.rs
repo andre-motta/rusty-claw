@@ -16,6 +16,8 @@
 //!   snapshot, with the snap rules for jumps;
 //! - [`refresh`]: a deterministic simulated display clock for tests and
 //!   benchmarks;
+//! - [`pace`]: a frame-rate cap for drawing that does not wait for the
+//!   display's refresh;
 //! - [`driver`]: the three combined into one per-frame call.
 
 #![forbid(unsafe_code)]
@@ -23,12 +25,14 @@
 pub mod driver;
 pub mod input;
 pub mod interp;
+pub mod pace;
 pub mod refresh;
 pub mod step;
 
 pub use driver::{FrameDriver, FrameReport};
 pub use input::InputLatch;
 pub use interp::{InterpolatedFrame, InterpolatedRenderable, interpolate};
+pub use pace::{DEFAULT_FPS_CAP, FramePacer};
 pub use refresh::SimulatedRefresh;
 pub use step::{Advance, FixedStep, FrameClock};
 

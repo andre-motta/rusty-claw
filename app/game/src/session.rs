@@ -52,6 +52,8 @@ pub struct Session {
     last_stamp: u64,
     paused: bool,
     script: Option<InputScript>,
+    looped: bool,
+    past_script: u64,
     trace: Option<Vec<TraceRow>>,
     samples: Option<Vec<TickSample>>,
     before_tick: Option<BeforeTick>,
@@ -79,6 +81,8 @@ impl Session {
             last_stamp: 0,
             paused: false,
             script: None,
+            looped: false,
+            past_script: 0,
             trace: None,
             samples: None,
             before_tick: None,
@@ -89,7 +93,22 @@ impl Session {
     /// keyboard again.
     pub fn with_replay(mut self, script: InputScript) -> Session {
         self.script = Some(script);
+        self.looped = false;
         self
+    }
+
+    /// Plays `script` from the next tick over and over, for benchmarks
+    /// that run for a time rather than a number of ticks.
+    pub fn with_looped_replay(mut self, script: InputScript) -> Session {
+        self.script = Some(script);
+        self.looped = true;
+        self
+    }
+
+    /// Ticks that took keyboard input because a replayed script had no row
+    /// left for them; always 0 for a looped script.
+    pub fn ticks_past_script(&self) -> u64 {
+        self.past_script
     }
 
     /// Records one trace row per tick from now on.
@@ -129,9 +148,13 @@ impl Session {
 
     /// True while a replayed script still has rows left.
     pub fn replaying(&self) -> bool {
-        self.script
-            .as_ref()
-            .is_some_and(|s| (self.ticks as usize) < s.ticks.len())
+        self.script.as_ref().is_some_and(|s| {
+            if self.looped {
+                !s.ticks.is_empty()
+            } else {
+                (self.ticks as usize) < s.ticks.len()
+            }
+        })
     }
 
     /// The simulation clock at the last frame, in microseconds: the ticks
@@ -180,6 +203,8 @@ impl Session {
             latch,
             ticks,
             script,
+            looped,
+            past_script,
             trace,
             samples,
             before_tick,
@@ -188,7 +213,16 @@ impl Session {
         let report = driver.frame(dt, || {
             let n = *ticks;
             let live = latch.take(n);
-            let scripted = script.as_ref().and_then(|s| s.ticks.get(n as usize));
+            let scripted = script.as_ref().and_then(|s| {
+                let row = match s.ticks.len() {
+                    len if *looped && len > 0 => (n % len as u64) as usize,
+                    _ => n as usize,
+                };
+                s.ticks.get(row)
+            });
+            if script.is_some() && scripted.is_none() {
+                *past_script += 1;
+            }
             let input: TickInput = scripted.copied().unwrap_or(live);
             if let Some(hook) = before_tick {
                 hook(n, sim);
@@ -358,6 +392,28 @@ mod tests {
         let base = run(60.0);
         assert_eq!(run(144.0), base);
         assert_eq!(run(240.0), base);
+    }
+
+    #[test]
+    fn a_looped_replay_never_runs_out() {
+        let s = script();
+        let len = s.ticks.len() as u64;
+        let mut once = Session::new(Sim::new(level(), SimConfig::default())).with_replay(s.clone());
+        let mut looped =
+            Session::new(Sim::new(level(), SimConfig::default())).with_looped_replay(s);
+        looped.record_trace();
+        for _ in 0..(3 * len) {
+            once.frame(Duration::from_millis(18));
+            looped.frame(Duration::from_millis(18));
+        }
+        assert_eq!(looped.ticks(), 3 * len);
+        assert!(looped.replaying());
+        assert_eq!(looped.ticks_past_script(), 0);
+        assert!(looped.trace().iter().all(|r| r.source == "script"));
+        let held = |i: usize| looped.trace()[i].held;
+        assert_eq!(held(5), held(5 + len as usize));
+        assert!(!once.replaying());
+        assert_eq!(once.ticks_past_script(), 2 * len);
     }
 
     #[test]

@@ -4,12 +4,16 @@
 //! window benchmark. The output size, the aspect policy, the scaling and
 //! fullscreen change at run time; the 640x480 game view and the simulation
 //! stay as they are.
+//!
+//! With vsync on, waiting for the display paces the frames. Otherwise each
+//! frame first waits for the frame-rate cap (300 frames per second unless
+//! set otherwise), so the game never draws thousands of frames a second.
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use claw_frame::FrameClock;
+use claw_frame::{FrameClock, FramePacer};
 use claw_render::gpu::COLOR_FORMAT;
 use claw_render::{FrameInput, Gpu, LevelGraphics, Offscreen, Renderer, SceneBuilder, wgpu};
 use claw_sim::InputScript;
@@ -20,7 +24,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::bench::{Report, Samples, Summary, WARMUP_S, route};
+use crate::bench::{PresentDetail, Report, Samples, Summary, WARMUP_S, route};
 use crate::keymap::{Action, Command, Keymap};
 use crate::load::{LevelBundle, new_sim, preload};
 use crate::session::Session;
@@ -63,6 +67,7 @@ struct BenchState {
     images_at_start: usize,
     samples: Samples,
     last_present: Option<Instant>,
+    route_ticks: usize,
 }
 
 struct App {
@@ -74,6 +79,11 @@ struct App {
     session: Option<Session>,
     live: Option<Live>,
     clock: FrameClock,
+    pacer: FramePacer,
+    pacing: String,
+    /// Window events since the last present that reallocate drawing
+    /// resources, for the benchmark's missed-refresh detail.
+    events: Vec<&'static str>,
     last_frame: Instant,
     aspect: Aspect,
     scale: Scale,
@@ -89,6 +99,13 @@ struct App {
     report: Option<Report>,
     error: Option<anyhow::Error>,
     announced_end: bool,
+}
+
+/// Records a window event once until the next present.
+fn note(events: &mut Vec<&'static str>, event: &'static str) {
+    if !events.contains(&event) {
+        events.push(event);
+    }
 }
 
 fn present_mode(modes: &[wgpu::PresentMode], vsync: bool) -> wgpu::PresentMode {
@@ -155,6 +172,18 @@ impl App {
         config.format = format;
         config.present_mode = present_mode(&caps.present_modes, self.settings.vsync);
         surface.configure(&gpu.device, &config);
+        // Waiting for the display paces the frames; any other mode is held
+        // to the frame-rate cap.
+        let (pacer, pacing) = if config.present_mode == wgpu::PresentMode::Fifo {
+            (FramePacer::uncapped(), "display refresh".to_string())
+        } else {
+            match self.settings.fps_cap {
+                Some(n) => (FramePacer::capped(Some(n)), format!("{n} fps cap")),
+                None => (FramePacer::uncapped(), "none (throughput run)".to_string()),
+            }
+        };
+        self.pacer = pacer;
+        self.pacing = pacing;
 
         // The simulation starts now that the output size is known: widened
         // activation follows the first output's shape.
@@ -175,15 +204,26 @@ impl App {
             self.settings.sim_config(first_output),
             self.settings.start,
         );
+        if self.settings.widens() {
+            let (w, h) = sim.config().activation.view;
+            eprintln!(
+                "rusty-claw: widened activation follows the first output's shape \
+                 ({}x{}): {w}x{h} game pixels stay active until the level is loaded again",
+                first_output.0, first_output.1
+            );
+        }
         self.preloaded = preload(&mut self.graphics, &self.bundle.level, &sim.snapshot());
         let mut session = Session::new(sim);
         match &self.mode {
             WindowMode::Play => {}
             WindowMode::Watch(script) => session = session.with_replay(script.clone()),
             WindowMode::Bench(seconds) => {
-                session = session.with_replay(route(seconds + WARMUP_S + 30.0));
+                let script = route(seconds + WARMUP_S);
+                let route_ticks = script.ticks.len();
+                session = session.with_looped_replay(script);
                 self.bench = Some(BenchState {
                     seconds: *seconds,
+                    route_ticks,
                     ..BenchState::default()
                 });
             }
@@ -237,12 +277,13 @@ impl App {
             .map(|mhz| f64::from(mhz) / 1000.0);
         self.load_ms = self.started.elapsed().as_secs_f64() * 1000.0;
         eprintln!(
-            "rusty-claw: {} at {}x{} on {}, {:?}, {} activation, ready in {:.0} ms",
+            "rusty-claw: {} at {}x{} on {}, {:?}, paced by {}, {} activation, ready in {:.0} ms",
             self.bundle.name,
             config.width,
             config.height,
             gpu.describe(),
             config.present_mode,
+            self.pacing,
             session.sim().config().activation.mode.name(),
             self.load_ms,
         );
@@ -272,6 +313,7 @@ impl App {
             (live.config.width, live.config.height),
         );
         live.builder = SceneBuilder::new(&self.graphics, view, live.gpu.max_target());
+        note(&mut self.events, "view rebuilt");
     }
 
     fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -283,6 +325,7 @@ impl App {
         live.config.width = size.width.min(max);
         live.config.height = size.height.min(max);
         live.surface.configure(&live.gpu.device, &live.config);
+        note(&mut self.events, "resize");
         if let Some(b) = &mut self.bench
             && b.measuring_since
                 .is_some_and(|t| t.elapsed().as_secs_f64() >= WARMUP_S)
@@ -352,6 +395,7 @@ impl App {
         } else if !paused && session.is_paused() {
             session.resume();
             self.clock.reset();
+            self.pacer.reset();
             if let Some(b) = &mut self.bench {
                 b.last_present = None;
             }
@@ -378,9 +422,13 @@ impl App {
         let (Some(live), Some(session)) = (&mut self.live, &mut self.session) else {
             return;
         };
+        // The cap's wait comes before the frame's clock and work timer.
+        self.pacer.wait();
         let dt = self.clock.frame();
         self.last_frame = Instant::now();
         let t0 = self.last_frame;
+        let sets_before = self.graphics.loaded_while_drawing();
+        let images_before = self.graphics.images.records.len();
         let f = session.frame(dt);
         if !self.announced_end && matches!(self.mode, WindowMode::Watch(_)) && !session.replaying()
         {
@@ -408,13 +456,19 @@ impl App {
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 live.surface.configure(&live.gpu.device, &live.config);
+                note(&mut self.events, "surface reconfigured");
+                note(&mut self.events, "frame skipped");
                 return;
             }
-            _ => return,
+            _ => {
+                note(&mut self.events, "frame skipped");
+                return;
+            }
         };
         let acquire = ta.elapsed();
         if (texture.texture.width(), texture.texture.height()) != scene.comp.output {
             // The window changed size since the last configure.
+            note(&mut self.events, "frame skipped");
             return;
         }
         let t1 = Instant::now();
@@ -423,8 +477,10 @@ impl App {
             .render(&self.graphics, &scene, &target, live.config.format);
         let work = (cpu + t1.elapsed()).as_secs_f64() * 1000.0;
         live.window.pre_present_notify();
+        let tp = Instant::now();
         live.gpu.queue.present(texture);
         let now = Instant::now();
+        let events = std::mem::take(&mut self.events);
 
         let Some(b) = &mut self.bench else { return };
         let since = *b.measuring_since.get_or_insert(now);
@@ -436,10 +492,19 @@ impl App {
             return;
         }
         if let Some(prev) = b.last_present.replace(now) {
-            b.samples
-                .present_ms
-                .push((now - prev).as_secs_f64() * 1000.0);
+            let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+            b.samples.present_ms.push(ms(now - prev));
             b.samples.present_at_s.push(measured - WARMUP_S);
+            b.samples.present_detail.push(PresentDetail {
+                gap_ms: ms(t0.saturating_duration_since(prev)),
+                work_ms: work,
+                acquire_ms: ms(acquire),
+                present_call_ms: ms(now - tp),
+                ticks: f.ticks,
+                sets_loaded: self.graphics.loaded_while_drawing() - sets_before,
+                images_loaded: self.graphics.images.records.len() - images_before,
+                events,
+            });
         }
         b.samples.frame(work, f.ticks);
         b.samples.acquire_ms.push(acquire.as_secs_f64() * 1000.0);
@@ -476,6 +541,7 @@ impl App {
                 scale: comp.scale,
                 adapter: live.gpu.describe(),
                 present_mode: format!("{:?}", live.config.present_mode),
+                pacing: self.pacing.clone(),
                 display_hz,
                 display_hz_source,
                 seconds: measured - WARMUP_S,
@@ -485,6 +551,8 @@ impl App {
                 preloaded_sets: self.preloaded,
                 images_loaded_during_run: self.graphics.images.records.len() - b.images_at_start,
                 load_ms: self.load_ms,
+                route_ticks: b.route_ticks,
+                ticks_past_route: session.ticks_past_script(),
                 samples: std::mem::take(&mut b.samples),
                 ticks_measured: session.tick_samples().to_vec(),
             });
@@ -559,6 +627,9 @@ pub fn run(
         session: None,
         live: None,
         clock: FrameClock::new(),
+        pacer: FramePacer::uncapped(),
+        pacing: String::new(),
+        events: Vec::new(),
         last_frame: Instant::now(),
         user_paused: false,
         focused: true,

@@ -53,6 +53,7 @@ fn main() -> ExitCode {
         }
     };
     println!("{}", report.to_json());
+    println!("{}", report.summary());
     let fps = report.fps();
     println!(
         "640x480 window: {fps:.1} frames per second at a {:.1} Hz display ({}), {} missed \
@@ -62,6 +63,10 @@ fn main() -> ExitCode {
         report.missed_vblanks(),
         report.frame_work().p99
     );
+    if report.ticks_past_route != 0 {
+        eprintln!("install_window: the route ran out");
+        return ExitCode::FAILURE;
+    }
     if report.output != (640, 480) {
         eprintln!("install_window: the window is {:?}", report.output);
         return ExitCode::FAILURE;

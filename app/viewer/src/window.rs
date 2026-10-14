@@ -1,10 +1,13 @@
 //! The windowed viewer.
+//!
+//! With vsync on the display's refresh paces the frames; otherwise each
+//! frame first waits for the frame-rate cap.
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use claw_frame::{Buttons, FrameClock, FrameDriver, InputLatch, ScaleMode, ViewConfig};
+use claw_frame::{Buttons, FrameClock, FrameDriver, FramePacer, InputLatch, ScaleMode, ViewConfig};
 use claw_render::{FrameInput, Gpu, Renderer, SceneBuilder, wgpu};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -74,6 +77,7 @@ struct App {
     driver: FrameDriver,
     latch: InputLatch,
     clock: FrameClock,
+    pacer: FramePacer,
     interp: bool,
     live: Option<Live>,
     stats: Stats,
@@ -83,8 +87,10 @@ struct App {
 
 fn present_mode(modes: &[wgpu::PresentMode], vsync: bool) -> wgpu::PresentMode {
     use wgpu::PresentMode as P;
+    // Fifo waits for each refresh; mailbox would draw as fast as the GPU
+    // allows and drop frames, so it only serves when vsync is off.
     let prefs: &[P] = if vsync {
-        &[P::Mailbox, P::Fifo]
+        &[P::Fifo]
     } else {
         &[P::Immediate, P::Mailbox, P::Fifo]
     };
@@ -142,6 +148,19 @@ impl App {
         config.format = format;
         config.present_mode = present_mode(&caps.present_modes, self.args.vsync);
         surface.configure(&gpu.device, &config);
+        self.pacer = if config.present_mode == wgpu::PresentMode::Fifo {
+            FramePacer::uncapped()
+        } else {
+            FramePacer::capped(self.args.frame_cap())
+        };
+        let pacing = if config.present_mode == wgpu::PresentMode::Fifo {
+            "display refresh".to_string()
+        } else {
+            match self.args.frame_cap() {
+                Some(n) => format!("{n} fps cap"),
+                None => "none (throughput run)".to_string(),
+            }
+        };
         let mut renderer = Renderer::new(&gpu);
         renderer.set_level(&self.loaded.graphics);
         let view = self.args.view((config.width, config.height));
@@ -152,7 +171,7 @@ impl App {
             .filter(|&mhz| mhz > 0)
             .map(|mhz| 1_000_000.0 / f64::from(mhz));
         eprintln!(
-            "claw-viewer: {} on {}, {:?}, level loaded in {:.0} ms",
+            "claw-viewer: {} on {}, {:?}, paced by {pacing}, level loaded in {:.0} ms",
             format_args!("{}x{}", config.width, config.height),
             gpu.describe(),
             config.present_mode,
@@ -247,6 +266,8 @@ impl App {
     }
 
     fn frame(&mut self) {
+        // The cap's wait comes before the frame's clock and work timer.
+        self.pacer.wait();
         let dt = self.clock.frame();
         let t0 = Instant::now();
         let (stub, latch) = (&mut self.stub, &mut self.latch);
@@ -311,6 +332,7 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(true) => {
                 self.driver.step_mut().resume();
                 self.clock.reset();
+                self.pacer.reset();
                 self.stats.last_present = None;
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -358,6 +380,7 @@ pub fn run(args: Args) -> Result<()> {
         driver,
         latch: InputLatch::new(),
         clock: FrameClock::new(),
+        pacer: FramePacer::uncapped(),
         live: None,
         stats: Stats::default(),
         error: None,

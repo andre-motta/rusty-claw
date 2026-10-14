@@ -2,8 +2,10 @@
 //!
 //! The benchmark drives the real frame loop (fixed 18 ms ticks, a simulated
 //! display clock at `--bench-hz`, interpolation) with the camera panning
-//! across the level, renders every frame offscreen at `--res` as fast as the
-//! machine allows, and reports per-frame times in milliseconds:
+//! across the level, renders every frame offscreen at `--res`, paced to the
+//! simulated display rate (or as fast as the machine allows with
+//! `--uncapped`), and reports per-frame times in milliseconds; the pacing
+//! wait is never part of them:
 //!
 //! - `frame_work_ms`: CPU work of a frame (tick, interpolation, scene
 //!   building and command submission);
@@ -25,7 +27,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use claw_frame::{FrameDriver, SimulatedRefresh, TickInput};
+use claw_frame::{FrameDriver, FramePacer, SimulatedRefresh, TickInput};
 use claw_render::gpu::COLOR_FORMAT;
 use claw_render::{FrameInput, Gpu, Offscreen, Renderer, SceneBuilder};
 
@@ -94,11 +96,17 @@ pub fn run(args: &Args, seconds: f64) -> Result<()> {
     let load_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let mut refresh = SimulatedRefresh::new(args.bench_hz);
+    // `--uncapped` (or `--fps-cap 0`) asks for a throughput run.
+    let mut pacer = match args.frame_cap() {
+        Some(_) => FramePacer::new(args.bench_hz),
+        None => FramePacer::uncapped(),
+    };
     let (mut work, mut tick_work, mut gpu_ms, mut total) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut ticks = 0u64;
     let run_start = Instant::now();
     while run_start.elapsed().as_secs_f64() < seconds {
+        pacer.wait();
         let t0 = Instant::now();
         let dt = refresh.next().unwrap_or_default();
         let report = driver.frame(dt, || stub.step(TickInput::default()));
@@ -128,7 +136,7 @@ pub fn run(args: &Args, seconds: f64) -> Result<()> {
     let deck = percentile(&tick_sorted, 0.99) * DECK_FACTOR;
     println!(
         "{{\"res\": \"{}x{}\", \"presentation\": \"{}x{}\", \"scale\": {}, \"adapter\": {}, \
-         \"seconds\": {seconds}, \"display_hz\": {}, \"interpolation\": {}, \"frames\": {frames}, \
+         \"seconds\": {seconds}, \"display_hz\": {}, \"paced\": {}, \"interpolation\": {}, \"frames\": {frames}, \
          \"ticks\": {ticks}, \"images\": {}, \"sets_loaded_while_drawing\": {}, \
          \"load_ms\": {load_ms:.1}, \"frame_work_ms\": {}, \
          \"tick_frame_work_ms\": {}, \"gpu_ms\": {}, \"frame_ms\": {}, \"deck_proxy_ms\": {deck:.4}}}",
@@ -139,6 +147,7 @@ pub fn run(args: &Args, seconds: f64) -> Result<()> {
         comp.scale,
         json_string(&gpu.describe()),
         args.bench_hz,
+        pacer.is_paced(),
         !args.no_interp,
         loaded.graphics.images.records.len(),
         loaded.graphics.loaded_while_drawing(),

@@ -92,11 +92,18 @@ positions interpolated between steps, at any resolution.
 | `--scale integer` | whole-pixel steps only, with bars |
 | `--widen-activation` | with `fill`, keep everything visible on a wide display active; this changes gameplay |
 | `--vsync on\|off` | wait for the display's refresh (default on) |
+| `--fps-cap N` | with vsync off, draw at most N frames per second (default 300) |
+| `--uncapped` | no frame-rate cap with vsync off (same as `--fps-cap 0`); for measuring throughput only |
 | `--no-interp` | draw the latest game tick only |
 | `--pack DIR` | an image pack with higher-resolution replacement images |
 
 Window size, aspect, scaling and fullscreen also change while playing (F8
 to F11); the game view and the game itself stay as they are.
+
+The game never draws as fast as the GPU allows unless asked to: with vsync
+on, the display's refresh paces drawing, and with vsync off, the frame-rate
+cap does. Drawing thousands of frames a second gains nothing, wastes power
+and makes some graphics cards whine audibly.
 
 Settings can live in a config file, `~/.config/rusty-claw/config.toml` (or
 under `$XDG_CONFIG_HOME`), or any file passed with `--config FILE`; command
@@ -111,6 +118,7 @@ aspect = "fill"            # fill, centered or 4:3
 scale = "fit"              # fit or integer
 widen_activation = false
 vsync = true
+fps_cap = 300              # with vsync off; 0 for no cap
 interpolation = true
 ```
 
@@ -137,6 +145,22 @@ frames that missed the display's refresh (in a window) or GPU time
 (offscreen), and an estimate for a handheld-class CPU. When the desktop is
 smaller than `--res`, the window gets what fits and every frame is also
 drawn offscreen at the requested size.
+
+The report is one line of JSON on standard output. A second line on
+standard error gives the verdict, PASS or FAIL, with each budget: frame
+work under 6.9 ms at the 99th percentile, the handheld estimate under
+8.3 ms, and no missed refresh. Missed refreshes can be counted only in a
+window with vsync on; offscreen or with vsync off the line says they are
+not measurable. The benchmark exits with status 3 when a measured budget is
+missed. For each missed refresh, the JSON describes that frame (its work,
+the waits around it, sprite loads and window changes) and names the likely
+cause, to tell a slow frame of the game from a stall in the desktop's
+compositor.
+
+The offscreen benchmark draws at its simulated display rate (`--render-hz`,
+144 by default), as a real display would; per-frame times never include
+that wait. Add `--uncapped` to draw as fast as the machine allows, for
+measuring throughput.
 
 ## Development
 
@@ -170,6 +194,12 @@ make run-viewer ARGS='--install PATH --level 1'          # free-camera level vie
 make replay ARGS='--install PATH --level 1 --script s.csv --trace t.csv'
 cargo run --release -p claw-info -- --install PATH --level 1
 ```
+
+The viewer follows the same rules as the game: vsync on by default
+(`--vsync off` to turn it off), a cap of `--fps-cap N` frames per second
+(300 by default) with vsync off, and `--uncapped` only for throughput runs.
+Its offscreen benchmark (`--headless-bench SECONDS`) draws at `--bench-hz`
+unless `--uncapped` is given.
 
 ## Layout
 

@@ -8,6 +8,9 @@
 //! - At 640x480 a whole frame, GPU included, takes under 16.7 ms at the
 //!   99th percentile: 60 frames per second or more.
 //! - No image is read or decoded while frames are drawn.
+//! - Frames are paced to the simulated display: the run draws about 144
+//!   frames a second, not as many as the GPU allows, and the looping route
+//!   never runs out.
 //!
 //! The tick cost and the number of live objects are printed with each run,
 //! also with widened activation at 5120x1440, which keeps more objects live.
@@ -53,8 +56,20 @@ fn bench(res: (u32, u32), widen: bool) -> Option<Report> {
         r.activation,
     );
     println!("{}", r.to_json());
+    println!("{}", r.summary());
     assert_eq!(r.images_loaded_during_run, 0, "images decoded mid-run");
     assert!(r.ticks > 100, "the route ran");
+    assert_eq!(r.ticks_past_route, 0, "the route ran out");
+    assert!(r.route_ticks > 0);
+    assert!(
+        r.fps() <= 144.0 * 1.05,
+        "{:.1} frames per second at a paced 144 Hz",
+        r.fps()
+    );
+    assert!(
+        r.summary()
+            .contains("missed vblanks not measurable offscreen")
+    );
     Some(r)
 }
 
