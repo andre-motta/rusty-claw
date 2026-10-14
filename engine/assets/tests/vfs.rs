@@ -164,6 +164,52 @@ fn hostile_archives_are_refused() {
     );
 }
 
+fn file_entry(name: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    // Kind, data offset, data size, time, id, type code, key count.
+    for v in [0u32, 0, 0, 0, 0, TYPE_PID, 0] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(name.as_bytes());
+    out.extend_from_slice(&[0, 0]);
+    out
+}
+
+#[test]
+fn overlapping_folder_blocks_are_refused() {
+    // One region of 64 file entries, and a root block whose 64 folders each
+    // point at a longer prefix of it. Every folder block is new by (offset,
+    // size), but together they read the region about 32 times over.
+    let files: Vec<Vec<u8>> = (0..64).map(|i| file_entry(&format!("F{i:02}"))).collect();
+    let entry_len = files[0].len() as u32;
+    let region: Vec<u8> = files.concat();
+    let header_len = RezBuilder::new().build().len() as u32;
+    let folders = |region_at: u32, count: u32| -> Vec<u8> {
+        (0..count)
+            .flat_map(|j| dir_entry(&format!("D{j:02}"), region_at, (j + 1) * entry_len))
+            .collect()
+    };
+    let root_len = folders(0, 64).len() as u32;
+    let region_at = header_len + root_len;
+    let mut block = folders(region_at, 64);
+    block.extend_from_slice(&region);
+    let mut data = archive_with_root_block(&block, 0);
+    data[0x87..0x8B].copy_from_slice(&root_len.to_le_bytes());
+    let err = AssetStore::new().mount(Source::RezBytes(data)).unwrap_err();
+    assert!(err.to_string().contains("overlap"), "{err}");
+
+    // A few overlapping folders stay within the budget and mount.
+    let root_len = folders(0, 2).len() as u32;
+    let region_at = header_len + root_len;
+    let mut block = folders(region_at, 2);
+    block.extend_from_slice(&region);
+    let mut data = archive_with_root_block(&block, 0);
+    data[0x87..0x8B].copy_from_slice(&root_len.to_le_bytes());
+    let mut store = AssetStore::new();
+    store.mount(Source::RezBytes(data)).unwrap();
+    assert_eq!(store.root().count(), (1 + 2, 2));
+}
+
 #[test]
 fn deep_archive_nesting_is_refused() {
     let mut builder = RezBuilder::new();
@@ -370,4 +416,41 @@ fn install_with_archive_and_folder() {
     let store = install.store().unwrap();
     assert_eq!(store.open("GAME/A.TXT").unwrap(), b"archive");
     assert_eq!(store.open("GAME/B.TXT").unwrap(), b"folder");
+}
+
+#[test]
+fn install_parts_may_be_links() {
+    let tmp = tempfile::tempdir().unwrap();
+    let library = tmp.path().join("library");
+    put(
+        &library,
+        "claw.rez",
+        &RezBuilder::new().file("GAME/A.TXT", b"archive").build(),
+    );
+    put(&library, "Assets/GAME/B.TXT", b"folder");
+    put(tmp.path(), "secret.txt", b"secret");
+    symlink(
+        tmp.path().join("secret.txt"),
+        library.join("Assets/GAME/ESCAPE.TXT"),
+    )
+    .unwrap();
+    let root = tmp.path().join("install");
+    fs::create_dir_all(&root).unwrap();
+    symlink(library.join("claw.rez"), root.join("CLAW.REZ")).unwrap();
+    symlink(library.join("Assets"), root.join("Assets")).unwrap();
+
+    let install = Install::open(&root).unwrap();
+    assert!(install.archive().is_some());
+    assert!(install.assets_dir().is_some());
+    let store = install.store().unwrap();
+    assert_eq!(store.open("GAME/A.TXT").unwrap(), b"archive");
+    assert_eq!(store.open("GAME/B.TXT").unwrap(), b"folder");
+    // Inside the linked folder, links that leave it are still refused.
+    assert!(store.lookup("GAME/ESCAPE.TXT").unwrap().is_none());
+
+    // Broken links count as missing.
+    let broken = tmp.path().join("broken");
+    fs::create_dir_all(&broken).unwrap();
+    symlink(tmp.path().join("nothing"), broken.join("Assets")).unwrap();
+    assert!(Install::open(&broken).is_err());
 }

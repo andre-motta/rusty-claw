@@ -508,6 +508,7 @@ impl AssetStore {
                 mount,
                 seen: HashSet::new(),
                 entries: 0,
+                dir_bytes: 0,
             };
             let mut files = Vec::new();
             let mut notes = Vec::new();
@@ -559,6 +560,7 @@ struct RezWalk<'a> {
     mount: usize,
     seen: HashSet<(u32, u32)>,
     entries: usize,
+    dir_bytes: u64,
 }
 
 impl RezWalk<'_> {
@@ -587,6 +589,13 @@ impl RezWalk<'_> {
             return Err(format_error(
                 FORMAT,
                 "folder block lies outside the archive",
+            ));
+        }
+        self.dir_bytes += u64::from(size);
+        if self.dir_bytes > self.size.saturating_mul(rez::MAX_DIRECTORY_READ_FACTOR) {
+            return Err(format_error(
+                FORMAT,
+                "folder blocks overlap: more folder data than the archive holds",
             ));
         }
         let block = read_archive(self.source, u64::from(offset), u64::from(size))?;

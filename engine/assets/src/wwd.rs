@@ -453,10 +453,11 @@ fn to_usize_u64(v: u64) -> usize {
     usize::try_from(v).unwrap_or(usize::MAX)
 }
 
-/// Budget charged for each image-set name on top of the bytes scanned: the
-/// `String` header, room for the name list to grow, and the smallest heap
-/// block a name occupies. Charging this per name keeps a list of many short
-/// names from taking far more memory than the bytes it was read from.
+/// Budget charged for each image-set name on top of the bytes scanned: an
+/// approximate per-name overhead covering the `String` header, room for the
+/// name list to grow and a small heap block. Charging this per name keeps a
+/// list of many short names from taking far more memory than the bytes it
+/// was read from, within a small constant factor.
 const NAME_COST: usize = 2 * std::mem::size_of::<String>() + 16;
 
 /// Reads image-set names: per name, skip bytes that are not NUL and below
@@ -465,7 +466,9 @@ const NAME_COST: usize = 2 * std::mem::size_of::<String>() + 16;
 /// every further pass finds nothing; the scan stops at the first pass that
 /// consumes no bytes, which bounds the work by the buffer size instead of
 /// the untrusted count. Each pass charges the bytes it scanned, plus
-/// [`NAME_COST`] when it found a name, before the name is stored.
+/// [`NAME_COST`] when it found a name, before the name is stored. The scan
+/// itself is never cut short by the budget: a name the budget cannot cover
+/// in full is a decode-budget error, never a shortened name.
 fn parse_image_set_names(
     buf: &[u8],
     off: usize,
@@ -1109,6 +1112,23 @@ mod tests {
             scan_names(buf, u32::MAX).unwrap(),
             (vec!["A".to_string()], 1)
         );
+    }
+
+    #[test]
+    fn a_name_the_budget_cannot_cover_is_an_error_not_a_shorter_name() {
+        let buf = b"\x01LONGNAME\0";
+        // Room for the skipped byte and half the name only.
+        let mut budget = Budget::new(1 + 4 + NAME_COST);
+        let err = parse_image_set_names(buf, 0, 1, &mut budget, "names").unwrap_err();
+        assert!(err.to_string().contains("decode budget"), "{err}");
+        // The same with a count that would end on that pass anyway.
+        let mut budget = Budget::new(1 + 7 + NAME_COST);
+        assert!(parse_image_set_names(buf, 0, 1, &mut budget, "names").is_err());
+        // Exactly enough: the whole name.
+        let mut budget = Budget::new(1 + 8 + NAME_COST);
+        let (names, used) = parse_image_set_names(buf, 0, 1, &mut budget, "names").unwrap();
+        assert_eq!((names, used), (vec!["LONGNAME".to_string()], 9));
+        assert_eq!(budget.remaining, 0);
     }
 
     #[test]
