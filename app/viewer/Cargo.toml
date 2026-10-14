@@ -12,8 +12,12 @@ name = "claw-viewer"
 path = "src/main.rs"
 
 [dependencies]
+claw-assets.workspace = true
 claw-frame.workspace = true
 claw-render.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen", "x11"] }
 
 [lints]
 workspace = true

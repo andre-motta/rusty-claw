@@ -10,6 +10,15 @@ publish.workspace = true
 [dependencies]
 claw-assets.workspace = true
 claw-frame.workspace = true
+thiserror.workspace = true
+bytemuck = { version = "1.25", features = ["derive"] }
+png = "0.18"
+pollster = "0.4"
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "wgsl"] }
+
+[dev-dependencies]
+serde_json = "1"
+tempfile.workspace = true
 
 [lints]
 workspace = true
