@@ -16,8 +16,10 @@
 //! checked, and malformed files return an error. Planes, objects and tile
 //! descriptors may point at any bytes, so the parser also keeps one decode
 //! budget for the whole file: together they may not decode more bytes than
-//! the buffer holds, which keeps memory use linear in the file size even when
-//! many planes point at the same region.
+//! the buffer holds, with each image-set name also charged a fixed cost for
+//! its allocation. This keeps memory use linear in the file size even when
+//! many planes point at the same region or a name list holds many short
+//! names.
 
 use flate2::{Decompress, FlushDecompress, Status};
 
@@ -296,6 +298,7 @@ impl Wwd {
 /// Bytes the parser may still decode from the body. Every tile grid,
 /// image-set name scan, object record and tile descriptor is charged here
 /// before it is copied, so the total decoded never exceeds the buffer size.
+/// Image-set names also pay [`NAME_COST`] each for their allocation.
 #[derive(Debug)]
 struct Budget {
     remaining: usize,
@@ -450,13 +453,26 @@ fn to_usize_u64(v: u64) -> usize {
     usize::try_from(v).unwrap_or(usize::MAX)
 }
 
+/// Budget charged for each image-set name on top of the bytes scanned: the
+/// `String` header, room for the name list to grow, and the smallest heap
+/// block a name occupies. Charging this per name keeps a list of many short
+/// names from taking far more memory than the bytes it was read from.
+const NAME_COST: usize = 2 * std::mem::size_of::<String>() + 16;
+
 /// Reads image-set names: per name, skip bytes that are not NUL and below
 /// 0x30 (as signed bytes, so 0x80 and up too), then collect bytes from 0x30
 /// to 0x7F. The NUL that ends a name is not stepped over, so after a NUL
 /// every further pass finds nothing; the scan stops at the first pass that
 /// consumes no bytes, which bounds the work by the buffer size instead of
-/// the untrusted count.
-fn parse_image_set_names(buf: &[u8], off: usize, count: u32) -> Result<(Vec<String>, usize)> {
+/// the untrusted count. Each pass charges the bytes it scanned, plus
+/// [`NAME_COST`] when it found a name, before the name is stored.
+fn parse_image_set_names(
+    buf: &[u8],
+    off: usize,
+    count: u32,
+    budget: &mut Budget,
+    what: &str,
+) -> Result<(Vec<String>, usize)> {
     let mut names = Vec::new();
     let mut pos = off;
     let n = buf.len();
@@ -473,7 +489,10 @@ fn parse_image_set_names(buf: &[u8], off: usize, count: u32) -> Result<(Vec<Stri
         if pos >= n && start == pos {
             return Err(format_error(FORMAT, "image-set names run past the end"));
         }
-        if pos > start {
+        let found = pos > start;
+        let cost = (pos - pass_start).saturating_add(if found { NAME_COST } else { 0 });
+        budget.charge(cost, what)?;
+        if found {
             names.push(latin1(&buf[start..pos]));
         }
         if pos == pass_start {
@@ -542,22 +561,13 @@ fn parse_plane(
         .collect();
     if image_set_count != 0 {
         need(buf, image_sets_offset, 1, "image-set names")?;
-        // Scan no further than the budget allows, then charge what was read.
-        let end = image_sets_offset.saturating_add(budget.remaining);
-        let limited = end < buf.len();
-        let window = &buf[..end.min(buf.len())];
-        let (names, consumed) = parse_image_set_names(window, image_sets_offset, image_set_count)
-            .map_err(|e| {
-            if limited {
-                format_error(
-                    FORMAT,
-                    format!("plane {index} image-set names exceed the decode budget"),
-                )
-            } else {
-                e
-            }
-        })?;
-        budget.charge(consumed, &format!("plane {index} image-set names"))?;
+        let (names, _) = parse_image_set_names(
+            buf,
+            image_sets_offset,
+            image_set_count,
+            budget,
+            &format!("plane {index} image-set names"),
+        )?;
         plane.image_sets = names;
     }
     let mut objects = Vec::new();
@@ -1081,26 +1091,51 @@ mod tests {
         assert!(Wwd::parse(truncated).is_err());
     }
 
+    fn scan_names(buf: &[u8], count: u32) -> Result<(Vec<String>, usize)> {
+        parse_image_set_names(buf, 0, count, &mut Budget::new(usize::MAX), "names")
+    }
+
     #[test]
     fn image_set_names_scan() {
         let buf = b"\x01\x02ACTION\0BACK\0";
-        assert_eq!(
-            parse_image_set_names(buf, 0, 5).unwrap(),
-            (vec!["ACTION".to_string()], 8)
-        );
+        assert_eq!(scan_names(buf, 5).unwrap(), (vec!["ACTION".to_string()], 8));
         let buf = b"ONE TWO\0";
-        assert_eq!(
-            parse_image_set_names(buf, 0, 2).unwrap().0,
-            vec!["ONE", "TWO"]
-        );
+        assert_eq!(scan_names(buf, 2).unwrap().0, vec!["ONE", "TWO"]);
         let buf = b"\x01\x01";
-        assert!(parse_image_set_names(buf, 0, 1).is_err());
+        assert!(scan_names(buf, 1).is_err());
         // A huge count stops as soon as a pass consumes nothing.
         let buf = b"A\0";
         assert_eq!(
-            parse_image_set_names(buf, 0, u32::MAX).unwrap(),
+            scan_names(buf, u32::MAX).unwrap(),
             (vec!["A".to_string()], 1)
         );
+    }
+
+    #[test]
+    fn image_set_names_pay_for_their_allocation() {
+        // Two bytes per name, so the bytes alone fit the budget many times
+        // over; the per-name cost does not.
+        let names = 1024;
+        let buf: Vec<u8> = b"A\x01".repeat(names);
+        let mut budget = Budget::new(buf.len() * 4);
+        let err = parse_image_set_names(&buf, 0, names as u32, &mut budget, "names").unwrap_err();
+        assert!(err.to_string().contains("decode budget"), "{err}");
+
+        let mut budget = Budget::new(names * (2 + NAME_COST));
+        let (found, _) =
+            parse_image_set_names(&buf, 0, names as u32, &mut budget, "names").unwrap();
+        assert_eq!(found.len(), names);
+        assert_eq!(budget.remaining, 1);
+
+        // The same list inside a level: the names cost more than the file.
+        // The names start right after the plane header and its one-cell grid.
+        let mut body = shared_region_body(1, 1, 1, false);
+        body.truncate(PLANE_HEADER_SIZE + 4);
+        body.extend_from_slice(&b"A\x01".repeat(64 * 1024));
+        body.push(0);
+        body[0x7C..0x80].copy_from_slice(&u32::MAX.to_le_bytes());
+        let err = Wwd::parse(&level_with_body(1, &body, true)).unwrap_err();
+        assert!(err.to_string().contains("decode budget"), "{err}");
     }
 
     /// Body of `planes` plane headers that all point at one shared region:
