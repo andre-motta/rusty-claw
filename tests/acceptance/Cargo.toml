@@ -12,6 +12,15 @@ claw-assets.workspace = true
 claw-frame.workspace = true
 claw-render.workspace = true
 claw-sim.workspace = true
+claw-game = { path = "../../app/game" }
+
+[dev-dependencies]
+serde_json = "1"
+
+# Opens a window, which must happen on the main thread.
+[[test]]
+name = "install_window"
+harness = false
 
 [lints]
 workspace = true

@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[lib]
+name = "claw_game"
+path = "src/lib.rs"
+
 [[bin]]
 name = "rusty-claw"
 path = "src/main.rs"
@@ -16,6 +20,12 @@ claw-assets.workspace = true
 claw-frame.workspace = true
 claw-render.workspace = true
 claw-sim.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06", "wayland", "wayland-dlopen", "x11"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

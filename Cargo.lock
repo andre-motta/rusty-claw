@@ -368,8 +368,10 @@ version = "0.1.0"
 dependencies = [
  "claw-assets",
  "claw-frame",
+ "claw-game",
  "claw-render",
  "claw-sim",
+ "serde_json",
 ]
 
 [[package]]
@@ -390,10 +392,14 @@ version = "0.1.0"
 name = "claw-game"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
  "claw-assets",
  "claw-frame",
  "claw-render",
  "claw-sim",
+ "tempfile",
+ "winit",
 ]
 
 [[package]]
