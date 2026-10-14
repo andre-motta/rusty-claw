@@ -188,7 +188,7 @@ impl PresentDetail {
         } else if self.acquire_ms + self.present_call_ms >= self.gap_ms {
             "waiting on the display (compositor or driver)"
         } else {
-            "between frames (event loop or scheduler)"
+            "between frames (compositor frame callback or event loop)"
         }
     }
 
@@ -884,7 +884,10 @@ mod tests {
             f(&mut d);
             d.likely_cause(7.0)
         };
-        assert_eq!(d(|_| {}), "between frames (event loop or scheduler)");
+        assert_eq!(
+            d(|_| {}),
+            "between frames (compositor frame callback or event loop)"
+        );
         assert_eq!(
             d(|d| d.acquire_ms = 12.0),
             "waiting on the display (compositor or driver)"

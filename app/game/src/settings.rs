@@ -15,14 +15,14 @@
 //! scale = "fit"             # fit or integer
 //! widen_activation = false
 //! vsync = true
-//! fps_cap = 300             # with vsync off; 0 for no cap
+//! fps_cap = 300             # with vsync off, 1 to 10000
 //! interpolation = true
 //! ```
 //!
 //! With vsync on, the display's refresh paces drawing. With vsync off,
 //! drawing is capped at `fps_cap` frames per second (300 by default);
 //! `--fps-cap 0` or `--uncapped` removes the cap, which is meant only for
-//! measuring throughput. The cap also paces headless benchmarks, which
+//! measuring throughput, so the settings file cannot remove it. The cap also paces headless benchmarks, which
 //! draw at their simulated display rate unless `--uncapped` is given.
 
 use std::collections::BTreeMap;
@@ -590,6 +590,12 @@ impl ConfigFile {
                     let n = v
                         .parse()
                         .map_err(|_| err(key, format!("bad frame rate {v:?}")))?;
+                    if n == 0 {
+                        return Err(err(
+                            key,
+                            "0 (no cap) is only accepted as --fps-cap 0 or --uncapped".into(),
+                        ));
+                    }
                     s.fps_cap = fps_cap(n).map_err(|e| err(key, e))?;
                 }
                 "interpolation" => s.interpolation = flag(key, v)?,
@@ -843,8 +849,7 @@ mod tests {
         let s = Settings::resolve(&args("--uncapped"), Some(&file)).unwrap();
         assert_eq!(s.fps_cap, None);
         let file = ConfigFile::parse("install = /i\nfps_cap = 0\n", "cfg").unwrap();
-        let s = Settings::resolve(&Args::default(), Some(&file)).unwrap();
-        assert_eq!(s.fps_cap, None);
+        assert!(Settings::resolve(&Args::default(), Some(&file)).is_err());
         let file = ConfigFile::parse("install = /i\nfps_cap = fast\n", "cfg").unwrap();
         assert!(Settings::resolve(&Args::default(), Some(&file)).is_err());
     }
