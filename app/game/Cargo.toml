@@ -1,0 +1,21 @@
+[package]
+name = "claw-game"
+description = "The game executable."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "claw"
+path = "src/main.rs"
+
+[dependencies]
+claw-assets.workspace = true
+claw-frame.workspace = true
+claw-render.workspace = true
+claw-sim.workspace = true
+
+[lints]
+workspace = true
