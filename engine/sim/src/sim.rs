@@ -58,7 +58,13 @@ impl SimConfig {
                 ActivationConfig::frozen_edge()
             }
             AspectPolicy::WidenedActivation => {
-                ActivationConfig::widened((presentation_width(&view), view.logic_height))
+                // The widened window size comes from the view's activation
+                // margin, the same value the presentation is drawn with.
+                let (mx, my) = view.activation_margin();
+                ActivationConfig::widened((
+                    view.logic_width.saturating_add(mx.saturating_mul(2)),
+                    view.logic_height.saturating_add(my.saturating_mul(2)),
+                ))
             }
         };
         SimConfig {
@@ -420,8 +426,12 @@ impl Sim {
                 renderables.push(r);
             }
         }
-        if self.cfg.activation.mode != ActivationMode::Original {
-            let extra = (presentation_width(view).saturating_sub(view.logic_width) / 2) as i32;
+        let extra = (presentation_width(view).saturating_sub(view.logic_width) / 2) as i32;
+        // Dormant objects are drawn only in the extra width of a wider
+        // presentation (plus a margin for sprites that reach into it); a
+        // presentation as wide as the logic view draws exactly what the
+        // original does.
+        if self.cfg.activation.mode != ActivationMode::Original && extra > 0 {
             let margin = 256;
             let area = Rect::new(
                 rect.left - extra - margin,
@@ -450,6 +460,7 @@ impl Sim {
             },
             renderables,
             palette_fade: None,
+            camera_teleported: self.camera.teleported,
         }
     }
 

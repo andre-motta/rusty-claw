@@ -44,6 +44,20 @@ pub enum GpuError {
     /// The device could not be created.
     #[error("cannot open the GPU: {0}")]
     Device(String),
+    /// An output image larger than the device can create.
+    #[error(
+        "output size {width}x{height} is larger than this GPU allows ({max}x{max} at most{extra})"
+    )]
+    OutputTooLarge {
+        /// Requested width.
+        width: u32,
+        /// Requested height.
+        height: u32,
+        /// Largest width or height the device takes.
+        max: u32,
+        /// Further detail, empty or starting with a separator.
+        extra: String,
+    },
 }
 
 /// An opened Vulkan device.
@@ -114,6 +128,48 @@ impl Gpu {
     pub fn max_target(&self) -> u32 {
         self.device.limits().max_texture_dimension_2d
     }
+
+    /// Checks that an output image of `size` can be created on this device,
+    /// and, with `read_back`, also copied back to memory in one piece.
+    /// Drawing into a larger one would fail inside the GPU layer instead of
+    /// returning an error.
+    pub fn check_output(&self, size: (u32, u32), read_back: bool) -> Result<(), GpuError> {
+        let limits = self.device.limits();
+        check_output_size(
+            size,
+            limits.max_texture_dimension_2d,
+            read_back.then_some(limits.max_buffer_size),
+        )
+    }
+}
+
+/// [`Gpu::check_output`] for given limits: the largest texture width or
+/// height, and the largest buffer when the image is read back as RGBA.
+pub fn check_output_size(
+    size: (u32, u32),
+    max_dimension: u32,
+    max_buffer: Option<u64>,
+) -> Result<(), GpuError> {
+    let (width, height) = size;
+    let too_large = |extra: String| GpuError::OutputTooLarge {
+        width,
+        height,
+        max: max_dimension,
+        extra,
+    };
+    if width > max_dimension || height > max_dimension {
+        return Err(too_large(String::new()));
+    }
+    if let Some(max_buffer) = max_buffer {
+        let row = (u64::from(width) * 4).div_ceil(256) * 256;
+        let bytes = row * u64::from(height);
+        if bytes > max_buffer {
+            return Err(too_large(format!(
+                ", and {max_buffer} bytes to read back; this needs {bytes}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[repr(C)]
@@ -958,5 +1014,31 @@ impl Offscreen {
             view,
             size,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_sizes_are_checked_against_the_limits() {
+        assert!(check_output_size((16384, 9216), 16384, None).is_ok());
+        let err = check_output_size((20000, 10000), 16384, None).unwrap_err();
+        assert!(matches!(
+            err,
+            GpuError::OutputTooLarge {
+                width: 20000,
+                height: 10000,
+                max: 16384,
+                ..
+            }
+        ));
+        assert!(err.to_string().contains("20000x10000"), "{err}");
+        assert!(check_output_size((1280, 20000), 16384, None).is_err());
+        // Read back as RGBA with rows padded to 256 bytes.
+        assert!(check_output_size((16384, 16384), 16384, Some(1 << 30)).is_ok());
+        let err = check_output_size((16384, 16384), 16384, Some(256 << 20)).unwrap_err();
+        assert!(err.to_string().contains("read back"), "{err}");
     }
 }

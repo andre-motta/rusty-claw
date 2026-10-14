@@ -4,9 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use claw_frame::{
-    AspectPolicy, Buttons, FrameClock, FrameDriver, InputLatch, ScaleMode, ViewConfig,
-};
+use claw_frame::{Buttons, FrameClock, FrameDriver, InputLatch, ScaleMode, ViewConfig};
 use claw_render::{FrameInput, Gpu, Renderer, SceneBuilder, wgpu};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -16,7 +14,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::stub::Stub;
-use crate::{Args, Loaded, load};
+use crate::{Args, Loaded, load, next_aspect};
 
 /// Frame statistics printed on exit.
 #[derive(Debug, Default)]
@@ -229,11 +227,8 @@ impl App {
             }
             KeyCode::KeyA => {
                 if let Some(live) = &mut self.live {
-                    live.view.aspect_policy = match live.view.aspect_policy {
-                        AspectPolicy::FrozenEdgeClamped => AspectPolicy::FrozenEdgeCentered,
-                        AspectPolicy::FrozenEdgeCentered => AspectPolicy::Pillarbox,
-                        _ => AspectPolicy::FrozenEdgeClamped,
-                    };
+                    live.view.aspect_policy =
+                        next_aspect(live.view.aspect_policy, self.args.widen_activation);
                     let view = live.view;
                     live.builder =
                         SceneBuilder::new(&self.loaded.graphics, view, live.gpu.max_target());

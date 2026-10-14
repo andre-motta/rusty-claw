@@ -1,14 +1,14 @@
 //! What the simulation needs from a level: the main plane's collision
 //! tiles, the start point, the object records and Claw's animations.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use claw_assets::wwd::OBJECT_INTS;
 use claw_assets::{Ani, AssetStore, LevelData, Result};
 
 use crate::anim::Animation;
-use crate::player::AnimSet;
+use crate::player::{self, AnimSet};
 use crate::tiles::{TileMap, TileReport};
 use crate::view::PlaneGeometry;
 
@@ -120,6 +120,24 @@ impl SimLevel {
             animations,
             flags: level.header.flags,
         })
+    }
+
+    /// Every image set the level's objects can show, sorted and without
+    /// duplicates: the sets placed objects start with, the sets named by
+    /// the loaded animations and the sets the simulation's own logics
+    /// switch to at run time (Claw's). Meant for loading graphics at level
+    /// load, so that drawing never has to read or decode a set.
+    pub fn image_sets(&self) -> Vec<String> {
+        let mut sets: BTreeSet<&str> = BTreeSet::new();
+        sets.insert(player::IMAGE_SET);
+        for o in &self.objects {
+            sets.insert(&o.image_set);
+        }
+        for a in self.animations.values() {
+            sets.insert(&a.image_set);
+        }
+        sets.remove("");
+        sets.into_iter().map(str::to_string).collect()
     }
 
     /// Main-plane size and wrap flags.

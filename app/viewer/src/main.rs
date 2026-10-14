@@ -75,7 +75,8 @@ pub struct Args {
     #[arg(long, value_enum, default_value = "native")]
     pub aspect: Aspect,
     /// Keep every visible object active (a gameplay change for the game;
-    /// the viewer draws the same picture as `--aspect native`).
+    /// the viewer draws the same picture as `--aspect native`). Only with
+    /// `--aspect native`.
     #[arg(long)]
     pub widen_activation: bool,
     /// Gameplay view in game pixels (default 640x480).
@@ -142,6 +143,22 @@ fn parse_on_off(s: &str) -> Result<bool, String> {
 }
 
 impl Args {
+    /// Rejects option combinations that cannot be honoured.
+    pub fn validate(&self) -> Result<()> {
+        if self.widen_activation && self.aspect != Aspect::Native {
+            bail!(
+                "--widen-activation needs --aspect native: widened activation fills the \
+                 output width, which the {} aspect does not",
+                match self.aspect {
+                    Aspect::Native => "native",
+                    Aspect::Centered => "centered",
+                    Aspect::Classic => "4:3",
+                }
+            );
+        }
+        Ok(())
+    }
+
     /// The view configuration for an output of `size`.
     pub fn view(&self, size: (u32, u32)) -> ViewConfig {
         let (lw, lh) = self.logic.unwrap_or((640, 480));
@@ -169,12 +186,30 @@ impl Args {
     }
 }
 
+/// The aspect policy after `current` in the A key cycle. With widened
+/// activation requested, the native step is the widened policy, so the
+/// cycle comes back to the mode the user asked for.
+pub fn next_aspect(current: AspectPolicy, widened: bool) -> AspectPolicy {
+    let native = if widened {
+        AspectPolicy::WidenedActivation
+    } else {
+        AspectPolicy::FrozenEdgeClamped
+    };
+    match current {
+        AspectPolicy::FrozenEdgeClamped | AspectPolicy::WidenedActivation => {
+            AspectPolicy::FrozenEdgeCentered
+        }
+        AspectPolicy::FrozenEdgeCentered => AspectPolicy::Pillarbox,
+        AspectPolicy::Pillarbox => native,
+    }
+}
+
 /// A loaded level with its graphics.
 #[derive(Debug)]
 pub struct Loaded {
     /// The level.
     pub level: LevelData,
-    /// Its graphics (tiles decoded, sprites loaded on demand).
+    /// Its graphics (tiles and every placed object's sprites decoded).
     pub graphics: LevelGraphics,
     /// Load time.
     pub load: Duration,
@@ -202,7 +237,10 @@ pub fn load(args: &Args) -> Result<Loaded> {
         }
         None => None,
     };
-    let graphics = LevelGraphics::from_level(&level, &store, pack);
+    let mut graphics = LevelGraphics::from_level(&level, &store, pack);
+    // Decode every sprite set the placed objects use now, so no frame reads
+    // or decodes images.
+    graphics.preload(level.objects.iter().map(|o| o.image_set.as_str()));
     for w in graphics.pack_warnings() {
         eprintln!("claw-viewer: pack: {w}");
     }
@@ -264,6 +302,7 @@ fn dump_tiles(args: &Args) -> Result<()> {
 }
 
 fn run(args: Args) -> Result<()> {
+    args.validate()?;
     if args.dump_visible_tiles {
         return dump_tiles(&args);
     }
@@ -285,6 +324,55 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("claw-viewer: {e:#}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(extra: &[&str]) -> Args {
+        let mut all = vec!["claw-viewer", "--install", "/nowhere", "--level", "1"];
+        all.extend_from_slice(extra);
+        Args::try_parse_from(all).unwrap()
+    }
+
+    #[test]
+    fn widened_activation_needs_the_native_aspect() {
+        assert!(args(&["--widen-activation"]).validate().is_ok());
+        let a = args(&["--widen-activation"]);
+        assert_eq!(
+            a.view((1920, 1080)).aspect_policy,
+            AspectPolicy::WidenedActivation
+        );
+        for aspect in ["centered", "4:3"] {
+            let a = args(&["--widen-activation", "--aspect", aspect]);
+            let err = a.validate().unwrap_err().to_string();
+            assert!(err.contains("--aspect native"), "{err}");
+            assert!(args(&["--aspect", aspect]).validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn aspect_cycle_returns_to_the_requested_mode() {
+        for widened in [false, true] {
+            let start = args(if widened {
+                &["--widen-activation"]
+            } else {
+                &[]
+            })
+            .view((1920, 1080))
+            .aspect_policy;
+            let mut seen = vec![start];
+            let mut p = start;
+            for _ in 0..3 {
+                p = next_aspect(p, widened);
+                seen.push(p);
+            }
+            assert_eq!(p, start, "widened {widened}: {seen:?}");
+            assert_eq!(seen[1], AspectPolicy::FrozenEdgeCentered);
+            assert_eq!(seen[2], AspectPolicy::Pillarbox);
         }
     }
 }

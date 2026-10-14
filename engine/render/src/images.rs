@@ -282,6 +282,7 @@ pub struct LevelGraphics {
     /// Per plane: one resolved slot per cell.
     pub plane_slots: Vec<Vec<i32>>,
     sprites: HashMap<String, Option<FrameMap>>,
+    loaded_while_drawing: usize,
     source: Box<dyn ImageSource>,
     pack: Option<HdPack>,
 }
@@ -336,6 +337,7 @@ impl LevelGraphics {
             images: ImageStore::default(),
             plane_slots: Vec::new(),
             sprites: HashMap::new(),
+            loaded_while_drawing: 0,
             source,
             pack,
         };
@@ -420,12 +422,52 @@ impl LevelGraphics {
         self.plane_slots = all;
     }
 
-    /// The image id of `frame` of sprite set `key`, loading the set on first
-    /// use. Frame -1 means the set's first frame.
+    /// Reads and decodes the sprite sets `keys` now, at level load, so that
+    /// drawing them later does no file reading or decoding. Sets already
+    /// loaded and keys with no set are remembered and skipped; the result is
+    /// the number of keys looked up for the first time.
+    ///
+    /// Call it with every image set the level's objects can show, including
+    /// the sets their logics switch to at run time.
+    pub fn preload<I>(&mut self, keys: I) -> usize
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let mut added = 0;
+        for key in keys {
+            let key = key.as_ref();
+            if key.is_empty() || self.sprites.contains_key(key) {
+                continue;
+            }
+            let loaded = self.load_set(key);
+            self.sprites.insert(key.to_string(), loaded);
+            added += 1;
+        }
+        added
+    }
+
+    /// True when the sprite set `key` has been looked up (found or not).
+    pub fn is_loaded(&self, key: &str) -> bool {
+        self.sprites.contains_key(key)
+    }
+
+    /// Sprite sets that were first looked up while drawing, because
+    /// [`LevelGraphics::preload`] did not name them. Each one read and
+    /// decoded files on the frame path; a complete preload keeps this at 0.
+    pub fn loaded_while_drawing(&self) -> usize {
+        self.loaded_while_drawing
+    }
+
+    /// The image id of `frame` of sprite set `key`. A set that was not
+    /// preloaded is loaded here on first use (and counted by
+    /// [`LevelGraphics::loaded_while_drawing`]). Frame -1 means the set's
+    /// first frame.
     pub fn sprite(&mut self, key: &str, frame: i32) -> Option<u32> {
         if !self.sprites.contains_key(key) {
             let loaded = self.load_set(key);
             self.sprites.insert(key.to_string(), loaded);
+            self.loaded_while_drawing += 1;
         }
         let map = self.sprites.get(key)?.as_ref()?;
         if frame == -1 {
@@ -548,6 +590,59 @@ mod tests {
         assert_eq!(s[3], SLOT_EMPTY);
         assert_eq!(s[4], SLOT_FILL);
         assert_eq!(g.images.index_at(s[5] as u32, 0, 0), 9);
+    }
+
+    /// Counts every set read from the wrapped source.
+    #[derive(Debug, Clone)]
+    struct Counting {
+        inner: MemoryImages,
+        reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl ImageSource for Counting {
+        fn image_set(&self, key: &str) -> Option<Vec<SourceFrame>> {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.image_set(key)
+        }
+    }
+
+    #[test]
+    fn preloaded_sets_are_not_read_again() {
+        let mut inner = MemoryImages::default();
+        inner.insert("A", 1, frame(2, 2, 0, |_, _| 3));
+        inner.insert("A", 2, frame(2, 2, 0, |_, _| 4));
+        inner.insert("B", 7, frame(1, 1, 0, |_, _| 5));
+        let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let src = Counting {
+            inner,
+            reads: reads.clone(),
+        };
+        let pal = Palette::default();
+        let mut g = LevelGraphics::new(
+            Vec::new(),
+            true,
+            pal.clone(),
+            LevelTables::blank(&pal),
+            Box::new(src),
+            None,
+        );
+        let count = || reads.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(g.preload(["A", "B", "MISSING", "A", ""]), 3);
+        assert_eq!(count(), 3);
+        assert!(g.is_loaded("A") && g.is_loaded("MISSING"));
+        let images = g.images.records.len();
+        assert_eq!(g.preload(["B"]), 0, "already loaded");
+        // Drawing reads and decodes nothing more.
+        assert!(g.sprite("A", 2).is_some());
+        assert!(g.sprite("B", -1).is_some());
+        assert!(g.sprite("MISSING", 1).is_none());
+        assert_eq!(count(), 3);
+        assert_eq!(g.images.records.len(), images);
+        assert_eq!(g.loaded_while_drawing(), 0);
+        // A set left out of the preload is loaded late, and counted.
+        assert!(g.sprite("C", 1).is_none());
+        assert_eq!(count(), 4);
+        assert_eq!(g.loaded_while_drawing(), 1);
     }
 
     #[test]

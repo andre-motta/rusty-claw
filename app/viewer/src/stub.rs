@@ -114,6 +114,7 @@ impl Stub {
             camera: self.view.camera_for_center(c),
             renderables: self.renderables.clone(),
             palette_fade: self.fade,
+            camera_teleported: false,
         }
     }
 

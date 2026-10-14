@@ -29,7 +29,8 @@ pub const DEFAULT_MAX_TARGET: u32 = 8192;
 
 /// How long each visible and hidden phase of a flashing sprite lasts, in
 /// milliseconds. Objects set their own period in the game; this is the one
-/// a hit uses.
+/// a hit uses, and the renderer uses it for every blinking sprite. Phases
+/// run from simulation time 0, so all blinking sprites blink in step.
 pub const FLASH_PERIOD_MS: f64 = 33.0;
 
 /// Sprite flag: mirrored horizontally.

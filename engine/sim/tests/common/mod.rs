@@ -205,16 +205,23 @@ pub struct Tolerance {
 }
 
 /// The built-in movement targets (60 fps feel).
-fn builtin() -> BTreeMap<String, Tolerance> {
+pub fn builtin() -> BTreeMap<String, Tolerance> {
     let t = |value: f64, tolerance: f64| Tolerance {
         value,
         tolerance,
         provisional: false,
     };
+    // Targets the measurement still marks provisional, flagged in the output
+    // the same way as when the measured table is loaded.
+    let p = |value: f64, tolerance: f64| Tolerance {
+        value,
+        tolerance,
+        provisional: true,
+    };
     let mut m = BTreeMap::new();
     let rows: [(&str, Tolerance); 31] = [
-        ("walk_speed", t(269.22, 3.0)),
-        ("run_speed", t(330.0, 3.0)),
+        ("walk_speed", p(269.22, 3.0)),
+        ("run_speed", p(330.0, 3.0)),
         ("run_onset_ms", t(1500.0, 18.0)),
         ("stop_slide_px", t(0.0, 1.0)),
         ("jump_tap_peak", t(45.0, 1.0)),
@@ -229,21 +236,21 @@ fn builtin() -> BTreeMap<String, Tolerance> {
         ("jump_hold_162_peak", t(87.5, 1.0)),
         ("jump_hold_162_time_to_peak_ms", t(258.25, 18.0)),
         ("jump_hold_162_airtime_ms", t(533.0, 18.0)),
-        ("jump_hold_216_peak", t(121.0, 5.0)),
+        ("jump_hold_216_peak", p(121.0, 5.0)),
         ("jump_hold_216_time_to_peak_ms", t(328.75, 18.0)),
         ("jump_hold_216_airtime_ms", t(645.5, 20.5)),
         ("jump_full_peak", t(145.0, 1.0)),
         ("jump_full_time_to_peak_ms", t(366.5, 18.0)),
         ("jump_full_airtime_ms", t(724.5, 18.0)),
-        ("climb_speed", t(239.56, 3.0)),
-        ("climb_down_speed", t(220.05, 3.0)),
+        ("climb_speed", p(239.56, 3.0)),
+        ("climb_down_speed", p(220.05, 3.0)),
         ("fall_terminal_vy", t(1042.13, 25.0)),
         ("ledge_drop_px", t(64.0, 1.0)),
         ("ledge_fall_ms", t(200.25, 18.0)),
         ("cam_follow_lag_px", t(0.0, 1.0)),
         ("cam_settle_ms", t(25.0, 18.0)),
         ("lookup_state_delay_ms", t(657.0, 18.0)),
-        ("lookup_pan_delay_ms", t(915.0, 25.0)),
+        ("lookup_pan_delay_ms", p(915.0, 25.0)),
     ];
     for (k, v) in rows {
         m.insert(k.to_string(), v);

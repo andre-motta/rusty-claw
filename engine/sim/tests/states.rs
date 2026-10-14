@@ -185,13 +185,26 @@ fn hit_in_mid_air(fix: bool) -> Sim {
 }
 
 #[test]
-fn hit_ending_in_mid_air_falls_by_default() {
+fn hit_ending_in_mid_air_lands_by_default() {
     let mut sim = hit_in_mid_air(true);
-    assert_eq!(sim.player().unwrap().state, state::FALL);
-    let y = sim.player().unwrap().y;
+    let o = sim.player().unwrap();
+    assert_eq!(o.state, state::LAND, "Land, not Stand, in mid-air");
+    let y = o.y;
     sim.step(press(JUMP));
     assert_eq!(sim.player().unwrap().state, state::FALL, "no second jump");
     assert!(sim.player().unwrap().y >= y);
+}
+
+#[test]
+fn hit_ending_on_the_ground_stands_with_the_fix() {
+    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    sim.step(TickInput::default());
+    let before = sim.player().unwrap().clone();
+    sim.set_player_state(state::HIT);
+    sim.step(TickInput::default());
+    let o = sim.player().unwrap();
+    assert_eq!(o.state, state::STAND);
+    assert_eq!((o.x, o.y), (before.x, before.y));
 }
 
 #[test]

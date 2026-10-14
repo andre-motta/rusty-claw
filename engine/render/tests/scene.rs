@@ -305,6 +305,7 @@ fn snapshot_camera_is_the_logic_view_corner() {
         camera: Point { x: 680.0, y: 160.0 },
         renderables: vec![r],
         palette_fade: None,
+        camera_teleported: false,
     };
     let frame = interpolate(&snap, &snap, 0.0);
     let input = FrameInput::from_frame(&frame, &v);
@@ -357,4 +358,27 @@ fn integer_scaling_is_exact_nearest() {
         };
         assert_eq!(out[o..o + 4], want, "({ox}, {oy})");
     }
+}
+
+#[test]
+fn preloaded_sets_draw_the_same_without_loading_on_the_frame_path() {
+    let frame = busy_frame((1000.0, 400.0));
+    let mut lazy = graphics(None);
+    let mut b = SceneBuilder::new(&lazy, view(640, 480), DEFAULT_MAX_TARGET);
+    let lazy_scene = b.build(&mut lazy, &frame);
+    assert!(lazy.loaded_while_drawing() > 0);
+
+    let mut eager = graphics(None);
+    let keys: Vec<&str> = frame.sprites.iter().map(|s| s.key).collect();
+    assert_eq!(eager.preload(&keys), 5, "SPR, ODD, KEYED, GHOSTLY, MISSING");
+    let images = eager.images.records.len();
+    let mut b = SceneBuilder::new(&eager, view(640, 480), DEFAULT_MAX_TARGET);
+    let eager_scene = b.build(&mut eager, &frame);
+    assert_eq!(eager.loaded_while_drawing(), 0);
+    assert_eq!(eager.images.records.len(), images, "nothing decoded");
+    // Image ids follow load order, so compare the composed pictures.
+    let a = cpu::compose(&lazy, &lazy_scene);
+    let b = cpu::compose(&eager, &eager_scene);
+    assert_eq!((a.width, a.height), (b.width, b.height));
+    assert!(a.index == b.index, "the same picture");
 }
