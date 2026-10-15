@@ -3,12 +3,14 @@
 //! The binary `rusty-claw` is a thin front end over this library, which the
 //! end-to-end tests drive directly:
 //!
-//! - [`settings`]: command line, config file and the view they describe;
+//! - [`settings`]: command line, config file and the view they describe,
+//!   and writing changed options back to the config file;
 //! - [`load`]: reading a retail or community custom level from the install;
 //! - [`session`]: the simulation, the fixed-step frame driver and input;
-//! - [`keymap`]: the keyboard map;
-//! - [`input`]: the input router every key goes through, and recording
-//!   the input of a game;
+//! - [`keymap`]: the keyboard and gamepad maps, and rebinding;
+//! - [`input`]: the input router every key and gamepad goes through, and
+//!   recording the input of a game;
+//! - [`saves`]: saved games;
 //! - [`audio`]: playing the game's sounds;
 //! - [`window`]: the game window;
 //! - [`bench`]: benchmarks in a window or offscreen;
@@ -17,8 +19,9 @@
 //! Claw stands, walks, runs, jumps, falls, lands, crouches, looks up and
 //! climbs, with tile collision and a following camera, and fights with his
 //! sword, fists and feet. Officers fight back, and the game plays its
-//! sounds. Other enemies, shots, pickups, music, menus and the status bar
-//! come later.
+//! sounds. Keys can be rebound, gamepads work, options are written back to
+//! the config file and games can be saved. Other enemies, shots, pickups,
+//! music, menus and the status bar come later.
 
 use claw_frame::SimulatedRefresh;
 use claw_sim::InputScript;
@@ -29,6 +32,7 @@ pub mod bench;
 pub mod input;
 pub mod keymap;
 pub mod load;
+pub mod saves;
 pub mod session;
 pub mod settings;
 pub mod window;
