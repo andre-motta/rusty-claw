@@ -1,15 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
-    "engine/assets",
-    "engine/frame",
-    "engine/render",
-    "engine/sim",
-    "app/info",
-    "app/viewer",
-    "app/game",
-    "tools/replay",
-    "tests/acceptance",
+    "engine/*",
+    "app/*",
+    "tools/*",
+    "tests/*",
 ]
 
 [workspace.package]
@@ -21,9 +16,11 @@ publish = false
 
 [workspace.dependencies]
 claw-assets = { path = "engine/assets" }
+claw-audio = { path = "engine/audio" }
 claw-frame = { path = "engine/frame" }
 claw-render = { path = "engine/render" }
 claw-sim = { path = "engine/sim" }
+claw-ui = { path = "engine/ui" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
