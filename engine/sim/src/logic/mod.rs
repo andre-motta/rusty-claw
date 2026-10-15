@@ -249,11 +249,13 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     }
 }
 
-/// `carrier` lifted `id`.
+/// `carrier` lifted `id`. Kegs, crates and the human enemies (officers
+/// and soldiers, see [`enemy::lift`]) react; other families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
         Some(GameLogic::Crate) => crates::lifted(w, id, carrier),
+        Some(GameLogic::Officer | GameLogic::Soldier) => enemy::lift::lifted(w, id, carrier),
         _ => {}
     }
 }
@@ -263,6 +265,7 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::thrown(w, id, vx, vy),
         Some(GameLogic::Crate) => crates::thrown(w, id, vx, vy),
+        Some(GameLogic::Officer | GameLogic::Soldier) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
 }
@@ -272,6 +275,7 @@ pub fn dropped(w: &mut World, id: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::dropped(w, id),
         Some(GameLogic::Crate) => crates::dropped(w, id),
+        Some(GameLogic::Officer | GameLogic::Soldier) => enemy::lift::dropped(w, id),
         _ => {}
     }
 }
@@ -316,7 +320,13 @@ mod tests;
 
 #[cfg(test)]
 mod unit {
+    use claw_frame::TickInput;
+
     use super::*;
+    use crate::level::{ObjectSpec, SimLevel};
+    use crate::logic::enemy::EnemyState;
+    use crate::tiles::TileMap;
+    use crate::{Sim, SimConfig};
 
     #[test]
     fn every_name_belongs_to_one_family() {
@@ -340,6 +350,107 @@ mod unit {
             sorted.dedup();
             assert_eq!(list, sorted);
             assert!(list.iter().all(|s| !s.is_empty()));
+        }
+    }
+
+    /// A flat floor with an officer, a soldier and a rat beside Claw, all
+    /// built.
+    fn enemies_beside_claw() -> (Sim, ObjectId, [ObjectId; 3]) {
+        let mut rows = vec![".".repeat(60); 15];
+        rows.push("#".repeat(60));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let mut level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600));
+        for (name, x) in [("Officer", 900), ("Soldier", 1100), ("Rat", 1200)] {
+            level.objects.push(ObjectSpec::at(name, x, 900, 4000));
+        }
+        let mut sim = Sim::new(level, SimConfig::default());
+        for _ in 0..3 {
+            sim.step(TickInput::default());
+        }
+        let find = |g: GameLogic| {
+            sim.objects()
+                .all()
+                .find(|(_, o)| o.kind == LogicKind::Game(g))
+                .map(|(id, _)| id)
+                .expect("the enemy exists")
+        };
+        let ids = [
+            find(GameLogic::Officer),
+            find(GameLogic::Soldier),
+            find(GameLogic::Rat),
+        ];
+        let claw = sim
+            .objects()
+            .all()
+            .find(|(_, o)| o.kind == LogicKind::Player)
+            .map(|(id, _)| id)
+            .expect("Claw");
+        (sim, claw, ids)
+    }
+
+    /// What lifting changes on an object: state, flags, position, type,
+    /// physics and data.
+    fn look(sim: &Sim, id: ObjectId) -> (i32, u32, i32, i32, u32, i32, ObjectData) {
+        let o = sim.objects().get(id).expect("the object exists");
+        (
+            o.state,
+            o.flags,
+            o.x,
+            o.y,
+            o.type_flags,
+            o.physics_type,
+            o.data.clone(),
+        )
+    }
+
+    fn enemy_state(sim: &Sim, id: ObjectId) -> Option<EnemyState> {
+        sim.objects()
+            .get(id)
+            .and_then(|o| EnemyState::from_id(o.state))
+    }
+
+    #[test]
+    fn lifting_an_officer_or_a_soldier_reaches_its_family() {
+        let (sim, claw, [officer, soldier, rat]) = enemies_beside_claw();
+        let rat_before = look(&sim, rat);
+        for id in [officer, soldier] {
+            let mut sim = sim.clone();
+            assert!(enemy_state(&sim, id).is_some(), "built");
+            sim.with_world(|w| lifted(w, id, claw));
+            assert_eq!(enemy_state(&sim, id), Some(EnemyState::Lifted));
+            sim.with_world(|w| thrown(w, id, 300, -650));
+            assert_eq!(enemy_state(&sim, id), Some(EnemyState::Thrown));
+        }
+        for id in [officer, soldier] {
+            let mut sim = sim.clone();
+            sim.with_world(|w| {
+                lifted(w, id, claw);
+                dropped(w, id);
+            });
+            sim.step(TickInput::default());
+            assert_eq!(enemy_state(&sim, id), Some(EnemyState::Dropped));
+        }
+        // The rat is never lifted.
+        let mut sim = sim.clone();
+        sim.with_world(|w| {
+            lifted(w, rat, claw);
+            thrown(w, rat, 300, -650);
+            dropped(w, rat);
+        });
+        assert_eq!(look(&sim, rat), rat_before);
+    }
+
+    #[test]
+    fn an_enemy_nobody_lifted_ignores_throws_and_drops() {
+        let (sim, _, [officer, soldier, _]) = enemies_beside_claw();
+        for id in [officer, soldier] {
+            let mut sim = sim.clone();
+            let before = look(&sim, id);
+            sim.with_world(|w| {
+                thrown(w, id, 300, -650);
+                dropped(w, id);
+            });
+            assert_eq!(look(&sim, id), before);
         }
     }
 

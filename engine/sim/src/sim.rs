@@ -216,6 +216,13 @@ impl Runner<'_> {
             f(&mut ctx)
         };
         objects.swap_payload(id, &mut held);
+        self.say_requested(objects);
+        Some(r)
+    }
+
+    /// Carries out the voice requests made since the last call, in request
+    /// order.
+    fn say_requested(&mut self, objects: &mut Container) {
         let voice = self.out.take_voice();
         if !voice.is_empty() {
             let mut w = self.world(objects);
@@ -223,7 +230,6 @@ impl Runner<'_> {
                 logic::sound::claw_say(&mut w, &v.key, v.force);
             }
         }
-        Some(r)
     }
 
     /// Starts the screen shake asked for since the last call, timed from
@@ -541,6 +547,9 @@ impl Sim {
         {
             let (mut runner, objects, activation) = self.parts();
             activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
+            // A line asked for outside Claw's handler, or while his handler
+            // did not run, is said in this tick rather than left waiting.
+            runner.say_requested(objects);
             runner.list_spawned(objects);
             // A shake asked for after the camera ran starts from this tick
             // too; the camera applies it from its next call.
@@ -986,6 +995,37 @@ mod tests {
         assert!(snap.audio.iter().any(
             |c| matches!(c, AudioCue::Play(s) if s.key == "CLAW_OTHER" && s.channel == SoundChannel::Voice)
         ));
+    }
+
+    #[test]
+    fn a_line_left_waiting_is_said_by_the_end_of_the_tick() {
+        let mut level = flat();
+        level.sounds.insert("CLAW_LINE".into(), Some(900));
+        let mut sim = Sim::new(level, SimConfig::default());
+        idle_ticks(&mut sim, 2);
+        let claw = sim.player.unwrap();
+        // Asked for outside Claw's handler, in a tick his handler skips.
+        sim.with_world(|w| {
+            w.out.say("CLAW_LINE", false);
+            w.objects.get_mut(claw).unwrap().frame_delay = 1;
+        });
+        assert_eq!(sim.out.voice_requests().len(), 1);
+        let snap = sim.step(TickInput::default());
+        assert!(
+            snap.audio.iter().any(|c| matches!(
+                c,
+                AudioCue::Play(s) if s.key == "CLAW_LINE" && s.channel == SoundChannel::Voice
+            )),
+            "the line is said in the tick it was left waiting in"
+        );
+        assert!(sim.out.voice_requests().is_empty(), "nothing is left over");
+        assert!(sim.clone().out.voice_requests().is_empty());
+    }
+
+    fn idle_ticks(sim: &mut Sim, n: usize) {
+        for _ in 0..n {
+            sim.step(TickInput::default());
+        }
     }
 
     #[test]

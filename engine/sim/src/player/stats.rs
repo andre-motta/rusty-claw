@@ -188,6 +188,8 @@ pub struct StartState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tiles::TileMap;
+    use crate::{Sim, SimConfig, SimLevel};
 
     #[test]
     fn new_game_values() {
@@ -210,7 +212,7 @@ mod tests {
     }
 
     #[test]
-    fn deaths_count_attempts_and_do_not_carry() {
+    fn deaths_count_attempts_and_wrap() {
         let mut s = PlayerStats::new_game();
         s.count_attempt();
         s.count_attempt();
@@ -218,6 +220,28 @@ mod tests {
         s.attempt = u32::MAX;
         s.count_attempt();
         assert_eq!(s.attempt, 0, "the counter wraps instead of failing");
+    }
+
+    #[test]
+    fn a_new_level_started_with_carried_progress_starts_at_attempt_zero() {
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600));
+        let mut sim = Sim::new(level.clone(), SimConfig::default());
+        sim.with_world(|w| {
+            w.claw.stats.count_attempt();
+            w.claw.stats.count_attempt();
+            w.claw.stats.score = 1234;
+        });
+        assert_eq!(sim.stats().attempt, 2);
+        let start = StartState {
+            carry: Some(sim.carry()),
+            save: None,
+        };
+        let next = Sim::with_start(level, SimConfig::default(), start);
+        assert_eq!(next.stats().score, 1234, "the progress is carried");
+        assert_eq!(next.stats().attempt, 0, "the attempt counter is not");
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! The framework inputs the level and player code build on: the attack
 //! gate of the standing state, the level number, the attempt counter, the
-//! image sets' frame ranges and boxes, the screen shake request and the
-//! sound-only random stream, driven through the public simulation API.
+//! image sets' frame ranges and boxes, the screen shake request, the
+//! sound-only random stream and the kind of a kill, driven through the
+//! public simulation API.
 //!
 //! The tests named `install_*` read the user's own install from the folder
 //! named by `CLAW_INSTALL` at run time and skip themselves when it is
@@ -16,7 +17,7 @@ use claw_assets::level::RETAIL_LEVELS;
 use claw_assets::{AssetStore, Install, LevelData, LevelSource};
 use claw_sim::anim::Animation;
 use claw_sim::level::{ImageFrames, frame_box};
-use claw_sim::object::{Rect, draw_flags, flags};
+use claw_sim::object::{LogicKind, Object, Rect, draw_flags, engine_state, flags, types};
 use claw_sim::player::state;
 use claw_sim::{Buttons, Sim, SimConfig, SimLevel, TickInput};
 use common::*;
@@ -208,6 +209,46 @@ fn the_sound_stream_is_seeded_per_level_and_apart_from_the_game_stream() {
     assert_ne!(a.sound_rng(), a.rng());
     let c = Sim::new(flat_level(), SimConfig::default());
     assert_eq!(a.sound_rng(), c.sound_rng());
+}
+
+/// An undrawn object with no logic of its own at (x, 900).
+fn bare(name: &str, x: i32) -> Object {
+    let mut o = Object::new(0, x, 900, 10, name.into(), LogicKind::Inert);
+    o.flags = flags::WORLD;
+    o
+}
+
+#[test]
+fn a_survived_kill_leaves_no_kind_for_a_later_death_by_hit_damage() {
+    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    idle(&mut sim, 2);
+    let mut target = bare("TestTarget", 1300);
+    target.flags |= flags::AUTO_HIT_DAMAGE;
+    target.hit_type_flags = types::THROWN;
+    target.hit_rect = Rect::new(-5, -5, 5, 5);
+    target.health = 20;
+    let id = sim.spawn(target);
+    assert!(sim.with_world(|w| w.kill(id, 2)));
+    let o = sim.objects().get(id).unwrap();
+    assert_eq!((o.state, o.kill_kind), (engine_state::KILLED, 2));
+    // Its logic lets it live through that kind of kill.
+    sim.with_world(|w| w.objects.get_mut(id).unwrap().state = 1);
+    idle(&mut sim, 1);
+    assert_eq!(sim.objects().get(id).unwrap().state, 1);
+    // Later something thrown at it takes the rest of its health.
+    let mut blow = bare("TestBlow", 1300);
+    blow.type_flags = types::THROWN;
+    blow.attack_rect = Rect::new(-5, -5, 5, 5);
+    blow.damage = 30;
+    sim.spawn(blow);
+    idle(&mut sim, 1);
+    let o = sim.objects().get(id).unwrap();
+    assert!(o.health <= 0);
+    assert_eq!(
+        (o.state, o.kill_kind),
+        (engine_state::KILLED, 0),
+        "an ordinary kill, not the old kind"
+    );
 }
 
 // ------------------------------------------------------------- install

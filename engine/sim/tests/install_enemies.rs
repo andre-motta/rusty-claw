@@ -12,7 +12,7 @@ use std::time::Instant;
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_frame::{Buttons, TickInput};
 use claw_sim::activation::ActivationConfig;
-use claw_sim::logic::enemy::{self, EnemyState};
+use claw_sim::logic::enemy::{self, DeathKind, EnemyState};
 use claw_sim::object::{LogicKind, Object, ObjectId};
 use claw_sim::physics::{self, ptype};
 use claw_sim::player::state;
@@ -74,10 +74,31 @@ fn enemy_from(sim: &Sim, x: i32, y: i32, z: i32) -> Option<ObjectId> {
         .map(|(id, _)| id)
 }
 
-fn state_of(sim: &Sim, id: ObjectId) -> Option<EnemyState> {
-    sim.objects()
-        .get(id)
-        .and_then(|o| EnemyState::from_id(o.state))
+/// How a fight stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// The enemy is alive.
+    Alive,
+    /// Seen dead of a hit: a kill.
+    Killed,
+    /// Removed, or dead some other way, without being seen dead of a hit
+    /// first: not a sword kill.
+    Lost,
+}
+
+/// How the fight with `id` stands. Only an enemy seen dead of a hit counts
+/// as killed; one that disappears before that does not.
+fn outcome(sim: &Sim, id: ObjectId) -> Outcome {
+    let Some(o) = sim.objects().get(id) else {
+        return Outcome::Lost;
+    };
+    match EnemyState::from_id(o.state) {
+        Some(EnemyState::Dead) => match enemy::data_of(o) {
+            Some(d) if d.dead && d.death == DeathKind::Hit => Outcome::Killed,
+            _ => Outcome::Lost,
+        },
+        _ => Outcome::Alive,
+    }
 }
 
 fn feet(o: &Object) -> i32 {
@@ -163,14 +184,15 @@ fn place(sim: &mut Sim, (x, y, z): (i32, i32, i32), rat: bool) -> Option<ObjectI
 }
 
 /// Fights the enemy `id` with the sword: walks up to it, faces it and
-/// attacks (crouching for a rat) until it is dead or `ticks` ran out.
-/// Returns the tick it died on.
+/// attacks (crouching for a rat) until it is seen dead of a hit, it is
+/// lost some other way, or `ticks` ran out. Returns the tick it died on.
 fn fight(sim: &mut Sim, id: ObjectId, rat: bool, ticks: usize) -> Option<usize> {
     let mut since_press = 0;
     for t in 0..ticks {
-        match state_of(sim, id) {
-            Some(EnemyState::Dead) | None => return Some(t),
-            _ => {}
+        match outcome(sim, id) {
+            Outcome::Killed => return Some(t),
+            Outcome::Lost => return None,
+            Outcome::Alive => {}
         }
         let (c, o) = (sim.player().unwrap(), sim.objects().get(id).unwrap());
         let dx = o.x - c.x;
@@ -208,14 +230,18 @@ fn fight(sim: &mut Sim, id: ObjectId, rat: bool, ticks: usize) -> Option<usize> 
 
 /// Strikes at the enemy `id` from the air: Claw is put beside it at its
 /// height, facing it, and swipes as he falls past. Tried from both sides
-/// at a few heights; returns the tick of the try that killed it.
+/// at a few heights; returns the tick of the try that killed it (seen dead
+/// of a hit, as in [`fight`]).
 fn strike_from_the_air(sim: &mut Sim, id: ObjectId, ticks: usize) -> Option<usize> {
     let mut used = 0;
     for rise in [10, 20, 0, 30] {
         for side in [-1, 1] {
-            let Some(o) = sim.objects().get(id) else {
-                return Some(used);
-            };
+            match outcome(sim, id) {
+                Outcome::Killed => return Some(used),
+                Outcome::Lost => return None,
+                Outcome::Alive => {}
+            }
+            let o = sim.objects().get(id)?;
             let (x, y) = (o.x, o.y);
             sim.teleport_player(x + side * 55, y - rise);
             let toward = if side < 0 { RIGHT } else { LEFT };
@@ -229,8 +255,10 @@ fn strike_from_the_air(sim: &mut Sim, id: ObjectId, ticks: usize) -> Option<usiz
             });
             for _ in 0..20 {
                 used += 1;
-                if matches!(state_of(sim, id), Some(EnemyState::Dead) | None) {
-                    return Some(used);
+                match outcome(sim, id) {
+                    Outcome::Killed => return Some(used),
+                    Outcome::Lost => return None,
+                    Outcome::Alive => {}
                 }
                 sim.step(TickInput::default());
             }
@@ -287,17 +315,25 @@ fn install_every_enemy_can_be_killed_with_the_sword() {
         match killed {
             Some(t) => slowest = slowest.max(t),
             None => {
-                let o = sim.objects().get(id).unwrap();
                 let c = sim.player().unwrap();
-                failed.push(format!(
-                    "{logic} at ({x}, {y}): alive after the fight, at ({}, {}) in {:?}, Claw at ({}, {}) health {}",
-                    o.x,
-                    o.y,
-                    EnemyState::from_id(o.state),
-                    c.x,
-                    c.y,
-                    sim.stats().health
-                ));
+                let at = format!("Claw at ({}, {}) health {}", c.x, c.y, sim.stats().health);
+                match sim.objects().get(id) {
+                    Some(o) if outcome(&sim, id) == Outcome::Alive => failed.push(format!(
+                        "{logic} at ({x}, {y}): alive after the fight, at ({}, {}) in {:?}, {at}",
+                        o.x,
+                        o.y,
+                        EnemyState::from_id(o.state),
+                    )),
+                    Some(o) => failed.push(format!(
+                        "{logic} at ({x}, {y}): dead of {:?}, not of a hit, at ({}, {}), {at}",
+                        enemy::data_of(o).map(|d| d.death),
+                        o.x,
+                        o.y,
+                    )),
+                    None => failed.push(format!(
+                        "{logic} at ({x}, {y}): removed without being seen dead of a hit, {at}"
+                    )),
+                }
             }
         }
     }

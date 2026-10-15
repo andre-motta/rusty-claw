@@ -195,9 +195,9 @@ pub mod draw_flags {
 pub mod engine_state {
     /// First logic call.
     pub const INIT: i32 = 0;
-    /// Health dropped to zero through automatic hit damage, or a logic
-    /// killed the object with [`crate::logic::World::kill`] (which also
-    /// records the kind of kill in [`super::Object::kill_kind`]).
+    /// Health dropped to zero through automatic hit damage (kill kind 0),
+    /// or a logic killed the object with [`crate::logic::World::kill`]
+    /// (which records the kind of kill in [`super::Object::kill_kind`]).
     pub const KILLED: i32 = 28;
     /// Last call before destruction.
     pub const DESTROYING: i32 = 29;
@@ -303,9 +303,11 @@ pub struct Object {
     /// The update pass clears it at the start of the object's turn, so a
     /// platform logic sets it only in the ticks it moves.
     pub platform_move: (i32, i32),
-    /// Kind of the last kill asked for with [`crate::logic::World::kill`],
-    /// 0 when none was; the logic reads it when it sees
-    /// [`engine_state::KILLED`].
+    /// Kind of the kill the object sees with [`engine_state::KILLED`]: the
+    /// kind given to [`crate::logic::World::kill`], or 0 for a kill by
+    /// automatic hit damage. The logic reads it when it sees KILLED. An
+    /// object that survives a kill keeps the kind until its next kill sets
+    /// it again, so a later death by hit damage sees 0, not the old kind.
     pub kill_kind: i32,
     /// Animation player.
     pub anim: AnimPlayer,
