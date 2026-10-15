@@ -162,9 +162,18 @@ fn claw_never_enters_solid_and_lands_only_from_above() {
                 "seed {seed} tick {i} at ({}, {}) state {}",
                 o.x, o.y, o.state
             );
-            // The centre column of the body and the feet are never Solid.
-            for y in [o.y + r.top, o.y, o.y + r.bottom] {
-                assert!(!solid_at(&map, o.x, y), "inside Solid: {ctx}");
+            // The body never overlaps Solid: its centre column and both
+            // edges of the movement box, from the top to the feet.
+            for x in [o.x + r.left, o.x, o.x + r.right] {
+                let mut y = o.y + r.top;
+                while y <= o.y + r.bottom {
+                    assert!(!solid_at(&map, x, y), "inside Solid at ({x}, {y}): {ctx}");
+                    y += o.move_res_y.max(1);
+                }
+                assert!(
+                    !solid_at(&map, x, o.y + r.bottom),
+                    "feet in Solid at {x}: {ctx}"
+                );
             }
             // Landing moves down onto the surface, never up through it.
             let landed = prev.state == state::FALL && o.state != state::FALL;

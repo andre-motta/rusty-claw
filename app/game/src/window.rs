@@ -61,7 +61,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::audio::{AudioBridge, ViewInfo};
-use crate::bench::{PresentDetail, Report, Samples, Summary, WARMUP_S, route};
+use crate::bench::{Combat, PresentDetail, Report, Samples, Summary, WARMUP_S, combat_route};
 use crate::flow::{self, Effect, Flow, Screen, Start};
 use crate::input::{InputContext, InputRouter, Recorder, Routed};
 use crate::keymap::Command;
@@ -203,6 +203,9 @@ struct BenchState {
     samples: Samples,
     last_present: Option<Instant>,
     route_ticks: usize,
+    route_kind: &'static str,
+    route_start: Option<(i32, i32)>,
+    combat: Combat,
 }
 
 /// A level being played.
@@ -647,6 +650,16 @@ impl App {
                 self.settings.sim_config(first_output),
                 self.settings.start,
             );
+            // The benchmark plays the level's combat route, planned on a
+            // copy of the game (from the given start point when there is
+            // one).
+            let bench_route = match &self.mode {
+                WindowMode::Bench(seconds) => {
+                    let seconds = (seconds + WARMUP_S) * 1.25 + 2.0;
+                    Some(combat_route(&sim, seconds, self.settings.start.is_some()))
+                }
+                _ => None,
+            };
             announce_widening(&self.settings, first_output, &sim);
             self.preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
             let mut status = StatusLayer::new(&mut graphics, &bundle);
@@ -662,12 +675,14 @@ impl App {
                 WindowMode::Play => {}
                 WindowMode::Watch(script) => session = session.with_replay(script.clone()),
                 WindowMode::Bench(seconds) => {
-                    let script = route(seconds + WARMUP_S);
-                    let route_ticks = script.ticks.len();
-                    session = session.with_looped_replay(script);
+                    let r = bench_route.expect("made for the benchmark");
+                    session = session.with_replay(r.script.clone());
+                    session.set_before_tick(r.mover());
                     self.bench = Some(BenchState {
                         seconds: *seconds,
-                        route_ticks,
+                        route_ticks: r.script.ticks.len(),
+                        route_kind: r.kind,
+                        route_start: self.settings.start.or(r.start()),
                         ..BenchState::default()
                     });
                 }
@@ -1526,6 +1541,9 @@ impl App {
         }
         b.samples.frame(work, f.ticks);
         b.samples.acquire_ms.push(acquire.as_secs_f64() * 1000.0);
+        if f.ticks > 0 {
+            b.combat.look(session.sim());
+        }
         if measured >= WARMUP_S + b.seconds {
             let comp = scene.comp;
             let sim = session.sim();
@@ -1569,8 +1587,12 @@ impl App {
                 preloaded_sets: self.preloaded,
                 images_loaded_during_run: level.graphics.images.records.len() - b.images_at_start,
                 load_ms: self.load_ms,
+                route_kind: b.route_kind,
+                route_start: b.route_start,
                 route_ticks: b.route_ticks,
                 ticks_past_route: session.ticks_past_script(),
+                combat: b.combat,
+                audio: None,
                 samples: std::mem::take(&mut b.samples),
                 ticks_measured: session.tick_samples().to_vec(),
             });

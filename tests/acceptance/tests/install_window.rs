@@ -1,7 +1,8 @@
 //! A 640x480 game window holds 60 frames per second or more.
 //!
-//! Opens the game window at 640x480 on level 1 with the benchmark route for
-//! a few seconds and checks the presented frame rate. It also prints the
+//! Opens the game window at 640x480 on level 1 with the benchmark's combat
+//! route for a few seconds and checks the presented frame rate and that the
+//! route lasted the run. It also prints the
 //! frame work and the number of frames that missed the display's refresh.
 //! Windows must be opened from the main thread, so this file runs without
 //! the test harness. It is skipped without `CLAW_INSTALL` or without a
@@ -63,6 +64,13 @@ fn main() -> ExitCode {
         report.missed_vblanks(),
         report.frame_work().p99
     );
+    if report.route_kind != "combat" || report.route_ticks == 0 {
+        eprintln!(
+            "install_window: not the combat route: {}",
+            report.route_kind
+        );
+        return ExitCode::FAILURE;
+    }
     if report.ticks_past_route != 0 {
         eprintln!("install_window: the route ran out");
         return ExitCode::FAILURE;

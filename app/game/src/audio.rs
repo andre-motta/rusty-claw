@@ -37,8 +37,9 @@
 //! music is off, one message says how to get a bank, and sound effects are
 //! unaffected.
 //!
-//! Only the window's normal play opens an audio device. Replays, benchmarks
-//! and headless runs never create a bridge.
+//! Only the window's normal play opens an audio device. The headless
+//! benchmark plays through a silent output (with music, so its mixing and
+//! synthesis run); replays and the window benchmark create no bridge.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
