@@ -262,6 +262,34 @@ impl ImageSource for MemoryImages {
     }
 }
 
+/// Claw's image set.
+pub const CLAW_SET: &str = "CLAW";
+
+/// Extra vertical draw offsets of Claw's climb-over frames, 383 to 389.
+/// The game adds these when it sets Claw up, so the pose follows his feet
+/// while he climbs over a ladder top; the files alone draw it up to 45 px
+/// too high.
+pub const CLIMB_OVER_FIX: [(i32, i32); 7] = [
+    (383, 4),
+    (384, 8),
+    (385, 12),
+    (386, 16),
+    (387, 40),
+    (388, 54),
+    (389, 58),
+];
+
+/// The vertical draw offset added to frame `number` of the set `key`.
+pub fn draw_offset_fix(key: &str, number: i32) -> i32 {
+    if key != CLAW_SET {
+        return 0;
+    }
+    CLIMB_OVER_FIX
+        .iter()
+        .find(|&&(n, _)| n == number)
+        .map_or(0, |&(_, dy)| dy)
+}
+
 /// Frames of one loaded set: frame number to image id.
 pub type FrameMap = BTreeMap<i32, u32>;
 
@@ -393,6 +421,7 @@ impl LevelGraphics {
             let id = self
                 .images
                 .add(&f.frame, f.path.as_deref(), self.pack.as_mut());
+            self.images.meta[id as usize].offset_y += draw_offset_fix(key, f.number);
             map.insert(f.number, id);
         }
         Some(map)
@@ -734,5 +763,28 @@ mod tests {
         );
         assert_eq!(g.plane_slots[0].len(), 6);
         assert_eq!((g.planes[1].w_tiles, g.plane_slots[1].len()), (0, 0));
+    }
+    #[test]
+    fn claw_climb_over_frames_are_drawn_lower() {
+        let mut src = MemoryImages::default();
+        for n in [1, 383, 386, 389] {
+            src.insert(CLAW_SET, n, frame(2, 2, 0, |_, _| 1));
+        }
+        src.insert("OTHER", 389, frame(2, 2, 0, |_, _| 1));
+        let pal = Palette::default();
+        let mut g = LevelGraphics::new(
+            Vec::new(),
+            true,
+            pal.clone(),
+            LevelTables::blank(&pal),
+            Box::new(src),
+            None,
+        );
+        let dy = |g: &mut LevelGraphics, key: &str, n: i32| g.frame_info(key, n).unwrap().offset_y;
+        assert_eq!(dy(&mut g, CLAW_SET, 1), 0);
+        assert_eq!(dy(&mut g, CLAW_SET, 383), 4);
+        assert_eq!(dy(&mut g, CLAW_SET, 386), 16);
+        assert_eq!(dy(&mut g, CLAW_SET, 389), 58);
+        assert_eq!(dy(&mut g, "OTHER", 389), 0, "other sets keep their offsets");
     }
 }

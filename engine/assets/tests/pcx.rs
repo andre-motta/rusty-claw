@@ -161,7 +161,15 @@ proptest! {
         let data = pcx::build(w as u16, h as u16, &pcx::encode(&pixels), None);
         let (img, pal) = pcx::decode(&data).unwrap();
         prop_assert_eq!(img.pixels, pixels);
-        prop_assert_eq!(pal, None);
+        // A file without a palette reads as having one when its stream
+        // happens to hold the marker 769 bytes from the end.
+        let marker_at_end = data
+            .len()
+            .checked_sub(769)
+            .is_some_and(|at| at >= HEADER_SIZE && data[at] == PALETTE_MARKER);
+        if !marker_at_end {
+            prop_assert_eq!(pal, None);
+        }
     }
 
     #[test]
