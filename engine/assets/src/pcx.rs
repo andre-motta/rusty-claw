@@ -12,8 +12,10 @@
 //!   one pixel. A run that is longer than what is left of its row carries on
 //!   at the start of the next row.
 //! - The palette is the last 768 bytes of the file, 256 (red, green, blue)
-//!   triples, preceded by the marker byte `0x0C`. A file without the marker
-//!   has no palette.
+//!   triples, as the game reads it: whenever at least 768 bytes follow the
+//!   pixel stream, the last 768 are the palette. The marker byte `0x0C`
+//!   that normally sits in front of it is not checked. A file that ends
+//!   sooner has no palette.
 //!
 //! Like every reader in this crate it treats its input as untrusted: the
 //! size is bounded, a stream too short for the image is refused before
@@ -134,11 +136,12 @@ pub fn decode(data: &[u8]) -> Result<(IndexedImage, Option<Palette>)> {
             out += 1;
         }
     }
+    let stream_end = HEADER_SIZE + pos;
     let palette = data
         .len()
-        .checked_sub(PALETTE_SIZE + 1)
-        .filter(|&at| at >= HEADER_SIZE && data[at] == PALETTE_MARKER)
-        .and_then(|at| Palette::parse(&data[at + 1..]).ok());
+        .checked_sub(PALETTE_SIZE)
+        .filter(|&at| at >= stream_end)
+        .and_then(|at| Palette::parse(&data[at..]).ok());
     Ok((
         IndexedImage {
             width,
@@ -214,5 +217,27 @@ mod tests {
         assert!(decode(&build(4, 1, &[7, 0xC3], None)).is_err());
         assert!(decode(&build(4, 1, &[7], None)).is_err());
         assert!(decode(&[0; 10]).is_err());
+    }
+
+    #[test]
+    fn the_palette_is_the_last_768_bytes_after_the_stream() {
+        let pal = Palette(std::array::from_fn(|i| [i as u8, 1, 2]));
+        let with = build(4, 1, &[7, 0xC3, 9], Some(&pal));
+        assert_eq!(decode(&with).unwrap().1, Some(pal.clone()));
+        // The marker is not checked.
+        let mut other = with.clone();
+        other[with.len() - PALETTE_SIZE - 1] = 0x55;
+        assert_eq!(decode(&other).unwrap().1, Some(pal.clone()));
+        // No marker at all: the 768 bytes right after the stream.
+        let mut bare = build(4, 1, &[7, 0xC3, 9], None);
+        for c in &pal.0 {
+            bare.extend_from_slice(c);
+        }
+        assert_eq!(decode(&bare).unwrap().1, Some(pal));
+        // Fewer than 768 bytes after the stream: no palette, whatever the
+        // byte 769 from the end holds.
+        let mut short = build(1000, 1, &encode(&[PALETTE_MARKER; 1000]), None);
+        short.extend_from_slice(&[0; 767]);
+        assert_eq!(decode(&short).unwrap().1, None);
     }
 }

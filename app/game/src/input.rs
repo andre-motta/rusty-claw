@@ -9,8 +9,8 @@
 //! - pads can be plugged in and out at any time, and several pads act as
 //!   one;
 //! - the d-pad and the left stick move; the stick has a radial dead zone
-//!   (by default 0.66 of a full deflection) and points in eight
-//!   directions;
+//!   (by default 0.34 of a full deflection, the original joystick's feel)
+//!   and points in eight directions;
 //! - the buttons follow the pad map (by default the original joystick
 //!   layout, see [`crate::keymap`]), and Start pauses;
 //! - a pad or key held together with another source of the same button

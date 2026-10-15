@@ -203,12 +203,14 @@ fn every_interrupted_write_leaves_a_whole_file() {
             ..WriteHooks::default()
         };
         let r = ConfigFile::update_in_place_with(&path, &[("res", "800x600")], &mut hooks);
-        assert!(r.is_err(), "{step:?}");
         let now = fs::read_to_string(&path).unwrap();
         if step == WriteStep::SyncDir {
-            // Failing after the rename: the new file is whole.
+            // Failing after the rename: the new file is whole and in place,
+            // so the write counts as done (with a warning).
+            assert!(r.is_ok(), "{step:?}: {r:?}");
             assert!(now.contains("res = \"800x600\""), "{step:?}");
         } else {
+            assert!(r.is_err(), "{step:?}");
             assert_eq!(now, REALISTIC, "{step:?}");
         }
         // No temporary file is left behind.
@@ -335,6 +337,13 @@ fn links_and_permissions_are_kept() {
         fs::metadata(&real).unwrap().permissions().mode() & 0o777,
         0o600
     );
+    // The backup of a private file is private too.
+    let bak = claw_game::settings::backup_path(&real);
+    assert_eq!(fs::read_to_string(&bak).unwrap(), "vsync = on\n");
+    assert_eq!(
+        fs::metadata(&bak).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 }
 
 #[test]
@@ -376,7 +385,7 @@ fn new_keys_reach_audio_and_input() {
     .unwrap();
     assert_eq!((s.sound_volume, s.music_volume), (80, 50));
     assert!(s.voice && s.ambient && s.pad.enabled);
-    assert_eq!(s.pad.dead_zone, 0.66);
+    assert_eq!(s.pad.dead_zone, 0.34);
     assert_eq!(s.keymap, Keymap::default());
     for bad in [
         "sound_volume = 101",
@@ -455,7 +464,7 @@ fn command_line_values_are_never_written_back() {
     assert!(text.contains("key_jump = \"Space, KeyW\"\n"), "{text}");
     assert!(text.contains("pad_pause = Start\n"), "{text}");
     assert!(
-        text.contains("gamepad = on\npad_dead_zone = 0.66\n"),
+        text.contains("gamepad = on\npad_dead_zone = 0.34\n"),
         "{text}"
     );
     let reread = Settings::from_args(
@@ -535,4 +544,26 @@ fn atomic_writes_keep_one_backup() {
         }
     }
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+}
+
+#[test]
+fn the_status_bar_placement_is_a_setting() {
+    let parse = |text: &str| ConfigFile::parse(text, "test").and_then(|f| f.check().map(|_| f));
+    let resolve = |text: &str| {
+        let file = parse(text).unwrap();
+        Settings::resolve(
+            &Args::try_parse_from(["x", "--install", "/i"]).unwrap(),
+            Some(&file),
+        )
+        .unwrap()
+    };
+    assert!(!resolve("").status_bar_centred, "at the edges by default");
+    assert!(resolve("status_bar = centred\n").status_bar_centred);
+    assert!(resolve("status_bar = \"centered\"\n").status_bar_centred);
+    assert!(!resolve("status_bar = edges\n").status_bar_centred);
+    assert!(parse("status_bar = middle\n").is_err());
+    let mut s = resolve("");
+    assert_eq!(s.config_value("status_bar").as_deref(), Some("edges"));
+    s.status_bar_centred = true;
+    assert_eq!(s.config_value("status_bar").as_deref(), Some("centred"));
 }

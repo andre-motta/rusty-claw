@@ -26,13 +26,16 @@
 //! level; finishing a level writes the start of the next level (score,
 //! health, lives, ammunition and the game's treasure carried over), which
 //! is what marks the level complete and opens the next level in the new
-//! game and load lists. Community custom levels are never saved.
+//! game and load lists. Community custom levels are never saved, and their
+//! save points show no game-saved message ([`Flow::hide_messages`]).
 //!
 //! Options changed in the menus apply at once and are written back to the
 //! config file, keeping its other lines as they are. Settings that the
 //! config file has no key for (the music switch, detail, the front layer,
-//! the play area size, interlaced movies and where the status bar sits)
-//! last until the game is closed.
+//! the play area size and interlaced movies) last until the game is
+//! closed. The window's own keys for the view (fullscreen, window size,
+//! aspect, scaling and smooth motion) change it for this run: the Video
+//! page shows the change, and choosing an entry there saves it.
 //!
 //! Screens fade out over [`FADE_MS`] before the next one, which fades in
 //! over the same time (with the menu's roll-up and unroll sounds).
@@ -40,6 +43,7 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use claw_frame::{AudioCue, GameEvent, SoundChannel, SoundCue};
+use claw_sim::logic::checkpoint::MESSAGE_SAVED;
 use claw_sim::{Sim, StartState};
 use claw_ui::menu::command::{MenuCommand, MenuKind, Page, Slider, Toggle, VideoSetting};
 use claw_ui::menu::draw::{self, FontArt, MenuState};
@@ -324,7 +328,7 @@ pub fn dead_zone_step(value: i32, delta: i32, wrap: bool) -> i32 {
 }
 
 /// The Video page's text of `v` for `settings`.
-pub fn video_text(v: VideoSetting, settings: &Settings, safe_area: bool) -> String {
+pub fn video_text(v: VideoSetting, settings: &Settings) -> String {
     let on = |b: bool| if b { "ON" } else { "OFF" };
     match v {
         VideoSetting::Resolution => format!("WINDOW {}X{}", settings.res.0, settings.res.1),
@@ -344,7 +348,12 @@ pub fn video_text(v: VideoSetting, settings: &Settings, safe_area: bool) -> Stri
         },
         VideoSetting::Interpolation => format!("SMOOTH MOTION {}", on(settings.interpolation)),
         VideoSetting::StatusBar => {
-            format!("STATUS BAR {}", if safe_area { "CENTRED" } else { "EDGES" })
+            let place = if settings.status_bar_centred {
+                "CENTRED"
+            } else {
+                "EDGES"
+            };
+            format!("STATUS BAR {place}")
         }
     }
 }
@@ -363,7 +372,6 @@ pub struct Flow {
     game_over: Option<GameOverScreen>,
     state: MenuState,
     music_available: bool,
-    safe_area: bool,
     play: Option<Play>,
     fade: Option<Fade>,
     pending: Option<Pending>,
@@ -428,7 +436,6 @@ impl Flow {
             game_over: None,
             state,
             music_available: true,
-            safe_area: false,
             play: None,
             fade: None,
             pending: None,
@@ -502,7 +509,7 @@ impl Flow {
     fn refresh_texts_of(&mut self, nav: &mut Navigator) {
         for i in 0..nav.tree.items.len() {
             let text = match nav.tree.items[i].command {
-                MenuCommand::Video(v) => Some(video_text(v, &self.settings, self.safe_area)),
+                MenuCommand::Video(v) => Some(video_text(v, &self.settings)),
                 MenuCommand::PadDeadZone => Some(dead_zone_text(&self.settings)),
                 MenuCommand::Bind(n) => {
                     let n = usize::from(n);
@@ -614,7 +621,7 @@ impl Flow {
 
     /// True when the status bar keeps to the centred 4:3 area.
     pub fn status_bar_centred(&self) -> bool {
-        self.safe_area
+        self.settings.status_bar_centred
     }
 
     /// Time since the flow started, ms (for menu animations).
@@ -665,6 +672,32 @@ impl Flow {
     pub fn set_booty(&mut self, booty: BootyScreen) {
         self.booty = Some(booty);
         self.drain_booty_audio();
+    }
+
+    /// Shows `text` as a notice, for example a problem found at start-up.
+    pub fn notify(&mut self, text: impl Into<String>) {
+        self.push_notice(text.into());
+    }
+
+    /// The window changed a view setting with one of its own keys: shows
+    /// the change on the Video page without saving it (choosing the entry
+    /// there saves it).
+    pub fn view_changed(&mut self, update: impl FnOnce(&mut Settings)) {
+        update(&mut self.settings);
+        self.refresh_texts();
+    }
+
+    /// Removes from `events` the in-game messages that do not apply: the
+    /// game-saved message of a save point on a community custom level,
+    /// which is never saved.
+    pub fn hide_messages(&self, events: &mut Vec<GameEvent>) {
+        let custom = self
+            .play
+            .as_ref()
+            .is_some_and(|p| retail_number(&p.level).is_none());
+        if custom {
+            events.retain(|e| !matches!(e, GameEvent::Message { id, .. } if *id == MESSAGE_SAVED));
+        }
     }
 
     fn push_notice(&mut self, text: String) {
@@ -1203,8 +1236,8 @@ impl Flow {
                 Some("interpolation")
             }
             VideoSetting::StatusBar => {
-                self.safe_area = !self.safe_area;
-                None
+                s.status_bar_centred = !s.status_bar_centred;
+                Some("status_bar")
             }
         };
         self.effects.push(Effect::Video(v));

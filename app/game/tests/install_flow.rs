@@ -244,25 +244,14 @@ fn a_save_point_reached_in_a_new_game_loads_in_the_next_run() {
     }
     game.events.clear();
     game.run(3000.0);
-    if !game
-        .events
-        .iter()
-        .any(|e| matches!(e, GameEvent::SavePoint { .. }))
-    {
-        // Until the save point logic is live in this build, send the events
-        // the save point sends when touched.
-        eprintln!("the save point did not fire; sending its events");
-        let p = game.sim().player().map(|o| (o.x, o.y)).unwrap();
-        let sim = game.sim().clone();
-        game.flow.play_events(
-            &[
-                GameEvent::Checkpoint { x: p.0, y: p.1 },
-                GameEvent::SavePoint { slot: 1 },
-            ],
-            &sim,
-        );
-        game.effects();
-    }
+    // The save point itself saves: touching it sends the save point event.
+    assert!(
+        game.events
+            .iter()
+            .any(|e| matches!(e, GameEvent::SavePoint { slot: 1 })),
+        "touching the first save point sent no save point event: {:?}",
+        game.events
+    );
     let carry = game.carry();
     // Where Claw stands on the floor below the save point.
     let stood = game.sim().player().map(|o| (o.x, o.y)).unwrap();

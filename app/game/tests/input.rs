@@ -99,7 +99,7 @@ fn default_pad_table_is_the_original_joystick_layout() {
         assert_eq!(map.action(button), Some(B(dir)));
     }
     assert_eq!(map.action(PadButton::Select), None);
-    assert_eq!(PadSettings::default().dead_zone, 0.66);
+    assert_eq!(PadSettings::default().dead_zone, 0.34);
 }
 
 #[test]
@@ -317,12 +317,13 @@ fn the_stick_has_a_radial_dead_zone_and_eight_directions() {
     assert_eq!(stick_buttons(f32::NAN, 1.0, dz), Buttons::UP);
     assert_eq!(stick_buttons(5.0, 0.0, dz), Buttons::RIGHT);
 
+    // The default dead zone: about a third of a full deflection.
     let (mut r, pads) = router();
-    pads.stick(0, 0.6, 0.0);
+    pads.stick(0, 0.33, 0.0);
     assert_eq!(poll(&mut r), vec![]);
-    pads.stick(0, 0.7, 0.0);
+    pads.stick(0, 0.35, 0.0);
     assert_eq!(poll(&mut r), vec![down(Buttons::RIGHT)]);
-    pads.stick(0, 0.7, 0.7);
+    pads.stick(0, 0.35, 0.35);
     assert_eq!(poll(&mut r), vec![down(Buttons::UP)]);
     // Each axis event counts: x moves first, then y.
     pads.stick(0, 0.0, 0.3);

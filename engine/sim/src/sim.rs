@@ -682,6 +682,12 @@ impl Sim {
         }
     }
 
+    /// The screen transition in progress, as [`Sim::snapshot`] reports it,
+    /// without building a snapshot.
+    pub fn transition(&self) -> Option<claw_frame::ScreenTransition> {
+        self.out.transition()
+    }
+
     /// The status bar values.
     pub fn hud(&self) -> HudState {
         let s = &self.claw.stats;

@@ -12,7 +12,9 @@
 //!   - one track plays at a time; starting a track stops the one playing;
 //!   - the power-up track pauses the level track, and asking for the level
 //!     track again resumes it where it was instead of restarting it;
-//!   - the Music switch: off stops the music, on restarts the current track
+//!   - the Music switch: off pauses the current track (a level track the
+//!     power-up track paused stays paused, so the level track still resumes
+//!     where it was when the power-up ends); on restarts the current track
 //!     from the start, looping.
 //!
 //! A looping track restarts from its first tick the moment it reaches its
@@ -73,8 +75,8 @@ impl Track {
         }
     }
 
-    /// The music file names that can supply the track, most preferred first.
-    /// With a General MIDI bank the General MIDI arrangement (the name ending
+    /// The music file names that can supply the track, most preferred first
+    /// (none for the credits track, whose file is not settled yet). With a General MIDI bank the General MIDI arrangement (the name ending
     /// in 0) comes first and the other one is the fallback; with the game's
     /// own instrument bank it is the other way round.
     pub fn file_names(self, mode: BankMode) -> &'static [&'static str] {
@@ -88,7 +90,9 @@ impl Track {
             Track::Boss => &["BOSS", "BOSS0"],
             Track::Monolith => &["MONOLITH"],
             Track::Chord => &["CHORD"],
-            Track::Credits => &["PLAY"],
+            // No file is known for the credits screen yet, so selection
+            // finds nothing rather than the level's music.
+            Track::Credits => &[],
         }
     }
 }
@@ -583,8 +587,9 @@ impl MusicPlayer {
         self.states = [State::Idle; 6];
     }
 
-    /// The Music switch. Off stops the music; on restarts the current track
-    /// (or the level track) from the beginning, looping.
+    /// The Music switch. Off pauses the current track only, so a level
+    /// track that the power-up track paused keeps its place; on restarts
+    /// the current track (or the level track) from the beginning, looping.
     pub fn set_enabled(&mut self, on: bool) {
         if on == self.enabled {
             return;
@@ -593,7 +598,12 @@ impl MusicPlayer {
             self.enabled = true;
             self.restart(true);
         } else {
-            self.stop();
+            if let Some(t) = self.current
+                && self.states[t.index()] == State::Playing
+            {
+                self.send(Cmd::Pause);
+                self.states[t.index()] = State::Paused;
+            }
             self.enabled = false;
         }
     }

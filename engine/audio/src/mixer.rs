@@ -330,21 +330,22 @@ impl Mixer {
         }
     }
 
-    /// Pauses the game, as the game's own pause does: one-shot game sounds
-    /// (Effect, Voice, Ambient) stop, looping ones and the music hold where
-    /// they are, and interface sounds keep playing. Sounds started while
+    /// Pauses the game, as the game's own pause does: every game sound
+    /// (Effect, Voice and Ambient, looping or not) stops, the music holds
+    /// where it is, and interface sounds keep playing. Sounds started while
     /// paused wait for the resume.
     pub fn pause_game(&mut self) {
         self.game_paused = true;
         for v in self.voices.iter_mut() {
-            if v.active && v.params.channel.is_game() && !v.params.looped {
+            if v.active && v.params.channel.is_game() {
                 v.end();
             }
         }
     }
 
-    /// Resumes the game: looping sounds and the music continue where they
-    /// were; the one-shot sounds stopped by the pause stay stopped.
+    /// Resumes the game: the music continues where it was. The sounds the
+    /// pause stopped stay stopped; the caller starts the ambient loops
+    /// again.
     pub fn resume_game(&mut self) {
         self.game_paused = false;
     }
@@ -917,17 +918,23 @@ mod tests {
             ("G", Pcm::mono(RATE, s.clone())),
             ("UI", Pcm::mono(RATE, s.clone())),
             ("SHOT", Pcm::mono(RATE, s.clone())),
+            ("AMB", Pcm::mono(RATE, s.clone())),
         ]);
         let mut m = mixer(&full_volume());
         let mut loop_req = req("G");
         loop_req.looped = true;
         let g = m.play(&loop_req, &bk).unwrap();
+        let mut amb_req = PlayRequest::new("AMB", Channel::Ambient);
+        amb_req.looped = true;
+        amb_req.handle = Some(4);
+        let amb = m.play(&amb_req, &bk).unwrap();
         let shot = m.play(&req("SHOT"), &bk).unwrap();
         let mut out = vec![0.0f32; 2 * 10];
         m.render(&mut out);
         m.pause_game();
-        // One-shot game sounds stop at the pause and do not come back.
-        assert!(!m.is_active(shot));
+        // Every game sound stops at the pause, loops included, and does not
+        // come back.
+        assert!(!m.is_active(shot) && !m.is_active(g) && !m.is_active(amb));
         let ui = m
             .play(&PlayRequest::new("UI", Channel::Interface), &bk)
             .unwrap();
@@ -936,21 +943,28 @@ mod tests {
         for k in 0..10 {
             assert!(close(out[2 * k], f32::from(s[k]) / 32768.0));
         }
-        assert!(m.is_active(g) && m.is_active(ui));
+        assert!(m.is_active(ui));
         m.stop_voice(ui);
         m.resume_game();
         m.render(&mut out);
-        // The game loop continues where it was paused.
-        for k in 0..10 {
-            assert!(close(out[2 * k], f32::from(s[10 + k]) / 32768.0));
-        }
+        assert!(out.iter().all(|s| *s == 0.0), "nothing comes back");
+        // The caller starts the ambient loop again, from its start.
+        let again = m.play(&amb_req, &bk).unwrap();
+        m.render(&mut out);
+        assert!(m.is_active(again) && m.active_voices() == 1);
+        assert_eq!(out[0], 0.0, "from its first sample");
+        assert!(out[2] > 0.0);
+        m.stop(4);
 
+        // Pausing everything holds every voice where it is.
+        m.play(&loop_req, &bk).unwrap();
+        m.render(&mut out);
         m.pause_all();
         m.render(&mut out);
         assert!(out.iter().all(|s| *s == 0.0));
         m.resume_all();
         m.render(&mut out);
-        assert!(close(out[0], f32::from(s[20]) / 32768.0));
+        assert!(close(out[0], f32::from(s[10]) / 32768.0));
     }
 
     struct Constant(f32);

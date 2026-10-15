@@ -12,6 +12,7 @@
 //!   recording the input of a game;
 //! - [`saves`]: saved games;
 //! - [`audio`]: playing the game's sounds;
+//! - [`pause`]: what pauses play and what a pause holds;
 //! - [`flow`]: the game flow: title, menus, play, the end-of-level tally
 //!   and the end of a game;
 //! - [`window`]: the game window;
@@ -35,6 +36,7 @@ pub mod flow;
 pub mod input;
 pub mod keymap;
 pub mod load;
+pub mod pause;
 pub mod saves;
 pub mod session;
 pub mod settings;
