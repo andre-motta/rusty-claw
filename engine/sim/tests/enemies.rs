@@ -6,6 +6,7 @@
 
 mod common;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use claw_frame::{AudioCue, TickInput};
@@ -214,6 +215,27 @@ fn shots(sim: &Sim) -> Vec<(ObjectId, ProjectileSpec)> {
         .collect();
     v.sort_unstable_by_key(|s| s.0);
     v
+}
+
+/// The projectile spawn requests that appeared since `seen` was last
+/// updated, in spawn order. Shots fly and are removed when they hit or
+/// leave, so tests note them by id as they step.
+fn new_shots(sim: &Sim, seen: &mut BTreeSet<ObjectId>) -> Vec<ProjectileSpec> {
+    shots(sim)
+        .into_iter()
+        .filter(|(id, _)| seen.insert(*id))
+        .map(|(_, spec)| spec)
+        .collect()
+}
+
+/// Removes every projectile, so that no shot reaches Claw.
+fn clear_shots(sim: &mut Sim) {
+    let ids: Vec<ObjectId> = shots(sim).into_iter().map(|(id, _)| id).collect();
+    sim.with_world(|w| {
+        for id in ids {
+            w.objects.remove(id);
+        }
+    });
 }
 
 /// Moves Claw far to the right, out of every enemy's sight and range.
@@ -533,7 +555,7 @@ fn the_soldier_fires_at_most_once_per_firing_window() {
     sim.step(TickInput::default());
     let id = first(&sim, GameLogic::Soldier);
     let mut fired_at = Vec::new();
-    let mut seen = 0;
+    let mut seen = BTreeSet::new();
     let mut windows = 0;
     let mut in_window = false;
     let mut per_window = 0;
@@ -545,8 +567,7 @@ fn the_soldier_fires_at_most_once_per_firing_window() {
             per_window = 0;
         }
         in_window = fire;
-        let all = shots(&sim);
-        for (_, spec) in &all[seen..] {
+        for spec in new_shots(&sim, &mut seen) {
             fired_at.push(t);
             per_window += 1;
             assert!(per_window <= 1, "one shot per firing window");
@@ -560,7 +581,6 @@ fn the_soldier_fires_at_most_once_per_firing_window() {
             assert_eq!(spec.z, o.z - 1);
             assert_eq!(spec.owner, Some(id));
         }
-        seen = all.len();
     }
     assert!(windows >= 3, "{windows} firing windows");
     assert!(fired_at.len() >= 3, "{fired_at:?}");
@@ -624,11 +644,10 @@ fn the_rat_throws_across_at_most_once_a_second() {
     sim.step(TickInput::default());
     let id = first(&sim, GameLogic::Rat);
     let mut thrown_at = Vec::new();
-    let mut seen = 0;
+    let mut seen = BTreeSet::new();
     for t in 0..300 {
         sim.step(TickInput::default());
-        let all = shots(&sim);
-        for (_, spec) in &all[seen..] {
+        for spec in new_shots(&sim, &mut seen) {
             thrown_at.push(t);
             let o = obj(&sim, id);
             assert_eq!(spec.logic, "RatBomb");
@@ -638,7 +657,6 @@ fn the_rat_throws_across_at_most_once_a_second() {
             assert_eq!(spec.z, o.z - 1);
             assert_eq!(spec.special_flags, rat::BOMB_ACROSS);
         }
-        seen = all.len();
     }
     assert!(thrown_at.len() >= 4, "{thrown_at:?}");
     let gap = 1000usize.div_ceil(18);
@@ -675,10 +693,15 @@ fn the_rat_drops_bombs_on_claw_below() {
     );
     let mut down = 0;
     let mut across = 0;
+    let mut thrown = BTreeMap::new();
+    // Each bomb is taken away once noted: its explosion would catch the
+    // rat itself, which any blow kills.
     for _ in 0..200 {
         sim.step(TickInput::default());
+        thrown.extend(shots(&sim));
+        clear_shots(&mut sim);
     }
-    for (_, spec) in shots(&sim) {
+    for spec in thrown.into_values() {
         if spec.vx == 0 {
             down += 1;
             assert_eq!(spec.vy, 250);
@@ -768,10 +791,11 @@ fn hit_reactions_follow_what_hit() {
             .map(|(id, _)| id)
             .unwrap()
     };
-    // Claw's blow: low flinch, a 300 ms cooldown, the burst's two draws.
+    // Claw's blow: low flinch, a 300 ms cooldown, the burst's three draws
+    // (its place, then its size).
     let (mut sim, id) = lone("Officer", Some(50));
     let blow = attacker(&mut sim, types::PLAYER, 5, 0);
-    assert_eq!(hit(&mut sim, id, blow, true, false), 2);
+    assert_eq!(hit(&mut sim, id, blow, true, false), 3);
     assert_eq!(state_of(&sim, id), Some(EnemyState::HitLow));
     assert_eq!(obj(&sim, id).health, 45);
     assert_eq!(
@@ -794,7 +818,7 @@ fn hit_reactions_follow_what_hit() {
     // The uppercut: a high flinch, one more draw for its sound.
     let (mut sim, id) = lone("Officer", Some(50));
     let blow = attacker(&mut sim, types::PLAYER, 5, 0);
-    assert_eq!(hit(&mut sim, id, blow, true, true), 3);
+    assert_eq!(hit(&mut sim, id, blow, true, true), 4);
     assert_eq!(state_of(&sim, id), Some(EnemyState::HitHigh));
 
     // A pistol shot is used up; no cooldown.
@@ -1240,6 +1264,9 @@ fn the_soldier_draws_in_the_games_order() {
     let id = first(&sim, GameLogic::Soldier);
     let mut m = Rng::new(sim.rng().state());
     assert_eq!(state_of(&sim, id), Some(EnemyState::Fire));
+    // Its shots are taken away as they appear: the draws Claw makes when
+    // one hits him are not the soldier's.
+    clear_shots(&mut sim);
     let mut homes = 0;
     for _ in 0..100 {
         let at_home = state_of(&sim, id) == Some(EnemyState::Home);
@@ -1250,6 +1277,7 @@ fn the_soldier_draws_in_the_games_order() {
                 m.next_u15();
             }
         });
+        clear_shots(&mut sim);
     }
     assert!(homes > 0);
 }
@@ -1284,10 +1312,11 @@ fn a_kill_by_claw_draws_his_line_a_quarter_of_the_time() {
         sim.with_world(|w| w.objects.get_mut(id).unwrap().health = 1);
         let before = sim.rng().state();
         hit(&mut sim, id, blow, true, false);
-        // The burst's two draws, then the death roll.
+        // The burst's place and size, then the death roll.
         let mut m = Rng::new(before);
         m.below(9);
         m.below(9);
+        m.below(3);
         let roll = m.below(100);
         if roll < 25 {
             m.below(10);

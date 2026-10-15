@@ -95,11 +95,11 @@ fn sounds(audio: &[claw_sim::claw_frame::AudioCue]) -> Vec<String> {
         .collect()
 }
 
-/// Explosion requests made by `source`.
-fn explosions(sim: &Sim, source: ObjectId) -> Vec<(i32, i32, i32, i32)> {
+/// Explosion requests made by `source` that exist now, with their ids.
+fn live_explosions(sim: &Sim, source: ObjectId) -> Vec<(ObjectId, (i32, i32, i32, i32))> {
     sim.objects()
         .all()
-        .filter_map(|(_, o)| match o.data {
+        .filter_map(|(id, o)| match o.data {
             ObjectData::Effect(EffectData {
                 request:
                     Some(EffectKind::Explosion {
@@ -107,10 +107,42 @@ fn explosions(sim: &Sim, source: ObjectId) -> Vec<(i32, i32, i32, i32)> {
                         radius,
                         source: Some(s),
                     }),
-            }) if s == source => Some((o.x, o.y, damage, radius)),
+                ..
+            }) if s == source => Some((id, (o.x, o.y, damage, radius))),
             _ => None,
         })
         .collect()
+}
+
+/// Explosion requests made by `source` that exist now.
+fn explosions(sim: &Sim, source: ObjectId) -> Vec<(i32, i32, i32, i32)> {
+    live_explosions(sim, source)
+        .into_iter()
+        .map(|(_, e)| e)
+        .collect()
+}
+
+/// Every explosion `source` asked for while a test watched, once each: an
+/// explosion is removed right after its blast, so tests note them as they
+/// step.
+#[derive(Default)]
+struct BlastLog(BTreeMap<ObjectId, (i32, i32, i32, i32)>);
+
+impl BlastLog {
+    fn note(&mut self, sim: &Sim, source: ObjectId) {
+        self.0.extend(live_explosions(sim, source));
+    }
+
+    fn step(&mut self, sim: &mut Sim, n: usize, source: ObjectId) {
+        for _ in 0..n {
+            step(sim, 1);
+            self.note(sim, source);
+        }
+    }
+
+    fn all(&self) -> Vec<(i32, i32, i32, i32)> {
+        self.0.values().copied().collect()
+    }
 }
 
 /// A one-shot animation of `n` 60 ms elements whose third reports event 1.
@@ -618,13 +650,14 @@ fn a_keg_hit_by_a_blast_requests_exactly_one_explosion() {
         explosions(&sim, k).is_empty(),
         "the blast waits for its frame"
     );
+    let mut log = BlastLog::default();
     let mut ticks = 1;
     while sim.objects().get(k).is_some() {
-        step(&mut sim, 1);
+        log.step(&mut sim, 1, k);
         ticks += 1;
         assert!(ticks < 100);
     }
-    assert_eq!(explosions(&sim, k), vec![(1205, 905, 20, 50)]);
+    assert_eq!(log.all(), vec![(1205, 905, 20, 50)]);
 }
 
 #[test]
@@ -724,9 +757,10 @@ fn a_lifted_keg_follows_claw_and_explodes_where_it_lands() {
     assert_eq!(o.type_flags, types::THROWN);
     assert_eq!(o.physics_type, ptype::FLY);
     let start_x = o.x;
+    let mut log = BlastLog::default();
     let mut ticks = 0;
     while keg::data_of(obj(&sim, k)).unwrap().phase == keg::Phase::Thrown {
-        step(&mut sim, 1);
+        log.step(&mut sim, 1, k);
         ticks += 1;
         assert!(ticks < 200);
     }
@@ -738,8 +772,8 @@ fn a_lifted_keg_follows_claw_and_explodes_where_it_lands() {
         o.x
     );
     assert_eq!(o.y + keg::KEG_BOX.bottom, FLOOR - 1, "landed on the floor");
-    step(&mut sim, 40);
-    assert_eq!(explosions(&sim, k).len(), 1);
+    log.step(&mut sim, 40, k);
+    assert_eq!(log.all().len(), 1);
     assert!(sim.objects().get(k).is_none());
 }
 
@@ -757,10 +791,9 @@ fn a_dropped_keg_falls_and_explodes() {
         keg::data_of(obj(&sim, k)).unwrap().phase,
         keg::Phase::Dropped
     );
-    for _ in 0..60 {
-        step(&mut sim, 1);
-    }
-    assert_eq!(explosions(&sim, k).len(), 1);
+    let mut log = BlastLog::default();
+    log.step(&mut sim, 60, k);
+    assert_eq!(log.all().len(), 1);
     assert!(sim.objects().get(k).is_none());
 }
 
@@ -1387,8 +1420,9 @@ fn a_kill_of_kind_two_sets_a_keg_off_and_other_kills_remove_it() {
         keg::data_of(obj(&sim, k)).unwrap().phase,
         keg::Phase::Exploding
     );
-    step(&mut sim, 60);
-    assert_eq!(explosions(&sim, k).len(), 1);
+    let mut log = BlastLog::default();
+    log.step(&mut sim, 60, k);
+    assert_eq!(log.all().len(), 1);
     assert!(sim.objects().get(k).is_none());
 
     let mut sim = Sim::new(keg_level(true), SimConfig::default());
@@ -1397,9 +1431,11 @@ fn a_kill_of_kind_two_sets_a_keg_off_and_other_kills_remove_it() {
     sim.with_world(|w| w.kill(k, 1));
     let snap = sim.step(TickInput::default());
     assert!(!sounds(&snap.audio).contains(&keg::BLAST_SOUND.to_string()));
-    step(&mut sim, 2);
+    let mut log = BlastLog::default();
+    log.note(&sim, k);
+    log.step(&mut sim, 2, k);
     assert!(sim.objects().get(k).is_none());
-    assert!(explosions(&sim, k).is_empty());
+    assert!(log.all().is_empty());
 }
 
 #[test]

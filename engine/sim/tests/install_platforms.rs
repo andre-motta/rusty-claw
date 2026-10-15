@@ -112,6 +112,22 @@ fn played(sim: &Sim, key: &str) -> bool {
     })
 }
 
+/// Removes every projectile. The rides pass rats and soldiers whose shots
+/// would knock Claw off or kill him; the rides are about the elevators.
+fn clear_shots(sim: &mut Sim) {
+    let ids: Vec<ObjectId> = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| o.kind == LogicKind::Game(GameLogic::Projectile))
+        .map(|(id, _)| id)
+        .collect();
+    sim.with_world(|w| {
+        for id in ids {
+            w.objects.remove(id);
+        }
+    });
+}
+
 /// Wakes the platform `id` by looking at it, then drops Claw just above
 /// its surface and waits until he rides it.
 fn land_on(sim: &mut Sim, id: ObjectId) -> bool {
@@ -206,6 +222,7 @@ fn ride_to_both_ends(sim: &mut Sim, id: ObjectId, logic: &str) -> Ride {
         let before = sim.player().unwrap().x;
         let track_before = at(sim);
         sim.step(TickInput::default());
+        clear_shots(sim);
         let moved = obj(sim, id).platform_move;
         let carried = before + moved.0;
         if sim.player().unwrap().x != carried {
