@@ -538,6 +538,9 @@ impl Sim {
                 let Some(o) = objects.get_mut(id) else {
                     continue;
                 };
+                // Only the move made in this turn is published, so a platform
+                // that stops or skips a tick stops carrying its riders.
+                o.platform_move = (0, 0);
                 if o.time_delay != 0 && TICK_MS < o.time_delay {
                     o.time_delay -= TICK_MS;
                     false

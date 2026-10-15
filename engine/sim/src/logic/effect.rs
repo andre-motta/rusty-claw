@@ -74,3 +74,26 @@ pub fn spawn(w: &mut World, kind: EffectKind, x: i32, y: i32) -> Option<ObjectId
     });
     Some(w.spawn(placeholder(name, x, y, 0, data)))
 }
+
+/// Shows a hit burst at (x, y, z). With an `owner` the burst follows it;
+/// `claw_image` picks Claw's burst art over an enemy's. Until effects are
+/// filled in, this leaves the same placeholder as [`spawn`].
+pub fn spawn_hit_burst(
+    w: &mut World,
+    x: i32,
+    y: i32,
+    z: i32,
+    owner: Option<ObjectId>,
+    claw_image: bool,
+) -> Option<ObjectId> {
+    let _ = (z, owner, claw_image);
+    spawn(w, EffectKind::HitBurst, x, y)
+}
+
+/// Starts the glitter that trails `target` while a powerup lasts and
+/// returns the object that drives it; the caller removes it when the
+/// powerup ends. Until effects are filled in, this does nothing.
+pub fn spawn_glitter(w: &mut World, target: ObjectId) -> Option<ObjectId> {
+    let _ = (w, target);
+    None
+}

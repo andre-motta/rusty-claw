@@ -49,6 +49,13 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     let _ = (w, id, victim);
 }
 
+/// A projectile that hit Claw and goes off instead of disappearing (its
+/// special flags ask for this). Until projectiles are filled in, this does
+/// nothing.
+pub fn impact(w: &mut World, id: ObjectId) {
+    let _ = (w, id);
+}
+
 /// What to launch.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ProjectileSpec {

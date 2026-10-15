@@ -99,7 +99,10 @@ impl Outbox {
 /// The context of one logic call.
 #[derive(Debug)]
 pub struct World<'a> {
-    /// Every object of the level.
+    /// Every object of the level. Logics add and remove objects only
+    /// through [`World::spawn`] and [`World::destroy`]; calling the
+    /// container's own add, remove, insert or unlink from a logic breaks
+    /// the update pass's walk over the list.
     pub objects: &'a mut Container,
     /// Claw's object.
     pub claw_id: Option<ObjectId>,

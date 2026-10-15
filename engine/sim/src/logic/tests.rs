@@ -298,6 +298,27 @@ fn logics_move_objects_and_keep_their_data() {
     );
 }
 
+fn stopper(w: &mut World, id: ObjectId) {
+    let moved = w.objects.get(id).unwrap().x < 903;
+    if moved {
+        mover(w, id);
+    }
+}
+
+#[test]
+fn a_platform_that_stops_carries_no_one() {
+    install(GameLogic::Platform, stopper);
+    let mut sim = Sim::new(level(&[("Elevator", 900, 700, 10)]), SimConfig::default());
+    let lift = find(&sim, "Elevator")[0];
+    sim.step(TickInput::default());
+    let p = crate::sim::platforms(sim.objects());
+    assert_eq!((p[0].id, p[0].move_x), (lift, 3));
+    sim.step(TickInput::default());
+    let p = crate::sim::platforms(sim.objects());
+    assert_eq!((p[0].id, p[0].move_x, p[0].move_y), (lift, 0, 0));
+    assert_eq!(sim.objects().get(lift).unwrap().x, 903);
+}
+
 // --------------------------------------------------------------- hitting
 
 fn hitter(w: &mut World, id: ObjectId) {

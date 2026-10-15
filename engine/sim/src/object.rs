@@ -297,8 +297,9 @@ pub struct Object {
     pub special_flags: u32,
     /// The logic's own data.
     pub data: ObjectData,
-    /// The move a platform made this tick, which riders add to their own;
-    /// platform logics set it every tick they move.
+    /// The move a platform made this tick, which riders add to their own.
+    /// The update pass clears it at the start of the object's turn, so a
+    /// platform logic sets it only in the ticks it moves.
     pub platform_move: (i32, i32),
     /// Animation player.
     pub anim: AnimPlayer,
