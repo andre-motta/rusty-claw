@@ -34,11 +34,24 @@ fn level(objects: &[(&str, i32, i32)]) -> SimLevel {
     let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
     let mut l = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600));
     l.sounds.insert("GAME_MAPPIECE".to_string(), Some(1520));
+    for line in POWERUP_LINES {
+        l.sounds.insert(line.to_string(), Some(LINE_MS));
+    }
     for &(name, x, y) in objects {
         l.objects.push(ObjectSpec::at(name, x, y, 5));
     }
     l
 }
+
+/// Claw's powerup lines, registered in [`level`] at [`LINE_MS`] each.
+const POWERUP_LINES: [&str; 4] = [
+    "CLAW_1110064",
+    "CLAW_1110001",
+    "CLAW_1110022",
+    "CLAW_1110012",
+];
+/// Length of each of Claw's lines in [`level`], ms.
+const LINE_MS: u32 = 900;
 
 fn sim_of(objects: &[(&str, i32, i32)]) -> Sim {
     Sim::new(level(objects), SimConfig::default())
@@ -290,7 +303,8 @@ fn timed_powerups_and_swords() {
     );
     assert!(played(&audio, "CLAW_1110064"));
     assert!(played(&audio, "GAME_PICKUP1"));
-    // A sword pickup with damage is a refill that stays.
+    // A sword pickup with damage is a refill that stays. Its line is a
+    // Claw line: refused while the ghost line still runs.
     let mut f = special_pickup(powerup::FIRE_SWORD, 20000);
     f.damage = 1;
     let sword = toucher(&mut sim, types::SPECIAL, f, 0);
@@ -299,14 +313,17 @@ fn timed_powerups_and_swords() {
         (sim.stats().powerup_kind, sim.stats().powerup_ms),
         (powerup::FIRE_SWORD, 20000)
     );
-    assert!(played(&audio, "CLAW_1110001"));
+    assert!(!played(&audio, "CLAW_1110001"), "{audio:?}");
     assert_eq!(music(&audio), vec![MusicTrack::Powerup]);
     let (audio, _) = step(&mut sim);
     assert_eq!(sim.stats().powerup_ms, 20000, "touching it again refills");
     assert!(audio.is_empty(), "{audio:?}");
     assert!(stays(&mut sim, sword));
     sim.with_world(|w| w.destroy(sword));
-    step(&mut sim);
+    // Once the ghost line is over the next line is said.
+    for _ in 0..ticks_of(LINE_MS) {
+        step(&mut sim);
+    }
     // Without damage the sword is used up.
     let ice = toucher(
         &mut sim,
@@ -665,8 +682,10 @@ fn death_on_a_death_tile_respawns_at_the_last_checkpoint() {
         "fires once"
     );
     assert_eq!(sim.claw().death_tile_hits, 1);
+    assert_eq!(sim.stats().attempt, 0, "not counted before the lives step");
     let events = run_until(&mut sim, TickInput::default(), 10, |s| s.stats().lives == 6);
     assert_eq!(events, vec![GameEvent::ClawDied { lives_left: 6 }]);
+    assert_eq!(sim.stats().attempt, 1);
     let mut flag_sound = false;
     for _ in 0..ticks_of(CLOSE_MS) {
         let (audio, events) = step(&mut sim);
@@ -677,6 +696,26 @@ fn death_on_a_death_tile_respawns_at_the_last_checkpoint() {
     let o = sim.player().unwrap();
     assert_eq!((o.x, o.y, o.state), (1210, 899, state::STAND));
     assert_eq!(sim.stats().health, 100);
+}
+
+#[test]
+fn without_level_logics_a_death_tile_is_only_counted() {
+    let cfg = SimConfig {
+        level_logics: false,
+        ..SimConfig::default()
+    };
+    let mut sim = Sim::new(level(&[]), cfg);
+    run_until(&mut sim, hold(RIGHT), 300, |s| s.claw().death_tile_hits > 0);
+    for _ in 0..120 {
+        let snap = sim.step(hold(RIGHT));
+        assert!(snap.events.is_empty(), "{:?}", snap.events);
+        assert_eq!(snap.transition, None);
+    }
+    let o = sim.player().unwrap();
+    assert!(o.state != state::DEATH && o.state != state::DEATH_FALL);
+    assert!(o.x >= 1600, "on the death tiles: {}", o.x);
+    let s = sim.stats();
+    assert_eq!((s.health, s.lives, s.attempt), (100, 7, 0));
 }
 
 #[test]
@@ -702,13 +741,19 @@ fn seven_lives_give_six_respawns() {
     let mut sim = sim_of(&[]);
     let mut died = Vec::new();
     let mut over = 0;
-    for _ in 0..7 {
+    for n in 0..7 {
         set_health(&mut sim, 1);
         let e = enemy(&mut sim, 5);
         let lives = sim.stats().lives;
+        assert_eq!(sim.stats().attempt, n, "one attempt per death so far");
         let events = run_until(&mut sim, TickInput::default(), 200, |s| {
             s.stats().lives < lives
         });
+        assert_eq!(
+            sim.stats().attempt,
+            n + 1,
+            "counted at the step that takes the life"
+        );
         sim.with_world(|w| w.destroy(e));
         for ev in events {
             match ev {

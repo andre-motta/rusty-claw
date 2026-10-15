@@ -15,7 +15,11 @@
 //! Either way he stops reacting to anything (no collisions, safe from
 //! attacks), drops what he carries, stops his attack and loses his powerup.
 //!
-//! The lives step runs once per death: a life is taken, then with lives
+//! With the level logics off a death tile only counts the touch (see
+//! [`kill`]).
+//!
+//! The lives step runs once per death: a life is taken and the death is
+//! counted in [`super::stats::PlayerStats::attempt`], then with lives
 //! left the game reports [`GameEvent::ClawDied`] and closes a circle around
 //! the body ([`CLOSE_MS`], with the circle sound). When it is closed Claw
 //! respawns at the last checkpoint (or the level start) with full health,
@@ -30,8 +34,9 @@
 //!
 //! One powerup runs at a time ([`set_powerup`]). Taking the running one
 //! again adds its time, up to [`POWERUP_MAX_MS`]; a different one replaces
-//! it. Starting one switches the music to the powerup tune and plays its
-//! voice line; when it ends the level music comes back. Catnip starts the
+//! it. Starting one switches the music to the powerup tune and asks for
+//! its voice line (a Claw line through [`Ctx::say`], so it is refused while
+//! another of his lines runs); when it ends the level music comes back. Catnip starts the
 //! glitter that trails Claw; Vader makes him immune to enemies and every
 //! kind of shot for as long as it lasts. [`powerup_tick`] counts the time
 //! down after every state handler.
@@ -133,9 +138,16 @@ fn dying(state_id: i32) -> bool {
 }
 
 /// Kills Claw.
+///
+/// A death tile is always counted in [`super::Claw::death_tile_hits`].
+/// With the level logics off ([`Ctx::level_logics`]) that is all it does:
+/// Claw carries on, as in the first playable version.
 pub fn kill(c: &mut Ctx, cause: DeathCause) {
     if cause == DeathCause::DeathTile {
         c.p.death_tile_hits += 1;
+        if !c.level_logics {
+            return;
+        }
     }
     if dying(c.o.state) {
         return;
@@ -230,11 +242,12 @@ pub fn death_tick(c: &mut Ctx) {
     }
 }
 
-/// Takes a life, then starts the respawn or ends the game. Runs once per
-/// death.
+/// Takes a life and counts the death in the attempt counter, then starts
+/// the respawn or ends the game. Runs once per death.
 fn lives_step(c: &mut Ctx) {
     c.o.special_flags |= claw_flags::LIVES_COUNTED;
     c.p.stats.lives -= 1;
+    c.p.stats.count_attempt();
     if c.p.stats.lives > 0 {
         c.out.event(GameEvent::ClawDied {
             lives_left: c.p.stats.lives,
@@ -325,7 +338,7 @@ fn respawn_tick(c: &mut Ctx) {
 ///
 /// The same powerup again adds `ms` to its time, up to
 /// [`POWERUP_MAX_MS`]. A different one replaces it: the old one's effect
-/// ends, the new one starts with its voice line, and the music switches to
+/// ends, the new one starts and asks for its voice line, and the music switches to
 /// the powerup tune. Ending a powerup brings the level music back.
 pub fn set_powerup(c: &mut Ctx, kind: u32, ms: u32) {
     let current = c.p.stats.powerup_kind;
@@ -363,7 +376,7 @@ pub fn set_powerup(c: &mut Ctx, kind: u32, ms: u32) {
         _ => None,
     };
     if let Some(v) = voice {
-        c.play(v, SoundChannel::Voice);
+        c.say(v, false);
     }
     if kind == powerup::CATNIP {
         let id = c.id;
