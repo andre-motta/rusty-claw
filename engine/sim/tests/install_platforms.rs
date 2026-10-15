@@ -439,6 +439,9 @@ fn install_toggle_pegs_follow_their_phases() {
         let mut was = None;
         let mut slides = 0;
         for _ in 0..1500 {
+            // Held above the peg: when it goes out he would fall to the
+            // spikes below and come back at the level start, far from it.
+            sim.teleport_player(x, y - 100);
             sim.step(TickInput::default());
             let p = obj(&sim, id);
             if p.state == state::SET_UP {

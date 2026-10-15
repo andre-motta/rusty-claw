@@ -456,6 +456,8 @@ fn breaking_a_stacked_crate_drops_its_item_and_lets_the_ones_above_fall() {
     step(&mut sim, 2);
     let ids = stack_crates(&sim);
     let claw = claw(&mut sim);
+    // Claw stays out of the drops, so every item is still there to count.
+    sim.with_world(|w| w.objects.get_mut(claw).unwrap().hit_type_flags = 0);
     // Middle crate: one item with a random hop, then the break sound.
     let mut r: Rng = sim.rng().clone();
     let vx = f64::from(r.below(401) as i32 - 200);
@@ -1202,16 +1204,20 @@ fn claw_meets_pickups_through_pair_collision() {
         )]),
         SimConfig::default(),
     );
-    step(&mut sim, 3);
-    let t = find(&sim, "TreasurePowerup")[0];
-    let hits: Vec<_> = sim
-        .collision_events()
-        .iter()
-        .filter(|e| {
-            matches!(e, claw_sim::container::CollisionEvent::Hit { attacker, .. } if *attacker == t)
-        })
-        .collect();
-    assert_eq!(hits.len(), 1, "the treasure touches Claw");
+    let mut hits = 0;
+    for _ in 0..3 {
+        step(&mut sim, 1);
+        let t = find(&sim, "TreasurePowerup")[0];
+        hits += sim
+            .collision_events()
+            .iter()
+            .filter(|e| {
+                matches!(e, claw_sim::container::CollisionEvent::Hit { attacker, .. } if *attacker == t)
+            })
+            .count();
+    }
+    // He takes it at the first touch, so it touches him once.
+    assert_eq!(hits, 1, "the treasure touches Claw");
 }
 
 // ------------------------------------------------------------ determinism

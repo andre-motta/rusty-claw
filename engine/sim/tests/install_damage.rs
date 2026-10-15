@@ -9,9 +9,10 @@ mod common;
 use std::path::PathBuf;
 
 use claw_assets::{AssetStore, Install, LevelData, LevelSource};
-use claw_frame::GameEvent;
-use claw_sim::object::{draw_flags, flags};
-use claw_sim::player::state;
+use claw_frame::{AudioCue, GameEvent};
+use claw_sim::container::CollisionEvent;
+use claw_sim::object::{ObjectId, draw_flags, flags};
+use claw_sim::player::{death, hit, state};
 use claw_sim::tiles::{CLEAR, DEATH};
 use claw_sim::trace::{self, TraceRow};
 use claw_sim::{InputLatch, InputScript, SavePos, Sim, SimConfig, SimLevel, StartState, TickInput};
@@ -159,8 +160,13 @@ fn install_death_respawns_at_the_first_checkpoint() {
     assert_eq!(sim.claw().checkpoint, Some(point));
     sim.teleport_player(pit.0, pit.1);
     let mut died = None;
+    let mut spiked = false;
     for i in 0..600 {
         let snap = sim.step(TickInput::default());
+        spiked |= snap
+            .audio
+            .iter()
+            .any(|a| matches!(a, AudioCue::Play(s) if s.key == death::DEATH_TILE_SOUND));
         if snap.events.contains(&GameEvent::ClawDied { lives_left: 6 }) {
             died = Some(i);
             break;
@@ -168,6 +174,9 @@ fn install_death_respawns_at_the_first_checkpoint() {
         assert!(snap.events.is_empty(), "{:?}", snap.events);
     }
     assert!(died.is_some(), "Claw died on the death tile");
+    assert!(spiked, "the death-tile sound played");
+    assert_eq!(sim.stats().health, 0);
+    assert_eq!(sim.stats().attempt, 1);
     assert_eq!(sim.player().unwrap().state, state::DEATH);
     assert_eq!(sim.claw().death_tile_hits, 1);
     idle(&mut sim, 70);
@@ -295,4 +304,86 @@ fn install_traces_are_identical_at_60_144_and_240_hz() {
         let (t, _) = run(&l, &segments, Some(hz));
         assert_eq!(t, direct, "{hz} Hz");
     }
+}
+
+/// The officer running `logic` placed at `at` on the level.
+fn object_at(sim: &Sim, logic: &str, at: (i32, i32)) -> ObjectId {
+    sim.objects()
+        .all()
+        .find(|(_, o)| &*o.logic == logic && (o.x, o.y) == at)
+        .map(|(id, _)| id)
+        .unwrap_or_else(|| panic!("no {logic} at {at:?}"))
+}
+
+#[test]
+fn install_the_first_officer_hurts_claw_until_he_dies_and_respawns() {
+    let Some(store) = store() else { return };
+    let l = level1(&store);
+    let start = l.start;
+    let at = nearest(&l, "Officer");
+    let mut sim = Sim::new(l, SimConfig::default());
+    let officer = object_at(&sim, "Officer", at);
+    // Claw stands still in front of the officer and lets him strike.
+    sim.teleport_player(at.0 - 60, at.1);
+    let mut health = sim.stats().health;
+    let mut hits = Vec::new();
+    let mut blow = 0;
+    let mut died = None;
+    for i in 0..900 {
+        let snap = sim.step(TickInput::default());
+        let now = sim.stats().health;
+        if now != health {
+            // The blow's damage is the officer's while he swings.
+            let damage = sim.objects().get(officer).unwrap().damage.max(1);
+            assert_eq!(now, health - damage, "tick {i}: one blow's damage");
+            blow = damage;
+            assert!(
+                sim.collision_events().iter().any(|e| matches!(
+                    e,
+                    CollisionEvent::Hit { attacker, .. } if *attacker == officer
+                )),
+                "tick {i}: the officer's blow"
+            );
+            assert!(
+                snap.audio.iter().any(|a| matches!(
+                    a,
+                    AudioCue::Play(s) if hit::HIT_SOUNDS.contains(&s.key.as_str())
+                )),
+                "tick {i}: a hit sound"
+            );
+            hits.push(i);
+            health = now;
+        }
+        if snap.events.contains(&GameEvent::ClawDied { lives_left: 6 }) {
+            died = Some(i);
+            break;
+        }
+    }
+    assert!(
+        hits.first().is_some_and(|&t| t < 120),
+        "the officer strikes soon: {hits:?}"
+    );
+    // The blows land no faster than the window after each hit allows.
+    let window = death::ticks_of(hit::INVULNERABLE_MS as u32) as usize;
+    for w in hits.windows(2) {
+        assert!(w[1] - w[0] >= window, "{hits:?}");
+    }
+    assert_eq!(hits.len() as i32, (100 + blow - 1) / blow, "{hits:?}");
+    assert!(died.is_some(), "Claw died of his wounds");
+    assert_eq!(sim.stats().health, 0);
+    assert_eq!(sim.player().unwrap().state, state::DEATH_FALL);
+    assert_eq!(sim.claw().death_tile_hits, 0);
+    assert_eq!(sim.stats().attempt, 1);
+    // No checkpoint yet: he comes back at the level start, whole.
+    idle(&mut sim, 70);
+    let o = sim.player().unwrap();
+    assert_eq!(o.state, state::STAND);
+    assert_eq!(o.x, start.0);
+    assert!(
+        (o.y - start.1).abs() <= 64,
+        "on the ground at the start: {}",
+        o.y
+    );
+    assert_eq!(sim.stats().health, 100);
+    assert_eq!(sim.stats().lives, 6);
 }
