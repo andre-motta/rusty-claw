@@ -672,6 +672,45 @@ fn the_officer_dies_drops_its_loot_and_flies_off() {
     // played at the kill (checked in the install test with real keys).
 }
 
+#[test]
+fn a_multi_item_drop_fans_out() {
+    let mut rec = officer_at(1080, 900, 33);
+    rec.record[35] = 33;
+    rec.record[37] = 33;
+    let mut sim = sim_with(arena(vec![rec]), 4);
+    sim.step(TickInput {
+        held: Buttons(ATTACK),
+        pressed: Buttons(ATTACK),
+    });
+    assert!(until_state(&mut sim, EnemyState::Dead, 20), "killed");
+    let drops = |sim: &Sim| -> Vec<(ObjectId, i32, f64)> {
+        sim.objects()
+            .all()
+            .filter_map(|(id, o)| match &o.data {
+                ObjectData::Pickup(p) if p.drop_code.is_some() => {
+                    Some((id, o.x, p.goodie.as_ref().map_or(0.0, |g| g.vx)))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let at_drop = drops(&sim);
+    assert_eq!(at_drop.len(), 3, "one pickup per filled slot");
+    let mut speeds: Vec<f64> = at_drop.iter().map(|d| d.2).collect();
+    speeds.sort_by(f64::total_cmp);
+    // Slots 0, 1 and 8 of three: -75 / 2, then 25 px/s more per slot.
+    assert_eq!(speeds, vec![-37.0, -12.0, 163.0], "fanned 25 px/s apart");
+    idle(&mut sim, 5);
+    let mut xs: Vec<i32> = drops(&sim)
+        .iter()
+        .filter(|d| at_drop.iter().any(|a| a.0 == d.0))
+        .map(|d| d.1)
+        .collect();
+    xs.sort_unstable();
+    xs.dedup();
+    assert!(xs.len() >= 2, "the drops spread apart: {xs:?}");
+}
+
 /// Feeds a script to a latch at a simulated display rate and returns the
 /// trace.
 fn trace_at_rate(level: SimLevel, script: &InputScript, hz: u64) -> String {

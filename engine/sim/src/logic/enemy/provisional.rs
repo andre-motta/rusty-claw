@@ -336,41 +336,23 @@ pub fn pause_tick(w: &mut World, id: ObjectId) {
     }
 }
 
-/// Drops the enemy's loot: the drop sound once, then one pickup per filled
-/// slot, fanned out 25 px/s apart (a single one gets a random speed across)
-/// and thrown up at random. Draws per filled slot: the speed across (single
-/// slot only), then the speed up; they are made even when no pickup
-/// appears.
+/// Drops the enemy's loot: the drop sound once, then the shared loot drop
+/// (one pickup per filled slot, fanned out 25 px/s apart, a single one at a
+/// random speed across, all thrown up at random). Nothing plays when the
+/// enemy carries no loot.
 pub fn drop_loot(w: &mut World, id: ObjectId) {
     let Some(loot) = data(w, id).map(|d| d.loot) else {
         return;
     };
-    let n = loot.iter().filter(|&&c| c != 0).count() as i32;
-    if n == 0 {
+    if loot.iter().all(|&c| c == 0) {
         return;
     }
-    play(w, super::DROP_SOUND);
     let (x, y) = {
         let o = obj(w, id);
         (o.x, o.y)
     };
-    for (i, &code) in loot.iter().enumerate() {
-        if code == 0 {
-            continue;
-        }
-        let vx = if n == 1 {
-            rand(w, 401) - 200
-        } else {
-            -(25 * n) / 2 + 25 * i as i32
-        };
-        let vy = -(rand(w, 301) + 200);
-        if let Some(p) = pickup::spawn_drop(w, x, y, code)
-            && let Some(o) = w.objects.get_mut(p)
-        {
-            o.speed_x = vx;
-            o.speed_y = vy;
-        }
-    }
+    play(w, super::DROP_SOUND);
+    pickup::drop_loot(w, x, y, loot);
 }
 
 // ----------------------------------------------------------------------
