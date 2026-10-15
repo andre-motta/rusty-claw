@@ -28,8 +28,9 @@
 //! the view:
 //!
 //! - `GlobalAmbientSound` registers at level load and `AmbientSound` when
-//!   it first wakes; both then remove themselves (one without a sound
-//!   stays, idle) and their loop lasts to the end of the level. Without an
+//!   it first wakes; both then remove themselves (one whose sound the level
+//!   does not register removes itself without a loop) and their loop lasts
+//!   to the end of the level. Without an
 //!   area the loop plays everywhere at once; with one it fades in over a
 //!   second while the view centre is inside it and fades out over a second
 //!   once it leaves. A record with a movement box makes the loop come and
@@ -689,11 +690,12 @@ fn ambient_tick(w: &mut World, id: ObjectId, global: bool) {
     let r = record_of(o);
     quiet(w, id);
     let Some(key) = sound_key(w, id) else {
-        // Without a sound there is nothing to register: the object stays,
-        // idle.
+        // Without a sound there is nothing to register: the object removes
+        // itself all the same.
         if let Some(o) = w.objects.get_mut(id) {
             o.state = trigger_state::ARMED;
         }
+        w.destroy(id);
         return;
     };
     let mut area = area_of(r[23], r[24], r[25], r[26]);

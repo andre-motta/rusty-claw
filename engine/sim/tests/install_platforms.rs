@@ -323,11 +323,15 @@ fn install_a_crumbling_peg_drops_after_its_delay_and_comes_back() {
     let first = p.frame;
     sim.set_camera_point(Some((p.x, p.y)));
     let (mut t, mut sound, mut fell, mut hidden) = (None, None, None, None);
+    let mut carried = Vec::new();
     for k in 0..120u64 {
         sim.step(TickInput::default());
         let p = obj(&sim, id);
         if t.is_none() && p.state == state::START {
             t = Some(k);
+        }
+        if riding(&sim, id) {
+            carried.push(k);
         }
         if sound.is_none() && played(&sim, platform::CRUMBLE_SOUND) {
             sound = Some(k);
@@ -346,8 +350,12 @@ fn install_a_crumbling_peg_drops_after_its_delay_and_comes_back() {
     }
     let t = t.expect("the peg sees Claw");
     assert_eq!(sound, Some(t + 2));
+    // The peg carries Claw for 15 ticks (270 ms) after it sees him, then
+    // stops being solid; it hides 36 ticks (648 ms) after it sees him.
+    assert_eq!(carried, (0..t + 15).collect::<Vec<_>>(), "t = {t}");
     assert_eq!(fell, Some(t + 15));
     assert_eq!(hidden, Some(t + 36));
+    assert_eq!(u64::from(claw_sim::claw_frame::TICK_MS) * 15, 270);
     idle(&mut sim, 200);
     assert_eq!(obj(&sim, id).state, state::GONE, "gone until a new attempt");
     count_death(&mut sim);

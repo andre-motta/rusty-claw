@@ -220,7 +220,9 @@ fn level_objects_load_dormant_and_wake_near_the_camera() {
         .iter()
         .map(|&id| sim.objects().get(id).unwrap().logic.to_string())
         .collect();
-    assert!(live.contains(&"GlobalAmbientSound".to_string()));
+    // The global ambient sound names no registered sound, so it removed
+    // itself on its first call; the always-active AniCycle is live.
+    assert!(!live.contains(&"GlobalAmbientSound".to_string()));
     assert!(live.contains(&"AniCycle".to_string()));
     assert!(live.contains(&"NotALogic".to_string()));
     assert_eq!(live.iter().filter(|l| *l == "TreasurePowerup").count(), 1);

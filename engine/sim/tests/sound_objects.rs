@@ -637,6 +637,19 @@ fn a_dialog_line_rearms_on_claws_attempt_counter() {
 }
 
 #[test]
+fn ambient_sounds_without_a_registered_sound_remove_themselves() {
+    let mut sim = sim(vec![
+        spec("GlobalAmbientSound", 1300, FLOOR_Y, "LEVEL_AMBIENT_NONE"),
+        spec("AmbientSound", 1100, FLOOR_Y, "LEVEL_AMBIENT_NONE"),
+    ]);
+    let cues = idle_cues(&mut sim, 5);
+    assert!(cues.is_empty(), "{cues:?}");
+    assert!(!exists(&sim, "GlobalAmbientSound"));
+    assert!(!exists(&sim, "AmbientSound"));
+    assert!(sound_object::manager_of(sim.objects()).is_none_or(|m| m.entries.is_empty()));
+}
+
+#[test]
 fn the_dialog_helpers_are_found_through_the_manager() {
     let mut sim = sim(vec![spec("SoundTrigger", 3000, FLOOR_Y, PUDDLE)]);
     idle(&mut sim, 2);
