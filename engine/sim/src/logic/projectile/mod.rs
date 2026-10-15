@@ -32,8 +32,9 @@
 //! freeze in place and play their explosion. They hurt everything in
 //! their box exactly once, in the collision pass of the tick their
 //! animation reaches its hit frame: dynamite a 101x101 px square, a bomb
-//! its own box grown by 40 px on every side. They are removed when the
-//! explosion animation ends.
+//! its own box grown by 40 px on every side. Dynamite also shakes the
+//! screen for half a second then. They are removed when the explosion
+//! animation ends.
 
 mod motion;
 
@@ -101,6 +102,8 @@ pub const RAT_BOMB_DAMAGE: i32 = 15;
 pub const RAT_BOMB_BLAST_GROWTH: i32 = 40;
 /// Box an exploding stick of dynamite hurts with.
 pub const DYNAMITE_BLAST: Rect = Rect::new(-50, -50, 50, 50);
+/// Screen shake an exploding stick of dynamite starts when it hurts, ms.
+pub const DYNAMITE_SHAKE_MS: u32 = 500;
 /// Depth given to dynamite and bombs launched at depth 0.
 pub const DEFAULT_Z: i32 = 4990;
 /// Depth of dynamite waiting in solid ground.
@@ -176,9 +179,10 @@ impl Class {
         }
     }
 
-    /// Its movement and attack box: the drawn box of the first frame of
-    /// its image set, relative to its position. The sword shots use the
-    /// magic claw's box (provisional).
+    /// Its movement and attack box when the level does not know the first
+    /// frame of its image set: that frame's drawn box in the game's own
+    /// art, relative to its position. The sword shots use the magic claw's
+    /// box.
     pub fn frame_box(self) -> Rect {
         match self {
             Class::PistolBullet => Rect::new(-2, -2, 1, 1),
@@ -414,8 +418,10 @@ pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
         _ => class.image_set(),
     };
     o.image_set = runtime_image_set(image);
-    o.frame = 1;
-    let frame_box = class.frame_box();
+    // The boxes come from the first frame of the set and keep that size
+    // whatever frame the animation shows later.
+    o.frame = w.image_frames(image).map_or(1, |(first, _)| first);
+    let frame_box = w.frame_box(image, o.frame).unwrap_or(class.frame_box());
     o.move_rect = frame_box;
     o.attack_rect = frame_box;
     let mut d = ProjectileData {
@@ -644,11 +650,12 @@ fn explode(w: &mut World, id: ObjectId, d: &mut ProjectileData, class: Class) {
     d.phase = Phase::Exploding;
     d.armed = false;
     effect::boom(w, sound);
+    let first = w.image_frames("GAME_DYNAMITEEXPLO").map_or(1, |(f, _)| f);
     if let Some(o) = w.objects.get_mut(id) {
         o.type_flags = types::LEVEL_SHOT;
         if class == Class::Dynamite {
             o.image_set = runtime_image_set("GAME_DYNAMITEEXPLO");
-            o.frame = 1;
+            o.frame = first;
         }
     }
     w.set_anim(id, anim);
@@ -679,6 +686,9 @@ fn exploding(w: &mut World, id: ObjectId, mut d: ProjectileData, class: Class) {
                 let r = o.attack_rect;
                 o.attack_rect = Rect::new(r.left - g, r.top - g, r.right + g, r.bottom + g);
             }
+        }
+        if class == Class::Dynamite {
+            w.shake(DYNAMITE_SHAKE_MS);
         }
     }
     if done {

@@ -69,6 +69,9 @@ pub const HIT_BURST_Z: i32 = 8501;
 /// The three hit burst animations, by size.
 pub const HIT_BURST_ANIMS: [&str; 3] = ["GAME_SMLHITBURST", "GAME_MEDHITBURST", "GAME_BIGHITBURST"];
 
+/// Image set of the splash.
+pub const SPLASH_IMAGE: &str = "LEVEL_SPLASH";
+
 /// Sparkles the glitter driver sheds per tick.
 pub const GLITTER_PER_TICK: u32 = 2;
 
@@ -139,11 +142,17 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 ///
 /// A hit burst asked for here has no owner: it uses the enemy art, sits at
 /// depth [`HIT_BURST_Z`] and stays where it is. A splash sits just in
-/// front of Claw. An explosion is described in the module notes.
+/// front of Claw; a level that lists its image sets without the splash
+/// art gets none (`None`), while a level that lists no image sets at all
+/// cannot tell and gets one. An explosion is described in the module
+/// notes.
 pub fn spawn(w: &mut World, kind: EffectKind, x: i32, y: i32) -> Option<ObjectId> {
     match kind {
         EffectKind::HitBurst => spawn_hit_burst(w, x, y, HIT_BURST_Z, None, false),
         EffectKind::Splash => {
+            if !w.level.images.is_empty() && w.image_frames(SPLASH_IMAGE).is_none() {
+                return None;
+            }
             let z = w.claw_object().map_or(0, |c| c.z + 2);
             let mut o = new_object("Splash", x, y, z);
             o.data = ObjectData::Effect(EffectData {
@@ -278,7 +287,9 @@ fn random_in(w: &mut World, lo: i32, hi: i32) -> f64 {
 }
 
 /// True when `id` exists, is not about to be removed and was on screen:
-/// its box (or its position, without one) overlaps the logic view.
+/// the box its frame is drawn in overlaps the logic view. When the level
+/// does not know its frame, its hit box, its movement box or its position
+/// stands in.
 fn shown(w: &World, id: ObjectId) -> bool {
     let Some(o) = w.objects.get(id) else {
         return false;
@@ -286,14 +297,17 @@ fn shown(w: &World, id: ObjectId) -> bool {
     if o.flags & flags::DESTROY != 0 || o.draw_flags & draw_flags::HIDDEN != 0 {
         return false;
     }
-    let r = if o.hit_rect.is_set() {
-        o.hit_rect
-    } else if o.move_rect.is_set() {
-        o.move_rect
-    } else {
-        Rect::new(0, 0, 0, 0)
-    };
-    r.translate(o.x, o.y).overlaps(&w.view)
+    let r = w.draw_box(o).unwrap_or_else(|| {
+        let r = if o.hit_rect.is_set() {
+            o.hit_rect
+        } else if o.move_rect.is_set() {
+            o.move_rect
+        } else {
+            Rect::new(0, 0, 0, 0)
+        };
+        r.translate(o.x, o.y)
+    });
+    r.overlaps(&w.view)
 }
 
 fn data_mut(o: &mut Object) -> &mut EffectData {
@@ -344,7 +358,7 @@ fn start_sparkle(w: &mut World, id: ObjectId) {
 fn start_splash(w: &mut World, id: ObjectId) {
     start_common(w, id);
     if let Some(o) = w.objects.get_mut(id) {
-        o.image_set = runtime_image_set("LEVEL_SPLASH");
+        o.image_set = runtime_image_set(SPLASH_IMAGE);
     }
     w.set_anim(id, "GAME_SPLASH");
 }

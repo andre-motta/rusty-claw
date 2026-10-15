@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_sim::container::CollisionEvent;
+use claw_sim::logic::effect::{self, EffectKind};
 use claw_sim::logic::projectile::{self, Phase, ProjectileSpec};
 use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags, types};
 use claw_sim::tiles::{GROUND, SOLID};
@@ -310,4 +311,50 @@ fn install_projectile_traces_are_identical_at_60_144_and_240_hz() {
     for hz in [60, 144, 240] {
         assert_eq!(bomb_run(&level, Some(hz)), direct, "{hz} Hz");
     }
+}
+
+#[test]
+fn install_projectile_boxes_come_from_the_first_frames() {
+    let Some(level) = level1() else { return };
+    let cases = [
+        ("PistolBullet", "GAME_BULLETS", Rect::new(-2, -2, 1, 1)),
+        ("MagicBullet", "GAME_MAGICCLAW", Rect::new(-36, -18, 31, 13)),
+        ("Bullet", "LEVEL_MUSKETBALL", Rect::new(-6, -5, 5, 4)),
+        ("Dynamite", "GAME_DYNAMITELIT", Rect::new(-13, -14, 14, 9)),
+        ("RatBomb", "LEVEL_RATBOMB", Rect::new(-17, 33, 6, 54)),
+    ];
+    let mut sim = Sim::new(level.clone(), SimConfig::default());
+    for (logic, set, want) in cases {
+        let first = level.image_frames(set).map(|(f, _)| f);
+        let known = first.and_then(|f| level.frame_box(set, f));
+        println!("{logic}: first frame {first:?}, box {known:?}");
+        assert_eq!(known, Some(want), "{logic}");
+        let id = sim
+            .with_world(|w| {
+                projectile::spawn(
+                    w,
+                    ProjectileSpec {
+                        logic,
+                        x: 5000,
+                        y: 300,
+                        image_set: set,
+                        ..ProjectileSpec::default()
+                    },
+                )
+            })
+            .unwrap();
+        assert_eq!(sim.objects().get(id).unwrap().move_rect, want, "{logic}");
+    }
+}
+
+#[test]
+fn install_level1_shows_no_splash() {
+    let Some(level) = level1() else { return };
+    let mut sim = Sim::new(level, SimConfig::default());
+    let (x, y, _, _) = claw(&sim);
+    assert_eq!(
+        sim.with_world(|w| effect::spawn(w, EffectKind::Splash, x, y)),
+        None,
+        "LEVEL1 has no splash art"
+    );
 }

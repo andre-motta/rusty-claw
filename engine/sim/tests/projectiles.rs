@@ -8,6 +8,7 @@ use std::sync::Arc;
 use claw_sim::anim::{AnimFrame, Animation};
 use claw_sim::claw_frame::{AudioCue, SoundChannel, SoundCue};
 use claw_sim::container::CollisionEvent;
+use claw_sim::level::ImageFrames;
 use claw_sim::logic::effect::{self, EffectKind};
 use claw_sim::logic::new_object;
 use claw_sim::logic::projectile::{self, Phase, ProjectileSpec};
@@ -477,9 +478,15 @@ fn dynamite_goes_off_after_its_fuse_and_hits_once() {
     let mut hit_at = Vec::new();
     let mut counts = [0usize; 4];
     let mut sounds = Vec::new();
+    let mut shakes = Vec::new();
     for n in 1..=150 {
+        let start_ms = sim.tick() * 18;
+        let shake_before = sim.camera().shake_until_ms;
         let snap = sim.step(TickInput::default());
         sounds.extend(snap.audio.iter().cloned().map(|c| (n, c)));
+        if sim.camera().shake_until_ms != shake_before {
+            shakes.push((n, sim.camera().shake_until_ms - start_ms));
+        }
         sparkles.extend(
             sim.objects()
                 .all()
@@ -526,6 +533,11 @@ fn dynamite_goes_off_after_its_fuse_and_hits_once() {
     assert_eq!(counts, [1, 1, 1, 0]);
     hit_at.dedup();
     assert_eq!(hit_at, vec![exploded + 9]);
+    // The screen shakes for half a second from the tick it hurts.
+    assert_eq!(
+        shakes,
+        vec![(exploded + 9, u64::from(projectile::DYNAMITE_SHAKE_MS))]
+    );
     assert!(obj(&sim, d).is_none(), "removed when its animation ends");
 }
 
@@ -842,6 +854,78 @@ fn effects_remove_themselves_after_their_animation() {
         .unwrap();
     let (n, _) = run_until_gone(&mut bare, b, 3);
     assert_eq!(n, 1);
+}
+
+#[test]
+fn a_splash_needs_its_art_on_levels_that_list_their_image_sets() {
+    let mut l = arena();
+    l.images
+        .insert("GAME_SPARKLE".into(), ImageFrames::range(1, 6));
+    let mut sim = Sim::new(l.clone(), SimConfig::default());
+    assert_eq!(
+        sim.with_world(|w| effect::spawn(w, EffectKind::Splash, 1200, 900)),
+        None
+    );
+    l.images
+        .insert(effect::SPLASH_IMAGE.into(), ImageFrames::range(1, 7));
+    let mut sim = Sim::new(l, SimConfig::default());
+    assert!(
+        sim.with_world(|w| effect::spawn(w, EffectKind::Splash, 1200, 900))
+            .is_some()
+    );
+}
+
+#[test]
+fn a_burst_shows_only_while_its_owners_drawn_box_is_on_screen() {
+    // The owner's drawn box reaches 300 px to its left, so it shows while
+    // its position is just right of the view.
+    let mut l = arena();
+    let mut frames = ImageFrames::range(1, 1);
+    frames.boxes.insert(1, Rect::new(-300, -10, 0, 10));
+    l.images.insert("TEST_WIDE".into(), frames);
+    let mut sim = Sim::new(l, SimConfig::default());
+    for _ in 0..60 {
+        step(&mut sim);
+    }
+    let view = sim.with_world(|w| w.view);
+    let owner = target(&mut sim, view.right + 200, 900, 0);
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(owner).unwrap();
+        o.image_set = "TEST_WIDE".into();
+        o.frame = 1;
+    });
+    let shown = sim
+        .with_world(|w| effect::spawn_hit_burst(w, view.right + 200, 900, 0, Some(owner), false));
+    assert!(shown.is_some());
+    sim.with_world(|w| w.objects.get_mut(owner).unwrap().x = view.right + 400);
+    let hidden = sim
+        .with_world(|w| effect::spawn_hit_burst(w, view.right + 400, 900, 0, Some(owner), false));
+    assert_eq!(hidden, None);
+    // The burst already shown goes with its owner off screen.
+    step(&mut sim);
+    step(&mut sim);
+    assert!(obj(&sim, shown.unwrap()).is_none());
+}
+
+#[test]
+fn boxes_come_from_the_first_frame_when_the_level_knows_it() {
+    let mut l = arena();
+    let mut frames = ImageFrames::range(3, 5);
+    frames.boxes.insert(3, Rect::new(-4, -3, 3, 2));
+    frames.boxes.insert(4, Rect::new(-40, -30, 30, 20));
+    l.images.insert("GAME_BULLETS".into(), frames);
+    let mut sim = Sim::new(l, SimConfig::default());
+    let p = launch(&mut sim, pistol(1200, 900, 700));
+    let o = obj(&sim, p).unwrap();
+    assert_eq!(o.frame, 3);
+    assert_eq!(
+        (o.move_rect, o.attack_rect),
+        (Rect::new(-4, -3, 3, 2), Rect::new(-4, -3, 3, 2))
+    );
+    // Without it, the game's own box stands in.
+    let mut sim = Sim::new(arena(), SimConfig::default());
+    let p = launch(&mut sim, pistol(1200, 900, 700));
+    assert_eq!(obj(&sim, p).unwrap().move_rect, Rect::new(-2, -2, 1, 1));
 }
 
 // ------------------------------------------------------------- the family
