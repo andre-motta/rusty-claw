@@ -1,8 +1,11 @@
 //! The keyboard map: physical keys to game buttons.
 //!
-//! The default map uses the arrow keys to move, climb, crouch and look up,
-//! and Space to jump. Keys are matched by their physical position, so the
-//! map works on any keyboard layout.
+//! The default map is the original game's: the arrow keys move, climb,
+//! crouch and look up, Space jumps, Ctrl attacks, Alt fires the selected
+//! weapon, Shift switches weapons, Z lifts and throws, and 1, 2 and 3
+//! select the pistol, magic and dynamite; the left and right Ctrl, Alt
+//! and Shift keys both work. Keys are matched by their physical position,
+//! so the map works on any keyboard layout.
 
 use claw_frame::Buttons;
 use winit::keyboard::KeyCode;
@@ -51,6 +54,16 @@ impl Default for Keymap {
                 (KeyCode::ArrowUp, B(Buttons::UP)),
                 (KeyCode::ArrowDown, B(Buttons::DOWN)),
                 (KeyCode::Space, B(Buttons::JUMP)),
+                (KeyCode::ControlLeft, B(Buttons::ATTACK)),
+                (KeyCode::ControlRight, B(Buttons::ATTACK)),
+                (KeyCode::AltLeft, B(Buttons::PROJECTILE)),
+                (KeyCode::AltRight, B(Buttons::PROJECTILE)),
+                (KeyCode::ShiftLeft, B(Buttons::TOGGLE)),
+                (KeyCode::ShiftRight, B(Buttons::TOGGLE)),
+                (KeyCode::KeyZ, B(Buttons::LIFT)),
+                (KeyCode::Digit1, B(Buttons::PISTOL)),
+                (KeyCode::Digit2, B(Buttons::MAGIC)),
+                (KeyCode::Digit3, B(Buttons::DYNAMITE)),
                 (KeyCode::Escape, C(Command::Quit)),
                 (KeyCode::F11, C(Command::ToggleFullscreen)),
                 (KeyCode::F10, C(Command::NextWindowSize)),
@@ -86,7 +99,9 @@ impl Keymap {
 
     /// Help text: one line per key.
     pub fn help(&self) -> &'static str {
-        "arrows move, climb, crouch and look up; Space jumps; P or Pause pauses; \
+        "arrows move, climb, crouch and look up; Space jumps; Ctrl attacks; \
+         Alt fires the weapon; Shift switches weapons; Z lifts and throws; \
+         1, 2, 3 select pistol, magic, dynamite; P or Pause pauses; \
          F7 interpolation; F8 fit or integer scaling; F9 aspect (fill, centered, 4:3); \
          F10 window size; F11 fullscreen; Escape quits"
     }
@@ -97,7 +112,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_map_moves_with_arrows_and_jumps_with_space() {
+    fn default_map_is_the_original_one() {
         let map = Keymap::default();
         let b = |k| match map.action(k) {
             Some(Action::Button(b)) => b,
@@ -108,10 +123,36 @@ mod tests {
         assert_eq!(b(KeyCode::ArrowUp), Buttons::UP);
         assert_eq!(b(KeyCode::ArrowDown), Buttons::DOWN);
         assert_eq!(b(KeyCode::Space), Buttons::JUMP);
+        for (k, want) in [
+            (KeyCode::ControlLeft, Buttons::ATTACK),
+            (KeyCode::ControlRight, Buttons::ATTACK),
+            (KeyCode::AltLeft, Buttons::PROJECTILE),
+            (KeyCode::AltRight, Buttons::PROJECTILE),
+            (KeyCode::ShiftLeft, Buttons::TOGGLE),
+            (KeyCode::ShiftRight, Buttons::TOGGLE),
+            (KeyCode::KeyZ, Buttons::LIFT),
+            (KeyCode::Digit1, Buttons::PISTOL),
+            (KeyCode::Digit2, Buttons::MAGIC),
+            (KeyCode::Digit3, Buttons::DYNAMITE),
+        ] {
+            assert_eq!(b(k), want, "{k:?}");
+        }
         assert_eq!(
             map.buttons(),
-            Buttons::LEFT | Buttons::RIGHT | Buttons::UP | Buttons::DOWN | Buttons::JUMP
+            Buttons::LEFT
+                | Buttons::RIGHT
+                | Buttons::UP
+                | Buttons::DOWN
+                | Buttons::JUMP
+                | Buttons::ATTACK
+                | Buttons::PROJECTILE
+                | Buttons::TOGGLE
+                | Buttons::LIFT
+                | Buttons::PISTOL
+                | Buttons::MAGIC
+                | Buttons::DYNAMITE
         );
+        assert!(map.help().contains("Ctrl attacks"));
         assert_eq!(
             map.action(KeyCode::Escape),
             Some(Action::Command(Command::Quit))

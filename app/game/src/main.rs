@@ -4,7 +4,7 @@
 //! rusty-claw --install PATH [--level N | --custom FILE.WWD] [--res WxH]
 //!            [--fullscreen] [--aspect fill|centered|4:3] [--scale fit|integer]
 //!            [--widen-activation] [--vsync on|off] [--fps-cap N | --uncapped]
-//!            [--no-interp]
+//!            [--no-interp] [--no-audio] [--record FILE.csv]
 //!            [--replay FILE.csv [--trace OUT.csv] [--render-hz HZ]]
 //!            [--bench SECONDS [--headless] [--render-hz HZ]]
 //! ```
