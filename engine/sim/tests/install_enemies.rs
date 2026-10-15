@@ -257,9 +257,12 @@ fn install_every_enemy_can_be_killed_with_the_sword() {
             Some(id) => id,
             None => {
                 // No floor beside it Claw can stand on (an alcove in a
-                // wall): wake it, then strike from the air.
+                // wall): wake it, then strike from the air. A few ticks
+                // only: below the alcove there may be spikes.
                 sim.teleport_player(x - 55, y - 10);
-                settle(&mut sim);
+                for _ in 0..5 {
+                    sim.step(TickInput::default());
+                }
                 match enemy_from(&sim, x, y, z) {
                     Some(id) => id,
                     None => {

@@ -12,7 +12,7 @@ use claw_sim::anim::Animation;
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::enemy::{self, EnemyState};
 use claw_sim::logic::pickup::PickupData;
-use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags};
+use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags, types};
 use claw_sim::player::attack::{self, PUNCHABLE, kind};
 use claw_sim::player::state;
 use claw_sim::rng::Rng;
@@ -529,6 +529,16 @@ fn touching_an_officer_hurts_once_per_window() {
     }
 }
 
+/// Keeps the officer's blows off Claw for the rest of the test: a hit
+/// stops Claw's own blow, and these tests watch his blow land.
+fn shield(sim: &mut Sim) {
+    sim.with_world(|w| {
+        w.claw.stats.invulnerable_ms = 1_000_000;
+        let id = w.claw_id.unwrap();
+        w.objects.get_mut(id).unwrap().hit_type_flags &= !types::ENEMY;
+    });
+}
+
 /// Runs until the officer's state is `s`, at most `n` ticks.
 fn until_state(sim: &mut Sim, s: EnemyState, n: usize) -> bool {
     for _ in 0..n {
@@ -543,6 +553,7 @@ fn until_state(sim: &mut Sim, s: EnemyState, n: usize) -> bool {
 #[test]
 fn a_blow_makes_the_officer_flinch_and_slide_away() {
     let mut sim = sim_with(arena(vec![officer_at(1080, 900, 0)]), 2);
+    shield(&mut sim);
     let id = first_officer(&sim).unwrap();
     // Tougher than usual, to watch the flinch without the death.
     sim.with_world(|w| w.objects.get_mut(id).unwrap().health = 20);
@@ -556,6 +567,7 @@ fn a_blow_makes_the_officer_flinch_and_slide_away() {
     );
     // Replay the blow tick by tick to watch the slide.
     let mut sim = sim_with(arena(vec![officer_at(1080, 900, 0)]), 2);
+    shield(&mut sim);
     let id = first_officer(&sim).unwrap();
     sim.with_world(|w| w.objects.get_mut(id).unwrap().health = 20);
     sim.step(TickInput {
@@ -595,6 +607,7 @@ fn an_uppercut_makes_a_high_flinch() {
     for seed in 1..40 {
         // 15 px away: the choice is a punch, an uppercut or a kick.
         let mut sim = sim_with(arena(vec![officer_at(1050, 900, 0)]), seed);
+        shield(&mut sim);
         let id = first_officer(&sim).unwrap();
         sim.with_world(|w| w.objects.get_mut(id).unwrap().health = 20);
         sim.step(TickInput {
@@ -629,6 +642,7 @@ fn an_uppercut_makes_a_high_flinch() {
 #[test]
 fn the_officer_dies_drops_its_loot_and_flies_off() {
     let mut sim = sim_with(arena(vec![officer_at(1080, 900, 33)]), 4);
+    shield(&mut sim);
     let id = first_officer(&sim).unwrap();
     sim.step(TickInput {
         held: Buttons(ATTACK),
@@ -678,6 +692,7 @@ fn a_multi_item_drop_fans_out() {
     rec.record[35] = 33;
     rec.record[37] = 33;
     let mut sim = sim_with(arena(vec![rec]), 4);
+    shield(&mut sim);
     sim.step(TickInput {
         held: Buttons(ATTACK),
         pressed: Buttons(ATTACK),
