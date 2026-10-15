@@ -576,6 +576,9 @@ fn a_warp_in_a_stack_keeps_its_destination() {
     step(&mut sim, 2);
     let c = stack_crates(&sim)[0];
     let claw = claw(&mut sim);
+    // Claw takes a warp he touches; the warp lands next to him here, so he
+    // is kept from touching it.
+    sim.with_world(|w| w.objects.get_mut(claw).unwrap().hit_type_flags &= !types::SPECIAL);
     hit(&mut sim, c, claw);
     let g = find(&sim, pickup::BOUNCING_GOODIE)[0];
     assert_eq!((obj(&sim, g).speed_x, obj(&sim, g).speed_y), (4000, 300));
@@ -1251,6 +1254,44 @@ fn claw_meets_pickups_through_pair_collision() {
     }
     // He takes it at the first touch, so it touches him once.
     assert_eq!(hits, 1, "the treasure touches Claw");
+}
+
+#[test]
+fn claw_takes_what_a_placed_pickup_was_set_up_with() {
+    // The level's own amounts are left at 0, as the first level leaves
+    // them: what Claw gets comes from the pickup's picture.
+    let at = |logic: &str, set: &str| spec(logic, set, 1000, 930);
+    // Treasure: its points and its kind in the tally.
+    let mut sim = Sim::new(
+        level(vec![at("TreasurePowerup", "GAME_TREASURE_RINGS_RED")]),
+        SimConfig::default(),
+    );
+    step(&mut sim, 3);
+    assert_eq!(sim.stats().score, 1500);
+    assert_eq!(sim.stats().treasure_level[2], 1, "a ring");
+    // Health: the potion's amount.
+    let mut sim = Sim::new(
+        level(vec![at("HealthPowerup", "GAME_HEALTH_POTION1")]),
+        SimConfig::default(),
+    );
+    sim.with_world(|w| w.claw.stats.health = 50);
+    step(&mut sim, 3);
+    assert_eq!(sim.stats().health, 60);
+    // The map piece ends the level.
+    let mut sim = Sim::new(
+        level(vec![at("SpecialPowerup", "GAME_MAPPIECE")]),
+        SimConfig::default(),
+    );
+    let mut events = Vec::new();
+    for _ in 0..3 {
+        events.extend(sim.step(TickInput::default()).events);
+    }
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, claw_sim::claw_frame::GameEvent::LevelComplete { .. })),
+        "{events:?}"
+    );
 }
 
 // ------------------------------------------------------------ determinism

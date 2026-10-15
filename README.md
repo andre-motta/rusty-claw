@@ -20,36 +20,48 @@ are never run.
 
 ## Status
 
-Claw stands, walks, runs, jumps (higher the longer Jump is held), falls,
-lands, crouches, looks up and climbs, with tile collision and a camera that
-follows him, in every retail level and in community custom levels.
-Movement is tuned to cover the same distances in the same times as the
-original played at 60 frames per second.
+The first level, La Roca, plays from start to finish:
 
-Claw fights with his sword, fists and feet: standing he swipes, punches,
-uppercuts or kicks, and he swipes crouching and in the air. Officers, the
-sword-fighting guards of the first level, stand guard, pace, strike back,
-flinch and die. Claw loses health when he is struck and cannot be hurt again for a moment. The
-game plays its sounds; the window title shows health, score and lives.
+- Claw walks, runs, jumps, climbs, crouches and looks up, tuned to cover the
+  same distances in the same times as the original at 60 frames per second.
+- He fights with his sword, fists and feet (standing, crouching and in the
+  air), the pistol, magic and dynamite, and lifts and throws powder kegs.
+- Officers, soldiers and rats guard, pace, strike, shoot, throw bombs,
+  flinch and die, dropping their loot.
+- Health, lives, damage from enemies, shots and spikes, death and the
+  respawn at the last checkpoint, save points, crates, powder kegs,
+  treasure, food, ammunition, power-ups, the map piece and the end-of-level
+  tally.
+- Elevators, crumbling and toggling pegs and the animated scenery; pegs and
+  elevators go back in place after a death.
+- Sound effects with positional panning, ambient sounds, Claw's and the
+  enemies' speech, and the music (with a SoundFont, see below).
+- The status bar, screen transitions, the original-style title, main menu,
+  options, load game, in-game menu, tally and game over, saved games,
+  settings written back to the config file, gamepads and rebindable keys.
 
-Not there yet: the other enemies, the pistol, magic and dynamite, pickups,
-dying, music, menus, the status bar, movies and saved games. Other objects
-are drawn where the level places them but do not move yet.
+Every retail level loads and runs. In levels 2 to 14, the objects the first
+level does not have (other enemies, bosses, traps and the like) are drawn
+where the level places them but stand still; see [Known gaps](#known-gaps).
 
 ## Building on Fedora
 
 You need a C linker, `make`, Vulkan drivers (Mesa's for AMD and Intel
-GPUs; the NVIDIA driver brings its own), the ALSA and udev development
-packages (for sound and, later, game controllers), plus the Rust toolchain
-from [rustup](https://rustup.rs).
+GPUs; the NVIDIA driver brings its own), the ALSA development package (for
+sound) and the udev development package (for gamepads), plus the Rust
+toolchain from [rustup](https://rustup.rs).
 
 ```sh
-sudo dnf install gcc make git vulkan-loader mesa-vulkan-drivers alsa-lib-devel systemd-devel
+sudo dnf install gcc make git curl vulkan-loader mesa-vulkan-drivers alsa-lib-devel systemd-devel
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # then open a new shell
 git clone https://github.com/andre-motta/rusty-claw.git
 cd rusty-claw
+make soundfont                                  # optional: the music's instruments
 make run-game ARGS='--install /path/to/your/install'
 ```
+
+On Debian and Ubuntu the packages are `build-essential git curl
+libvulkan1 mesa-vulkan-drivers libasound2-dev libudev-dev`.
 
 The first build downloads the pinned Rust version from `rust-toolchain.toml`
 and the dependencies, and takes a few minutes. The game binary is
@@ -61,10 +73,22 @@ support, which in practice means GPUs from about 2016 on.
 ## Playing
 
 ```sh
-rusty-claw --install /path/to/your/install                 # level 1
-rusty-claw --install /path/to/your/install --level 4
+rusty-claw --install /path/to/your/install                 # the title and main menu
+rusty-claw --install /path/to/your/install --level 4       # straight into level 4
 rusty-claw --install /path/to/your/install --custom "My Level.WWD"
 ```
+
+With only `--install` the game starts at the title, then the main menu:
+new game (pick a level you have opened), load game (a level's start or one
+of its two save points), options (sound, video, controls) and quit.
+`--level` and `--custom` start straight into that level. In play, Escape, P
+or the gamepad's Start button open the in-game menu: resume, options and
+end the game. Finishing a level shows the treasure tally, then the main
+menu; the next level is then open in the new game and load lists.
+
+The game pauses when its window loses focus.
+
+### Keyboard
 
 | Key | Action |
 | --- | --- |
@@ -73,33 +97,123 @@ rusty-claw --install /path/to/your/install --custom "My Level.WWD"
 | Down | climb down; crouch when standing |
 | Space | jump; hold for a higher jump |
 | Ctrl | attack: sword, punch, uppercut or kick; crouching and in the air, a sword swipe |
-| Alt | fire the selected weapon (not there yet) |
+| Alt | fire the selected weapon |
 | Shift | switch weapons: pistol, magic, dynamite |
-| 1, 2, 3 | select the pistol, magic or dynamite |
-| Z | lift and throw (not there yet) |
-| P or Pause | pause |
-| F7 | interpolation between game ticks on or off |
+| 1, 2, 3 | select and fire the pistol, magic or dynamite |
+| Z | lift an object in front of Claw; again to throw it (hold to throw farther) |
+| Escape, P or Pause | the in-game menu |
+| F7 | smooth motion between game ticks on or off |
 | F8 | fit or integer scaling |
 | F9 | aspect: fill, centered, 4:3 |
 | F10 | next window size |
 | F11 | fullscreen |
-| Escape | quit |
 
-The game pauses when its window loses focus.
+Keys are matched by their position, so the map is the same on any keyboard
+layout. Hold the fire key longer to throw dynamite farther.
 
-## Sound
+### Gamepad
+
+Any standard gamepad works, the Steam Deck's controls included:
+
+| Pad | Action |
+| --- | --- |
+| d-pad or left stick | move, climb, crouch, look up |
+| South (A) | jump |
+| East (B) | attack |
+| West (X) | fire the weapon |
+| North (Y) | switch weapons |
+| left shoulder | lift and throw |
+| right shoulder, left trigger, right trigger | pistol, magic, dynamite |
+| Start | the in-game menu |
+
+The menus also follow the d-pad, South to choose and East to go back.
+
+### Rebinding
+
+The controls page of the options lists every action with its keys and pad
+buttons. Choose an action with the keyboard and press a key, or choose it
+with the gamepad and press a pad button: that becomes its binding. A key
+belongs to one action at a time, so taking a key from another action swaps
+the two; the quit, pause and display keys cannot be taken. The same page
+sets the stick dead zone and restores the default bindings. Bindings are
+saved in the config file as `key_<action>` and `pad_<action>` lines (see
+below), which can also be edited by hand.
+
+## Sound and music
 
 The game plays the sounds of your install: every sound of a level is read
 and decoded when the level loads. It uses the default output device of
 your desktop (PipeWire, PulseAudio or ALSA); without one it runs silently
-and says so once. Game sounds pause with the game. Music comes later.
+and says so once. Sounds pause with the game; the music holds and carries
+on.
+
+Music is the game's own score, played through a General MIDI SoundFont (an
+`.sf2` instrument bank). None comes with the source. The default bank is
+GeneralUser GS by S. Christian Collins, under its own permissive licence:
+
+```sh
+make soundfont
+```
+
+fetches a pinned copy into `~/.local/share/rusty-claw/soundfonts/` (or under
+`$XDG_DATA_HOME`) and checks its SHA-256. The game takes the first usable
+bank from, in order: the `soundfont` setting, the `CLAW_SOUNDFONT`
+environment variable, a packaged game's `share/rusty-claw/soundfonts/`,
+that user folder, and the common system paths where distributions install
+FluidR3_GM. Without a bank, music is off, one message says how to get one,
+and the sound effects are unaffected.
 
 | Option | What it does |
 | --- | --- |
 | `--no-audio` | no sound; no audio device is opened |
 
-In the config file, `audio = off` does the same. Replays, benchmarks and
-headless runs are always silent.
+In the config file, `audio = off` does the same. The sound options set the
+sound and music volumes and turn music, speech and ambient sounds on or
+off. Replays, benchmarks and headless runs are always silent.
+
+## Settings and saved games
+
+Settings live in a config file, `~/.config/rusty-claw/config.toml` (or under
+`$XDG_CONFIG_HOME`), or any file passed with `--config FILE`; command line
+options win over it. Options changed in the menus are written back to that
+file: only the changed lines change, every other line and comment stays as
+it is, the previous file is kept as `config.toml.bak`, and values given on
+the command line are not written back.
+
+```toml
+install = "/path/to/your/install"
+level = 1                  # or: custom = "My Level.WWD"
+res = "2560x1440"
+fullscreen = false
+aspect = "fill"            # fill, centered or 4:3
+scale = "fit"              # fit or integer
+widen_activation = false
+vsync = true
+fps_cap = 300              # with vsync off; 0 for no cap
+interpolation = true
+status_bar = "edges"       # edges, or centred in the 4:3 area
+audio = on                 # on or off
+sound_volume = 80          # 0 to 100
+music_volume = 50          # 0 to 100
+voice = on                 # Claw's and the enemies' speech
+ambient = on               # ambient sounds
+soundfont = "/path/to/a/soundfont.sf2"
+gamepad = on               # on or off
+pad_dead_zone = 0.34       # stick dead zone, 0.05 to 0.95
+key_jump = "Space"         # key_<action>: key names, comma separated
+pad_jump = "South"         # pad_<action>: pad button names
+```
+
+The bindable actions are `left`, `right`, `up`, `down`, `jump`, `attack`,
+`projectile`, `toggle`, `lift`, `pistol`, `magic`, `dynamite`, `quit`,
+`fullscreen`, `window_size`, `aspect`, `scale`, `interpolation` and `pause`.
+
+Saved games are kept in `~/.local/share/rusty-claw/saves/default/` (or
+under `$XDG_DATA_HOME`). Touching one of a level's two save points saves
+the game there, and finishing a level saves the start of the next one with
+the score, health, lives, ammunition and treasure carried over. Every write
+is atomic and keeps the previous file; a damaged save is moved aside, never
+deleted. Community custom levels are not saved.
 
 ## Resolution, aspect and refresh
 
@@ -123,31 +237,16 @@ positions interpolated between steps, at any resolution.
 | `--no-interp` | draw the latest game tick only |
 | `--pack DIR` | an image pack with higher-resolution replacement images |
 
-Window size, aspect, scaling and fullscreen also change while playing (F8
-to F11); the game view and the game itself stay as they are.
+The status bar sits at the edges of the picture; on a wide display
+`status_bar = "centred"` (or the video options) keeps it in the 4:3
+area. Window size, aspect, scaling and fullscreen also change while playing
+(F8 to F11, or the video options); the game view and the game itself stay
+as they are.
 
 The game never draws as fast as the GPU allows unless asked to: with vsync
 on, the display's refresh paces drawing, and with vsync off, the frame-rate
 cap does. Drawing thousands of frames a second gains nothing, wastes power
 and makes some graphics cards whine audibly.
-
-Settings can live in a config file, `~/.config/rusty-claw/config.toml` (or
-under `$XDG_CONFIG_HOME`), or any file passed with `--config FILE`; command
-line options win over it:
-
-```toml
-install = "/path/to/your/install"
-level = 1                  # or: custom = "My Level.WWD"
-res = "2560x1440"
-fullscreen = false
-aspect = "fill"            # fill, centered or 4:3
-scale = "fit"              # fit or integer
-widen_activation = false
-vsync = true
-fps_cap = 300              # with vsync off; 0 for no cap
-interpolation = true
-audio = on                 # on or off
-```
 
 ## Replays and benchmarks
 
@@ -162,40 +261,47 @@ start gives the same game.
 
 ```sh
 # play and record, then watch the recording
-rusty-claw --install PATH --record game.csv
-rusty-claw --install PATH --replay game.csv
-# watch a script in the window, then take over with the keyboard
-rusty-claw --install PATH --replay walk.csv
+rusty-claw --install PATH --level 1 --record game.csv
+rusty-claw --install PATH --level 1 --replay game.csv
 # no window: write one trace row per tick, with a simulated 144 Hz display
 rusty-claw --install PATH --replay walk.csv --trace out.csv --render-hz 144
-# benchmark: Claw on a fixed route for 10 s, statistics as JSON
+# benchmark: the combat route for 10 s, statistics as JSON
 make bench ARGS='--install PATH --level 1 --bench 10 --res 3840x2160'
 # the same, drawn offscreen at the full size with a simulated display
 make bench ARGS='--install PATH --level 1 --bench 10 --res 5120x1440 --headless'
 ```
 
-Traces are identical at every display rate. The benchmark reports the CPU
-work per frame, the cost of each game tick and the number of live objects,
-frames that missed the display's refresh (in a window) or GPU time
-(offscreen), and an estimate for a handheld-class CPU. When the desktop is
-smaller than `--res`, the window gets what fits and every frame is also
-drawn offscreen at the requested size.
+Traces are identical at every display rate.
 
-The report is one line of JSON on standard output. A second line on
-standard error gives the verdict, PASS or FAIL, with each budget: frame
-work under 6.9 ms at the 99th percentile, the handheld estimate under
-8.3 ms, and no missed refresh. Missed refreshes can be counted only in a
-window with vsync on; offscreen or with vsync off the line says they are
-not measurable. The benchmark exits with status 3 when a measured budget is
-missed. For each missed refresh, the JSON describes that frame (its work,
-the waits around it, sprite loads and window changes) and names the likely
-cause, to tell a slow frame of the game from a stall in the desktop's
-compositor.
+The benchmark plays a combat route: Claw starts before the stretch of the
+level where the most enemies stand together and takes them on one after
+the other, with his sword and the pistol, so enemies fight back and shots,
+bursts and pickups fly while frames are measured. The route is planned on a
+copy of the game before the run and played once; it lasts a run paced at
+the display rate, and the verdict says when an unpaced run outran it. The
+offscreen benchmark also plays the sounds and music through a silent
+output, so their work is measured too.
+
+The report is one line of JSON on standard output: the CPU work per frame,
+the cost of each game tick and the number of live objects, frames that
+missed the display's refresh (in a window) or GPU time (offscreen), an
+estimate for a handheld-class CPU, the route and what it met (enemies
+killed, the most enemies and shots live at once). A second line on standard
+error gives the verdict, PASS or FAIL, with each budget: frame work under
+6.9 ms at the 99th percentile, the handheld estimate under 8.3 ms, and no
+missed refresh. Missed refreshes can be counted only in a window with vsync
+on; offscreen or with vsync off the line says they are not measurable. The
+benchmark exits with status 3 when a measured budget is missed. For each
+missed refresh, the JSON describes that frame (its work, the waits around
+it, sprite loads and window changes) and names the likely cause, to tell a
+slow frame of the game from a stall in the desktop's compositor.
 
 The offscreen benchmark draws at its simulated display rate (`--render-hz`,
 144 by default), as a real display would; per-frame times never include
 that wait. Add `--uncapped` to draw as fast as the machine allows, for
-measuring throughput.
+measuring throughput. When the desktop is smaller than `--res`, a window
+benchmark gets what fits and every frame is also drawn offscreen at the
+requested size.
 
 ## Development
 
@@ -214,13 +320,22 @@ install tests read your install at run time and skip themselves without it:
 | `CLAW_GOLDEN_DIR` | optional: a folder of reference visible-tile grids (`level<N>_<W>x<H>.json`) the render and acceptance tests compare against |
 | `CLAW_TOLERANCES` | optional: a TOML table of movement targets to check instead of the built-in one |
 | `CLAW_GPU_TESTS=1` | optional: run the renderer's GPU tests on synthetic data without an install |
+| `CLAW_AUDIO_SMOKE=1` | optional: open the real audio device in the audio tests |
 
-The acceptance suite (`tests/acceptance`) checks that every level loads in
-under 3 s, the visible tile grids, Claw's movement against the movement
-targets, identical traces at 60, 144 and 240 Hz, frame cost at 3840x2160,
+The acceptance suite (`tests/acceptance`) plays the first level from start
+to finish on a route built from the level's own records (every enemy
+killed, every checkpoint, a death and the respawn, crates, a powder keg,
+treasure and the tally, the elevator and the toggling pegs, the map piece)
+and checks that the whole game is identical at 60, 144 and 240 Hz with
+jitter. It also covers each weapon against each enemy, a saved game round
+trip and the tally through the menus, a minute of random input on every
+retail level, every level loading in under 3 s, the visible tile grids,
+Claw's movement against the movement targets, frame cost at 3840x2160,
 5120x1440 and 640x480, a 640x480 window at 60 frames per second or more,
-and that community custom levels load. Some of these tests use the GPU or
-open a window for a few seconds.
+and community custom levels. Some of these tests use the GPU or open a
+window for a few seconds; on a locked or headless desktop run them under a
+virtual display (`xvfb-run`). `tests/acceptance/PLAYTEST.md` is the list of
+things to try by hand before a release.
 
 Other tools:
 
@@ -236,14 +351,32 @@ The viewer follows the same rules as the game: vsync on by default
 Its offscreen benchmark (`--headless-bench SECONDS`) draws at `--bench-hz`
 unless `--uncapped` is given.
 
+## Known gaps
+
+- Levels 2 to 14: their own enemies, bosses, traps, ropes, conveyor belts
+  and other objects do not move or act yet.
+- No movies or cut scenes, and no multiplayer (curses only act in
+  multiplayer games, so they vanish in single player as in the original).
+- A few details still follow a reasonable guess rather than a measurement
+  of the original: carrying an object walks at 30 px/s, a hit near a ledge
+  can briefly show a landing before the fall, rats that reach a wall turn
+  back at walking speed, enemies treat goo like spikes, a magic hit on an
+  enemy shows no lingering flame or frost, and the switch-weapon click is
+  missing while climbing. The play-test list asks about each.
+- The in-game menu's end-life entry, the front layer and detail settings
+  and the play area size are shown but have no effect yet.
+- One profile, without profile screens.
+
 ## Layout
 
 | Directory | Package | What it is |
 | --- | --- | --- |
 | `engine/assets` | `claw-assets` | asset store, format readers, level model |
 | `engine/frame` | `claw-frame` | fixed-step frame driver and the types shared by renderer and simulation |
-| `engine/render` | `claw-render` | palette renderer |
-| `engine/sim` | `claw-sim` | headless simulation |
+| `engine/render` | `claw-render` | palette renderer, screen sprites and transitions |
+| `engine/sim` | `claw-sim` | headless simulation and the level logics |
+| `engine/audio` | `claw-audio` | mixer, output device and music synthesis |
+| `engine/ui` | `claw-ui` | status bar, menus and the title, tally and game-over screens |
 | `app/info` | `claw-info` | level summary tool |
 | `app/viewer` | `claw-viewer` | level viewer |
 | `app/game` | `claw-game` | the game (`rusty-claw` binary) |
@@ -254,4 +387,5 @@ unless `--uncapped` is given.
 
 GPL-3.0-or-later; see [LICENSE](LICENSE). The licence covers this source code
 only. Captain Claw and its assets belong to their respective owners and are
-not part of this project.
+not part of this project. The SoundFont that `make soundfont` fetches is
+covered by its own licence.

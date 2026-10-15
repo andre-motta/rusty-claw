@@ -1,5 +1,7 @@
 //! Frame cost on level 1, drawn offscreen with the game's benchmark route
-//! at a simulated 144 Hz display.
+//! at a simulated 144 Hz display: the combat route through the stretch of
+//! the level with the most enemies, with the status bar, and the sounds and
+//! music played through a silent output.
 //!
 //! - At 3840x2160 and 5120x1440 the CPU work of a frame (input, ticks,
 //!   interpolation, scene building and submission) stays under 6.9 ms at
@@ -9,8 +11,9 @@
 //!   99th percentile: 60 frames per second or more.
 //! - No image is read or decoded while frames are drawn.
 //! - Frames are paced to the simulated display: the run draws about 144
-//!   frames a second, not as many as the GPU allows, and the looping route
-//!   never runs out.
+//!   frames a second, not as many as the GPU allows, and the route (played
+//!   once) lasts the whole run.
+//! - The route meets enemies, and the sounds play.
 //!
 //! The tick cost and the number of live objects are printed with each run,
 //! also with widened activation at 5120x1440, which keeps more objects live.
@@ -40,7 +43,7 @@ fn bench(res: (u32, u32), widen: bool) -> Option<Report> {
     println!(
         "{}x{}{}: {} frames, work p50 {:.3} p99 {:.3} max {:.3} ms, tick frames p99 {:.3} ms \
          (handheld estimate {:.3} ms), tick p50 {:.4} p99 {:.4} max {:.4} ms at {mean:.0} \
-         live objects (max {max}), {} activation",
+         live objects (max {max}), {} activation, {:?}",
         res.0,
         res.1,
         if widen { " widened" } else { "" },
@@ -54,13 +57,27 @@ fn bench(res: (u32, u32), widen: bool) -> Option<Report> {
         tick.p99,
         tick.max,
         r.activation,
+        r.combat,
     );
     println!("{}", r.to_json());
     println!("{}", r.summary());
     assert_eq!(r.images_loaded_during_run, 0, "images decoded mid-run");
     assert!(r.ticks > 100, "the route ran");
+    assert_eq!(r.route_kind, "combat");
+    assert!(
+        r.route_start.is_some(),
+        "the route starts at the combat stretch"
+    );
+    assert!(
+        r.route_ticks as u64 >= r.ticks,
+        "the route lasts the run: {} ticks for {}",
+        r.route_ticks,
+        r.ticks
+    );
     assert_eq!(r.ticks_past_route, 0, "the route ran out");
-    assert!(r.route_ticks > 0);
+    assert!(r.combat.enemies_live_max > 0, "enemies met: {:?}", r.combat);
+    let audio = r.audio.clone().expect("the headless run plays sound");
+    assert!(audio.sounds > 0 && audio.cues > 0, "{audio:?}");
     assert!(
         r.fps() <= 144.0 * 1.05,
         "{:.1} frames per second at a paced 144 Hz",
