@@ -86,11 +86,9 @@ fn blow(key: &str, frames: &[(i32, i32, i32)]) -> Arc<Animation> {
     Arc::new(a)
 }
 
-/// Needs Claw's melee attacks: until they are on this branch, pressing
-/// Attack starts nothing, so the test is ignored. Run it with
-/// `cargo test -p claw-sim --test framework -- --ignored` once they are.
+/// Holding Right and Attack through a running blow does not cut it short
+/// before its strike box goes live.
 #[test]
-#[ignore = "needs Claw's melee attacks to start a blow from the Attack button"]
 fn holding_right_and_attack_through_a_blow_lets_it_strike() {
     let mut level = flat_level();
     let strike = [(1, 25, 0), (2, 25, 0), (3, 125, 1), (2, 35, 0), (1, 25, 0)];

@@ -13,7 +13,7 @@ use claw_assets::{AssetStore, Install, LevelData, LevelSource};
 use claw_sim::logic::decor;
 use claw_sim::logic::platform::{self, PLATFORM, PlatformData, state};
 use claw_sim::logic::{self, GameLogic};
-use claw_sim::object::{LogicKind, Object, ObjectId, draw_flags, flags};
+use claw_sim::object::{LogicKind, Object, ObjectId, draw_flags, flags, types};
 use claw_sim::trace::{self, TraceRow};
 use claw_sim::{
     ActivationConfig, InputLatch, InputScript, ObjectData, Sim, SimConfig, SimLevel, TickInput,
@@ -128,6 +128,16 @@ fn clear_shots(sim: &mut Sim) {
     });
 }
 
+/// Keeps the blows of the enemies the rides pass off Claw: a blow knocks
+/// him back off his place on the elevator.
+fn shield(sim: &mut Sim) {
+    sim.with_world(|w| {
+        w.claw.stats.invulnerable_ms = 1_000_000;
+        let id = w.claw_id.unwrap();
+        w.objects.get_mut(id).unwrap().hit_type_flags &= !types::ENEMY;
+    });
+}
+
 /// Wakes the platform `id` by looking at it, then drops Claw just above
 /// its surface and waits until he rides it.
 fn land_on(sim: &mut Sim, id: ObjectId) -> bool {
@@ -198,6 +208,7 @@ enum Ride {
 /// place on it, unless the level stops him.
 fn ride_to_both_ends(sim: &mut Sim, id: ObjectId, logic: &str) -> Ride {
     assert!(land_on(sim, id), "{logic} {id}: Claw lands on it");
+    shield(sim);
     let d = data(sim, id);
     let clock = logic == "Elevator";
     let moving_x = if clock {
