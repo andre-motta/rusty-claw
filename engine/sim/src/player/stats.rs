@@ -6,8 +6,16 @@
 //! 5 magic charges, 3 sticks of dynamite and the pistol selected; the
 //! first extra life from score comes at 500000 points. Health, score,
 //! lives, ammunition, the weapon and the game-wide treasure counts carry
-//! from a level to the next; the level's treasure counts, the powerup and
-//! the invulnerability window do not.
+//! from a level to the next; the level's treasure counts, the powerup,
+//! the invulnerability window and the attempt counter do not.
+//!
+//! The attempt counter is the number of deaths so far in the level. It
+//! starts at 0 when the level starts and rises by one, through
+//! [`PlayerStats::count_attempt`], at the step of a death that takes a
+//! life, before Claw comes back. Logics that put things back after a death
+//! (crumbled pegs, elevators sent back to their place, spent sound
+//! triggers) compare it with the value they saw last; they read it with
+//! [`crate::logic::World::attempt`] or [`crate::player::Ctx::attempt`].
 
 use claw_frame::Weapon;
 
@@ -60,6 +68,8 @@ pub struct PlayerStats {
     pub next_extra_life: u32,
     /// A cheat was used in this game.
     pub cheated: bool,
+    /// Deaths so far in this level (see the module documentation).
+    pub attempt: u32,
 }
 
 impl PlayerStats {
@@ -80,7 +90,14 @@ impl PlayerStats {
             treasure_game: [0; TREASURE_KINDS],
             next_extra_life: EXTRA_LIFE_STEP,
             cheated: false,
+            attempt: 0,
         }
+    }
+
+    /// Counts a death in the attempt counter; the death code calls it at
+    /// the step that takes a life.
+    pub fn count_attempt(&mut self) {
+        self.attempt = self.attempt.wrapping_add(1);
     }
 
     /// Ammunition of `weapon`.
@@ -184,11 +201,23 @@ mod tests {
         assert_eq!(s.treasure_level, [0; 9]);
         assert_eq!(s.treasure_game, [0; 9]);
         assert!(!s.cheated);
+        assert_eq!(s.attempt, 0);
         let c = Carry::default();
         assert_eq!((c.score, c.health, c.lives), (0, 100, 7));
         assert_eq!((c.pistol, c.magic, c.dynamite), (10, 5, 3));
         assert_eq!(StartState::default().carry, None);
         assert_eq!(StartState::default().save, None);
+    }
+
+    #[test]
+    fn deaths_count_attempts_and_do_not_carry() {
+        let mut s = PlayerStats::new_game();
+        s.count_attempt();
+        s.count_attempt();
+        assert_eq!(s.attempt, 2);
+        s.attempt = u32::MAX;
+        s.count_attempt();
+        assert_eq!(s.attempt, 0, "the counter wraps instead of failing");
     }
 
     #[test]

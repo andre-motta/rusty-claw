@@ -1,16 +1,18 @@
-//! What the simulation needs from a level: the main plane's collision
-//! tiles, the start point, the object records, the animations its logics
-//! play (with the sounds of their frames) and the length of every
-//! registered sound.
+//! What the simulation needs from a level: its number, the main plane's
+//! collision tiles, the start point, the object records, the animations its
+//! logics play (with the sounds of their frames), the frame numbers and
+//! frame boxes of its image sets and the length of every registered sound.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
+use claw_assets::name::TYPE_PID;
 use claw_assets::wwd::OBJECT_INTS;
-use claw_assets::{Ani, AssetStore, LevelData, Result, wav};
+use claw_assets::{Ani, AssetStore, LevelData, Result, pid, wav};
 
 use crate::anim::Animation;
 use crate::logic;
+use crate::object::Rect;
 use crate::player::{self, AnimSet};
 use crate::tiles::{TileMap, TileReport};
 use crate::view::PlaneGeometry;
@@ -71,9 +73,74 @@ pub fn runtime_image_set(name: &str) -> String {
     name.to_string()
 }
 
+/// What the simulation knows of one image set: the range of its frame
+/// numbers and the box each frame covers.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImageFrames {
+    /// Lowest frame number of the set.
+    pub first: i32,
+    /// Highest frame number of the set.
+    pub last: i32,
+    /// Box of each frame whose image could be read, by frame number,
+    /// relative to the object's position (see [`frame_box`]).
+    pub boxes: BTreeMap<i32, Rect>,
+}
+
+impl ImageFrames {
+    /// A set of frames `first..=last` with no boxes known.
+    pub fn range(first: i32, last: i32) -> ImageFrames {
+        ImageFrames {
+            first,
+            last,
+            boxes: BTreeMap::new(),
+        }
+    }
+}
+
+/// The box a frame of `width` x `height` pixels with hotspot offset
+/// (`offset_x`, `offset_y`) covers around its object's position, edges
+/// included: `{ox - w/2, oy - h/2, ox + w/2 - 1, oy + h/2 - 1}`, the halves
+/// rounded down. This is the frame box logics use for pickup and hit
+/// boxes, and it is where the frame is drawn when the object is neither
+/// mirrored nor inverted.
+pub fn frame_box(width: i32, height: i32, offset_x: i32, offset_y: i32) -> Rect {
+    let (cx, cy) = (width >> 1, height >> 1);
+    Rect::new(
+        offset_x.saturating_sub(cx),
+        offset_y.saturating_sub(cy),
+        offset_x.saturating_add(cx).saturating_sub(1),
+        offset_y.saturating_add(cy).saturating_sub(1),
+    )
+}
+
+/// The frame box of a PID image read from its header (size and hotspot
+/// offset); `None` when the header is short or the size is not a valid
+/// image size.
+pub fn pid_frame_box(data: &[u8]) -> Option<Rect> {
+    if data.len() < pid::HEADER_SIZE {
+        return None;
+    }
+    let int = |at: usize| -> Option<i32> {
+        let bytes: [u8; 4] = data.get(at..at + 4)?.try_into().ok()?;
+        Some(i32::from_le_bytes(bytes))
+    };
+    let (w, h) = (int(8)?, int(12)?);
+    if w <= 0 || h <= 0 || w > pid::MAX_DIMENSION || h > pid::MAX_DIMENSION {
+        return None;
+    }
+    Some(frame_box(w, h, int(16)?, int(20)?))
+}
+
+/// Retail level number a level counts as when nothing says otherwise.
+pub const DEFAULT_LEVEL_NUMBER: u32 = 1;
+
 /// A level prepared for the simulation.
 #[derive(Debug, Clone)]
 pub struct SimLevel {
+    /// Retail level number (1 to 14); for a community custom level, the
+    /// number of the retail level it builds on. Logics whose behaviour
+    /// differs between levels read it.
+    pub number: u32,
     /// Main-plane collision tiles.
     pub map: TileMap,
     /// Problems found in the tile data.
@@ -93,13 +160,20 @@ pub struct SimLevel {
     pub skipped_animations: Vec<String>,
     /// Level flags word.
     pub flags: u32,
+    /// Frame range of every registered image set by key, with the frame
+    /// boxes of the sets the level's objects can show (those of
+    /// [`SimLevel::image_sets`]).
+    pub images: BTreeMap<String, ImageFrames>,
 }
 
 impl SimLevel {
     /// A level made of a tile map and a start point, with no objects or
     /// animations (tests and tools).
+    /// It counts as level [`DEFAULT_LEVEL_NUMBER`] and knows no image
+    /// sets.
     pub fn synthetic(map: TileMap, start: (i32, i32)) -> SimLevel {
         SimLevel {
+            number: DEFAULT_LEVEL_NUMBER,
             map,
             tile_report: TileReport::default(),
             start,
@@ -108,13 +182,16 @@ impl SimLevel {
             sounds: BTreeMap::new(),
             skipped_animations: Vec::new(),
             flags: 0,
+            images: BTreeMap::new(),
         }
     }
 
-    /// Prepares a loaded level: reads the animations its logics play and
-    /// the length of every registered sound from `store`. A sound that
-    /// cannot be read keeps an unknown length, and an animation other than
-    /// Claw's that cannot be read is left out; Claw's animations must load.
+    /// Prepares a loaded level: reads the animations its logics play, the
+    /// length of every registered sound and the frame boxes of the image
+    /// sets its objects can show from `store`. A sound that cannot be read
+    /// keeps an unknown length, a frame whose image cannot be read has no
+    /// box, and an animation other than Claw's that cannot be read is left
+    /// out; Claw's animations must load.
     pub fn from_level(level: &LevelData, store: &AssetStore) -> Result<SimLevel> {
         let (map, tile_report) = match level.main_plane.and_then(|i| level.planes.get(i)) {
             Some(plane) => TileMap::from_plane(plane, &level.tile_attributes),
@@ -189,7 +266,18 @@ impl SimLevel {
             }
             animations.insert(key.clone(), Arc::new(anim));
         }
-        Ok(SimLevel {
+        let images = level
+            .registries
+            .images
+            .iter()
+            .filter_map(|(key, set)| {
+                let first = *set.frames.keys().next()?;
+                let last = *set.frames.keys().next_back()?;
+                Some((key.clone(), ImageFrames::range(first, last)))
+            })
+            .collect();
+        let mut sim_level = SimLevel {
+            number: level.level,
             map,
             tile_report,
             start: (level.start_x, level.start_y),
@@ -198,7 +286,38 @@ impl SimLevel {
             sounds,
             skipped_animations,
             flags: level.header.flags,
-        })
+            images,
+        };
+        for key in sim_level.image_sets() {
+            let (Some(set), Some(frames)) = (
+                level.registries.images.get(&key),
+                sim_level.images.get_mut(&key),
+            ) else {
+                continue;
+            };
+            for (&index, &file) in &set.frames {
+                if store.file(file).type_code() != TYPE_PID {
+                    continue;
+                }
+                if let Some(b) = store.read(file).ok().and_then(|d| pid_frame_box(&d)) {
+                    frames.boxes.insert(index, b);
+                }
+            }
+        }
+        Ok(sim_level)
+    }
+
+    /// First and last frame numbers of the image set `set`; `None` when the
+    /// level registers no such set.
+    pub fn image_frames(&self, set: &str) -> Option<(i32, i32)> {
+        self.images.get(set).map(|f| (f.first, f.last))
+    }
+
+    /// Box of frame `frame` of the image set `set` relative to the object's
+    /// position (see [`frame_box`]); `None` when the set, the frame or its
+    /// image is unknown.
+    pub fn frame_box(&self, set: &str, frame: i32) -> Option<Rect> {
+        self.images.get(set)?.boxes.get(&frame).copied()
     }
 
     /// Length of the sound registered under `key`, ms; `None` when no
@@ -241,5 +360,45 @@ impl SimLevel {
             wrap_x: self.map.wrap_x(),
             wrap_y: self.map.wrap_y(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_boxes_centre_the_image_on_its_hotspot() {
+        assert_eq!(frame_box(20, 30, 0, 0), Rect::new(-10, -15, 9, 14));
+        assert_eq!(frame_box(20, 30, 4, -6), Rect::new(-6, -21, 13, 8));
+        // Odd sizes lose their last row and column, as the halves round
+        // down.
+        assert_eq!(frame_box(5, 3, 0, 0), Rect::new(-2, -1, 1, 0));
+    }
+
+    #[test]
+    fn frame_boxes_come_from_the_image_header() {
+        let data = pid::build(20, 30, pid::FLAG_RLE, (4, -6), &[]);
+        assert_eq!(pid_frame_box(&data), Some(Rect::new(-6, -21, 13, 8)));
+        assert_eq!(pid_frame_box(&data[..pid::HEADER_SIZE - 1]), None);
+        let bad = pid::build(0, 30, pid::FLAG_RLE, (0, 0), &[]);
+        assert_eq!(pid_frame_box(&bad), None);
+        let huge = pid::build(pid::MAX_DIMENSION + 1, 4, 0, (0, 0), &[]);
+        assert_eq!(pid_frame_box(&huge), None);
+    }
+
+    #[test]
+    fn image_sets_report_their_range_and_boxes() {
+        let mut l = SimLevel::synthetic(TileMap::new(4, 4, 64, 64), (0, 0));
+        assert_eq!(l.number, DEFAULT_LEVEL_NUMBER);
+        assert!(l.images.is_empty());
+        let mut set = ImageFrames::range(3, 9);
+        set.boxes.insert(4, Rect::new(-1, -2, 3, 4));
+        l.images.insert("SET".into(), set);
+        assert_eq!(l.image_frames("SET"), Some((3, 9)));
+        assert_eq!(l.image_frames("OTHER"), None);
+        assert_eq!(l.frame_box("SET", 4), Some(Rect::new(-1, -2, 3, 4)));
+        assert_eq!(l.frame_box("SET", 5), None);
+        assert_eq!(l.frame_box("OTHER", 4), None);
     }
 }

@@ -271,6 +271,8 @@ pub struct Ctx<'a> {
     pub t: &'a Tuning,
     /// Game randomness.
     pub rng: &'a mut Rng,
+    /// The sound-only random stream (see [`World::sound_rng`]).
+    pub sound_rng: &'a mut Rng,
     /// Scripted camera point, reset at level start and respawn.
     pub camera_override: &'a mut Option<(i32, i32)>,
     /// Integer centre of the main plane's view.
@@ -283,6 +285,11 @@ pub struct Ctx<'a> {
     pub now_ms: u64,
     /// The logic view in level pixels.
     pub view: Rect,
+    /// The level objects run their logics
+    /// ([`crate::sim::SimConfig::level_logics`]). Off, Claw keeps the
+    /// first playable version's behaviour where a level logic would take
+    /// over (a death tile is counted, not deadly).
+    pub level_logics: bool,
 }
 
 impl std::fmt::Debug for Ctx<'_> {
@@ -311,6 +318,7 @@ impl Ctx<'_> {
                 claw: &mut *self.p,
                 level: self.level,
                 rng: &mut *self.rng,
+                sound_rng: &mut *self.sound_rng,
                 tuning: self.t,
                 tick: self.tick,
                 now_ms: self.now_ms,
@@ -321,6 +329,24 @@ impl Ctx<'_> {
         };
         self.objects.swap_payload(self.id, self.o);
         r
+    }
+
+    /// The level's retail number (see [`SimLevel::number`]).
+    pub fn level_number(&self) -> u32 {
+        self.level.number
+    }
+
+    /// Claw's deaths so far in this level (see
+    /// [`stats::PlayerStats::attempt`]).
+    pub fn attempt(&self) -> u32 {
+        self.p.stats.attempt
+    }
+
+    /// Asks for Claw to say the line `key`; the simulation passes it to
+    /// [`crate::logic::sound::claw_say`] once this handler returns (see
+    /// [`Outbox::say`]).
+    pub fn say(&mut self, key: &str, force: bool) {
+        self.out.say(key, force);
     }
 
     /// Plays `key` centred on `channel` at the configured volume.
@@ -349,11 +375,16 @@ impl Ctx<'_> {
         }
     }
 
-    /// Advances Claw's animation one tick and plays the sounds of the
-    /// element it applies; returns the event value.
+    /// Advances Claw's animation one tick (within his image set's frame
+    /// range, when the level knows it) and plays the sounds of the element
+    /// it applies; returns the event value.
     fn advance_anim(&mut self) -> i32 {
         let mirrored = self.o.draw_flags & draw_flags::MIRROR != 0;
-        let e = self.o.anim.advance(TICK_MS, self.o.frame, mirrored);
+        let frames = self.level.image_frames(&self.o.image_set);
+        let e = self
+            .o
+            .anim
+            .advance_in(TICK_MS, self.o.frame, mirrored, frames);
         if let Some(f) = e.frame {
             self.o.frame = f;
         }
@@ -739,19 +770,29 @@ pub fn respawn(c: &mut Ctx) {
 // ----------------------------------------------------------------------
 // Movement handlers
 
+/// True while an attack runs whose active part is not over: the host
+/// states ignore movement input meanwhile.
+pub fn attack_holds_input(c: &Ctx) -> bool {
+    c.p.attacking && !c.p.attack.interruptible
+}
+
 /// Stand: starts jumps and walks, teeters at ledges, crouches, looks up.
+/// While an attack runs and cannot be interrupted yet, Jump, Left and
+/// Right are ignored and the ledge test comes first.
 pub fn stand_tick(c: &mut Ctx) {
-    if c.pressed(Buttons::JUMP) {
-        stand_jump_start(c);
-        return;
-    }
-    if c.held(Buttons::RIGHT) {
-        stand_walk_start(c, true);
-        return;
-    }
-    if c.held(Buttons::LEFT) {
-        stand_walk_start(c, false);
-        return;
+    if !attack_holds_input(c) {
+        if c.pressed(Buttons::JUMP) {
+            stand_jump_start(c);
+            return;
+        }
+        if c.held(Buttons::RIGHT) {
+            stand_walk_start(c, true);
+            return;
+        }
+        if c.held(Buttons::LEFT) {
+            stand_walk_start(c, false);
+            return;
+        }
     }
     if c.o.flags & flags::ON_ELEVATOR == 0 {
         if c.ledge_on_right_only() {
@@ -1160,7 +1201,7 @@ pub fn crouch_tick(c: &mut Ctx) {
         return;
     }
     animate(c);
-    if c.p.attacking && !c.p.attack.interruptible {
+    if attack_holds_input(c) {
         return;
     }
     if !c.held(Buttons::DOWN) && c.o.physics_type == ptype::DUCK {

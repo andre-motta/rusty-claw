@@ -195,7 +195,9 @@ pub mod draw_flags {
 pub mod engine_state {
     /// First logic call.
     pub const INIT: i32 = 0;
-    /// Health dropped to zero through automatic hit damage.
+    /// Health dropped to zero through automatic hit damage, or a logic
+    /// killed the object with [`crate::logic::World::kill`] (which also
+    /// records the kind of kill in [`super::Object::kill_kind`]).
     pub const KILLED: i32 = 28;
     /// Last call before destruction.
     pub const DESTROYING: i32 = 29;
@@ -301,6 +303,10 @@ pub struct Object {
     /// The update pass clears it at the start of the object's turn, so a
     /// platform logic sets it only in the ticks it moves.
     pub platform_move: (i32, i32),
+    /// Kind of the last kill asked for with [`crate::logic::World::kill`],
+    /// 0 when none was; the logic reads it when it sees
+    /// [`engine_state::KILLED`].
+    pub kill_kind: i32,
     /// Animation player.
     pub anim: AnimPlayer,
     /// The object jumped this tick (drawn without interpolation).
@@ -353,6 +359,7 @@ impl Object {
             special_flags: 0,
             data: ObjectData::None,
             platform_move: (0, 0),
+            kill_kind: 0,
             anim: AnimPlayer::default(),
             teleported: false,
             prev: None,
