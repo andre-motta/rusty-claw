@@ -24,7 +24,9 @@
 //!
 //! # Pickups
 //!
-//! Claw reads a pickup through [`PickupFields`]. Collected pickups play
+//! Claw reads a pickup through [`PickupFields`]: for a pickup the pickup
+//! family runs, the kind, amount and duration it set up from its picture
+//! (see [`PickupFields::of_pickup`]). Collected pickups play
 //! their sound (once per tick per sound) and are removed, except where
 //! noted:
 //!
@@ -135,6 +137,21 @@ impl PickupFields {
         }
     }
 
+    /// The fields of pickup `o` as Claw reads them: for a pickup the
+    /// pickup family set up ([`pickup::data_of`]), its kind, amount and
+    /// duration from that set-up (the level's own amount is ignored);
+    /// otherwise [`PickupFields::of`]. Damage and the warp target always
+    /// come from the object.
+    pub fn of_pickup(o: &Object) -> PickupFields {
+        let mut f = PickupFields::of(o);
+        if let Some(d) = pickup::data_of(o) {
+            f.kind = d.kind;
+            f.points = d.points;
+            f.smarts = d.smarts;
+        }
+        f
+    }
+
     /// Writes these fields into `o`, where [`PickupFields::of`] reads
     /// them.
     pub fn store(&self, o: &mut Object) {
@@ -225,7 +242,10 @@ pub fn claw_hit(c: &mut Ctx, attacker: ObjectId) {
 }
 
 fn fields(c: &Ctx, id: ObjectId) -> PickupFields {
-    c.objects.get(id).map(PickupFields::of).unwrap_or_default()
+    c.objects
+        .get(id)
+        .map(PickupFields::of_pickup)
+        .unwrap_or_default()
 }
 
 fn damage_of(o: &Object) -> i32 {
@@ -336,7 +356,11 @@ fn remove(c: &mut Ctx, id: ObjectId) {
 /// Plays the pickup's sound, unless the same sound already plays in this
 /// tick.
 fn pickup_sound_of(c: &mut Ctx, id: ObjectId) {
-    let Some(key) = c.objects.get(id).and_then(|o| pickup_sound(o.id)) else {
+    let Some(key) = c
+        .objects
+        .get(id)
+        .and_then(|o| pickup_sound(PickupFields::of_pickup(o).kind))
+    else {
         return;
     };
     let playing = c
