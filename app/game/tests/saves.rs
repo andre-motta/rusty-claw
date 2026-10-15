@@ -208,6 +208,11 @@ fn a_save_that_cannot_be_read_is_left_where_it_is() {
     let reports = store.take_reports();
     assert_eq!(reports.len(), 1, "{reports:?}");
     assert!(reports[0].contains("cannot be read"), "{reports:?}");
+    // Building the save lists again does not repeat the notice.
+    assert_eq!(store.read("LEVEL1", 1).unwrap(), None);
+    store.list().unwrap();
+    store.list().unwrap();
+    assert_eq!(store.take_reports(), Vec::<String>::new());
     // Writing to the slot fails rather than replacing it unseen.
     assert!(store.write(&record("LEVEL1", 1, 9)).is_err());
     fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();

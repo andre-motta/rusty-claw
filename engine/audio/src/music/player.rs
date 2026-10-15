@@ -76,9 +76,10 @@ impl Track {
     }
 
     /// The music file names that can supply the track, most preferred first
-    /// (none for the credits track, whose file is not settled yet). With a General MIDI bank the General MIDI arrangement (the name ending
-    /// in 0) comes first and the other one is the fallback; with the game's
-    /// own instrument bank it is the other way round.
+    /// (none for the credits track, whose file is not settled yet). With a
+    /// General MIDI bank the General MIDI arrangement (the name ending in 0)
+    /// comes first and the other one is the fallback; with the game's own
+    /// instrument bank it is the other way round.
     pub fn file_names(self, mode: BankMode) -> &'static [&'static str] {
         let gm = mode == BankMode::GeneralMidi;
         match self {

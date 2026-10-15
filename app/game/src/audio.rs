@@ -22,7 +22,9 @@
 //! - pausing the game (or losing focus) stops every effect, speech and
 //!   ambient sound, holds the music where it is and keeps interface sounds
 //!   playing; resuming starts the live ambient loops again at their current
-//!   level, while the effects and lines the pause stopped stay stopped.
+//!   level, while the effects and lines the pause stopped stay stopped;
+//! - leaving a level ([`AudioBridge::leave_level`]) ends its ambient loops
+//!   for good, paused or not.
 //!
 //! Music rules: one track at a time, looping as the cue asks; the power-up
 //! track pauses the level track, which resumes where it was when the level
@@ -577,6 +579,22 @@ impl AudioBridge {
         }
     }
 
+    /// Ends the ambient loops of the level being left: they stop now and a
+    /// later [`AudioBridge::resume`] does not start them again, so the
+    /// level's loops never play over the menus or the end-of-level screens.
+    pub fn leave_level(&mut self) {
+        for &h in self.loops.keys() {
+            self.engine.stop(h);
+        }
+        self.loops.clear();
+    }
+
+    /// The looping sounds of the level in play that are still live (the
+    /// ones a resume or a switch brings back).
+    pub fn live_loops(&self) -> usize {
+        self.loops.len()
+    }
+
     /// True while the game's sounds are paused.
     pub fn is_paused(&self) -> bool {
         self.paused
@@ -832,6 +850,57 @@ mod tests {
         std::thread::sleep(Duration::from_millis(30));
         bridge.apply(&[], &ViewInfo::default());
         assert_eq!(bridge.engine().stats().voices_started, 6);
+    }
+
+    #[test]
+    fn leaving_a_level_ends_its_ambient_loops() {
+        let settings = AudioSettings::default();
+        let mut bridge = AudioBridge::silent(settings.clone());
+        let mut bank = SoundBank::new();
+        for k in ["AMB", "UI"] {
+            bank.insert(k, Pcm::mono(22050, vec![100i16; 22050 * 4]).into());
+        }
+        bridge.engine.set_bank(bank);
+        let amb = play("AMB", SoundChannel::Ambient, Some(7), true);
+        bridge.apply(std::slice::from_ref(&amb), &ViewInfo::default());
+        assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 1));
+        assert_eq!(bridge.live_loops(), 1);
+
+        // Left while paused (the in-game menu, the game-over fade): the
+        // resume that follows starts nothing.
+        bridge.pause();
+        assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 0));
+        bridge.leave_level();
+        assert_eq!(bridge.live_loops(), 0);
+        bridge.resume();
+        // An interface sound behind the resume: once it plays, the resume
+        // has been carried out too.
+        bridge.play_ui("UI");
+        assert!(wait(&mut bridge, |b| b.engine().stats().voices_started == 2));
+        std::thread::sleep(Duration::from_millis(30));
+        bridge.apply(&[], &ViewInfo::default());
+        assert_eq!(bridge.engine().stats().voices_started, 2);
+        assert_eq!(bridge.engine().stats().active_voices, 1, "only UI");
+
+        // Left while playing (a level won): the loop stops at once, and a
+        // switch turned off and on does not bring it back.
+        bridge.set_sounds(SoundBank::new());
+        let mut bank = SoundBank::new();
+        bank.insert("AMB", Pcm::mono(22050, vec![100i16; 22050 * 4]).into());
+        bridge.engine.set_bank(bank);
+        bridge.apply(&[amb], &ViewInfo::default());
+        assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 1));
+        bridge.leave_level();
+        assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 0));
+        bridge.set_settings(AudioSettings {
+            ambient: false,
+            ..settings.clone()
+        });
+        bridge.set_settings(settings);
+        std::thread::sleep(Duration::from_millis(30));
+        bridge.apply(&[], &ViewInfo::default());
+        assert_eq!(bridge.engine().stats().active_voices, 0);
+        assert_eq!(bridge.engine().stats().voices_started, 3);
     }
 
     #[test]

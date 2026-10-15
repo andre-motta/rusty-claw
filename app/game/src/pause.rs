@@ -9,11 +9,17 @@
 //! The game's sounds are paused only while a level is in play. Leaving a
 //! level (ending the game, loading another level, the end of a game) clears
 //! the pauses of the level left, so the next level always starts with its
-//! sounds running, whichever way the in-game menu was left.
+//! sounds running, whichever way the in-game menu was left, and ends the
+//! level's ambient loops, so the resume that follows never plays them over
+//! the menus.
+//!
+//! [`Pauses::follow`] is the pause and sound side of every effect of the
+//! game flow, the one place both the window and the flow tests carry it
+//! out.
 
 use std::time::Duration;
 
-use crate::audio::AudioBridge;
+use crate::audio::{AudioBridge, ViewInfo};
 use crate::flow::Effect;
 use crate::session::Session;
 
@@ -58,6 +64,55 @@ impl Pauses {
                 self.user = false;
             }
             _ => {}
+        }
+    }
+
+    /// Carries out the pause and sound side of the game flow's effect `e`,
+    /// once the level `e` starts or ends has started or ended: `session` is
+    /// the level in play afterwards, if any. It follows `e` with the pauses
+    /// (see [`Pauses::effect`]), ends the loops of a level left, applies the
+    /// pauses when play starts, stops or pauses, restarts the music when
+    /// the in-game menu closes, and plays the flow's sounds. The caller sets
+    /// the background pause first and restarts its frame clock on
+    /// [`Change::Resumed`].
+    pub fn follow(
+        &mut self,
+        e: &Effect,
+        session: Option<&mut Session>,
+        mut audio: Option<&mut AudioBridge>,
+        since_frame: Duration,
+    ) -> Change {
+        self.effect(e);
+        match e {
+            Effect::StartLevel { .. } | Effect::PauseGame => {
+                self.apply(session, audio, since_frame)
+            }
+            Effect::EndLevel => {
+                if let Some(a) = audio.as_deref_mut() {
+                    a.leave_level();
+                }
+                self.apply(session, audio, since_frame)
+            }
+            Effect::ResumeGame => {
+                let change = self.apply(session, audio.as_deref_mut(), since_frame);
+                if let Some(a) = audio {
+                    a.restart_music();
+                }
+                change
+            }
+            Effect::Sound(cue) => {
+                if let Some(a) = audio {
+                    a.apply(std::slice::from_ref(cue), &ViewInfo::default());
+                }
+                Change::None
+            }
+            Effect::MenuChord => {
+                if let Some(a) = audio {
+                    a.play_menu_music();
+                }
+                Change::None
+            }
+            _ => Change::None,
         }
     }
 
