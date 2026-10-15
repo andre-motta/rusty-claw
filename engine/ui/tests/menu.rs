@@ -723,6 +723,41 @@ fn left_and_right_jump_columns_in_the_level_lists() {
 }
 
 #[test]
+fn left_and_right_step_text_entries() {
+    let mut n = nav(main_menu(), MenuKind::Main);
+    let display = n.tree.find_page(Page::Display).unwrap();
+    let page = n
+        .tree
+        .add_text(display, "CONTROLS", MenuCommand::Open(Page::Video));
+    n.tree
+        .add_text(page, "STICK DEAD ZONE 66", MenuCommand::PadDeadZone);
+    let back = n.tree.add_text(page, "BACK", MenuCommand::Back);
+    n.show(page, 0);
+    assert_eq!(
+        n.input(MenuInput::Right),
+        vec![MenuAction::Step {
+            command: MenuCommand::PadDeadZone,
+            delta: 1
+        }]
+    );
+    assert_eq!(
+        n.input(MenuInput::Left),
+        vec![MenuAction::Step {
+            command: MenuCommand::PadDeadZone,
+            delta: -1
+        }]
+    );
+    n.tree
+        .set_enabled_by(|i| i.command != MenuCommand::PadDeadZone);
+    assert!(
+        n.input(MenuInput::Right).is_empty(),
+        "a greyed-out entry does not step"
+    );
+    n.show(page, 1);
+    assert_eq!(n.selected(), Some(back));
+}
+
+#[test]
 fn hotkeys_choose_enabled_entries() {
     let mut n = nav(main_menu(), MenuKind::Main);
     assert_eq!(n.hotkey('o'), vec![MenuAction::Moved]);

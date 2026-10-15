@@ -10,8 +10,9 @@
 //!   [`MenuAction::Command`] for an entry that is enabled,
 //!   [`MenuAction::Disabled`] for one that is greyed out.
 //! - Left and Right change the highlighted entry's slider by one step,
-//!   and on the main menu's level lists jump to the other column (seven
-//!   entries along) when that entry exists and is enabled.
+//!   on this game's own text entries report [`MenuAction::Step`], and on
+//!   the main menu's level lists jump to the other column (seven entries
+//!   along) when that entry exists and is enabled.
 //! - Escape: in the main menu, the submenu above (at the top, the quit
 //!   entry is highlighted and chosen, which asks whether to quit); in the
 //!   in-game menu, back to the game from any submenu.
@@ -79,6 +80,14 @@ pub enum MenuAction {
         /// Which slider.
         slider: Slider,
         /// The change, one step up or down.
+        delta: i32,
+    },
+    /// Left or Right on one of this game's own text entries: step its
+    /// setting by `delta` (one step down or up).
+    Step {
+        /// The entry's command.
+        command: MenuCommand,
+        /// -1 for Left, 1 for Right.
         delta: i32,
     },
     /// Escape showed the submenu above.
@@ -261,6 +270,12 @@ impl Navigator {
             return vec![MenuAction::Slider {
                 slider,
                 delta: if right { s } else { -s },
+            }];
+        }
+        if self.tree.items[item].text.is_some() && self.tree.items[item].enabled {
+            return vec![MenuAction::Step {
+                command: self.tree.items[item].command,
+                delta: if right { 1 } else { -1 },
             }];
         }
         if self.tree.kind == MenuKind::Main && is_level_list(self.page()) {

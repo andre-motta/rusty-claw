@@ -19,8 +19,9 @@ use claw_game::session::Session;
 use claw_game::settings::{LevelChoice, Settings, UserDirs};
 use claw_render::LevelGraphics;
 use claw_sim::{Carry, Sim, StartState};
-use claw_ui::menu::command::{CommandCatalogue, MenuKind, Page};
+use claw_ui::menu::command::{CommandCatalogue, MenuCommand, MenuKind, Page};
 use claw_ui::menu::draw::FontArt;
+use claw_ui::menu::layout::CANVAS;
 use claw_ui::menu::nav::PRESS_MS;
 use claw_ui::menu::{MenuInput, MenuTree};
 use claw_ui::screens::assets::{MENU_PICTURE, MENU_SCREENS, ScreenAssets};
@@ -313,4 +314,56 @@ fn a_save_point_reached_in_a_new_game_loads_in_the_next_run() {
     let at = game.sim().player().map(|o| (o.x, o.y)).unwrap();
     assert_eq!(at, saved_pos, "Claw starts at the save point");
     assert_eq!(game.carry(), carry, "with the saved progress");
+}
+
+#[test]
+fn the_controls_page_fits_the_canvas_with_the_real_font() {
+    let Some(install) = std::env::var_os("CLAW_INSTALL").map(PathBuf::from) else {
+        eprintln!("skipped: CLAW_INSTALL is not set");
+        return;
+    };
+    let tmp = TempDir::new().unwrap();
+    let mut game = Game::new(&install, tmp.path());
+    game.reach_main_menu();
+    for (command, page) in [
+        (MenuCommand::Open(Page::Options), Page::Options),
+        (MenuCommand::Controls, Page::Controls),
+    ] {
+        let nav = game.flow.main_menu().unwrap();
+        let at = nav
+            .entries()
+            .iter()
+            .position(|&k| nav.tree.items[k].command == command)
+            .unwrap_or_else(|| panic!("{:?} lists {command:?}", nav.page()));
+        game.down(at);
+        game.choose();
+        assert_eq!(game.flow.main_menu().unwrap().page(), page);
+    }
+    let nav = game.flow.main_menu().unwrap();
+    assert_eq!(nav.page(), Page::Controls);
+    let cells: Vec<_> = nav
+        .entries()
+        .iter()
+        .map(|&k| (nav.tree.items[k].command, nav.tree.items[k].cell))
+        .collect();
+    assert!(
+        cells.iter().any(|(c, _)| *c == MenuCommand::PadDeadZone),
+        "the dead zone row is listed"
+    );
+    for (c, cell) in &cells {
+        assert!(
+            cell.x >= 0
+                && cell.y >= 0
+                && cell.x + cell.w <= CANVAS.0
+                && cell.y + cell.h <= CANVAS.1,
+            "{c:?} at {cell:?} leaves the canvas"
+        );
+    }
+    for pair in cells.windows(2) {
+        let ((a, ca), (b, cb)) = (pair[0], pair[1]);
+        assert!(
+            ca.y + ca.h <= cb.y,
+            "{a:?} at {ca:?} overlaps {b:?} at {cb:?}"
+        );
+    }
 }

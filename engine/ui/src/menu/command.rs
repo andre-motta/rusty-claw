@@ -208,6 +208,10 @@ pub enum MenuCommand {
     Bind(u8),
     /// Puts every binding back to the defaults.
     DefaultBindings,
+    /// The gamepad stick's dead zone: choosing it raises the dead zone one
+    /// step (from the highest back to the lowest); Left and Right lower
+    /// and raise it.
+    PadDeadZone,
     /// A feature this game does not have.
     Unavailable(Unavailable),
     /// Nothing.

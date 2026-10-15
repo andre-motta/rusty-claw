@@ -597,7 +597,7 @@ fn bindings_capture_and_persist() {
     r.choose(); // controls
     assert_eq!(r.page(), Page::Controls);
     let nav = r.flow.main_menu().unwrap();
-    assert_eq!(nav.entries().len(), flow::CONTROL_ACTIONS.len() + 2);
+    assert_eq!(nav.entries().len(), flow::CONTROL_ACTIONS.len() + 3);
     r.input(MenuInput::Down);
     r.input(MenuInput::Down);
     r.input(MenuInput::Down);
@@ -628,6 +628,80 @@ fn bindings_capture_and_persist() {
     );
     let row = control_row(&keymap, &PadMap::default(), "jump");
     assert_eq!(row, "JUMP   SPACE  J   SOUTH");
+}
+
+#[test]
+fn the_pad_dead_zone_steps_applies_and_persists() {
+    let mut r = Rig::new(Start::Title, |_| {});
+    r.reach_main_menu();
+    r.input(MenuInput::Down);
+    r.choose(); // options
+    r.input(MenuInput::Down);
+    r.input(MenuInput::Down);
+    r.choose(); // controls
+    assert_eq!(r.page(), Page::Controls);
+    // The dead zone row follows the bindings, before DEFAULTS and BACK.
+    for _ in 0..flow::CONTROL_ACTIONS.len() {
+        r.input(MenuInput::Down);
+    }
+    let nav = r.flow.main_menu().unwrap();
+    let row = nav.selected().unwrap();
+    assert_eq!(nav.tree.items[row].command, MenuCommand::PadDeadZone);
+    assert_eq!(
+        nav.tree.items[row].text.as_deref(),
+        Some("STICK DEAD ZONE 66")
+    );
+    let _ = r.flow.take_effects();
+
+    // Right raises it to the next step and applies it at once.
+    r.flow.menu_input(MenuInput::Right, false);
+    assert!(
+        r.flow.take_effects().contains(&Effect::Bindings),
+        "the new dead zone is applied"
+    );
+    assert_eq!(r.flow.settings().pad.dead_zone, 0.7);
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(text.lines().any(|l| l == "pad_dead_zone = 0.7"), "{text}");
+    assert_eq!(
+        other_lines(&text, &["pad_dead_zone"]),
+        other_lines(CONFIG, &[]),
+        "other lines are kept byte for byte"
+    );
+    let nav = r.flow.main_menu().unwrap();
+    assert_eq!(
+        nav.tree.items[row].text.as_deref(),
+        Some("STICK DEAD ZONE 70")
+    );
+
+    // Left lowers it and stops at the lowest step.
+    for _ in 0..30 {
+        r.input(MenuInput::Left);
+    }
+    assert_eq!(r.flow.settings().pad.dead_zone, 0.05);
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(text.lines().any(|l| l == "pad_dead_zone = 0.05"), "{text}");
+    assert_eq!(
+        other_lines(&text, &["pad_dead_zone"]),
+        other_lines(CONFIG, &[])
+    );
+
+    // Choosing it raises it one step.
+    r.choose();
+    assert_eq!(r.flow.settings().pad.dead_zone, 0.1);
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(text.lines().any(|l| l == "pad_dead_zone = 0.1"), "{text}");
+}
+
+#[test]
+fn the_pad_dead_zone_steps_on_its_grid_and_range() {
+    assert_eq!(flow::dead_zone_step(66, 1, false), 70);
+    assert_eq!(flow::dead_zone_step(66, -1, false), 65);
+    assert_eq!(flow::dead_zone_step(65, -1, false), 60);
+    assert_eq!(flow::dead_zone_step(5, -1, false), 5);
+    assert_eq!(flow::dead_zone_step(95, 1, false), 95);
+    assert_eq!(flow::dead_zone_step(95, 1, true), 5);
+    assert_eq!(flow::dead_zone_step(93, 1, true), 95);
+    assert_eq!(flow::dead_zone_step(40, 0, true), 40);
 }
 
 #[test]

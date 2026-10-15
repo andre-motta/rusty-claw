@@ -50,7 +50,7 @@ use winit::keyboard::KeyCode;
 use crate::input::{CaptureOutcome, Captured};
 use crate::keymap::{Action, Keymap, PadMap, key_name};
 use crate::saves::{SaveRecord, SaveStore, retail_level_name};
-use crate::settings::{LevelChoice, Scale, Settings, WINDOW_SIZES};
+use crate::settings::{LevelChoice, PAD_DEAD_ZONE_RANGE, Scale, Settings, WINDOW_SIZES};
 
 /// Length of a screen's fade out or in, ms.
 pub const FADE_MS: f64 = 700.0;
@@ -91,6 +91,8 @@ pub const CONTROL_ACTIONS: [&str; 12] = [
     "magic",
     "dynamite",
 ];
+/// One step of the pad dead zone on the controls page, in hundredths.
+pub const DEAD_ZONE_STEP: i32 = 5;
 /// The Video page's settings in order.
 pub const VIDEO_SETTINGS: [VideoSetting; 8] = [
     VideoSetting::Resolution,
@@ -294,6 +296,33 @@ pub fn control_row(keymap: &Keymap, pad: &PadMap, name: &str) -> String {
     )
 }
 
+/// The controls page's row for the stick dead zone.
+pub fn dead_zone_text(settings: &Settings) -> String {
+    format!(
+        "STICK DEAD ZONE {}",
+        (settings.pad.dead_zone * 100.0).round() as i32
+    )
+}
+
+/// The dead zone (in hundredths) one step from `value` in the direction of
+/// `delta`, on the grid of [`DEAD_ZONE_STEP`] and inside the allowed
+/// range; with `wrap`, raising the highest gives the lowest.
+pub fn dead_zone_step(value: i32, delta: i32, wrap: bool) -> i32 {
+    let lo = (PAD_DEAD_ZONE_RANGE.start() * 100.0).round() as i32;
+    let hi = (PAD_DEAD_ZONE_RANGE.end() * 100.0).round() as i32;
+    let s = DEAD_ZONE_STEP;
+    let next = match delta.signum() {
+        1 => (value.div_euclid(s) + 1) * s,
+        -1 => ((value + s - 1).div_euclid(s) - 1) * s,
+        _ => return value,
+    };
+    if wrap && next > hi {
+        lo
+    } else {
+        next.clamp(lo, hi)
+    }
+}
+
 /// The Video page's text of `v` for `settings`.
 pub fn video_text(v: VideoSetting, settings: &Settings, safe_area: bool) -> String {
     let on = |b: bool| if b { "ON" } else { "OFF" };
@@ -461,6 +490,7 @@ impl Flow {
             for i in 0..CONTROL_ACTIONS.len() {
                 tree.add_text(ctl, "", MenuCommand::Bind(i as u8));
             }
+            tree.add_text(ctl, "", MenuCommand::PadDeadZone);
             tree.add_text(ctl, "DEFAULTS", MenuCommand::DefaultBindings);
             tree.add_text(ctl, "BACK", MenuCommand::Back);
         }
@@ -473,6 +503,7 @@ impl Flow {
         for i in 0..nav.tree.items.len() {
             let text = match nav.tree.items[i].command {
                 MenuCommand::Video(v) => Some(video_text(v, &self.settings, self.safe_area)),
+                MenuCommand::PadDeadZone => Some(dead_zone_text(&self.settings)),
                 MenuCommand::Bind(n) => {
                     let n = usize::from(n);
                     Some(if self.capturing == Some(n) {
@@ -936,6 +967,15 @@ impl Flow {
             MenuAction::Back => self.menu_sound(kind, "SELECT"),
             MenuAction::Disabled(_) => self.menu_sound(kind, "DISABLE"),
             MenuAction::Slider { slider, delta } => self.slide(kind, slider, delta),
+            MenuAction::Step {
+                command: MenuCommand::PadDeadZone,
+                delta,
+            } => {
+                if self.dead_zone(delta, false) {
+                    self.menu_sound(kind, "CLICK");
+                }
+            }
+            MenuAction::Step { .. } => {}
             MenuAction::Command(c) => {
                 if c != MenuCommand::Resume {
                     self.menu_sound(kind, "SELECT");
@@ -1028,6 +1068,9 @@ impl Flow {
                 self.persist(&keys);
                 self.refresh_texts();
             }
+            MenuCommand::PadDeadZone => {
+                self.dead_zone(1, true);
+            }
             MenuCommand::Open(_)
             | MenuCommand::Back
             | MenuCommand::Controls
@@ -1036,6 +1079,21 @@ impl Flow {
             | MenuCommand::Unavailable(_)
             | MenuCommand::Nothing => {}
         }
+    }
+
+    /// Steps the pad dead zone (see [`dead_zone_step`]), applies and
+    /// saves it; false when it did not change.
+    fn dead_zone(&mut self, delta: i32, wrap: bool) -> bool {
+        let before = (self.settings.pad.dead_zone * 100.0).round() as i32;
+        let after = dead_zone_step(before, delta, wrap);
+        if after == before {
+            return false;
+        }
+        self.settings.pad.dead_zone = after as f32 / 100.0;
+        self.effects.push(Effect::Bindings);
+        self.persist(&["pad_dead_zone"]);
+        self.refresh_texts();
+        true
     }
 
     fn load(&mut self, level: u32, entry: u8) {
