@@ -196,20 +196,16 @@ pub fn surface(level: u32, kind: SurfaceKind) -> Rect {
 }
 
 /// The number of the level being played, which picks its platform
-/// rectangles. The level does not carry its number yet, so every level
-/// uses the first level's rectangles.
+/// rectangles (see [`SimLevel::number`]).
 pub fn level_number(level: &SimLevel) -> u32 {
-    let _ = level;
-    1
+    level.number
 }
 
-/// Claw's attempt number: it rises by one each time he loses a life.
-/// Trigger elevators go back to their place and crumbled pegs come back
-/// when it changes. Claw does not count his attempts yet, so it stays 0
-/// and nothing resets.
+/// Claw's attempt number: it rises by one each time he loses a life (see
+/// [`World::attempt`]). Trigger elevators go back to their place and
+/// crumbled pegs come back when it changes.
 pub fn claw_attempt(w: &World) -> u32 {
-    let _ = w;
-    0
+    w.attempt()
 }
 
 /// The level clock: game milliseconds since the level loaded, counting
@@ -291,6 +287,12 @@ pub fn clock_position(axis: &Axis, ms: u32) -> Option<i32> {
     })
 }
 
+/// The largest move of a clock elevator on `axis` in one tick when it runs
+/// on from its last place, px: its speed over a tick, rounded up.
+pub fn clock_step(axis: &Axis) -> u32 {
+    (axis.speed.max(0) as u32).wrapping_mul(TICK_MS) / 1000 + 1
+}
+
 /// The step of a trigger elevator in one tick at `speed` px/s, px.
 pub fn trigger_step(speed: i32) -> i32 {
     let q = (speed as u32).wrapping_mul(TICK_MS) / 1000;
@@ -329,13 +331,16 @@ pub struct PlatformData {
     /// Toggle peg cycle length, ms.
     pub period: i32,
     /// First and last frame numbers of the peg's image set, when known
-    /// (see [`super::decor::image_frames`]). A value present before the
-    /// first call is kept.
+    /// (see [`super::decor::image_frames`]): the level's, found at the
+    /// first set-up, or a value present before it, which is kept.
     pub frames: Option<(i32, i32)>,
     /// The peg's animation.
     pub anim: SpriteAnim,
     /// Tick of the elevator's last call.
     pub last_tick: Option<u64>,
+    /// A clock elevator has been set up and not moved yet: its first move
+    /// takes it from where it was placed to where the clock puts it.
+    pub fresh: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -470,6 +475,7 @@ fn clock_tick(w: &mut World, id: ObjectId, d: &mut PlatformData) {
             let dir = rec(o, field::DIRECTION);
             d.x = clock_axis(x_min, x_max, o.x, o.speed_x, matches!(dir, 1 | 4 | 7));
             d.y = clock_axis(y_min, y_max, o.y, o.speed_y, matches!(dir, 7..=9));
+            d.fresh = true;
             o.state = state::RUNNING;
         }
         state::RUNNING => {
@@ -481,11 +487,18 @@ fn clock_tick(w: &mut World, id: ObjectId, d: &mut PlatformData) {
                 o.y = y;
             }
             o.platform_move = (o.x - x0, o.y - y0);
-            // Woken after a sleep, the elevator jumps to where the clock
-            // puts it.
-            if d.last_tick.is_some_and(|t| t.wrapping_add(1) != tick) {
+            // Woken after a sleep, or set up away from where the clock puts
+            // it, the elevator jumps there: it is drawn at its new place at
+            // once instead of sweeping across. The set-up call does not
+            // move, so the first move covers two ticks of the clock.
+            let woken = d.last_tick.is_some_and(|t| t.wrapping_add(1) != tick);
+            let jumped = d.fresh
+                && (o.platform_move.0.unsigned_abs() > 2 * clock_step(&d.x)
+                    || o.platform_move.1.unsigned_abs() > 2 * clock_step(&d.y));
+            if woken || jumped {
                 o.teleported = true;
             }
+            d.fresh = false;
         }
         _ => {}
     }

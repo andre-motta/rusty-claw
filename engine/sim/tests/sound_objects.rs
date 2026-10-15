@@ -576,13 +576,122 @@ fn a_timed_loop_comes_and_goes() {
 }
 
 #[test]
-fn deaths_are_counted_when_claw_comes_back() {
+fn deaths_claws_code_does_not_count_are_counted_when_claw_comes_back() {
     let mut sim = sim(vec![spec("SoundTrigger", 3000, FLOOR_Y, PUDDLE)]);
     idle(&mut sim, 2);
-    assert_eq!(manager(&sim).attempt, 0);
+    assert_eq!(manager(&sim).uncounted, 0);
     die_and_return(&mut sim);
     die_and_return(&mut sim);
-    assert_eq!(manager(&sim).attempt, 2);
+    assert_eq!(manager(&sim).uncounted, 2);
+    assert_eq!(sim.stats().attempt, 0);
+    assert_eq!(manager(&sim).attempt(sim.stats().attempt), 2);
+}
+
+/// Claw's code counts a death: the attempt counter rises at the death,
+/// as the lives step does.
+fn count_death(sim: &mut Sim) {
+    sim.with_world(|w| w.claw.stats.count_attempt());
+}
+
+#[test]
+fn a_spent_trigger_rearms_on_claws_attempt_counter() {
+    let mut sim = sim(vec![spec("SoundTrigger", 1300, FLOOR_Y, PUDDLE)]);
+    put_claw(&mut sim, 1300);
+    assert_eq!(count(&idle_cues(&mut sim, 3), &effect(PUDDLE)), 1);
+    assert_eq!(count(&idle_cues(&mut sim, 30), &effect(PUDDLE)), 0);
+    // A death counted by Claw's code re-arms it at once, without any dying
+    // state.
+    count_death(&mut sim);
+    assert_eq!(count(&idle_cues(&mut sim, 2), &effect(PUDDLE)), 1);
+    assert_eq!(count(&idle_cues(&mut sim, 30), &effect(PUDDLE)), 0);
+    // A counted death with a dying spell is one death, not two: the
+    // trigger re-arms when the counter rises and stays spent after its
+    // next use.
+    let m = manager_id(&sim);
+    let standing = sim.player().unwrap().state;
+    sim.with_world(|w| {
+        let id = w.claw_id.unwrap();
+        w.objects.get_mut(id).unwrap().state = state::DEATH;
+        w.claw.stats.count_attempt();
+        sound_object::tick(w, m);
+    });
+    sim.with_world(|w| {
+        let id = w.claw_id.unwrap();
+        w.objects.get_mut(id).unwrap().state = standing;
+        sound_object::tick(w, m);
+    });
+    assert_eq!(manager(&sim).uncounted, 0, "the death was counted");
+    assert_eq!(count(&idle_cues(&mut sim, 2), &effect(PUDDLE)), 1);
+    assert_eq!(count(&idle_cues(&mut sim, 30), &effect(PUDDLE)), 0);
+}
+
+#[test]
+fn a_dialog_line_rearms_on_claws_attempt_counter() {
+    let mut sim = sim(vec![spec("ClawDialogSoundTrigger", 1300, FLOOR_Y, LINE)]);
+    put_claw(&mut sim, 1300);
+    let cues = idle_cues(&mut sim, 80);
+    assert_eq!(count(&cues, &voice(LINE)), 1);
+    count_death(&mut sim);
+    let cues = idle_cues(&mut sim, 80);
+    assert_eq!(count(&cues, &voice(LINE)), 1, "said again after the death");
+}
+
+#[test]
+fn the_dialog_helpers_are_found_through_the_manager() {
+    let mut sim = sim(vec![spec("SoundTrigger", 3000, FLOOR_Y, PUDDLE)]);
+    idle(&mut sim, 2);
+    assert_eq!(manager(&sim).claw_dialog, None);
+    assert!(!sim.with_world(|w| sound::claw_is_speaking(w)));
+    // Many objects made before the first line put the helpers far from
+    // Claw's id; they are still found, through the manager's record.
+    for k in 0..200 {
+        let mut o = Object::new(0, 100 + k, 100, 0, "DoNothing".into(), LogicKind::Inert);
+        o.flags |= claw_sim::object::flags::NO_COLLIDE;
+        sim.spawn(o);
+    }
+    let enemy = sim.spawn(Object::new(
+        0,
+        1200,
+        FLOOR_Y,
+        0,
+        "Officer".into(),
+        LogicKind::Inert,
+    ));
+    assert!(sim.with_world(|w| sound::claw_say(w, LINE, false)));
+    assert!(sim.with_world(|w| sound::enemy_say(w, enemy, LINE2, false)));
+    let m = manager(&sim);
+    let (claw, foe) = (m.claw_dialog.unwrap(), m.enemy_dialog.unwrap());
+    assert_ne!(claw, foe);
+    for (id, logic) in [
+        (claw, sound::CLAW_DIALOG_LOGIC),
+        (foe, sound::ENEMY_DIALOG_LOGIC),
+    ] {
+        assert_eq!(&*sim.objects().get(id).unwrap().logic, logic);
+    }
+    assert!(sim.with_world(|w| sound::claw_is_speaking(w)));
+    assert!(sim.with_world(|w| sound::enemy_is_speaking(w, enemy)));
+    // Saying more lines reuses the recorded helpers.
+    idle(&mut sim, 80);
+    assert!(sim.with_world(|w| sound::claw_say(w, LINE2, false)));
+    let m = manager(&sim);
+    assert_eq!((m.claw_dialog, m.enemy_dialog), (Some(claw), Some(foe)));
+    let helpers = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| &*o.logic == sound::CLAW_DIALOG_LOGIC)
+        .count();
+    assert_eq!(helpers, 1);
+}
+
+#[test]
+fn a_line_in_a_level_without_sound_objects_makes_the_manager_too() {
+    let mut sim = sim(Vec::new());
+    assert!(sound_object::manager_of(sim.objects()).is_none());
+    assert!(!sim.with_world(|w| sound::claw_is_speaking(w)));
+    assert!(sim.with_world(|w| sound::claw_say(w, LINE, false)));
+    let m = manager(&sim);
+    assert!(m.claw_dialog.is_some() && m.enemy_dialog.is_none());
+    assert!(sim.with_world(|w| sound::claw_is_speaking(w)));
 }
 
 // ------------------------------------------------------ placed sounds
