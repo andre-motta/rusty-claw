@@ -1,0 +1,15 @@
+[package]
+name = "claw-audio"
+description = "Sound effect mixer with the game's volume, pan and pitch curves, an output device with a silent fallback, and a music input."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cpal = "0.18.2"
+rtrb = "0.4"
+
+[lints]
+workspace = true
