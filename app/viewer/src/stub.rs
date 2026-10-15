@@ -5,7 +5,8 @@
 
 use claw_assets::LevelData;
 use claw_frame::{
-    Buttons, DrawMode, PaletteFade, Point, Renderable, SimSnapshot, TICK_MS, TickInput, ViewConfig,
+    Buttons, DrawMode, HudState, PaletteFade, Point, Renderable, SimSnapshot, TICK_MS, TickInput,
+    ViewConfig,
 };
 
 /// Camera speed in pixels per second.
@@ -115,6 +116,10 @@ impl Stub {
             renderables: self.renderables.clone(),
             palette_fade: self.fade,
             camera_teleported: false,
+            hud: HudState::default(),
+            audio: Vec::new(),
+            events: Vec::new(),
+            transition: None,
         }
     }
 

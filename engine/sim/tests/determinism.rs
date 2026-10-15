@@ -136,7 +136,8 @@ fn widened_activation_is_recorded_in_traces() {
         ..SimConfig::default()
     };
     let t = trace_of(course(), cfg, &s);
-    assert!(t.lines().nth(1).unwrap().ends_with(",script,widened"));
+    let row: Vec<&str> = t.lines().nth(1).unwrap().split(',').collect();
+    assert_eq!(&row[13..15], ["script", "widened"]);
 }
 
 fn solid_at(map: &TileMap, x: i32, y: i32) -> bool {

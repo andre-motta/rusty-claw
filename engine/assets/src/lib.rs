@@ -23,16 +23,20 @@ mod error;
 
 pub mod ani;
 pub mod clt;
+pub mod ifc;
 pub mod image_set;
 pub mod install;
 pub mod level;
 pub mod name;
 pub mod pal;
+pub mod pcx;
 pub mod pid;
 pub mod registry;
 pub mod rez;
 pub mod store;
+pub mod wav;
 pub mod wwd;
+pub mod xmi;
 
 pub use ani::{Ani, AniFrame};
 pub use clt::{Clt, CltKind};
@@ -44,4 +48,5 @@ pub use pal::Palette;
 pub use pid::PidImage;
 pub use registry::{ImageSetRef, Registries};
 pub use store::{AssetStore, DirNode, FileEntry, FileId, Source};
+pub use wav::Wav;
 pub use wwd::{ObjectRecord, Plane, TileDescriptor, Wwd};

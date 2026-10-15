@@ -5,7 +5,8 @@ mod common;
 use std::collections::HashSet;
 
 use claw_frame::{
-    AspectPolicy, DrawMode, PaletteFade, Point, Renderable, ScaleMode, SimSnapshot, interpolate,
+    AspectPolicy, DrawMode, HudState, PaletteFade, Point, Renderable, ScaleMode, SimSnapshot,
+    interpolate,
 };
 use claw_render::effects::{Effect, Table};
 use claw_render::scene::{DEFAULT_MAX_TARGET, Item, SPRITE_MIRROR};
@@ -306,6 +307,10 @@ fn snapshot_camera_is_the_logic_view_corner() {
         renderables: vec![r],
         palette_fade: None,
         camera_teleported: false,
+        hud: HudState::default(),
+        audio: Vec::new(),
+        events: Vec::new(),
+        transition: None,
     };
     let frame = interpolate(&snap, &snap, 0.0);
     let input = FrameInput::from_frame(&frame, &v);

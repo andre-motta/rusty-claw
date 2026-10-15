@@ -1,13 +1,22 @@
 //! Per-tick traces: one CSV row per tick with Claw's position, state and
-//! the camera, for comparing runs and checking movement.
+//! the camera, his stats and the game events of the tick, for comparing
+//! runs and checking movement.
+//!
+//! The `weapon` column is `pistol`, `magic` or `dynamite`. The `events`
+//! column lists the tick's game events separated by `|`, each as its name
+//! followed by its values, separated by `:` (for example
+//! `checkpoint:6200:3100|message:3:2000`); it is empty when nothing
+//! happened.
 
 use std::fmt::Write as _;
+
+use claw_frame::{GameEvent, Weapon};
 
 use crate::sim::Sim;
 use crate::tuning::TICK_MS;
 
 /// Column names of a trace.
-pub const HEADER: &str = "tick,t_ms,dt_ms,x,y,frac_x,frac_y,state_id,physics_type,cam_x,cam_y,held,pressed,source,activation";
+pub const HEADER: &str = "tick,t_ms,dt_ms,x,y,frac_x,frac_y,state_id,physics_type,cam_x,cam_y,held,pressed,source,activation,health,score,lives,weapon,pistol,magic,dynamite,events";
 
 /// One trace row.
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +51,44 @@ pub struct TraceRow {
     pub source: String,
     /// Activation mode name.
     pub activation: &'static str,
+    /// Claw's health.
+    pub health: i32,
+    /// Score.
+    pub score: u32,
+    /// Lives left.
+    pub lives: i32,
+    /// Selected projectile weapon.
+    pub weapon: &'static str,
+    /// Pistol shots.
+    pub pistol: i32,
+    /// Magic charges.
+    pub magic: i32,
+    /// Sticks of dynamite.
+    pub dynamite: i32,
+    /// The tick's game events, encoded as described in the module
+    /// documentation.
+    pub events: String,
+}
+
+/// Name of a weapon in traces.
+pub fn weapon_name(w: Weapon) -> &'static str {
+    match w {
+        Weapon::Pistol => "pistol",
+        Weapon::Magic => "magic",
+        Weapon::Dynamite => "dynamite",
+    }
+}
+
+/// One game event as written in traces.
+pub fn event_text(e: &GameEvent) -> String {
+    match *e {
+        GameEvent::LevelComplete { after_ms } => format!("level_complete:{after_ms}"),
+        GameEvent::ClawDied { lives_left } => format!("claw_died:{lives_left}"),
+        GameEvent::GameOver => "game_over".to_string(),
+        GameEvent::Checkpoint { x, y } => format!("checkpoint:{x}:{y}"),
+        GameEvent::SavePoint { slot } => format!("save_point:{slot}"),
+        GameEvent::Message { id, ms } => format!("message:{id}:{ms}"),
+    }
 }
 
 impl TraceRow {
@@ -54,6 +101,8 @@ impl TraceRow {
         let mover = &sim.claw().mover;
         let (cam_x, cam_y) = sim.camera().current;
         let input = sim.input();
+        let stats = sim.stats();
+        let events: Vec<String> = sim.last_events().iter().map(event_text).collect();
         TraceRow {
             tick,
             t_ms: (tick + 1) * u64::from(TICK_MS),
@@ -70,6 +119,14 @@ impl TraceRow {
             pressed: input.pressed.0,
             source: source.to_string(),
             activation: sim.config().activation.mode.name(),
+            health: stats.health,
+            score: stats.score,
+            lives: stats.lives,
+            weapon: weapon_name(stats.weapon),
+            pistol: stats.pistol,
+            magic: stats.magic,
+            dynamite: stats.dynamite,
+            events: events.join("|"),
         }
     }
 
@@ -78,7 +135,7 @@ impl TraceRow {
         let mut s = String::new();
         let _ = write!(
             s,
-            "{},{},{},{},{},{:.6},{:.6},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             self.tick,
             self.t_ms,
             self.dt_ms,
@@ -93,7 +150,15 @@ impl TraceRow {
             self.held,
             self.pressed,
             self.source,
-            self.activation
+            self.activation,
+            self.health,
+            self.score,
+            self.lives,
+            self.weapon,
+            self.pistol,
+            self.magic,
+            self.dynamite,
+            self.events
         );
         s
     }

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use crate::anim::AnimPlayer;
+use crate::logic::{GameLogic, ObjectData};
 
 /// Index of an object in its container. Stable for the object's lifetime.
 pub type ObjectId = u32;
@@ -123,6 +124,59 @@ pub mod flags {
     pub const CLASS_1: u32 = 1 << 23;
     /// Activation class 2 (small window).
     pub const CLASS_2: u32 = 1 << 24;
+    /// Animation frame sounds play only while the object is in view.
+    pub const SOUND_IN_VIEW: u32 = 1 << 25;
+}
+
+/// Bits of [`Object::type_flags`], [`Object::hit_type_flags`] and
+/// [`Object::attack_type_flags`]: what kind of object something is, which
+/// kinds can hit it and which kinds it attacks. Logics set them at run
+/// time; level records leave them 0.
+pub mod types {
+    /// Captain Claw.
+    pub const PLAYER: u32 = 0x2;
+    /// An enemy's body.
+    pub const ENEMY: u32 = 0x4;
+    /// An object Claw threw.
+    pub const THROWN: u32 = 0x10;
+    /// A shot from Claw's pistol.
+    pub const PISTOL_SHOT: u32 = 0x20;
+    /// An enemy's shot.
+    pub const ENEMY_SHOT: u32 = 0x40;
+    /// A special pickup (powerups, extra lives, warps, the end of the
+    /// level).
+    pub const SPECIAL: u32 = 0x100;
+    /// A checkpoint flag.
+    pub const CHECKPOINT: u32 = 0x800;
+    /// A health pickup.
+    pub const HEALTH: u32 = 0x10000;
+    /// A treasure.
+    pub const TREASURE: u32 = 0x40000;
+    /// Magic charges.
+    pub const MAGIC_AMMO: u32 = 0x100000;
+    /// The large health potion.
+    pub const SUPER_HEALTH: u32 = 0x200000;
+    /// Pistol shots.
+    pub const PISTOL_AMMO: u32 = 0x800000;
+    /// A hazard's shot from the level itself.
+    pub const LEVEL_SHOT: u32 = 0x1000000;
+    /// What Claw is hit by from the start of a level.
+    pub const CLAW_HIT_BY: u32 = 0x1B5_0544;
+    /// The kinds an invulnerability window turns off and back on.
+    pub const CLAW_SHIELDED: u32 = ENEMY | LEVEL_SHOT;
+}
+
+/// Bits of [`Object::special_flags`].
+pub mod special {
+    /// Claw can lift and throw it.
+    pub const LIFTABLE: u32 = 0x1;
+    /// An enemy whose touch does not hurt.
+    pub const HARMLESS_TOUCH: u32 = 0x10;
+    /// A shot that handles its own impact on Claw instead of being
+    /// destroyed.
+    pub const OWN_IMPACT: u32 = 0x20;
+    /// A pickup on its way to the status bar; it removes itself.
+    pub const FLYING_TO_HUD: u32 = 0x200;
 }
 
 /// Bits of [`Object::draw_flags`].
@@ -159,6 +213,8 @@ pub enum LogicKind {
     /// A logic this build does not implement yet; the object exists, can be
     /// drawn and activated, and does nothing.
     Inert,
+    /// A level logic run by one of the families in [`crate::logic`].
+    Game(GameLogic),
 }
 
 /// One object.
@@ -237,6 +293,13 @@ pub struct Object {
     pub attack_handler: bool,
     /// Level record values (71 integers), for logics of later milestones.
     pub record: Option<Box<[i32; 71]>>,
+    /// Logic-specific flags (see [`special`]).
+    pub special_flags: u32,
+    /// The logic's own data.
+    pub data: ObjectData,
+    /// The move a platform made this tick, which riders add to their own;
+    /// platform logics set it every tick they move.
+    pub platform_move: (i32, i32),
     /// Animation player.
     pub anim: AnimPlayer,
     /// The object jumped this tick (drawn without interpolation).
@@ -286,6 +349,9 @@ impl Object {
             hit_handler: false,
             attack_handler: false,
             record: None,
+            special_flags: 0,
+            data: ObjectData::None,
+            platform_move: (0, 0),
             anim: AnimPlayer::default(),
             teleported: false,
             prev: None,

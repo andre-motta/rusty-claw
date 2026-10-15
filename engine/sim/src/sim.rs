@@ -3,14 +3,19 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use claw_frame::{AspectPolicy, DrawMode, Point, Renderable, SimSnapshot, TickInput, ViewConfig};
+use claw_frame::{
+    AspectPolicy, AudioCue, DrawMode, GameEvent, HudState, Point, PowerupHud, Renderable,
+    SimSnapshot, TickInput, ViewConfig,
+};
 
 use crate::activation::{Activation, ActivationConfig, ActivationMode, Centres};
 use crate::camera::{Camera, Followed};
 use crate::container::{CollisionEvent, Container};
 use crate::level::{ObjectSpec, SimLevel};
+use crate::logic::{self, Outbox, World};
 use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags};
 use crate::physics::Platform;
+use crate::player::stats::{Carry, PlayerStats, StartState, TREASURE_KINDS};
 use crate::player::{self, Claw, Ctx};
 use crate::registry::{CAMERA_LOGIC, PLAYER_LOGIC, REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
 use crate::rng::Rng;
@@ -28,6 +33,10 @@ pub struct SimConfig {
     pub tuning: Tuning,
     /// Seed of the game's random stream.
     pub seed: u32,
+    /// Run the level objects' logics. Off, every level object stays an
+    /// inert placeholder and collisions run no handler, as in the first
+    /// playable version; the movement calibration replays use that.
+    pub level_logics: bool,
 }
 
 impl Default for SimConfig {
@@ -72,6 +81,7 @@ impl SimConfig {
             activation,
             tuning: Tuning::default(),
             seed: 1,
+            level_logics: true,
         }
     }
 }
@@ -85,6 +95,10 @@ pub struct Diagnostics {
     /// Level records dropped: empty logic name or position outside the
     /// main plane.
     pub dropped_records: usize,
+    /// Registered logic names no family runs yet, with their record
+    /// counts (only with level logics on); those objects run as inert
+    /// placeholders.
+    pub inert_logics: BTreeMap<String, usize>,
 }
 
 /// One level being simulated.
@@ -106,9 +120,13 @@ pub struct Sim {
     input: TickInput,
     events: Vec<CollisionEvent>,
     diagnostics: Diagnostics,
+    out: Outbox,
+    last_audio: Vec<AudioCue>,
+    last_events: Vec<GameEvent>,
 }
 
-/// What runs an object's logic: everything but the object container.
+/// What runs an object's logic: everything but the object container and
+/// the activation index.
 struct Runner<'a> {
     cfg: &'a SimConfig,
     level: &'a SimLevel,
@@ -117,7 +135,9 @@ struct Runner<'a> {
     camera_point: &'a mut (i32, i32),
     camera_override: &'a mut Option<(i32, i32)>,
     rng: &'a mut Rng,
+    out: &'a mut Outbox,
     input: TickInput,
+    tick: u64,
     now_ms: u64,
     player: Option<ObjectId>,
 }
@@ -127,28 +147,79 @@ impl Runner<'_> {
         self.level.plane()
     }
 
+    /// The logic view in level pixels.
+    fn view(&self) -> Rect {
+        let v = &self.cfg.view;
+        PlaneView::new(
+            self.plane(),
+            *self.camera_point,
+            (v.logic_width, v.logic_height),
+        )
+        .rect
+    }
+
+    fn world<'b>(&'b mut self, objects: &'b mut Container) -> World<'b> {
+        let view = self.view();
+        World {
+            objects,
+            claw_id: self.player,
+            claw: &mut *self.claw,
+            level: self.level,
+            rng: &mut *self.rng,
+            tuning: &self.cfg.tuning,
+            tick: self.tick,
+            now_ms: self.now_ms,
+            view,
+            out: &mut *self.out,
+        }
+    }
+
+    /// Runs `f` on Claw's object `id` with the player context; `None` when
+    /// the object does not exist.
+    fn with_claw<R>(
+        &mut self,
+        objects: &mut Container,
+        id: ObjectId,
+        f: impl FnOnce(&mut Ctx) -> R,
+    ) -> Option<R> {
+        let platforms = platforms(objects);
+        let centre = PlaneView::new(self.plane(), *self.camera_point, (640, 480)).centre;
+        let view = self.view();
+        let mut held = Object::new(0, 0, 0, 0, Arc::from(""), LogicKind::Inert);
+        if !objects.swap_payload(id, &mut held) {
+            return None;
+        }
+        let r = {
+            let mut ctx = Ctx {
+                o: &mut held,
+                p: &mut *self.claw,
+                id,
+                objects: &mut *objects,
+                level: self.level,
+                platforms: &platforms,
+                input: self.input,
+                t: &self.cfg.tuning,
+                rng: &mut *self.rng,
+                camera_override: &mut *self.camera_override,
+                plane_centre: centre,
+                out: &mut *self.out,
+                tick: self.tick,
+                now_ms: self.now_ms,
+                view,
+            };
+            f(&mut ctx)
+        };
+        objects.swap_payload(id, &mut held);
+        Some(r)
+    }
+
     fn run(&mut self, objects: &mut Container, id: ObjectId) {
         let Some(kind) = objects.get(id).map(|o| o.kind) else {
             return;
         };
         match kind {
             LogicKind::Player => {
-                let platforms = platforms(objects);
-                let centre = PlaneView::new(self.plane(), *self.camera_point, (640, 480)).centre;
-                let Some(o) = objects.get_mut(id) else { return };
-                let mut ctx = Ctx {
-                    o,
-                    p: self.claw,
-                    map: &self.level.map,
-                    platforms: &platforms,
-                    input: self.input,
-                    t: &self.cfg.tuning,
-                    rng: self.rng,
-                    anims: &self.level.animations,
-                    camera_override: self.camera_override,
-                    plane_centre: centre,
-                };
-                player::tick(&mut ctx);
+                self.with_claw(objects, id, player::tick);
             }
             LogicKind::Camera => {
                 let followed = self.player.and_then(|p| objects.get(p)).map(|o| Followed {
@@ -168,24 +239,81 @@ impl Runner<'_> {
                 *self.camera_point = self.camera.current;
             }
             LogicKind::Inert => {}
+            LogicKind::Game(_) => {
+                let mut w = self.world(objects);
+                logic::tick(&mut w, id);
+            }
+        }
+    }
+
+    /// The last call of an object being destroyed or put to sleep; its
+    /// state already says which.
+    fn notify(&mut self, objects: &mut Container, id: ObjectId) {
+        if matches!(objects.get(id).map(|o| o.kind), Some(LogicKind::Game(_))) {
+            let mut w = self.world(objects);
+            logic::tick(&mut w, id);
+        }
+    }
+
+    /// Calls the handlers of one pair-collision event.
+    fn collision(&mut self, objects: &mut Container, event: CollisionEvent) {
+        let kind = |objects: &Container, id: ObjectId| objects.get(id).map(|o| o.kind);
+        match event {
+            CollisionEvent::Attack { attacker, victim } => {
+                if let Some(LogicKind::Game(_)) = kind(objects, attacker) {
+                    let mut w = self.world(objects);
+                    logic::on_attack(&mut w, attacker, victim);
+                }
+            }
+            CollisionEvent::Hit { attacker, victim } => match kind(objects, victim) {
+                Some(LogicKind::Game(_)) => {
+                    let mut w = self.world(objects);
+                    logic::on_hit(&mut w, victim, attacker);
+                }
+                Some(LogicKind::Player) => {
+                    self.with_claw(objects, victim, |c| player::hit::claw_hit(c, attacker));
+                }
+                _ => {}
+            },
+            CollisionEvent::Damage { .. } => {}
+        }
+    }
+
+    /// Lists the objects spawned during the pass, in spawn order: those
+    /// already asked to be destroyed are removed instead, and those with
+    /// [`flags::RUN_AT_CREATION`] run their logic once at once.
+    fn list_spawned(&mut self, objects: &mut Container) {
+        while self.out.has_spawned() {
+            for id in self.out.take_spawned() {
+                let Some(o) = objects.get(id) else { continue };
+                if o.flags & flags::DESTROY != 0 {
+                    objects.remove(id);
+                    continue;
+                }
+                let run_now = o.flags & flags::RUN_AT_CREATION != 0;
+                objects.insert(id);
+                if run_now {
+                    self.run(objects, id);
+                }
+            }
         }
     }
 }
 
-/// Platform objects in list order.
-fn platforms(objects: &Container) -> Vec<Platform> {
+/// Platform objects in list order, with the move each made this tick.
+pub(crate) fn platforms(objects: &Container) -> Vec<Platform> {
     let mut out = Vec::new();
     let mut cur = objects.head();
     while let Some(id) = cur {
-        let o = objects.get(id).expect("listed object exists");
+        let Some(o) = objects.get(id) else { break };
         if o.type_flags & 0x80 != 0 && o.hit_rect.is_set() {
             out.push(Platform {
                 id,
                 x: o.x,
                 y: o.y,
                 hit_rect: o.hit_rect,
-                move_x: 0,
-                move_y: 0,
+                move_x: o.platform_move.0,
+                move_y: o.platform_move.1,
             });
         }
         cur = o.next;
@@ -226,6 +354,9 @@ impl Sim {
             input: TickInput::default(),
             events: Vec::new(),
             diagnostics: Diagnostics::default(),
+            out: Outbox::new(),
+            last_audio: Vec::new(),
+            last_events: Vec::new(),
             level,
         };
         let level = sim.level.clone();
@@ -266,21 +397,36 @@ impl Sim {
             self.diagnostics.dropped_records += 1;
             return;
         }
-        let (name, reg_flags) = match self.registry.get(&spec.logic) {
-            Some(e) => (e.name.clone(), e.flags),
+        let (name, reg_flags, kind) = match self.registry.get(&spec.logic) {
+            Some(e) => (e.name.clone(), e.flags, e.kind),
             None => {
                 *self
                     .diagnostics
                     .unknown_logics
                     .entry(spec.logic.clone())
                     .or_default() += 1;
-                (Arc::from(spec.logic.as_str()), 0)
+                (Arc::from(spec.logic.as_str()), 0, LogicKind::Inert)
             }
         };
-        // Level objects run as placeholders until their logics exist; Claw
-        // and the camera are created by the simulation itself, so a record
+        // Level objects run their family's logic when level logics are on
+        // and a family runs them; otherwise they are placeholders. Claw and
+        // the camera are created by the simulation itself, so a record
         // naming them gets a placeholder too.
-        let mut o = Object::new(r[0], x, y, r[7], name, LogicKind::Inert);
+        let kind = match kind {
+            LogicKind::Game(_) if self.cfg.level_logics => kind,
+            _ => LogicKind::Inert,
+        };
+        if self.cfg.level_logics
+            && kind == LogicKind::Inert
+            && self.registry.get(&spec.logic).is_some()
+        {
+            *self
+                .diagnostics
+                .inert_logics
+                .entry(spec.logic.clone())
+                .or_default() += 1;
+        }
+        let mut o = Object::new(r[0], x, y, r[7], name, kind);
         o.reg_flags = reg_flags;
         o.flags = flags::WORLD;
         if reg_flags & REG_CLASS_1 != 0 {
@@ -325,7 +471,7 @@ impl Sim {
         Centres::new(&self.cfg.activation, self.level.plane(), self.camera_point)
     }
 
-    fn runner(&mut self) -> (Runner<'_>, &mut Container) {
+    fn parts(&mut self) -> (Runner<'_>, &mut Container, &mut Activation) {
         let now_ms = self.tick * u64::from(TICK_MS);
         (
             Runner {
@@ -336,17 +482,21 @@ impl Sim {
                 camera_point: &mut self.camera_point,
                 camera_override: &mut self.camera_override,
                 rng: &mut self.rng,
+                out: &mut self.out,
                 input: self.input,
+                tick: self.tick,
                 now_ms,
                 player: self.player,
             },
             &mut self.objects,
+            &mut self.activation,
         )
     }
 
     fn run_logic(&mut self, id: ObjectId) {
-        let (mut runner, objects) = self.runner();
+        let (mut runner, objects, _) = self.parts();
         runner.run(objects, id);
+        runner.list_spawned(objects);
     }
 
     /// Advances one tick with `input` and returns the snapshot.
@@ -355,11 +505,17 @@ impl Sim {
         let c = self.centres();
         self.activation.enter(&mut self.objects, c);
         self.update_pass();
-        self.events = self.objects.pair_collision();
+        self.collision_pass();
         let c = self.centres();
-        let mut notify = |_: &mut Container, _: ObjectId, _: i32| {};
-        self.activation.leave(&mut self.objects, c, &mut notify);
+        {
+            let (mut runner, objects, activation) = self.parts();
+            activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
+            runner.list_spawned(objects);
+        }
         self.tick += 1;
+        let (audio, events) = self.out.take_tick();
+        self.last_audio = audio;
+        self.last_events = events;
         let snapshot = self.snapshot();
         // Jumps are reported once, in the snapshot of the tick they happen
         // in (or the next one, for moves made between ticks).
@@ -374,7 +530,7 @@ impl Sim {
     fn update_pass(&mut self) {
         let mut destroy = Vec::new();
         let mut resort = Vec::new();
-        let (mut runner, objects) = self.runner();
+        let (mut runner, objects, _) = self.parts();
         let mut cur = objects.head();
         while let Some(id) = cur {
             cur = objects.next_of(id);
@@ -406,7 +562,28 @@ impl Sim {
                 }
             }
         }
-        objects.finish_pass(&destroy, &resort, &mut |_, _| {});
+        objects.finish_pass(&destroy, &resort, &mut |objects, id| {
+            runner.notify(objects, id);
+        });
+        runner.list_spawned(objects);
+    }
+
+    /// Pair collision; with level logics on, each event calls its handlers
+    /// as it happens.
+    fn collision_pass(&mut self) {
+        let logics = self.cfg.level_logics;
+        let mut events = Vec::new();
+        {
+            let (mut runner, objects, _) = self.parts();
+            objects.pair_collision_with(&mut |objects, event| {
+                events.push(event);
+                if logics {
+                    runner.collision(objects, event);
+                }
+            });
+            runner.list_spawned(objects);
+        }
+        self.events = events;
     }
 
     /// The snapshot of the current state.
@@ -459,9 +636,70 @@ impl Sim {
                 y: f64::from(rect.top),
             },
             renderables,
-            palette_fade: None,
+            palette_fade: self.out.fade(),
             camera_teleported: self.camera.teleported,
+            hud: self.hud(),
+            audio: self.last_audio.clone(),
+            events: self.last_events.clone(),
+            transition: self.out.transition(),
         }
+    }
+
+    /// The status bar values.
+    pub fn hud(&self) -> HudState {
+        let s = &self.claw.stats;
+        HudState {
+            score: s.score,
+            health: s.health,
+            lives: s.lives,
+            weapon: s.weapon,
+            pistol_ammo: s.pistol,
+            magic_ammo: s.magic,
+            dynamite_ammo: s.dynamite,
+            powerup: (s.powerup_kind != 0 && s.powerup_ms > 0).then_some(PowerupHud {
+                kind: s.powerup_kind,
+                remaining_ms: s.powerup_ms,
+            }),
+            timer_ms: None,
+        }
+    }
+
+    /// Starts `level` like [`Sim::new`], then applies `start`: carried
+    /// progress and a save point to begin at.
+    pub fn with_start(level: impl Into<Arc<SimLevel>>, cfg: SimConfig, start: StartState) -> Sim {
+        let mut sim = Sim::new(level, cfg);
+        if let Some(id) = sim.player {
+            let (mut runner, objects, _) = sim.parts();
+            runner.with_claw(objects, id, |c| player::progress::apply_start(c, &start));
+            runner.list_spawned(objects);
+        }
+        sim
+    }
+
+    /// What Claw hands to the next level.
+    pub fn carry(&self) -> Carry {
+        player::progress::carry(&self.claw)
+    }
+
+    /// Claw's health, score, lives, ammunition, weapon, powerup and
+    /// treasures.
+    pub fn stats(&self) -> &PlayerStats {
+        &self.claw.stats
+    }
+
+    /// Treasures the level holds, per kind.
+    pub fn treasure_census(&self) -> [u32; TREASURE_KINDS] {
+        logic::pickup::census(&self.level)
+    }
+
+    /// Sound and music cues of the last tick.
+    pub fn last_audio(&self) -> &[AudioCue] {
+        &self.last_audio
+    }
+
+    /// Game events of the last tick.
+    pub fn last_events(&self) -> &[GameEvent] {
+        &self.last_events
     }
 
     /// Ticks run so far.
@@ -580,25 +818,23 @@ impl Sim {
     /// handlers (tools and tests).
     pub fn set_player_state(&mut self, state: i32) {
         let Some(id) = self.player else { return };
-        let plane = self.level.plane();
-        let centre = PlaneView::new(plane, self.camera_point, (640, 480)).centre;
-        let pf = platforms(&self.objects);
-        let Some(o) = self.objects.get_mut(id) else {
-            return;
+        let (mut runner, objects, _) = self.parts();
+        runner.with_claw(objects, id, |c| player::transition(c, state));
+        runner.list_spawned(objects);
+    }
+
+    /// Runs `f` with a [`World`] over this level (tools and tests): the
+    /// same context the level logics get. Objects it spawns join the live
+    /// list when it returns; cues and events it adds go into the next
+    /// tick's snapshot.
+    pub fn with_world<R>(&mut self, f: impl FnOnce(&mut World) -> R) -> R {
+        let (mut runner, objects, _) = self.parts();
+        let r = {
+            let mut w = runner.world(objects);
+            f(&mut w)
         };
-        let mut ctx = Ctx {
-            o,
-            p: &mut self.claw,
-            map: &self.level.map,
-            platforms: &pf,
-            input: self.input,
-            t: &self.cfg.tuning,
-            rng: &mut self.rng,
-            anims: &self.level.animations,
-            camera_override: &mut self.camera_override,
-            plane_centre: centre,
-        };
-        player::transition(&mut ctx, state);
+        runner.list_spawned(objects);
+        r
     }
 
     /// Adds an object at run time (live at once when `flags` lacks

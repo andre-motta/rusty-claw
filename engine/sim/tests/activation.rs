@@ -302,16 +302,25 @@ fn level_lists_every_image_set_its_objects_can_show() {
         key: "CLAW_STAND".into(),
         image_set: "CLAW_EXTRA".into(),
         frames: Vec::new(),
+        frame_sounds: Vec::new(),
     };
     level.animations.insert(anim.key.clone(), Arc::new(anim));
-    assert_eq!(
-        level.image_sets(),
-        vec!["CLAW", "CLAW_EXTRA", "GAME_TREASURE"]
-    );
+    let mut want: Vec<String> = ["CLAW", "CLAW_EXTRA", "GAME_TREASURE"]
+        .into_iter()
+        .chain(claw_sim::logic::runtime_image_sets())
+        .map(str::to_string)
+        .collect();
+    want.sort();
+    want.dedup();
+    assert_eq!(level.image_sets(), want);
     // Every set a logic switches to at run time is listed, even for a
     // level with no objects or animations.
     let empty = claw_sim::SimLevel::synthetic(claw_sim::TileMap::new(1, 1, 64, 64), (0, 0));
-    for set in claw_sim::level::RUNTIME_IMAGE_SETS {
+    let runtime = claw_sim::logic::runtime_image_sets();
+    for set in claw_sim::level::RUNTIME_IMAGE_SETS
+        .into_iter()
+        .chain(runtime)
+    {
         assert!(empty.image_sets().iter().any(|s| s == set), "{set}");
         assert_eq!(claw_sim::level::runtime_image_set(set), set);
     }
@@ -319,7 +328,7 @@ fn level_lists_every_image_set_its_objects_can_show() {
 
 #[test]
 #[cfg(debug_assertions)]
-#[should_panic(expected = "not listed in RUNTIME_IMAGE_SETS")]
+#[should_panic(expected = "not listed as a run-time image set")]
 fn switching_to_an_unlisted_image_set_is_caught_in_debug_builds() {
     let _ = claw_sim::level::runtime_image_set("SOME_OTHER_SET");
 }

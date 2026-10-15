@@ -317,3 +317,254 @@ fn install_level1_never_inside_solid_while_exploring() {
         }
     }
 }
+
+// ------------------------------------------------- level logics on and off
+
+/// FNV-1a 64 of a text.
+fn digest(text: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+/// The trace columns of the first playable version, one line per row.
+fn movement_columns(rows: &[TraceRow]) -> String {
+    let mut s = String::new();
+    for r in rows {
+        let csv = r.to_csv();
+        let line: Vec<&str> = csv.splitn(16, ',').take(15).collect();
+        s.push_str(&line.join(","));
+        s.push('\n');
+    }
+    s
+}
+
+fn movement_digest(mut sim: Sim, start: Option<(i32, i32)>, s: &InputScript) -> u64 {
+    if let Some((x, y)) = start {
+        sim.teleport_player(x, y);
+        idle(&mut sim, 60);
+    }
+    let rows: Vec<TraceRow> = s
+        .ticks
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| {
+            sim.step(t);
+            TraceRow::capture(&sim, i as u64, "script")
+        })
+        .collect();
+    digest(&movement_columns(&rows))
+}
+
+fn explore() -> InputScript {
+    script(&[
+        (RIGHT, 4000),
+        (RIGHT | JUMP, 800),
+        (RIGHT, 3000),
+        (RIGHT | JUMP, 800),
+        (RIGHT, 6000),
+        (LEFT | JUMP, 800),
+        (LEFT, 2000),
+        (UP, 1000),
+        (DOWN, 1000),
+        (UP | JUMP, 300),
+        (0, 1000),
+    ])
+}
+
+fn without_logics() -> SimConfig {
+    SimConfig {
+        level_logics: false,
+        ..SimConfig::default()
+    }
+}
+
+/// With level logics off, Claw moves exactly as in the first playable
+/// version: the movement columns of these runs hash to the values that
+/// version produced.
+#[test]
+fn install_without_level_logics_movement_is_unchanged() {
+    let Some(store) = store() else { return };
+    let explore_digests: [u64; 14] = [
+        0x1ff6_066e_b8a9_4865,
+        0x2fab_7156_cf88_422a,
+        0xb574_88ac_96b7_382a,
+        0xfd2e_ed1f_48d6_a213,
+        0x786b_be78_b388_dcfb,
+        0x436d_53e2_5424_1cf5,
+        0x135d_f10a_d2a7_55ab,
+        0x4a2b_3008_8039_e693,
+        0x85a0_7fd1_3fd2_b63d,
+        0x9d13_5a37_2262_f64c,
+        0xf730_ce72_d752_7402,
+        0x90c3_7621_befd_7943,
+        0x332e_540b_01a7_c935,
+        0xbdbe_4b08_c469_1476,
+    ];
+    let mut changed = Vec::new();
+    for (n, want) in RETAIL_LEVELS.zip(explore_digests) {
+        let got = movement_digest(
+            Sim::new(level(&store, n), without_logics()),
+            None,
+            &explore(),
+        );
+        if got != want {
+            changed.push(format!("LEVEL{n} explore"));
+        }
+    }
+    let l1 = level(&store, 1);
+    let flat = script(&[
+        (RIGHT, 3000),
+        (0, 600),
+        (JUMP, 800),
+        (0, 1000),
+        (DOWN, 3500),
+        (0, 2000),
+        (UP, 3500),
+        (0, 2000),
+        (LEFT | JUMP, 200),
+        (LEFT, 1500),
+    ]);
+    let climb = script(&[
+        (UP | JUMP, 108),
+        (UP, 1500),
+        (0, 500),
+        (DOWN, 1000),
+        (0, 500),
+    ]);
+    let wide = SimConfig {
+        activation: ActivationConfig::widened((1706, 480)),
+        ..without_logics()
+    };
+    let runs = [
+        (
+            "flat",
+            movement_digest(Sim::new(l1.clone(), without_logics()), Some(FLAT), &flat),
+            0x9193_7967_edf7_d26f,
+        ),
+        (
+            "ladder",
+            movement_digest(
+                Sim::new(l1.clone(), without_logics()),
+                Some((1440, 4760)),
+                &climb,
+            ),
+            0x9bb4_553a_3ab8_16d2,
+        ),
+        (
+            "widened",
+            movement_digest(Sim::new(l1, wide), None, &explore()),
+            0x5970_dea8_afcb_6061,
+        ),
+    ];
+    for (name, got, want) in runs {
+        if got != want {
+            changed.push(name.to_string());
+        }
+    }
+    assert!(
+        changed.is_empty(),
+        "movement traces changed with level logics off: {changed:?}"
+    );
+}
+
+/// A long, varied input, the same every run.
+fn wander(ticks: usize) -> Vec<TickInput> {
+    let mut rng = claw_sim::rng::Rng::new(7);
+    let moves = [RIGHT, RIGHT | JUMP, LEFT, LEFT | JUMP, UP, DOWN, 0, JUMP];
+    let mut out = Vec::with_capacity(ticks);
+    let mut held = 0u32;
+    for i in 0..ticks {
+        let prev = held;
+        if i % 40 == 0 {
+            held = moves[rng.below(moves.len() as u32) as usize];
+        }
+        out.push(TickInput {
+            held: claw_sim::Buttons(held),
+            pressed: claw_sim::Buttons(held & !prev),
+        });
+    }
+    out
+}
+
+#[test]
+fn install_level1_runs_with_level_logics() {
+    let Some(store) = store() else { return };
+    let l = level(&store, 1);
+    let mut sim = Sim::new(l.clone(), SimConfig::default());
+    let d = sim.diagnostics().clone();
+    assert!(d.unknown_logics.is_empty(), "{:?}", d.unknown_logics);
+    assert!(
+        d.inert_logics.is_empty(),
+        "every logic binds: {:?}",
+        d.inert_logics
+    );
+    let bound = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| matches!(o.kind, claw_sim::object::LogicKind::Game(_)))
+        .count();
+    assert_eq!(bound, l.objects.len(), "every placed object runs a family");
+    let inputs = wander(2000);
+    let t = std::time::Instant::now();
+    let mut ms = Vec::with_capacity(inputs.len());
+    let mut live = 0;
+    for &input in &inputs {
+        let s = std::time::Instant::now();
+        sim.step(input);
+        ms.push(s.elapsed().as_secs_f64() * 1000.0);
+        live = live.max(sim.objects().listed().len());
+    }
+    let total = t.elapsed();
+    ms.sort_by(f64::total_cmp);
+    println!(
+        "LEVEL1 with level logics: 2000 ticks in {total:?}, tick mean {:.4} ms, p99 {:.4} ms, max {:.4} ms, up to {live} live objects",
+        ms.iter().sum::<f64>() / ms.len() as f64,
+        ms[ms.len() * 99 / 100],
+        ms[ms.len() - 1]
+    );
+    assert_eq!(sim.tick(), 2000);
+    assert_eq!(sim.snapshot().hud.health, sim.stats().health);
+    // The level's animations and sounds are loaded for its logics.
+    assert!(l.animations.keys().any(|k| k.starts_with("LEVEL_")));
+    assert!(l.sounds.values().filter(|ms| ms.is_some()).count() > 100);
+    assert!(
+        l.skipped_animations.is_empty(),
+        "{:?}",
+        l.skipped_animations
+    );
+    // Two runs agree, and the families' stubs leave the movement alone.
+    let mut again = Sim::new(l.clone(), SimConfig::default());
+    let mut off = Sim::new(l, without_logics());
+    for (i, &input) in inputs.iter().enumerate().take(600) {
+        again.step(input);
+        off.step(input);
+        let a = TraceRow::capture(&again, i as u64, "script");
+        let b = TraceRow::capture(&off, i as u64, "script");
+        assert_eq!(a, b, "tick {i}");
+    }
+}
+
+#[test]
+fn install_every_level_loads_and_runs_with_level_logics() {
+    let Some(store) = store() else { return };
+    let inputs = wander(300);
+    for n in RETAIL_LEVELS {
+        let mut sim = Sim::new(level(&store, n), SimConfig::default());
+        for &input in &inputs {
+            sim.step(input);
+        }
+        assert_eq!(sim.tick(), 300, "LEVEL{n}");
+        let d = sim.diagnostics();
+        println!(
+            "LEVEL{n}: {} objects, {} with logics no family runs yet ({} names), {} live",
+            sim.objects().len(),
+            d.inert_logics.values().sum::<usize>(),
+            d.inert_logics.len(),
+            sim.objects().listed().len()
+        );
+    }
+}

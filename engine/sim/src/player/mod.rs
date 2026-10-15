@@ -10,23 +10,53 @@
 //! step runs (timers, the position clamp, death-tile marks).
 //!
 //! Every state id of the game is declared in the table. Ids without
-//! behaviour in the game run only the post-tick step. States that belong
-//! to later milestones (attacks, hits, deaths, lifting) are flagged
-//! fallback rows that return Claw to standing, so filling them in later
-//! changes only their handlers.
+//! behaviour in the game run only the post-tick step. States whose
+//! behaviour is not filled in yet (hits, deaths, lifting, throwing,
+//! freezing, swinging, being held) are flagged fallback rows that return
+//! Claw to standing.
+//!
+//! The parts that grow with combat and progress live in submodules, each
+//! with its own data in [`Claw`]:
+//!
+//! - [`stats`]: health, score, lives, ammunition, weapon, powerup and
+//!   treasure counts, and what carries between levels;
+//! - [`attack`]: choosing and running attacks, called by the host states
+//!   in the game's order (Jump, Fall and Crouch before their update, Walk
+//!   after it, Stand before its update);
+//! - [`special`]: the hit reaction, lifting, throwing and freezing states;
+//! - [`hit`]: what happens when something touches Claw;
+//! - [`death`]: dying, the death states and the powerup timer;
+//! - [`progress`]: starting a level from a carried state or a save, and
+//!   handing the progress on.
+//!
+//! The rows of the hit (31), lift (5000), throw (5001), death-fall (5004),
+//! death (5005) and freeze (5009) states call into those submodules, which
+//! fall back to standing until they are filled in.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use claw_frame::{Buttons, TickInput};
+use claw_frame::{AudioCue, Buttons, SoundCue, TickInput};
 
 use crate::anim::Animation;
+use crate::container::Container;
 use crate::kinematics::Mover;
-use crate::object::{Object, Rect, draw_flags, flags};
+use crate::level::SimLevel;
+use crate::logic::world::{Outbox, World};
+use crate::object::{Object, ObjectId, Rect, draw_flags, flags, types};
 use crate::physics::{self, Collider, Platform, opt, ptype};
 use crate::rng::Rng;
-use crate::tiles::{CLIMB, DEATH, TileMap};
+use crate::tiles::{CLIMB, DEATH};
 use crate::tuning::{TICK_MS, Tuning};
+
+pub mod attack;
+pub mod death;
+pub mod hit;
+pub mod progress;
+pub mod special;
+pub mod stats;
+
+pub use stats::{Carry, PlayerStats, SavePos, StartState};
 
 /// Animations by registry key.
 pub type AnimSet = HashMap<String, Arc<Animation>>;
@@ -78,6 +108,13 @@ pub mod state {
 /// Image set Claw is drawn from.
 pub const IMAGE_SET: &str = "CLAW";
 
+/// Voice line Claw may say when he starts teetering on a ledge.
+pub const TEETER_VOICE: &str = "CLAW_1021";
+/// Sound of Claw's feet touching the ground after a fall.
+pub const LANDING_SOUND: &str = "CLAW_LEFTFOOT1";
+/// Sound of the flag when Claw comes back at a checkpoint.
+pub const CHECKPOINT_RESPAWN_SOUND: &str = "GAME_FLAGWAVE";
+
 /// How far a state table row is implemented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RowKind {
@@ -125,8 +162,14 @@ pub struct StateRow {
 pub struct Claw {
     /// Facing right.
     pub facing_right: bool,
-    /// An attack is running (always false until attacks exist).
+    /// An attack is running.
     pub attacking: bool,
+    /// Health, score, lives, ammunition, weapon, powerup and treasures.
+    pub stats: PlayerStats,
+    /// The running attack.
+    pub attack: attack::AttackData,
+    /// Lifting, throwing, freezing and the hit reaction.
+    pub special: special::SpecialData,
     /// Pixels fallen since the fall began.
     pub fall_height: i32,
     /// Position after the level-start placement; the respawn fallback.
@@ -159,19 +202,13 @@ pub struct Claw {
     pub jump_press_time: f64,
     /// Idle time left before the idle animation, ms.
     pub afk_time: i32,
-    /// Invulnerability left, ms.
-    pub invulnerable_ms: i32,
     /// Second timer counted down by the post-tick step, ms.
     pub aux_timer_ms: i32,
-    /// Selected secondary weapon (1, 2 or 3).
-    pub second_weapon: i32,
     /// Position clamp: left, top, right, bottom.
     pub clamp: Rect,
-    /// Health.
-    pub health: i32,
     /// Floating-point motion.
     pub mover: Mover,
-    /// Death-tile contacts reported (deaths arrive in a later milestone).
+    /// Death-tile contacts reported (dying is not filled in yet).
     pub death_tile_hits: u32,
     /// Times a fallback row was entered.
     pub fallback_entries: u32,
@@ -182,6 +219,9 @@ impl Default for Claw {
         Claw {
             facing_right: true,
             attacking: false,
+            stats: PlayerStats::new_game(),
+            attack: attack::AttackData::default(),
+            special: special::SpecialData::default(),
             fall_height: 0,
             spawn_point: (0, 0),
             checkpoint: None,
@@ -198,11 +238,8 @@ impl Default for Claw {
             running_time: 0,
             jump_press_time: 0.0,
             afk_time: 0,
-            invulnerable_ms: 0,
             aux_timer_ms: 0,
-            second_weapon: 1,
             clamp: Rect::new(i32::MIN, i32::MIN, i32::MAX, i32::MAX),
-            health: 100,
             mover: Mover::default(),
             death_tile_hits: 0,
             fallback_entries: 0,
@@ -211,13 +248,21 @@ impl Default for Claw {
 }
 
 /// Everything a player handler works with during one call.
+///
+/// Claw's own object is held in `o` for the call; its slot in `objects`
+/// holds a stand-in meanwhile, so `objects` gives every other object.
+/// [`Ctx::with_world`] puts Claw back for code that works on any object.
 pub struct Ctx<'a> {
     /// Claw's object.
     pub o: &'a mut Object,
     /// Claw's data.
     pub p: &'a mut Claw,
-    /// Main-plane tiles.
-    pub map: &'a TileMap,
+    /// Claw's object id.
+    pub id: ObjectId,
+    /// Every other object (Claw's slot holds a stand-in during the call).
+    pub objects: &'a mut Container,
+    /// The level.
+    pub level: &'a SimLevel,
     /// Platform objects.
     pub platforms: &'a [Platform],
     /// This tick's input.
@@ -226,12 +271,18 @@ pub struct Ctx<'a> {
     pub t: &'a Tuning,
     /// Game randomness.
     pub rng: &'a mut Rng,
-    /// Animations.
-    pub anims: &'a AnimSet,
     /// Scripted camera point, reset at level start and respawn.
     pub camera_override: &'a mut Option<(i32, i32)>,
     /// Integer centre of the main plane's view.
     pub plane_centre: (i32, i32),
+    /// Sounds, events and screen effects of the tick.
+    pub out: &'a mut Outbox,
+    /// Number of the tick being run.
+    pub tick: u64,
+    /// Simulation time at the start of the tick, ms.
+    pub now_ms: u64,
+    /// The logic view in level pixels.
+    pub view: Rect,
 }
 
 impl std::fmt::Debug for Ctx<'_> {
@@ -248,6 +299,39 @@ const DT: i32 = TICK_MS as i32;
 const DT_S: f64 = TICK_MS as f64 * 0.001;
 
 impl Ctx<'_> {
+    /// Runs `f` with a [`World`] in which Claw's object is back in its
+    /// slot, for code that works on any object (spawning, lifting, other
+    /// objects' hooks, sounds placed at an object).
+    pub fn with_world<R>(&mut self, f: impl FnOnce(&mut World<'_>) -> R) -> R {
+        self.objects.swap_payload(self.id, self.o);
+        let r = {
+            let mut w = World {
+                objects: &mut *self.objects,
+                claw_id: Some(self.id),
+                claw: &mut *self.p,
+                level: self.level,
+                rng: &mut *self.rng,
+                tuning: self.t,
+                tick: self.tick,
+                now_ms: self.now_ms,
+                view: self.view,
+                out: &mut *self.out,
+            };
+            f(&mut w)
+        };
+        self.objects.swap_payload(self.id, self.o);
+        r
+    }
+
+    /// Plays `key` centred on `channel` at the configured volume.
+    pub fn play(&mut self, key: &str, channel: claw_frame::SoundChannel) {
+        self.out.cue(AudioCue::Play(SoundCue {
+            key: key.to_string(),
+            channel,
+            ..SoundCue::default()
+        }));
+    }
+
     fn held(&self, b: Buttons) -> bool {
         self.input.held.contains(b)
     }
@@ -257,7 +341,7 @@ impl Ctx<'_> {
     }
 
     fn set_anim(&mut self, key: &str, advance_now: bool) {
-        if let Some(a) = self.anims.get(key) {
+        if let Some(a) = self.level.animations.get(key) {
             self.o.anim.set(a.clone());
             if advance_now {
                 self.advance_anim();
@@ -265,6 +349,8 @@ impl Ctx<'_> {
         }
     }
 
+    /// Advances Claw's animation one tick and plays the sounds of the
+    /// element it applies; returns the event value.
     fn advance_anim(&mut self) -> i32 {
         let mirrored = self.o.draw_flags & draw_flags::MIRROR != 0;
         let e = self.o.anim.advance(TICK_MS, self.o.frame, mirrored);
@@ -279,12 +365,19 @@ impl Ctx<'_> {
             self.o.x = x;
             self.o.y = y;
         }
+        if let Some(index) = e.applied
+            && let Some(anim) = self.o.anim.animation().cloned()
+            && !anim.sounds_of(index).is_empty()
+        {
+            let id = self.id;
+            self.with_world(|w| w.frame_sound(id, &anim, index));
+        }
         e.event
     }
 
     fn physics(&mut self, tx: i32, ty: i32, mask: u32) -> u32 {
         let c = Collider {
-            map: self.map,
+            map: &self.level.map,
             platforms: self.platforms,
             step: self.t.physics.step,
         };
@@ -342,11 +435,9 @@ impl Ctx<'_> {
         self.o.speed_y = 0;
     }
 
-    /// Drops whatever the transition interrupts. Attacks and carried
-    /// objects arrive in a later milestone; until then this only ends the
-    /// attack flag.
+    /// Drops whatever the transition interrupts: the running attack.
     fn reset_actions(&mut self) {
-        self.p.attacking = false;
+        attack::cancel(self);
     }
 
     fn up_down_mask(&self, base: u32) -> u32 {
@@ -365,17 +456,17 @@ impl Ctx<'_> {
         }
         let m = self.o.move_rect;
         let tp = &self.t.player;
-        if !physics::support_at(self.map, self.o, m.left) {
+        if !physics::support_at(&self.level.map, self.o, m.left) {
             return false;
         }
         let mut dx = m.left + tp.ledge_probe_inset;
         while dx < m.right {
-            if physics::support_at(self.map, self.o, dx) {
+            if physics::support_at(&self.level.map, self.o, dx) {
                 return false;
             }
             dx += tp.ledge_probe_stride.max(1);
         }
-        !physics::support_at(self.map, self.o, m.right)
+        !physics::support_at(&self.level.map, self.o, m.right)
     }
 
     fn ledge_on_right_only(&self) -> bool {
@@ -384,17 +475,17 @@ impl Ctx<'_> {
         }
         let m = self.o.move_rect;
         let tp = &self.t.player;
-        if !physics::support_at(self.map, self.o, m.right) {
+        if !physics::support_at(&self.level.map, self.o, m.right) {
             return false;
         }
         let mut dx = m.right - tp.ledge_probe_inset;
         while dx > m.left {
-            if physics::support_at(self.map, self.o, dx) {
+            if physics::support_at(&self.level.map, self.o, dx) {
                 return false;
             }
             dx -= tp.ledge_probe_stride.max(1);
         }
-        !physics::support_at(self.map, self.o, m.left)
+        !physics::support_at(&self.level.map, self.o, m.left)
     }
 }
 
@@ -452,6 +543,11 @@ pub fn begin_jump(c: &mut Ctx) {
 /// jump's apex).
 pub fn begin_fall(c: &mut Ctx, keep_anim: bool) {
     c.reset_actions();
+    fall_from_rest(c, keep_anim);
+}
+
+/// The fall start without cancelling the running attack.
+fn fall_from_rest(c: &mut Ctx, keep_anim: bool) {
     if !keep_anim {
         c.set_anim("CLAW_FALL", false);
     }
@@ -480,9 +576,9 @@ pub fn enter_climb(c: &mut Ctx) {
 }
 
 fn teeter_voice(c: &mut Ctx) {
-    // The voice line itself arrives with audio; the draw keeps the random
-    // stream in step.
-    let _ = c.rng.below(100) < c.t.player.teeter_voice_percent;
+    if c.rng.below(100) < c.t.player.teeter_voice_percent {
+        c.play(TEETER_VOICE, claw_frame::SoundChannel::Voice);
+    }
 }
 
 /// Starts teetering on a ledge.
@@ -570,8 +666,8 @@ pub fn enter_land(c: &mut Ctx) {
 pub fn init(c: &mut Ctx) {
     *c.camera_override = None;
     let tp = &c.t.player;
-    let w = c.map.width();
-    let h = c.map.height();
+    let w = c.level.map.width();
+    let h = c.level.map.height();
     let clamp = Rect::new(
         tp.clamp_inset,
         tp.clamp_inset,
@@ -580,25 +676,27 @@ pub fn init(c: &mut Ctx) {
     );
     *c.p = Claw {
         clamp,
+        stats: c.p.stats.clone(),
         death_tile_hits: c.p.death_tile_hits,
         fallback_entries: c.p.fallback_entries,
         ..Claw::default()
     };
-    c.p.health = tp.respawn_health;
+    c.p.stats.health = tp.respawn_health;
+    c.p.stats.invulnerable_ms = 0;
     c.o.image_set = crate::level::runtime_image_set(IMAGE_SET);
     c.o.x = c.plane_centre.0;
     c.o.y = c.plane_centre.1;
     c.o.z = tp.z;
     c.o.hit_handler = true;
     c.o.flags = (c.o.flags & !flags::ON_ELEVATOR) | flags::HARMLESS;
-    c.o.type_flags = 2;
-    c.o.hit_type_flags = 0x1B5_0544;
+    c.o.type_flags = types::PLAYER;
+    c.o.hit_type_flags = types::CLAW_HIT_BY;
     c.speeds_zero();
     c.o.object_below = None;
     c.o.move_rect = tp.move_rect;
     c.o.hit_rect = tp.hit_rect;
     c.o.attack_rect = tp.attack_rect;
-    physics::align_to_ground(c.map, c.o);
+    physics::align_to_ground(&c.level.map, c.o);
     c.p.climb_dir = 5;
     c.p.spawn_point = (c.o.x, c.o.y);
     c.p.facing_right = true;
@@ -609,28 +707,33 @@ pub fn init(c: &mut Ctx) {
     c.o.teleported = true;
 }
 
-/// Places Claw at the checkpoint, or at the spawn point without one.
+/// Places Claw at the checkpoint, or at the spawn point without one; the
+/// flag sound plays when he comes back somewhere else than the spawn
+/// point.
 pub fn respawn(c: &mut Ctx) {
     *c.camera_override = None;
     let tp = &c.t.player;
-    c.p.health = tp.respawn_health;
+    c.p.stats.health = tp.respawn_health;
     let (x, y) = c.p.checkpoint.unwrap_or(c.p.spawn_point);
     c.o.image_set = crate::level::runtime_image_set(IMAGE_SET);
     c.o.x = x;
     c.o.y = y;
     c.o.z = tp.z;
     c.o.flags &= !(flags::NO_COLLIDE | flags::SAFE | flags::ON_DEATH_TILE);
-    c.o.hit_type_flags |= 0x100_0004;
+    c.o.hit_type_flags |= types::CLAW_SHIELDED;
     c.speeds_zero();
     c.o.draw_flags &= !(draw_flags::HIDDEN | draw_flags::FLASH);
-    physics::align_to_ground(c.map, c.o);
+    physics::align_to_ground(&c.level.map, c.o);
     enter_stand(c);
-    c.p.invulnerable_ms = 0;
+    c.p.stats.invulnerable_ms = 0;
     c.p.climb_dir = 5;
     c.p.attacking = false;
     c.p.conveyor_force = 0.0;
     c.p.aux_timer_ms = 0;
     c.o.teleported = true;
+    if c.o.x != c.p.spawn_point.0 {
+        c.play(CHECKPOINT_RESPAWN_SOUND, claw_frame::SoundChannel::Effect);
+    }
 }
 
 // ----------------------------------------------------------------------
@@ -674,6 +777,7 @@ pub fn stand_tick(c: &mut Ctx) {
             return;
         }
     }
+    attack::select(c);
     stand_update(c);
 }
 
@@ -733,7 +837,7 @@ fn stand_update(c: &mut Ctx) {
     let (ex, ey) = c.elevator_delta();
     let y = c.o.y;
     c.physics(tx + ex, y + ey, mask);
-    match c.o.physics_type {
+    let event = match c.o.physics_type {
         ptype::FALL => {
             begin_fall(c, false);
             return;
@@ -742,26 +846,32 @@ fn stand_update(c: &mut Ctx) {
             enter_climb(c);
             return;
         }
-        _ => {
-            c.advance_anim();
-        }
-    }
-    if c.held(Buttons::DOWN) && c.o.physics_type == ptype::STAND {
+        _ => animate(c),
+    };
+    let free = !c.p.attacking || c.p.attack.interruptible;
+    if free && c.held(Buttons::DOWN) && c.o.physics_type == ptype::STAND {
         enter_crouch(c);
         return;
     }
-    if c.p.post_climb_lockout_ms == 0 && c.held(Buttons::UP) && c.o.physics_type == ptype::STAND {
+    if !c.p.attacking
+        && c.p.post_climb_lockout_ms == 0
+        && c.held(Buttons::UP)
+        && c.o.physics_type == ptype::STAND
+    {
         c.p.look_up_time = (c.p.look_up_time - DT).max(0);
         if c.p.look_up_time == 0 {
             enter_look_up(c);
             return;
         }
     }
-    if c.p.afk_time > 0 {
+    if !c.p.attacking && c.p.afk_time > 0 {
         c.p.afk_time = (c.p.afk_time - DT).max(0);
         if c.p.afk_time == 0 {
             c.set_anim("CLAW_IDLE", true);
         }
+    }
+    if event == attack::STAND_FRAME_EVENT {
+        attack::frame_event(c, event);
     }
     if c.o.anim.is_done() && c.o.anim.animation().is_some() {
         c.set_anim("CLAW_STAND", true);
@@ -796,6 +906,18 @@ fn walk_tick(c: &mut Ctx, right: bool) {
     }
 }
 
+/// The animation step of a host state: the attack update while an attack
+/// runs, otherwise the plain animation advance. Returns the event value
+/// (-1 when the attack update ran).
+fn animate(c: &mut Ctx) -> i32 {
+    if c.p.attacking {
+        attack::update(c);
+        -1
+    } else {
+        c.advance_anim()
+    }
+}
+
 fn walk_dispatch(c: &mut Ctx, right: bool) {
     let (fwd, back) = if right {
         (Buttons::RIGHT, Buttons::LEFT)
@@ -814,9 +936,30 @@ fn walk_dispatch(c: &mut Ctx, right: bool) {
         enter_stand(c);
         stand_update(c);
     }
-    if c.pressed(Buttons::JUMP) {
+    if attack::select(c) {
+        stand_after_attack_start(c);
+    } else if c.pressed(Buttons::JUMP) {
         begin_jump(c);
     }
+}
+
+/// Stops walking because an attack started: back to standing (unless
+/// lifting), with the standing boxes and timers, and the stand animation
+/// as the one to come back to after the attack.
+fn stand_after_attack_start(c: &mut Ctx) {
+    if c.o.state == state::LIFT {
+        return;
+    }
+    c.o.state = state::STAND;
+    c.o.physics_type = ptype::STAND;
+    c.speeds_zero();
+    c.set_hit_rect_for_facing();
+    c.set_stand_move_rect();
+    let tp = &c.t.player;
+    c.p.running_time = tp.run_onset_ms;
+    c.p.look_up_time = tp.look_up_delay_ms;
+    c.p.afk_time = tp.idle_delay_ms;
+    c.p.attack.restore_anim = Some("CLAW_STAND".to_string());
 }
 
 /// MoveRight.
@@ -870,10 +1013,16 @@ fn jump_integrate(c: &mut Ctx, vx: f64) {
     c.physics(tx, ty, mask);
     c.p.jump_height += y_before - c.o.y;
     match c.o.physics_type {
-        ptype::FALL => begin_fall(c, false),
+        ptype::FALL => {
+            if attack::air_attack_running(c) {
+                fall_from_rest(c, false);
+            } else {
+                begin_fall(c, false);
+            }
+        }
         ptype::CLIMB => enter_climb(c),
         _ => {
-            c.advance_anim();
+            animate(c);
             if c.o.y <= c.p.jump_peak_y {
                 begin_fall(c, true);
             }
@@ -881,9 +1030,15 @@ fn jump_integrate(c: &mut Ctx, vx: f64) {
     }
 }
 
-/// Jump: hold update, steering, rise to the target, then fall from the
-/// apex.
+/// Jump: attack selection, then the jump update.
 pub fn jump_tick(c: &mut Ctx) {
+    attack::select(c);
+    jump_update(c);
+}
+
+/// The jump update: hold update, steering, rise to the target, then fall
+/// from the apex.
+pub fn jump_update(c: &mut Ctx) {
     jump_hold_update(c);
     if !c.held(Buttons::JUMP) {
         c.p.jump_press_time = 0.0;
@@ -908,8 +1063,9 @@ fn steer(c: &mut Ctx) -> f64 {
     v
 }
 
-/// Fall: steering, gravity, landing.
+/// Fall: attack selection, steering, gravity, landing.
 pub fn fall_tick(c: &mut Ctx) {
+    attack::select(c);
     let vx = steer(c);
     c.p.mover.x.v = vx;
     c.p.mover.step(DT_S);
@@ -925,6 +1081,7 @@ pub fn fall_tick(c: &mut Ctx) {
     c.p.fall_height += c.o.y - y_before;
     match c.o.physics_type {
         ptype::STAND => {
+            c.play(LANDING_SOUND, claw_frame::SoundChannel::Effect);
             if c.p.fall_height >= c.t.player.land_fall_height {
                 enter_land(c);
             } else if c.held(Buttons::RIGHT) {
@@ -937,9 +1094,13 @@ pub fn fall_tick(c: &mut Ctx) {
         }
         ptype::CLIMB => enter_climb(c),
         _ => {
-            c.advance_anim();
-            if c.p.fall_height > c.t.player.long_fall_height {
-                c.o.frame = c.t.player.long_fall_frame;
+            if c.p.attacking {
+                attack::update(c);
+            } else {
+                c.advance_anim();
+                if c.p.fall_height > c.t.player.long_fall_height {
+                    c.o.frame = c.t.player.long_fall_frame;
+                }
             }
         }
     }
@@ -987,8 +1148,10 @@ fn in_place(c: &mut Ctx, mask: u32) {
     c.physics(tx + ex, y + ey, mask);
 }
 
-/// Crouch: stays down while Down is held, turns in place.
+/// Crouch: attack selection, then stays down while Down is held and turns
+/// in place.
 pub fn crouch_tick(c: &mut Ctx) {
+    attack::select(c);
     c.p.look_down_time = (c.p.look_down_time - DT).max(0);
     c.speeds_zero();
     in_place(c, opt::PLATFORMS);
@@ -996,7 +1159,10 @@ pub fn crouch_tick(c: &mut Ctx) {
         begin_fall(c, false);
         return;
     }
-    c.advance_anim();
+    animate(c);
+    if c.p.attacking && !c.p.attack.interruptible {
+        return;
+    }
     if !c.held(Buttons::DOWN) && c.o.physics_type == ptype::DUCK {
         enter_stand(c);
     } else if c.held(Buttons::LEFT) && c.p.facing_right {
@@ -1013,7 +1179,7 @@ pub fn crouch_tick(c: &mut Ctx) {
 pub fn look_up_tick(c: &mut Ctx) {
     if c.pressed(Buttons::JUMP) {
         begin_jump(c);
-        jump_tick(c);
+        jump_update(c);
         return;
     }
     c.p.look_down_time = (c.p.look_down_time - DT).max(0);
@@ -1037,11 +1203,11 @@ pub fn climb_tick(c: &mut Ctx) {
         return;
     }
     let m = c.o.move_rect;
-    if c.p.climb_peak_y == 0 && c.map.attr(c.o.x, c.o.y + m.top) != CLIMB {
+    if c.p.climb_peak_y == 0 && c.level.map.attr(c.o.x, c.o.y + m.top) != CLIMB {
         let first = c.o.y + m.top + 1;
         let last = c.o.y + m.bottom;
         c.p.climb_peak_y = (first..=last)
-            .find(|&y| c.map.attr(c.o.x, y) == CLIMB)
+            .find(|&y| c.level.map.attr(c.o.x, y) == CLIMB)
             .unwrap_or(0);
     }
     let vy = if c.held(Buttons::UP) {
@@ -1096,7 +1262,7 @@ pub fn climb_tick(c: &mut Ctx) {
 pub fn on_edge_tick(c: &mut Ctx) {
     if c.pressed(Buttons::JUMP) {
         begin_jump(c);
-        jump_tick(c);
+        jump_update(c);
     } else if c.held(Buttons::RIGHT) {
         begin_walk(c, true);
         walk_tick(c, true);
@@ -1140,7 +1306,7 @@ fn on_edge_update(c: &mut Ctx) {
 // ----------------------------------------------------------------------
 // Fallback and unused rows
 
-/// Fallback for states of later milestones: back to standing.
+/// Fallback for states not filled in yet: back to standing.
 ///
 /// A hit reaction ends with the stand reset. With the double-jump fix on
 /// (the default), a hit that ends in mid-air then sets the state to Land
@@ -1245,6 +1411,12 @@ const fn unused(id: i32) -> StateRow {
 }
 
 const fn fallback(id: i32, name: &'static str) -> StateRow {
+    fallback_via(id, name, fallback_tick)
+}
+
+/// A fallback row whose handler lives in a submodule; the handler falls
+/// back to standing until it is filled in.
+const fn fallback_via(id: i32, name: &'static str, tick: TickFn) -> StateRow {
     StateRow {
         id,
         name,
@@ -1252,7 +1424,7 @@ const fn fallback(id: i32, name: &'static str) -> StateRow {
         animations: &[],
         physics_type: None,
         enter: enter_plain,
-        tick: fallback_tick,
+        tick,
         exit: no_exit,
     }
 }
@@ -1373,9 +1545,9 @@ pub static STATE_TABLE: [StateRow; 43] = [
     unused(28),
     unused(29),
     unused(30),
-    fallback(state::HIT, "Hit"),
-    fallback(state::LIFT, "Lift"),
-    fallback(state::THROW, "Throw"),
+    fallback_via(state::HIT, "Hit", special::hit_tick),
+    fallback_via(state::LIFT, "Lift", special::lift_tick),
+    fallback_via(state::THROW, "Throw", special::throw_tick),
     row(
         state::LAND,
         "Land",
@@ -1392,8 +1564,8 @@ pub static STATE_TABLE: [StateRow; 43] = [
         enter_row_look_up,
         look_up_tick,
     ),
-    fallback(state::DEATH_FALL, "DeathFall"),
-    fallback(state::DEATH, "Death"),
+    fallback_via(state::DEATH_FALL, "DeathFall", death::death_fall_tick),
+    fallback_via(state::DEATH, "Death", death::death_tick),
     row(
         state::ON_EDGE,
         "OnEdge",
@@ -1404,7 +1576,7 @@ pub static STATE_TABLE: [StateRow; 43] = [
     ),
     fallback(state::SWING, "Swing"),
     fallback(state::BEARHUG, "Bearhug"),
-    fallback(state::FREEZE, "Freeze"),
+    fallback_via(state::FREEZE, "Freeze", special::freeze_tick),
     unused(5010),
 ];
 
@@ -1438,15 +1610,16 @@ pub fn tick(c: &mut Ctx) {
 /// Shared bookkeeping after every handler.
 pub fn post_tick(c: &mut Ctx) {
     if c.pressed(Buttons::TOGGLE) && !c.p.attacking {
-        c.p.second_weapon = c.p.second_weapon % 3 + 1;
+        c.p.stats.weapon = stats::next_weapon(c.p.stats.weapon);
     }
-    if c.p.invulnerable_ms > 0 {
-        c.p.invulnerable_ms = (c.p.invulnerable_ms - DT).max(0);
-        if c.p.invulnerable_ms == 0 {
-            c.o.hit_type_flags |= 0x100_0004;
+    if c.p.stats.invulnerable_ms > 0 {
+        c.p.stats.invulnerable_ms = (c.p.stats.invulnerable_ms - DT).max(0);
+        if c.p.stats.invulnerable_ms == 0 {
+            c.o.hit_type_flags |= types::CLAW_SHIELDED;
             c.o.draw_flags &= !draw_flags::FLASH;
         }
     }
+    death::powerup_tick(c);
     c.p.post_climb_lockout_ms = (c.p.post_climb_lockout_ms - DT).max(0);
     c.p.aux_timer_ms = (c.p.aux_timer_ms - DT).max(0);
     if c.o.state != state::DEATH_FALL {
@@ -1456,15 +1629,15 @@ pub fn post_tick(c: &mut Ctx) {
     }
     let dying = c.o.state == state::DEATH_FALL || c.o.state == state::DEATH;
     if c.o.flags & flags::ON_DEATH_TILE != 0 {
-        if !dying {
-            c.p.death_tile_hits += 1;
-        }
         c.o.flags &= !flags::ON_DEATH_TILE;
+        if !dying {
+            death::kill(c, death::DeathCause::DeathTile);
+        }
     } else if c.o.flags & flags::ON_ELEVATOR != 0
         && !dying
-        && physics::tile_under_feet(c.map, c.o, 0) == DEATH
+        && physics::tile_under_feet(&c.level.map, c.o, 0) == DEATH
     {
-        c.p.death_tile_hits += 1;
+        death::kill(c, death::DeathCause::DeathTile);
     }
 }
 

@@ -7,15 +7,17 @@
 //! (2560x1920), 2 for pickups, decoration and small hazards (768x576), and
 //! 4 for objects that are always active. Names are case-sensitive.
 //!
-//! Logics this build does not implement yet run as inert placeholders:
-//! they exist, keep their activation class and can be drawn, and do
-//! nothing. Names that are not registered at all also become inert
+//! Names are bound to their implementation through
+//! [`crate::logic::kind_for`]. Registered names no family runs stay inert
+//! placeholders: they exist, keep their activation class and can be drawn,
+//! and do nothing. Names that are not registered at all also become inert
 //! placeholders, in activation class 0, and are reported by the
 //! simulation.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use crate::logic;
 use crate::object::LogicKind;
 
 /// Registration flag: activation class 1.
@@ -62,11 +64,17 @@ impl Registry {
             let kind = match name {
                 PLAYER_LOGIC => LogicKind::Player,
                 CAMERA_LOGIC => LogicKind::Camera,
-                _ => LogicKind::Inert,
+                _ => logic::kind_for(name).unwrap_or(LogicKind::Inert),
             };
             r.register(name, flags, kind);
         }
         r
+    }
+
+    /// The game's logics, built once and shared.
+    pub fn shared() -> &'static Registry {
+        static SHARED: OnceLock<Registry> = OnceLock::new();
+        SHARED.get_or_init(Registry::standard)
     }
 
     /// Registers `name`; a later registration of the same name wins.
@@ -327,5 +335,12 @@ mod tests {
         assert_eq!(r.get("TreasurePowerup").unwrap().flags, REG_CLASS_2);
         assert_eq!(r.get("GlobalAmbientSound").unwrap().flags, REG_ALWAYS);
         assert!(r.get("officer").is_none(), "names are case-sensitive");
+        assert_eq!(
+            r.get("Officer").unwrap().kind,
+            LogicKind::Game(logic::GameLogic::Officer)
+        );
+        assert_eq!(r.get("Sign"), None);
+        assert_eq!(r.get("Laser").unwrap().kind, LogicKind::Inert);
+        assert_eq!(Registry::shared(), &r);
     }
 }

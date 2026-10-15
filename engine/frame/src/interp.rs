@@ -141,6 +141,10 @@ mod tests {
             renderables: rs,
             palette_fade: None,
             camera_teleported: false,
+            hud: Default::default(),
+            audio: Vec::new(),
+            events: Vec::new(),
+            transition: None,
         }
     }
 
