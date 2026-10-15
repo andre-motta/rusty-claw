@@ -264,6 +264,8 @@ fn a_save_point_reached_in_a_new_game_loads_in_the_next_run() {
         game.effects();
     }
     let carry = game.carry();
+    // Where Claw stands on the floor below the save point.
+    let stood = game.sim().player().map(|o| (o.x, o.y)).unwrap();
     let mut store = SaveStore::open_default(&dirs(tmp.path()), Some(&install)).unwrap();
     let saved = store
         .read("LEVEL1", 1)
@@ -311,8 +313,12 @@ fn a_save_point_reached_in_a_new_game_loads_in_the_next_run() {
     let start = game.started.last().unwrap().clone();
     assert_eq!(start.save.map(|s| (s.x, s.y)), Some(saved_pos));
     assert_eq!(start.carry.as_ref(), Some(&carry));
+    // The save point keeps a respawn point above its flag; Claw starts
+    // there and drops onto the floor where he stood when it saved.
+    assert_eq!(saved_pos.0, flag.0, "saved at the save point");
+    assert!(saved_pos.1 <= stood.1, "saved at or above the floor");
     let at = game.sim().player().map(|o| (o.x, o.y)).unwrap();
-    assert_eq!(at, saved_pos, "Claw starts at the save point");
+    assert_eq!(at, stood, "Claw starts at the save point");
     assert_eq!(game.carry(), carry, "with the saved progress");
 }
 
