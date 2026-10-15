@@ -292,7 +292,6 @@ fn the_arsenal_traces_the_same_at_60_144_and_240_hz() {
             start.magic - end.magic,
             start.dynamite - end.dynamite,
         );
-        assert!(shots(&sim).len() >= 4, "shots: {}", shots(&sim).len());
         (csv, used)
     };
     assert!(used.0 >= 2, "pistol shots spent: {used:?}");

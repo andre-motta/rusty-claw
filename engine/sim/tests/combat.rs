@@ -13,7 +13,7 @@ use claw_sim::anim::Animation;
 use claw_sim::logic::keg::{self, Phase};
 use claw_sim::logic::projectile::{ProjectileData, ProjectileSpec};
 use claw_sim::logic::{self, World};
-use claw_sim::object::{ObjectId, Rect, draw_flags, flags, types};
+use claw_sim::object::{LogicKind, ObjectId, Rect, draw_flags, flags, types};
 use claw_sim::physics::ptype;
 use claw_sim::player::attack::{self, kind};
 use claw_sim::player::special;
@@ -208,18 +208,50 @@ fn element_tick(frames: &[(i32, i32, i32)], index: usize) -> i32 {
     frames[..index].iter().map(|f| shown(f.1)).sum()
 }
 
-/// Every projectile request so far: (object, request), in spawn order.
-fn shots(sim: &Sim) -> Vec<(ObjectId, ProjectileSpec)> {
-    let mut v: Vec<(ObjectId, ProjectileSpec)> = sim
-        .objects()
-        .all()
-        .filter_map(|(id, o)| match &o.data {
-            ObjectData::Projectile(ProjectileData { spec: Some(s), .. }) => Some((id, *s)),
-            _ => None,
-        })
-        .collect();
-    v.sort_by_key(|(id, _)| *id);
-    v
+/// Every shot request seen so far, in launch order: (creation number,
+/// request, drawing flags when it appeared). Real shots fly off and
+/// disappear, so the simulation is watched after every tick.
+#[derive(Default)]
+struct Shots(Vec<(u32, ProjectileSpec, u32)>);
+
+impl Shots {
+    fn watch(&mut self, sim: &Sim) {
+        let mut new: Vec<(u32, ProjectileSpec, u32)> = sim
+            .objects()
+            .all()
+            .filter_map(|(_, o)| match &o.data {
+                ObjectData::Projectile(ProjectileData { spec: Some(s), .. })
+                    if !self.0.iter().any(|e| e.0 == o.serial) =>
+                {
+                    Some((o.serial, *s, o.draw_flags))
+                }
+                _ => None,
+            })
+            .collect();
+        new.sort_by_key(|e| e.0);
+        self.0.extend(new);
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn spec(&self, i: usize) -> ProjectileSpec {
+        self.0[i].1
+    }
+}
+
+/// One tick, recording the shots it launches.
+fn go(sim: &mut Sim, log: &mut Shots, input: TickInput) {
+    sim.step(input);
+    log.watch(sim);
+}
+
+/// `n` idle ticks, recording shots.
+fn wait(sim: &mut Sim, log: &mut Shots, n: usize) {
+    for _ in 0..n {
+        go(sim, log, TickInput::default());
+    }
 }
 
 fn played(sim: &Sim, key: &str) -> bool {
@@ -436,20 +468,20 @@ fn a_jumping_swipe_carries_on_into_the_fall() {
 #[test]
 fn a_pistol_shot_requests_its_bullet_on_the_release_frame() {
     let mut sim = new_sim(3);
+    let mut log = Shots::default();
     let id = claw_id(&sim);
     let (x, y, z) = (claw(&sim).x, claw(&sim).y, claw(&sim).z);
     assert_eq!(sim.stats().weapon, Weapon::Pistol);
     let release = element_tick(PISTOL_SHOT, 3);
-    sim.step(press(PROJECTILE));
+    go(&mut sim, &mut log, press(PROJECTILE));
     assert_eq!(sim.claw().attack.kind, kind::PISTOL);
     for t in 1..=release {
-        assert!(shots(&sim).is_empty(), "no shot before tick {release}");
-        sim.step(TickInput::default());
-        assert_eq!(shots(&sim).is_empty(), t < release, "tick {t}");
+        assert_eq!(log.len(), 0, "no shot before tick {release}");
+        go(&mut sim, &mut log, TickInput::default());
+        assert_eq!(log.len(), usize::from(t == release), "tick {t}");
     }
-    let s = shots(&sim)[0].1;
     assert_eq!(
-        s,
+        log.spec(0),
         ProjectileSpec {
             logic: "PistolBullet",
             x: x + 71,
@@ -469,8 +501,8 @@ fn a_pistol_shot_requests_its_bullet_on_the_release_frame() {
     );
     assert_eq!(sim.stats().pistol, 9, "one shot spent");
     // Only one shot leaves from the release frame.
-    idle(&mut sim, 20);
-    assert_eq!(shots(&sim).len(), 1);
+    wait(&mut sim, &mut log, 20);
+    assert_eq!(log.len(), 1);
     assert!(!sim.claw().attacking);
 }
 
@@ -478,13 +510,14 @@ fn a_pistol_shot_requests_its_bullet_on_the_release_frame() {
 fn shots_leave_from_their_offsets_facing_either_way() {
     // Facing left: mirrored position and speed; magic is mirrored too.
     let mut sim = new_sim(3);
+    let mut log = Shots::default();
     face_left(&mut sim);
     let (x, y, z) = (claw(&sim).x, claw(&sim).y, claw(&sim).z);
-    sim.step(press(MAGIC));
+    go(&mut sim, &mut log, press(MAGIC));
     assert_eq!(sim.stats().weapon, Weapon::Magic, "the key selects magic");
     assert_eq!(sim.claw().attack.kind, kind::MAGIC, "and fires it");
-    idle(&mut sim, 10);
-    let (sid, s) = shots(&sim)[0];
+    wait(&mut sim, &mut log, 10);
+    let (_, s, drawn) = log.0[0];
     assert_eq!(
         (s.logic, s.x, s.y, s.z, s.vx, s.vy),
         ("MagicBullet", x - 54, y - 8, z + 1, -700, 0)
@@ -498,41 +531,48 @@ fn shots_leave_from_their_offsets_facing_either_way() {
             attack::MAGIC_SHOT_FLAG
         )
     );
-    let o = sim.objects().get(sid).expect("shot");
-    assert!(o.draw_flags & draw_flags::MIRROR != 0);
+    assert!(drawn & draw_flags::MIRROR != 0);
     assert_eq!(sim.stats().magic, 4);
     // Crouching pistol and crouching magic.
     let mut sim = new_sim(3);
+    let mut log = Shots::default();
     crouch(&mut sim);
     let (x, y) = (claw(&sim).x, claw(&sim).y);
-    sim.step(press(PISTOL | DOWN));
+    go(&mut sim, &mut log, press(PISTOL | DOWN));
     assert_eq!(sim.claw().attack.kind, kind::DUCK_PISTOL);
     for _ in 0..12 {
-        sim.step(hold(DOWN));
+        go(&mut sim, &mut log, hold(DOWN));
     }
-    let s = shots(&sim)[0].1;
+    let s = log.spec(0);
     assert_eq!((s.x, s.y, s.vx), (x + 71, y + 23, 700));
-    idle_down(&mut sim);
-    sim.step(press(MAGIC | DOWN));
+    for _ in 0..40 {
+        if !sim.claw().attacking {
+            break;
+        }
+        go(&mut sim, &mut log, hold(DOWN));
+    }
+    go(&mut sim, &mut log, hold(DOWN));
+    go(&mut sim, &mut log, press(MAGIC | DOWN));
     assert_eq!(sim.claw().attack.kind, kind::DUCK_MAGIC);
     for _ in 0..6 {
-        sim.step(hold(DOWN));
+        go(&mut sim, &mut log, hold(DOWN));
     }
-    let s = shots(&sim)[1].1;
+    let s = log.spec(1);
     assert_eq!((s.logic, s.x, s.y), ("MagicBullet", x + 68, y + 24));
     // In the air: pistol and magic.
     let mut sim = new_sim(3);
+    let mut log = Shots::default();
     jump(&mut sim);
-    sim.step(press(PROJECTILE | JUMP));
+    go(&mut sim, &mut log, press(PROJECTILE | JUMP));
     assert_eq!(sim.claw().attack.kind, kind::JUMP_PISTOL);
     let x = claw(&sim).x;
     for _ in 0..element_tick(RELEASE, 1) - 1 {
-        sim.step(hold(JUMP));
+        go(&mut sim, &mut log, hold(JUMP));
     }
-    assert!(shots(&sim).is_empty());
-    sim.step(hold(JUMP));
+    assert_eq!(log.len(), 0);
+    go(&mut sim, &mut log, hold(JUMP));
     let (cx, cy) = (claw(&sim).x, claw(&sim).y);
-    let s = shots(&sim)[0].1;
+    let s = log.spec(0);
     assert_eq!(s.logic, "PistolBullet");
     assert_eq!(
         (s.x, s.y),
@@ -546,20 +586,10 @@ fn shots_leave_from_their_offsets_facing_either_way() {
     assert_eq!(sim.claw().attack.kind, kind::JUMP_MAGIC);
 }
 
-/// Holds Down until the running attack ends.
-fn idle_down(sim: &mut Sim) {
-    for _ in 0..40 {
-        if !sim.claw().attacking {
-            break;
-        }
-        sim.step(hold(DOWN));
-    }
-    sim.step(hold(DOWN));
-}
-
 #[test]
 fn empty_weapons_play_their_empty_animation_and_launch_nothing() {
     let mut sim = new_sim(3);
+    let mut log = Shots::default();
     set(&mut sim, |w| {
         w.claw.stats.pistol = 0;
         w.claw.stats.magic = 0;
@@ -570,13 +600,13 @@ fn empty_weapons_play_their_empty_animation_and_launch_nothing() {
         (MAGIC, "CLAW_EMPTYMAGIC"),
         (DYNAMITE, "CLAW_EMPTYDYNAMITE"),
     ] {
-        sim.step(press(key));
+        go(&mut sim, &mut log, press(key));
         assert!(sim.claw().attacking);
         assert_eq!(claw(&sim).anim.key(), Some(anim));
-        idle(&mut sim, 30);
+        wait(&mut sim, &mut log, 30);
         assert!(!sim.claw().attacking);
     }
-    assert!(shots(&sim).is_empty());
+    assert_eq!(log.len(), 0);
     let st = sim.stats();
     assert_eq!((st.pistol, st.magic, st.dynamite), (0, 0, 0));
 }
@@ -584,61 +614,59 @@ fn empty_weapons_play_their_empty_animation_and_launch_nothing() {
 #[test]
 fn ammunition_runs_down_and_the_toggle_cycles_with_a_click() {
     let mut sim = new_sim(3);
+    let mut log = Shots::default();
     set(&mut sim, |w| {
         w.claw.stats.pistol = 2;
         w.claw.stats.magic = 1;
         w.claw.stats.dynamite = 1;
     });
     for _ in 0..3 {
-        sim.step(press(PISTOL));
-        idle(&mut sim, 30);
+        go(&mut sim, &mut log, press(PISTOL));
+        wait(&mut sim, &mut log, 30);
     }
     assert_eq!(sim.stats().pistol, 0);
-    assert_eq!(
-        shots(&sim).len(),
-        2,
-        "the third press finds the pistol empty"
-    );
+    assert_eq!(log.len(), 2, "the third press finds the pistol empty");
     // Toggle: pistol, magic, dynamite, pistol, each with the click.
     let mut seen = Vec::new();
     for _ in 0..3 {
-        sim.step(press(TOGGLE));
+        go(&mut sim, &mut log, press(TOGGLE));
         assert!(played(&sim, attack::TOGGLE_SOUND));
         seen.push(sim.stats().weapon);
     }
     assert_eq!(seen, [Weapon::Magic, Weapon::Dynamite, Weapon::Pistol]);
     // Not while an attack runs: no change, no click.
-    sim.step(press(MAGIC));
+    go(&mut sim, &mut log, press(MAGIC));
     assert!(sim.claw().attacking);
-    sim.step(press(TOGGLE));
+    go(&mut sim, &mut log, press(TOGGLE));
     assert_eq!(sim.stats().weapon, Weapon::Magic);
     assert!(!played(&sim, attack::TOGGLE_SOUND));
-    idle(&mut sim, 30);
+    wait(&mut sim, &mut log, 30);
     assert_eq!(sim.stats().magic, 0);
     // A stick of dynamite is spent at its release.
-    sim.step(press(DYNAMITE));
-    idle(&mut sim, 40);
+    go(&mut sim, &mut log, press(DYNAMITE));
+    wait(&mut sim, &mut log, 40);
     assert_eq!(sim.stats().dynamite, 0);
-    assert_eq!(shots(&sim).len(), 4);
-    assert_eq!(shots(&sim)[3].1.logic, "Dynamite");
+    assert_eq!(log.len(), 4);
+    assert_eq!(log.spec(3).logic, "Dynamite");
 }
 
 /// Throws dynamite after holding the fire key for `hold_ticks` ticks
 /// after the press; returns the request.
 fn throw_dynamite(sim: &mut Sim, hold_ticks: usize, extra: u32) -> ProjectileSpec {
+    let mut log = Shots::default();
     set(sim, |w| w.claw.stats.weapon = Weapon::Dynamite);
-    let before = shots(sim).len();
-    sim.step(press(PROJECTILE | extra));
+    go(sim, &mut log, press(PROJECTILE | extra));
     for _ in 0..hold_ticks {
-        sim.step(hold(PROJECTILE | extra));
+        go(sim, &mut log, hold(PROJECTILE | extra));
     }
     for _ in 0..40 {
-        if shots(sim).len() > before {
+        if log.len() > 0 {
             break;
         }
-        sim.step(hold(extra));
+        go(sim, &mut log, hold(extra));
     }
-    shots(sim)[before].1
+    assert_eq!(log.len(), 1, "one stick");
+    log.spec(0)
 }
 
 #[test]
@@ -686,34 +714,34 @@ fn dynamite_power_follows_the_charge() {
 #[test]
 fn rapid_fire_rewinds_for_another_shot() {
     let mut sim = new_sim(3);
+    let mut log = Shots::default();
     let serial = sim.claw().attack.serial;
-    sim.step(press(PROJECTILE));
+    go(&mut sim, &mut log, press(PROJECTILE));
     let refire = element_tick(PISTOL_SHOT, 4);
     for _ in 1..refire {
-        sim.step(TickInput::default());
+        go(&mut sim, &mut log, TickInput::default());
     }
-    assert_eq!(shots(&sim).len(), 1);
+    assert_eq!(log.len(), 1);
     // On a rapid-fire frame, a press readies the next shot.
-    sim.step(press(PROJECTILE));
+    go(&mut sim, &mut log, press(PROJECTILE));
     assert_eq!(sim.claw().attack.serial, serial.wrapping_add(2));
-    for _ in 0..8 {
-        sim.step(TickInput::default());
-    }
-    assert_eq!(shots(&sim).len(), 2, "a second shot left");
+    wait(&mut sim, &mut log, 8);
+    assert_eq!(log.len(), 2, "a second shot left");
     assert_eq!(sim.stats().pistol, 8);
-    idle(&mut sim, 30);
+    wait(&mut sim, &mut log, 30);
     assert!(!sim.claw().attacking);
-    assert_eq!(shots(&sim).len(), 2);
+    assert_eq!(log.len(), 2);
     // With the last shot spent, pressing again does not rewind.
     let mut sim = new_sim(3);
+    let mut log = Shots::default();
     set(&mut sim, |w| w.claw.stats.pistol = 1);
-    sim.step(press(PROJECTILE));
+    go(&mut sim, &mut log, press(PROJECTILE));
     for _ in 1..refire {
-        sim.step(TickInput::default());
+        go(&mut sim, &mut log, TickInput::default());
     }
-    sim.step(press(PROJECTILE));
-    idle(&mut sim, 30);
-    assert_eq!(shots(&sim).len(), 1);
+    go(&mut sim, &mut log, press(PROJECTILE));
+    wait(&mut sim, &mut log, 30);
+    assert_eq!(log.len(), 1);
     assert_eq!(sim.stats().pistol, 0);
 }
 
@@ -721,20 +749,20 @@ fn rapid_fire_rewinds_for_another_shot() {
 fn a_sword_shot_leaves_once_per_swing() {
     for (code, logic, flag, sound) in attack::SWORD_SHOTS {
         let mut sim = new_sim(3);
+        let mut log = Shots::default();
         set(&mut sim, |w| {
             w.claw.stats.powerup_kind = code;
             w.claw.stats.powerup_ms = 30_000;
         });
         let (x, y) = (claw(&sim).x, claw(&sim).y);
-        sim.step(press(ATTACK));
+        go(&mut sim, &mut log, press(ATTACK));
         assert_eq!(sim.claw().attack.kind, kind::SWIPE);
         assert_eq!(claw(&sim).anim.key(), Some("CLAW_POWERUPSWIPE"));
         // The 1 ms frame is shorter than a tick and still sends the shot.
         assert!(played(&sim, sound), "{sound}");
-        idle(&mut sim, 30);
-        let all = shots(&sim);
-        assert_eq!(all.len(), 1, "{logic}: one shot per swing");
-        let s = all[0].1;
+        wait(&mut sim, &mut log, 30);
+        assert_eq!(log.len(), 1, "{logic}: one shot per swing");
+        let s = log.spec(0);
         assert_eq!(
             (s.logic, s.x, s.y, s.vx, s.damage, s.special_flags),
             (
@@ -746,19 +774,39 @@ fn a_sword_shot_leaves_once_per_swing() {
                 attack::MAGIC_SHOT_FLAG | flag
             )
         );
-        sim.step(press(ATTACK));
-        idle(&mut sim, 30);
-        assert_eq!(shots(&sim).len(), 2, "{logic}: a second swing");
+        go(&mut sim, &mut log, press(ATTACK));
+        wait(&mut sim, &mut log, 30);
+        assert_eq!(log.len(), 2, "{logic}: a second swing");
     }
     // The plasma sword swings without a shot.
     let mut sim = new_sim(3);
+    let mut log = Shots::default();
     set(&mut sim, |w| {
         w.claw.stats.powerup_kind = 0x26BB;
         w.claw.stats.powerup_ms = 30_000;
     });
-    sim.step(press(ATTACK));
-    idle(&mut sim, 30);
-    assert!(shots(&sim).is_empty());
+    go(&mut sim, &mut log, press(ATTACK));
+    wait(&mut sim, &mut log, 30);
+    assert_eq!(log.len(), 0);
+}
+
+/// Removes every shot before it acts, so only Claw's own random draws
+/// are compared.
+fn remove_shots(sim: &mut Sim) {
+    sim.with_world(|w| {
+        let ids: Vec<ObjectId> = w
+            .objects
+            .all()
+            .filter(|(_, o)| matches!(o.data, ObjectData::Projectile(_)))
+            .map(|(id, _)| id)
+            .collect();
+        for id in ids {
+            if let Some(o) = w.objects.get_mut(id) {
+                o.kind = LogicKind::Inert;
+            }
+            w.destroy(id);
+        }
+    });
 }
 
 #[test]
@@ -766,14 +814,19 @@ fn firing_leaves_the_game_random_stream_alone() {
     // Same seed; one run fires everything, the other stands still.
     let mut quiet = new_sim(11);
     let mut busy = new_sim(11);
+    let mut log = Shots::default();
     let presses = [PROJECTILE, MAGIC, DYNAMITE, TOGGLE, PISTOL, PROJECTILE];
     for p in presses {
-        busy.step(press(p));
-        idle(&mut busy, 40);
+        go(&mut busy, &mut log, press(p));
+        remove_shots(&mut busy);
+        for _ in 0..40 {
+            go(&mut busy, &mut log, TickInput::default());
+            remove_shots(&mut busy);
+        }
         idle(&mut quiet, 41);
+        assert_eq!(busy.rng().state(), quiet.rng().state());
     }
-    assert!(shots(&busy).len() >= 4);
-    assert_eq!(busy.rng().state(), quiet.rng().state());
+    assert!(log.len() >= 4, "shots: {}", log.len());
     // The next blow is the same in both.
     busy.step(press(ATTACK));
     quiet.step(press(ATTACK));
