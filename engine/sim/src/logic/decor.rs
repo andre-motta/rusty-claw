@@ -15,9 +15,9 @@
 //!   animation by one tick.
 //!
 //! Animations that step through an image set (next, previous, first,
-//! last image) need the set's first and last frame numbers; see
-//! [`image_frames`]. [`SpriteAnim`] plays them, and the platforms use it
-//! too.
+//! last image) need the set's first and last frame numbers, which the
+//! level reports (see [`image_frames`]). [`SpriteAnim`] plays them, and
+//! the platforms use it too.
 
 use std::sync::Arc;
 
@@ -67,12 +67,11 @@ pub struct DecorData {
 }
 
 /// First and last frame numbers of the image set `set` in `level`, which
-/// the animations that step through a set need. The level does not list
-/// them yet, so this is `None`, and an object without them treats its
-/// placed frame as the whole set (see [`frames_of`]).
+/// the animations that step through a set need; `None` when the level
+/// registers no such set, in which case an object treats its placed frame
+/// as the whole set (see [`frames_of`]).
 pub fn image_frames(level: &SimLevel, set: &str) -> Option<(i32, i32)> {
-    let _ = (level, set);
-    None
+    level.image_frames(set)
 }
 
 /// The image-set frame range `known`, else the level's for `o`'s set,

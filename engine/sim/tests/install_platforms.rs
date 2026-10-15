@@ -1,7 +1,8 @@
 //! Elevators, pegs and decoration on the first level of the user's own
 //! install. The tests read the folder named by `CLAW_INSTALL` at run time
 //! and skip themselves when it is unset; objects are found through the
-//! level's own records, by logic name.
+//! level's own records, by logic name. The image-set frame ranges the pegs
+//! and decorations play over come from the level itself, as in the game.
 
 mod common;
 
@@ -9,8 +10,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use claw_assets::{AssetStore, Install, LevelData, LevelSource};
-use claw_sim::logic::decor::{self, DecorData};
-use claw_sim::logic::platform::{self, PLATFORM, PlatformData, Rider, state};
+use claw_sim::logic::decor;
+use claw_sim::logic::platform::{self, PLATFORM, PlatformData, state};
 use claw_sim::logic::{self, GameLogic};
 use claw_sim::object::{LogicKind, Object, ObjectId, draw_flags, flags};
 use claw_sim::trace::{self, TraceRow};
@@ -59,41 +60,22 @@ fn level1() -> Option<Level1> {
     Some(Level1 { level, data })
 }
 
-/// A simulation of the level whose platforms and decorations know the
-/// first and last frames of their image sets, as the level reports them.
+/// A simulation of the level as it loads, nothing injected.
 fn sim_with(l: &Level1, cfg: SimConfig) -> Sim {
-    let mut sim = Sim::new(l.level.clone(), cfg);
-    let ranges: Vec<(ObjectId, (i32, i32), bool)> = sim
-        .objects()
-        .all()
-        .filter_map(|(id, o)| {
-            let family = match o.kind {
-                LogicKind::Game(g @ (GameLogic::Platform | GameLogic::Decor)) => g,
-                _ => return None,
-            };
-            let set = l.data.registries.images.get(&o.image_set)?;
-            let first = *set.frames.keys().next()?;
-            let last = *set.frames.keys().next_back()?;
-            Some((id, (first, last), family == GameLogic::Decor))
-        })
-        .collect();
-    sim.with_world(|w| {
-        for (id, frames, decoration) in ranges {
-            let o = w.objects.get_mut(id).unwrap();
-            o.data = if decoration {
-                ObjectData::Decor(DecorData {
-                    frames: Some(frames),
-                    ..DecorData::default()
-                })
-            } else {
-                ObjectData::Platform(PlatformData {
-                    frames: Some(frames),
-                    ..PlatformData::default()
-                })
-            };
-        }
-    });
-    sim
+    Sim::new(l.level.clone(), cfg)
+}
+
+/// First and last frame numbers of the image set `set` in the level's
+/// registry.
+fn registry_range(l: &Level1, set: &str) -> Option<(i32, i32)> {
+    let set = l.data.registries.images.get(set)?;
+    Some((*set.frames.keys().next()?, *set.frames.keys().next_back()?))
+}
+
+/// Claw's code counts a death: the attempt counter rises, as the lives
+/// step of a death does.
+fn count_death(sim: &mut Sim) {
+    sim.with_world(|w| w.claw.stats.count_attempt());
 }
 
 fn records(sim: &Sim, logic: &str) -> Vec<ObjectId> {
@@ -128,6 +110,22 @@ fn played(sim: &Sim, key: &str) -> bool {
         claw_sim::claw_frame::AudioCue::Play(s) => s.key == key,
         _ => false,
     })
+}
+
+/// Removes every projectile. The rides pass rats and soldiers whose shots
+/// would knock Claw off or kill him; the rides are about the elevators.
+fn clear_shots(sim: &mut Sim) {
+    let ids: Vec<ObjectId> = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| o.kind == LogicKind::Game(GameLogic::Projectile))
+        .map(|(id, _)| id)
+        .collect();
+    sim.with_world(|w| {
+        for id in ids {
+            w.objects.remove(id);
+        }
+    });
 }
 
 /// Wakes the platform `id` by looking at it, then drops Claw just above
@@ -190,8 +188,8 @@ fn install_every_roster_logic_binds_to_its_family() {
 enum Ride {
     /// Carried to both ends of the track and back to the start.
     BothEnds,
-    /// The level stopped Claw while the elevator went on (a wall or a
-    /// ledge across the track), at this many ticks.
+    /// The level stopped Claw while the elevator went on along its track
+    /// (a wall or a ledge across it), at this many ticks.
     Blocked(usize),
 }
 
@@ -222,9 +220,32 @@ fn ride_to_both_ends(sim: &mut Sim, id: ObjectId, logic: &str) -> Ride {
     let start = at(sim);
     for n in 0..6000 {
         let before = sim.player().unwrap().x;
+        let track_before = at(sim);
         sim.step(TickInput::default());
-        let carried = before + obj(sim, id).platform_move.0;
+        clear_shots(sim);
+        let moved = obj(sim, id).platform_move;
+        let carried = before + moved.0;
         if sim.player().unwrap().x != carried {
+            // Claw was held back while the elevator made its move along its
+            // track and goes on without him.
+            assert_ne!(
+                moved,
+                (0, 0),
+                "{logic} {id}: Claw stopped on a still elevator"
+            );
+            assert_eq!(
+                at(sim) - track_before,
+                if moving_x { moved.0 } else { moved.1 },
+                "{logic} {id}: the elevator kept to its track"
+            );
+            let c = sim.player().unwrap();
+            assert!(
+                (c.x - before).abs() < moved.0.abs(),
+                "{logic} {id}: Claw was stopped, not thrown"
+            );
+            let far_before = at(sim);
+            idle(sim, 5);
+            assert_ne!(at(sim), far_before, "{logic} {id}: it runs on");
             return Ride::Blocked(n);
         }
         assert!(
@@ -249,34 +270,64 @@ fn ride_to_both_ends(sim: &mut Sim, id: ObjectId, logic: &str) -> Ride {
 #[test]
 fn install_claw_rides_each_elevator_kind_to_its_ends_and_back() {
     let Some(l) = level1() else { return };
-    for logic in ["Elevator", "StartElevator", "TriggerElevator"] {
+    // Every record reaches both ends but one TriggerElevator, whose track
+    // runs into the level's tiles at Claw's height: Claw is stopped while
+    // it runs on.
+    for (logic, count, blocked) in [
+        ("Elevator", 26, 0),
+        ("StartElevator", 1, 0),
+        ("TriggerElevator", 4, 1),
+    ] {
         let ids = records(&Sim::new(l.level.clone(), SimConfig::default()), logic);
+        assert_eq!(ids.len(), count, "{logic} records");
         let mut rides = Vec::new();
-        for id in ids {
+        for &id in &ids {
             let mut sim = sim_with(&l, SimConfig::default());
             rides.push(ride_to_both_ends(&mut sim, id, logic));
         }
         eprintln!("{logic}: {rides:?}");
-        assert!(rides.contains(&Ride::BothEnds), "{logic}");
+        let stopped: Vec<ObjectId> = ids
+            .iter()
+            .zip(&rides)
+            .filter(|(_, r)| matches!(r, Ride::Blocked(_)))
+            .map(|(&id, _)| id)
+            .collect();
+        assert_eq!(stopped.len(), blocked, "{logic}: stopped on {stopped:?}");
+        assert_eq!(
+            rides.iter().filter(|r| **r == Ride::BothEnds).count(),
+            count - blocked,
+            "{logic}: {rides:?}"
+        );
     }
 }
 
 #[test]
-fn install_a_trigger_elevator_goes_back_on_a_new_attempt() {
+fn install_a_death_sends_each_trigger_elevator_back() {
     let Some(l) = level1() else { return };
-    let mut sim = sim_with(&l, SimConfig::default());
-    let id = records(&sim, "TriggerElevator")[0];
-    let placed = (obj(&sim, id).x, obj(&sim, id).y);
-    assert!(land_on(&mut sim, id));
-    idle(&mut sim, 40);
-    assert_ne!((obj(&sim, id).x, obj(&sim, id).y), placed, "it moved");
-    let next = Rider {
-        on: false,
-        attempt: 1,
-    };
-    sim.with_world(|w| platform::step(w, id, next));
-    assert_eq!((obj(&sim, id).x, obj(&sim, id).y), placed);
-    assert_eq!(obj(&sim, id).state, state::SET_UP);
+    for id in records(
+        &Sim::new(l.level.clone(), SimConfig::default()),
+        "TriggerElevator",
+    ) {
+        // The whole level stays live, so the elevator runs its next tick
+        // wherever Claw comes back.
+        let cfg = SimConfig {
+            activation: ActivationConfig::widened((100_000, 100_000)),
+            ..SimConfig::default()
+        };
+        let mut sim = sim_with(&l, cfg);
+        let placed = (obj(&sim, id).x, obj(&sim, id).y);
+        assert!(land_on(&mut sim, id));
+        idle(&mut sim, 40);
+        assert_ne!((obj(&sim, id).x, obj(&sim, id).y), placed, "{id} moved");
+        // Claw dies and comes back at the start; the elevator is back where
+        // it was placed, waiting for him.
+        count_death(&mut sim);
+        sim.respawn();
+        idle(&mut sim, 2);
+        assert_eq!((obj(&sim, id).x, obj(&sim, id).y), placed, "{id}");
+        idle(&mut sim, 40);
+        assert_eq!((obj(&sim, id).x, obj(&sim, id).y), placed, "{id} waits");
+    }
 }
 
 #[test]
@@ -289,11 +340,15 @@ fn install_a_crumbling_peg_drops_after_its_delay_and_comes_back() {
     let first = p.frame;
     sim.set_camera_point(Some((p.x, p.y)));
     let (mut t, mut sound, mut fell, mut hidden) = (None, None, None, None);
+    let mut carried = Vec::new();
     for k in 0..120u64 {
         sim.step(TickInput::default());
         let p = obj(&sim, id);
         if t.is_none() && p.state == state::START {
             t = Some(k);
+        }
+        if riding(&sim, id) {
+            carried.push(k);
         }
         if sound.is_none() && played(&sim, platform::CRUMBLE_SOUND) {
             sound = Some(k);
@@ -312,21 +367,66 @@ fn install_a_crumbling_peg_drops_after_its_delay_and_comes_back() {
     }
     let t = t.expect("the peg sees Claw");
     assert_eq!(sound, Some(t + 2));
+    // The peg carries Claw for 15 ticks (270 ms) after it sees him, then
+    // stops being solid; it hides 36 ticks (648 ms) after it sees him.
+    assert_eq!(carried, (0..t + 15).collect::<Vec<_>>(), "t = {t}");
     assert_eq!(fell, Some(t + 15));
     assert_eq!(hidden, Some(t + 36));
+    assert_eq!(u64::from(claw_sim::claw_frame::TICK_MS) * 15, 270);
     idle(&mut sim, 200);
     assert_eq!(obj(&sim, id).state, state::GONE, "gone until a new attempt");
-    let next = Rider {
-        on: false,
-        attempt: 1,
-    };
-    sim.with_world(|w| platform::step(w, id, next));
-    sim.step(TickInput::default());
+    count_death(&mut sim);
+    idle(&mut sim, 2);
     let p = obj(&sim, id);
     assert_eq!(p.state, state::STOPPED);
     assert_eq!(p.type_flags, PLATFORM);
     assert_eq!(p.frame, first);
     assert_eq!(p.draw_flags & draw_flags::HIDDEN, 0);
+}
+
+#[test]
+fn install_pegs_and_decorations_play_over_the_levels_frame_ranges() {
+    let Some(l) = level1() else { return };
+    assert_eq!(registry_range(&l, "LEVEL_CRUMBLINGPEG"), Some((1, 12)));
+    for (_, o) in Sim::new(l.level.clone(), SimConfig::default())
+        .objects()
+        .all()
+    {
+        if matches!(
+            o.kind,
+            LogicKind::Game(GameLogic::Platform | GameLogic::Decor)
+        ) {
+            assert_eq!(
+                l.level.image_frames(&o.image_set),
+                registry_range(&l, &o.image_set),
+                "{} {}",
+                o.logic,
+                o.image_set
+            );
+        }
+    }
+    // After set-up every peg holds its set's range and its switch frame.
+    let cfg = SimConfig {
+        activation: ActivationConfig::widened((100_000, 100_000)),
+        ..SimConfig::default()
+    };
+    let mut sim = sim_with(&l, cfg);
+    idle(&mut sim, 2);
+    let mut pegs = 0;
+    for (_, o) in sim.objects().all() {
+        if o.logic.contains("Peg") {
+            let d = match &o.data {
+                ObjectData::Platform(d) => d.clone(),
+                _ => PlatformData::default(),
+            };
+            let range = registry_range(&l, &o.image_set).expect("a peg image set");
+            assert_eq!(d.frames, Some(range), "{}", o.logic);
+            assert_eq!(d.switch_frame, (range.0 + range.1) / 2, "{}", o.logic);
+            assert!(range.1 > range.0, "{}: a set of several images", o.logic);
+            pegs += 1;
+        }
+    }
+    assert_eq!(pegs, 64 + 23 + 16 + 11 + 6);
 }
 
 #[test]
@@ -356,6 +456,9 @@ fn install_toggle_pegs_follow_their_phases() {
         let mut was = None;
         let mut slides = 0;
         for _ in 0..1500 {
+            // Held above the peg: when it goes out he would fall to the
+            // spikes below and come back at the level start, far from it.
+            sim.teleport_player(x, y - 100);
             sim.step(TickInput::default());
             let p = obj(&sim, id);
             if p.state == state::SET_UP {
@@ -390,18 +493,35 @@ fn install_decorations_animate_and_never_collide() {
     };
     let mut sim = sim_with(&l, cfg);
     let candies = records(&sim, "BehindAniCandy");
+    assert_eq!(candies.len(), 485);
     let before: Vec<i32> = candies.iter().map(|&id| obj(&sim, id).frame).collect();
-    idle(&mut sim, 30);
-    let changed = candies
+    // Each candy whose set has several images shows another one within
+    // 30 ticks (the default loop changes image every sixth tick).
+    let animated: Vec<ObjectId> = candies
         .iter()
-        .zip(&before)
-        .filter(|&(&id, &f)| obj(&sim, id).frame != f)
-        .count();
-    assert!(
-        changed > candies.len() / 2,
-        "{changed} of {} animate",
-        candies.len()
-    );
+        .copied()
+        .filter(|&id| {
+            l.level
+                .image_frames(&obj(&sim, id).image_set)
+                .is_some_and(|(first, last)| last > first)
+        })
+        .collect();
+    let mut changed = vec![false; candies.len()];
+    for _ in 0..30 {
+        sim.step(TickInput::default());
+        for (i, (&id, &f)) in candies.iter().zip(&before).enumerate() {
+            changed[i] |= obj(&sim, id).frame != f;
+        }
+    }
+    let still: Vec<ObjectId> = candies
+        .iter()
+        .zip(&changed)
+        .filter(|&(id, &c)| !c && animated.contains(id))
+        .map(|(&id, _)| id)
+        .collect();
+    assert!(still.is_empty(), "candies that do not animate: {still:?}");
+    // The others show a set of one image, or one the level lacks.
+    assert_eq!(animated.len(), 448, "candies with several images");
     for (_, o) in sim.objects().all() {
         if decor::NAMES.contains(&&*o.logic) {
             assert!(o.flags & flags::NO_COLLIDE != 0, "{}", o.logic);

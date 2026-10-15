@@ -7,6 +7,12 @@
 //!
 //! Time: the mixer keeps its own clock, advanced by the frames it renders. The
 //! per-sound replay throttle measures against it.
+//!
+//! Channels: each channel plays at its configured volume
+//! ([`crate::settings::channel_volume`]), and a request's volume is a percent
+//! of it. A request with a handle that matches a playing voice of the same
+//! sound updates that voice's volume, pan and pitch instead of starting
+//! another one.
 
 use std::fmt;
 use std::sync::Arc;
@@ -184,7 +190,7 @@ impl Mixer {
 
     pub(crate) fn apply_settings(&mut self, settings: MixSettings) {
         self.settings = settings;
-        self.music_gain = if settings.enabled {
+        self.music_gain = if settings.enabled && settings.music {
             curve::music_gain(settings.music_volume)
         } else {
             0.0
@@ -197,7 +203,7 @@ impl Mixer {
             if slot >= cap || !settings.channel_on(v.params.channel) {
                 v.end();
             } else {
-                (v.gain_l, v.gain_r) = voice_gains(&settings, v.params.volume, v.params.pan);
+                (v.gain_l, v.gain_r) = voice_gains(&settings, &v.params);
             }
         }
     }
@@ -212,6 +218,10 @@ impl Mixer {
 
     /// Starts the sound at `id` in `bank`. Same rules as [`Mixer::play`];
     /// never allocates.
+    ///
+    /// When `params` carries a handle that a playing voice of the same sound
+    /// was started with, that voice is updated instead: it takes the new
+    /// volume, pan, pitch and loop flag and keeps its position.
     pub fn play_sound(
         &mut self,
         id: SoundId,
@@ -225,6 +235,25 @@ impl Mixer {
         if !pcm.is_playable() {
             return None;
         }
+        if let Some(handle) = params.handle
+            && let Some(slot) = self
+                .voices
+                .iter()
+                .position(|v| v.active && v.params.handle == Some(handle) && v.sound == Some(id))
+        {
+            let frequency = curve::pitch_frequency(pcm.rate, params.pitch);
+            let (gain_l, gain_r) = voice_gains(&self.settings, &params);
+            let out_rate = self.out_rate;
+            let v = &mut self.voices[slot];
+            v.params = params;
+            v.frequency = frequency;
+            v.step = step_for(frequency, out_rate);
+            (v.gain_l, v.gain_r) = (gain_l, gain_r);
+            return Some(VoiceId {
+                slot: slot as u16,
+                seq: v.seq,
+            });
+        }
         // The throttle is taken before a voice is found, so a play that finds
         // no voice still uses up the gap, as in the game.
         if !bank.throttle_pass(id, self.now_ms(), self.settings.min_replay_gap_ms) {
@@ -234,7 +263,7 @@ impl Mixer {
         let seq = self.next_seq;
         self.next_seq += 1;
         let frequency = curve::pitch_frequency(pcm.rate, params.pitch);
-        let (gain_l, gain_r) = voice_gains(&self.settings, params.volume, params.pan);
+        let (gain_l, gain_r) = voice_gains(&self.settings, &params);
         let v = &mut self.voices[slot];
         *v = Voice {
             active: true,
@@ -301,13 +330,22 @@ impl Mixer {
         }
     }
 
-    /// Pauses the game channels (Effect, Voice, Ambient). Interface sounds and
-    /// music keep playing. Sounds started while paused wait for the resume.
+    /// Pauses the game, as the game's own pause does: every game sound
+    /// (Effect, Voice and Ambient, looping or not) stops, the music holds
+    /// where it is, and interface sounds keep playing. Sounds started while
+    /// paused wait for the resume.
     pub fn pause_game(&mut self) {
         self.game_paused = true;
+        for v in self.voices.iter_mut() {
+            if v.active && v.params.channel.is_game() {
+                v.end();
+            }
+        }
     }
 
-    /// Resumes the game channels where they stopped.
+    /// Resumes the game: the music continues where it was. The sounds the
+    /// pause stopped stay stopped; the caller starts the ambient loops
+    /// again.
     pub fn resume_game(&mut self) {
         self.game_paused = false;
     }
@@ -377,7 +415,12 @@ impl Mixer {
                     mix_voice(v, out);
                 }
             }
-            if let Some(music) = self.music.as_mut() {
+            let music = if self.game_paused {
+                None
+            } else {
+                self.music.as_mut()
+            };
+            if let Some(music) = music {
                 let gain = self.music_gain;
                 for chunk in out.chunks_mut(SCRATCH_FRAMES * 2) {
                     let scratch = &mut self.scratch[..chunk.len()];
@@ -400,10 +443,10 @@ fn step_for(frequency: u32, out_rate: u32) -> u64 {
     (u64::from(frequency) << 32) / u64::from(out_rate)
 }
 
-fn voice_gains(settings: &MixSettings, volume: u8, pan: i8) -> (f32, f32) {
-    let v = curve::relative_volume(volume, settings.sound_volume);
+fn voice_gains(settings: &MixSettings, params: &PlayParams) -> (f32, f32) {
+    let v = curve::relative_volume(params.volume, settings.channel_volume(params.channel));
     let g = curve::gain(curve::attenuation(v));
-    let (l, r) = curve::pan_gains(pan);
+    let (l, r) = curve::pan_gains(params.pan);
     (g * l, g * r)
 }
 
@@ -786,6 +829,73 @@ mod tests {
     }
 
     #[test]
+    fn channels_play_at_their_configured_volumes() {
+        let bk = bank(&[("K", Pcm::mono(RATE, vec![16384i16; 8]))]);
+        let level = |channel: Channel, sound_volume: u8| {
+            let mut m = mixer(&AudioSettings {
+                sound_volume,
+                ..full_volume()
+            });
+            m.play(&PlayRequest::new("K", channel), &bk).unwrap();
+            let mut out = vec![0.0f32; 2];
+            m.render(&mut out);
+            out[0]
+        };
+        let at = |v: u8| 0.5 * curve::gain(curve::attenuation(v));
+        // Sound volume 80: effects and interface at 80, speech at 100,
+        // ambient loops at 65.
+        assert!(close(level(Channel::Effect, 80), at(80)));
+        assert!(close(level(Channel::Interface, 80), at(80)));
+        assert!(close(level(Channel::Voice, 80), at(100)));
+        assert!(close(level(Channel::Ambient, 80), at(65)));
+        // A cue at 90 percent of the speech level of sound volume 50 (70).
+        let mut m = mixer(&AudioSettings {
+            sound_volume: 50,
+            ..full_volume()
+        });
+        let mut r = PlayRequest::new("K", Channel::Voice);
+        r.volume = 90;
+        m.play(&r, &bk).unwrap();
+        let mut out = vec![0.0f32; 2];
+        m.render(&mut out);
+        assert!(close(out[0], at(63)));
+        // Ambient loops are silent from sound volume 6 to 15.
+        assert_eq!(level(Channel::Ambient, 10), 0.0);
+        assert!(close(level(Channel::Ambient, 5), at(5)));
+    }
+
+    #[test]
+    fn a_play_for_a_live_handle_updates_it() {
+        let s: Vec<i16> = vec![16384; 1000];
+        let bk = bank(&[
+            ("AMB", Pcm::mono(RATE, s.clone())),
+            ("OTHER", Pcm::mono(RATE, s.clone())),
+        ]);
+        let mut m = mixer(&full_volume());
+        let mut r = PlayRequest::new("AMB", Channel::Effect);
+        r.looped = true;
+        r.handle = Some(4);
+        r.volume = 100;
+        let v = m.play(&r, &bk).unwrap();
+        let mut out = vec![0.0f32; 2 * 10];
+        m.render(&mut out);
+        r.volume = 50;
+        r.pan = 100;
+        assert_eq!(m.play(&r, &bk), Some(v), "same voice");
+        assert_eq!(m.active_voices(), 1);
+        m.render(&mut out);
+        assert_eq!(out[0], 0.0);
+        assert!(close(out[1], 0.5 * curve::gain(-1000)));
+        // The same handle on another sound starts another voice; a stop of
+        // the handle ends both.
+        let mut o = PlayRequest::new("OTHER", Channel::Effect);
+        o.handle = Some(4);
+        let w = m.play(&o, &bk).unwrap();
+        assert!(m.is_active(v) && m.is_active(w));
+        assert_eq!(m.stop(4), 2);
+    }
+
+    #[test]
     fn volume_change_follows_playing_voices() {
         let bk = bank(&[("L", Pcm::mono(RATE, vec![16384i16; 4]))]);
         let mut m = mixer(&full_volume());
@@ -807,12 +917,24 @@ mod tests {
         let bk = bank(&[
             ("G", Pcm::mono(RATE, s.clone())),
             ("UI", Pcm::mono(RATE, s.clone())),
+            ("SHOT", Pcm::mono(RATE, s.clone())),
+            ("AMB", Pcm::mono(RATE, s.clone())),
         ]);
         let mut m = mixer(&full_volume());
-        let g = m.play(&req("G"), &bk).unwrap();
+        let mut loop_req = req("G");
+        loop_req.looped = true;
+        let g = m.play(&loop_req, &bk).unwrap();
+        let mut amb_req = PlayRequest::new("AMB", Channel::Ambient);
+        amb_req.looped = true;
+        amb_req.handle = Some(4);
+        let amb = m.play(&amb_req, &bk).unwrap();
+        let shot = m.play(&req("SHOT"), &bk).unwrap();
         let mut out = vec![0.0f32; 2 * 10];
         m.render(&mut out);
         m.pause_game();
+        // Every game sound stops at the pause, loops included, and does not
+        // come back.
+        assert!(!m.is_active(shot) && !m.is_active(g) && !m.is_active(amb));
         let ui = m
             .play(&PlayRequest::new("UI", Channel::Interface), &bk)
             .unwrap();
@@ -821,21 +943,28 @@ mod tests {
         for k in 0..10 {
             assert!(close(out[2 * k], f32::from(s[k]) / 32768.0));
         }
-        assert!(m.is_active(g) && m.is_active(ui));
+        assert!(m.is_active(ui));
         m.stop_voice(ui);
         m.resume_game();
         m.render(&mut out);
-        // The game voice continues where it was paused.
-        for k in 0..10 {
-            assert!(close(out[2 * k], f32::from(s[10 + k]) / 32768.0));
-        }
+        assert!(out.iter().all(|s| *s == 0.0), "nothing comes back");
+        // The caller starts the ambient loop again, from its start.
+        let again = m.play(&amb_req, &bk).unwrap();
+        m.render(&mut out);
+        assert!(m.is_active(again) && m.active_voices() == 1);
+        assert_eq!(out[0], 0.0, "from its first sample");
+        assert!(out[2] > 0.0);
+        m.stop(4);
 
+        // Pausing everything holds every voice where it is.
+        m.play(&loop_req, &bk).unwrap();
+        m.render(&mut out);
         m.pause_all();
         m.render(&mut out);
         assert!(out.iter().all(|s| *s == 0.0));
         m.resume_all();
         m.render(&mut out);
-        assert!(close(out[0], f32::from(s[20]) / 32768.0));
+        assert!(close(out[0], f32::from(s[10]) / 32768.0));
     }
 
     struct Constant(f32);
@@ -855,11 +984,20 @@ mod tests {
         // Longer than the scratch buffer.
         let mut out = vec![0.0f32; 2 * 3000];
         m.render(&mut out);
-        let e = 0.5 * 63.0 / 127.0;
+        let e = 0.5 * (63.0f32 / 127.0).powi(2);
         assert!(out.iter().all(|s| close(*s, e)));
         m.pause_game();
         m.render(&mut out);
-        assert!(out.iter().all(|s| close(*s, e)), "music ignores game pause");
+        assert!(out.iter().all(|s| *s == 0.0), "music holds while paused");
+        m.resume_game();
+        m.render(&mut out);
+        assert!(out.iter().all(|s| close(*s, e)));
+        m.set_settings(&AudioSettings {
+            music: false,
+            ..full_volume()
+        });
+        m.render(&mut out);
+        assert!(out.iter().all(|s| *s == 0.0), "music switch off");
         m.set_settings(&AudioSettings {
             music_volume: 0,
             ..full_volume()

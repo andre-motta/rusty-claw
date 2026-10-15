@@ -1,7 +1,9 @@
 //! Opt-in device smoke test: runs only with CLAW_AUDIO_SMOKE=1.
 //!
 //! It opens the default output device, plays 32 quiet looping tones for two
-//! seconds, and prints the callback cost against the buffer length.
+//! seconds, prints the callback cost against the buffer length, and checks
+//! that a device loss and turning audio off and on again switch between the
+//! device and the silent output.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -71,6 +73,25 @@ fn device_smoke() {
     );
     assert_eq!(engine.stats().active_voices, 32);
     engine.stop(1);
+
+    // Turning audio off closes the device; turning it on opens it again.
+    let on = engine.settings().clone();
+    engine.set_settings(AudioSettings {
+        enabled: false,
+        ..on.clone()
+    });
+    let off = Instant::now();
+    while engine.output() == Output::Device && off.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(engine.output(), Output::Null, "device kept open while off");
+    engine.set_settings(on);
+    let again = Instant::now();
+    while engine.output() != Output::Device && again.elapsed() < Duration::from_secs(5) {
+        engine.poll_device();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(engine.output(), Output::Device, "device not opened again");
     let buffer_us = s.buffer_frames as f64 * 1e6 / f64::from(s.device_rate.max(1));
     eprintln!(
         "device {} Hz, buffer {} frames ({:.0} us), {} callbacks, \

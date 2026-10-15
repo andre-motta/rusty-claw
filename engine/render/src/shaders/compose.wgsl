@@ -4,6 +4,9 @@
 struct FrameU {
     target_size: vec2<f32>,
     pad: vec2<f32>,
+    // Transition mask: centre x and y in half target pixels, squared
+    // radius, mode (0 none, 1 black, 2 circle).
+    mask: vec4<i32>,
 };
 
 struct PlaneP {
@@ -266,5 +269,23 @@ fn fs_sprite(in: SpriteVs) -> Out {
             discard;
         }
     }
+    return out;
+}
+
+// Transition mask: hides every pixel outside the circle (or every pixel)
+// by writing index 0 and no replacement colour. Mirrors cpu::apply_mask.
+@fragment
+fn fs_mask(in: PlaneVs) -> Out {
+    let px = vec2<i32>(floor(in.pos.xy));
+    if frame.mask.w == 2 {
+        let dx = 2 * px.x + 1 - frame.mask.x;
+        let dy = 2 * px.y + 1 - frame.mask.y;
+        if dx * dx + dy * dy <= frame.mask.z {
+            discard;
+        }
+    }
+    var out: Out;
+    out.index = 0u;
+    out.hd = vec4<f32>(0.0);
     return out;
 }

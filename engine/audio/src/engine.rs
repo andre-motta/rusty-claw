@@ -79,6 +79,8 @@ pub struct AudioStats {
 
 enum Ctl {
     Reopen,
+    /// Drop the device stream and go on with the silent output.
+    Close,
     Shutdown,
 }
 
@@ -285,20 +287,29 @@ impl AudioEngine {
         self.send(Command::StopAll);
     }
 
-    /// Pauses game sounds; interface sounds and music keep playing.
+    /// Pauses the game's sounds: every game sound stops (loops included),
+    /// the music holds where it is, interface sounds keep playing (see
+    /// [`Mixer::pause_game`]).
     pub fn pause_game(&mut self) {
         self.game_paused = true;
         self.send(Command::PauseGame);
     }
 
-    /// Resumes game sounds where they stopped.
+    /// True while the game's sounds are paused.
+    pub fn game_paused(&self) -> bool {
+        self.game_paused
+    }
+
+    /// Resumes the music where it stopped. The sounds the pause stopped stay
+    /// stopped; the caller starts the ambient loops again.
     pub fn resume_game(&mut self) {
         self.game_paused = false;
         self.send(Command::ResumeGame);
     }
 
-    /// Applies new settings. Turning audio on lets the next
-    /// [`AudioEngine::poll_device`] open the device.
+    /// Applies new settings. Turning audio off closes the output device and
+    /// goes on with the silent output; turning it on lets the next
+    /// [`AudioEngine::poll_device`] open the device again.
     pub fn set_settings(&mut self, settings: AudioSettings) {
         let mix = MixSettings::from(&settings);
         let was_enabled = self.settings.enabled;
@@ -310,6 +321,13 @@ impl AudioEngine {
                 .unwrap_or(self.last_attempt);
         }
         self.send(Command::Settings(mix));
+        if was_enabled
+            && !self.settings.enabled
+            && let Some(host) = &self.host
+        {
+            log("audio is off; sound is silent");
+            let _ = host.ctl.send(Ctl::Close);
+        }
     }
 
     /// Sets or clears the music source, mixed at the music volume.
@@ -450,6 +468,12 @@ fn host_main(state: AudioState, ctl: Receiver<Ctl>, open_now: bool) {
                     }
                     host.try_open();
                 }
+                Ok(Ctl::Close) => {
+                    if !host.close() {
+                        return;
+                    }
+                    host.enter_null(None);
+                }
                 Ok(Ctl::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
                     host.close();
                     return;
@@ -467,6 +491,7 @@ fn host_main(state: AudioState, ctl: Receiver<Ctl>, open_now: bool) {
             host.run_null();
             match ctl.recv_timeout(NULL_TICK) {
                 Ok(Ctl::Reopen) => host.try_open(),
+                Ok(Ctl::Close) => {}
                 Ok(Ctl::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => {}
             }

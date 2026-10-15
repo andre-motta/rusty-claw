@@ -9,7 +9,11 @@
 //!            [--bench SECONDS [--headless] [--render-hz HZ]]
 //! ```
 //!
-//! Run `rusty-claw --help` for every option; settings can also come from a
+//! With only `--install` (and options), the game starts at the title and
+//! its main menu. `--level` and `--custom` start straight into that level
+//! with the in-game menu, the end-of-level tally and the main menu after
+//! it; `--replay` and `--bench` play one level without menus. Run
+//! `rusty-claw --help` for every option; settings can also come from a
 //! config file (see the `settings` module).
 //!
 //! A benchmark prints its report as one line of JSON on standard output and
@@ -20,7 +24,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use claw_game::bench::{Report, run_headless};
 use claw_game::settings::{Args, Aspect, Mode, Settings};
 use claw_game::window::{self, WindowMode};
@@ -29,6 +33,21 @@ use claw_sim::InputScript;
 
 /// Exit status of a benchmark that missed a measured budget.
 pub const BUDGET_FAILED: u8 = 3;
+
+/// What `--help` adds after the options.
+const AFTER_HELP: &str = "\
+How a run starts:
+  rusty-claw --install PATH          the title, then the main menu: new game,
+                                     load game, options and quit
+  rusty-claw --install PATH --level N (or --custom FILE.WWD)
+                                     straight into that level; Escape, P or
+                                     the pad's Start button open the in-game menu
+  --replay FILE.csv, --bench SECONDS one level without menus, as before
+
+Saved games are kept in $XDG_DATA_HOME/rusty-claw/saves/default/ (by default
+~/.local/share/rusty-claw/saves/default/). Options changed in the menus are
+written back to the config file; options given on the command line are not,
+unless changed in the menus.";
 
 /// What a run ended with.
 enum Outcome {
@@ -88,6 +107,11 @@ fn run(args: Args) -> Result<Outcome> {
             let report = run_headless(&settings, seconds, render_hz)?;
             Ok(bench_result(report))
         }
+        // Without a level on the command line the game starts at the title.
+        Mode::Play if !settings.from_command_line.contains("level") => {
+            window::run_menus(settings, started)?;
+            Ok(Outcome::Done)
+        }
         mode => {
             let window_mode = match mode {
                 Mode::Replay { script, .. } => WindowMode::Watch(read_script(&script)?),
@@ -107,8 +131,13 @@ fn run(args: Args) -> Result<Outcome> {
     }
 }
 
+fn parse_args() -> Args {
+    let matches = Args::command().after_help(AFTER_HELP).get_matches();
+    Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+}
+
 fn main() -> ExitCode {
-    match run(Args::parse()) {
+    match run(parse_args()) {
         Ok(Outcome::Done) => ExitCode::SUCCESS,
         Ok(Outcome::Bench(report)) if report.passed() => ExitCode::SUCCESS,
         Ok(Outcome::Bench(_)) => ExitCode::from(BUDGET_FAILED),

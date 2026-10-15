@@ -1,46 +1,172 @@
-//! The game window: keyboard in, frames and sound out at the display's
-//! refresh.
+//! The game window: keyboard and gamepads in, frames and sound out at the
+//! display's refresh.
 //!
-//! The same window runs normal play, watching a replayed script and the
-//! window benchmark. Every key goes through the input router, which the
-//! window also polls once per frame for other input devices. Normal play
-//! opens an audio device (unless sound is off) and plays the sound cues of
-//! every tick it runs; watching a script and the benchmark are silent. The
-//! window title shows Claw's health, score and lives. The output size, the aspect policy, the scaling and
-//! fullscreen change at run time; the 640x480 game view and the simulation
-//! stay as they are.
+//! The same window runs the game with its menus (from the title with
+//! [`run_menus`], or straight in a level with [`WindowMode::Play`]),
+//! watching a replayed script and the window benchmark. Every key goes
+//! through the input router, which the window also polls once per frame
+//! for other input devices.
+//!
+//! With menus, the [`Flow`] decides what shows: the title, the main menu
+//! and the end-of-level screens are drawn as standalone 640x480 screens
+//! with their own palettes; a level in play is drawn with its status bar,
+//! the in-game message and the screen transition in progress
+//! ([`StatusLayer`]), and the in-game menu is drawn over a dimmed copy of
+//! the frozen level.
+//! The window loads levels when the flow asks, plays the sound cues of
+//! every tick it runs and applies the options changed in the menus at once
+//! (the output size, the aspect policy, the scaling, fullscreen, vsync,
+//! the frame-rate cap, interpolation and the key bindings).
+//!
+//! Watching a script and the benchmark show one level without menus and
+//! are silent; the benchmark reads the keyboard only. The window title
+//! shows Claw's health, score and lives.
 //!
 //! With vsync on, waiting for the display paces the frames. Otherwise each
 //! frame first waits for the frame-rate cap (300 frames per second unless
 //! set otherwise), so the game never draws thousands of frames a second.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use claw_frame::{FrameClock, FramePacer};
+use claw_assets::{Install, Palette};
+use claw_frame::{
+    AudioCue, DrawMode, FrameClock, FramePacer, GameEvent, PaletteFade, ScreenTransition, TICK_MS,
+};
 use claw_render::gpu::COLOR_FORMAT;
-use claw_render::{FrameInput, Gpu, LevelGraphics, Offscreen, Renderer, SceneBuilder, wgpu};
-use claw_sim::InputScript;
+use claw_render::palette::{self, FULL_BRIGHTNESS};
+use claw_render::{
+    Anchor, FrameInput, Gpu, ImageId, LevelGraphics, Offscreen, Renderer, Scene, SceneBuilder,
+    ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
+};
+use claw_sim::{InputScript, Sim};
+use claw_ui::hud::{Hud, HudArt};
+use claw_ui::menu::command::{MenuKind, Page, VideoSetting};
+use claw_ui::menu::decor::{SPARKLE, Sparkles};
+use claw_ui::menu::draw::{self, FontArt};
+use claw_ui::menu::{CommandCatalogue, MenuTree};
+use claw_ui::screens::assets::{
+    BOOTY_SCREENS, MENU_PICTURE, MENU_SCREENS, ScreenAssets, TITLE_PICTURE, TITLE_SCREENS,
+    picture_frame,
+};
+use claw_ui::screens::booty::{self, BootyArt, BootyScreen, BootyStats};
+use claw_ui::screens::title::{self, TitleScreen};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::audio::{AudioBridge, ViewInfo};
 use crate::bench::{PresentDetail, Report, Samples, Summary, WARMUP_S, route};
-use crate::input::{InputRouter, Recorder, Routed};
-use crate::keymap::{Command, Keymap};
-use crate::load::{LevelBundle, new_sim, preload};
+use crate::flow::{self, Effect, Flow, Screen, Start};
+use crate::input::{InputContext, InputRouter, Recorder, Routed};
+use crate::keymap::Command;
+use crate::load::{
+    LevelBundle, SHADE_SET, SHADE_SIZE, load_graphics, load_level, new_sim, preload, settle_at,
+    start_override,
+};
+use crate::pause::{Change, Pauses};
+use crate::saves::SaveStore;
 use crate::session::Session;
-use crate::settings::{Aspect, Scale, Settings, WINDOW_SIZES, view_for};
+use crate::settings::{Aspect, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
+
+/// The screen layer of a game in progress: the status bar, the message on
+/// screen and the screen transition, for each frame drawn.
+///
+/// Messages age with game time only: by the ticks that run, and not while a
+/// transition runs (or while paused, when no tick runs). They are hidden
+/// while a transition runs (see [`transition_running`]).
+#[derive(Debug, Clone)]
+pub struct StatusLayer {
+    hud: Hud,
+    transition: Option<ScreenTransition>,
+    running: bool,
+    fresh: bool,
+}
+
+/// True while `t` runs at tick `tick`: a closing transition until the next
+/// one replaces it, an opening one until its length has passed.
+pub fn transition_running(t: &ScreenTransition, tick: u64) -> bool {
+    if t.closing {
+        return true;
+    }
+    let elapsed = tick.saturating_sub(t.start_tick) as f64 * f64::from(TICK_MS);
+    elapsed < f64::from(t.duration_ms)
+}
+
+impl StatusLayer {
+    /// Measures the status bar art of `bundle`'s level, preloading its image
+    /// sets into `graphics`.
+    pub fn new(graphics: &mut LevelGraphics, bundle: &LevelBundle) -> StatusLayer {
+        let art = HudArt::from_store(graphics, &bundle.store, &bundle.level.registries);
+        if !art.missing.is_empty() {
+            eprintln!(
+                "rusty-claw: status bar art not found: {}",
+                art.missing.join(", ")
+            );
+        }
+        StatusLayer {
+            hud: Hud::new(art),
+            transition: None,
+            running: false,
+            fresh: true,
+        }
+    }
+
+    /// Keeps the status bar inside the centred 4:3 area (true) or at the
+    /// picture's edges.
+    pub fn set_centred(&mut self, centred: bool) {
+        self.hud.placement.safe_area = centred;
+    }
+
+    /// Takes the game events of the ticks just run (the messages among
+    /// them).
+    pub fn events(&mut self, events: &[GameEvent]) {
+        for e in events {
+            self.hud.messages.event(e);
+        }
+    }
+
+    /// Follows the simulation after a frame that ran `ticks` ticks.
+    pub fn update(&mut self, sim: &Sim, ticks: u32) {
+        if ticks > 0 || self.fresh {
+            self.fresh = false;
+            self.transition = sim.transition();
+            self.running = self
+                .transition
+                .is_some_and(|t| transition_running(&t, sim.tick()));
+        }
+        if ticks > 0 && !self.running {
+            self.hud
+                .messages
+                .advance(f64::from(ticks) * f64::from(TICK_MS));
+        }
+    }
+
+    /// The screen transition in progress.
+    pub fn transition(&self) -> Option<ScreenTransition> {
+        self.transition
+    }
+
+    /// Fills the screen layer and the transition of `input`, a frame of
+    /// `sim` in a presentation of `presentation` game pixels.
+    pub fn apply(&mut self, input: &mut FrameInput<'_>, sim: &Sim, presentation: (u32, u32)) {
+        input.screen = self.hud.layout(&sim.hud(), presentation, input.time_ms);
+        if !self.running {
+            input.screen.extend(self.hud.message_layout());
+        }
+        input.transition = self.transition;
+    }
+}
 
 /// What the window does.
 #[derive(Debug, Clone)]
 pub enum WindowMode {
-    /// Play with the keyboard.
+    /// The game with its menus, straight in the level given.
     Play,
     /// Play a script, then hand over to the keyboard.
     Watch(InputScript),
@@ -54,7 +180,9 @@ struct Live {
     config: wgpu::SurfaceConfiguration,
     gpu: Gpu,
     renderer: Renderer,
-    builder: SceneBuilder,
+    builder: Option<SceneBuilder>,
+    screen_renderer: Renderer,
+    screen_builder: ScreenBuilder,
     /// Benchmark only: a second copy of every frame drawn offscreen at the
     /// requested size, when the window could not get that size.
     offscreen: Option<OffscreenCopy>,
@@ -77,17 +205,251 @@ struct BenchState {
     route_ticks: usize,
 }
 
+/// A level being played.
+struct Level {
+    bundle: LevelBundle,
+    graphics: LevelGraphics,
+    session: Session,
+    status: StatusLayer,
+}
+
+/// The art of the standalone screens.
+struct Screens {
+    assets: ScreenAssets,
+    graphics: LevelGraphics,
+    menu: Option<(ImageId, Palette)>,
+    title: Option<(ImageId, Palette)>,
+    pictures: BTreeMap<String, (ImageId, Palette)>,
+    sparkles: Sparkles,
+}
+
+impl Screens {
+    fn load(install: &std::path::Path) -> Result<Screens> {
+        let store = Install::open(install)
+            .with_context(|| format!("opening the install at {}", install.display()))?
+            .store()
+            .context("reading the install's assets")?;
+        let assets = ScreenAssets::load(store);
+        for m in &assets.missing {
+            eprintln!("rusty-claw: menu art not found: {m}");
+        }
+        let menu_pic = assets.picture(MENU_SCREENS, MENU_PICTURE);
+        let palette = menu_pic
+            .as_ref()
+            .map(|(_, p)| p.clone())
+            .unwrap_or_default();
+        let mut graphics = LevelGraphics::for_screens(palette, Box::new(assets.images()));
+        let menu = menu_pic.map(|(img, pal)| (graphics.add_image(&picture_frame(&img)), pal));
+        let title = assets
+            .picture(TITLE_SCREENS, TITLE_PICTURE)
+            .map(|(img, pal)| (graphics.add_image(&picture_frame(&img)), pal));
+        graphics.preload(draw::extra_sets(MenuKind::Main));
+        graphics.preload([SPARKLE, "DIALOGS_CONFIGCONTROLS"]);
+        let sparkles = Sparkles::new(graphics.frame_numbers(SPARKLE), 0x5EED);
+        Ok(Screens {
+            assets,
+            graphics,
+            menu,
+            title,
+            pictures: BTreeMap::new(),
+            sparkles,
+        })
+    }
+
+    fn picture(&mut self, folder: &str, name: &str) -> (Option<ImageId>, Palette) {
+        let key = format!("{folder}/{name}");
+        if let Some((id, pal)) = self.pictures.get(&key) {
+            return (Some(*id), pal.clone());
+        }
+        match self.assets.picture(folder, name) {
+            Some((img, pal)) => {
+                let id = self.graphics.add_image(&picture_frame(&img));
+                self.pictures.insert(key, (id, pal.clone()));
+                (Some(id), pal)
+            }
+            None => {
+                eprintln!("rusty-claw: picture {folder}/{name} not found");
+                (None, self.graphics.palette.clone())
+            }
+        }
+    }
+
+    fn title(&self) -> TitleScreen {
+        let (bg, pal) = match &self.title {
+            Some((id, pal)) => (Some(*id), pal.clone()),
+            None => (None, Palette::default()),
+        };
+        TitleScreen::new(bg, pal, self.assets.sound_ms(title::TITLE_SOUND))
+    }
+
+    fn booty(&mut self, stats: BootyStats) -> BootyScreen {
+        self.graphics.preload(BootyScreen::image_sets(stats.level));
+        let map = self.picture(BOOTY_SCREENS, &booty::map_picture(stats.level));
+        let tally = self.picture(
+            BOOTY_SCREENS,
+            &booty::tally_picture(stats.level, stats.custom),
+        );
+        let half = |g: &mut LevelGraphics, f: i32, d: i32| {
+            g.frame_info(booty::SYMBOLS, f)
+                .map_or(d, |i| i.width as i32 / 2 + 14)
+        };
+        let art = BootyArt {
+            map,
+            tally,
+            sound_ms: self.assets.sound_ms.clone(),
+            digit_width: self
+                .graphics
+                .frame_info(booty::DIGITS, 0)
+                .map_or(12, |f| f.width as i32),
+            total_offsets: (
+                half(&mut self.graphics, 4, 60),
+                half(&mut self.graphics, 5, 64),
+            ),
+        };
+        BootyScreen::new(stats, art)
+    }
+}
+
+/// The tiles behind the controls list: the dialog stone, 4 by 3 tiles of
+/// 128 pixels centred on the canvas.
+fn controls_panel(set: &str) -> Vec<ScreenSprite> {
+    let mut out = Vec::new();
+    for row in 0..3 {
+        for col in 0..4 {
+            out.push(ScreenSprite::new(
+                set,
+                1,
+                Anchor::TopLeft,
+                64 + 64 + 128 * col,
+                48 + 64 + 128 * row,
+            ));
+        }
+    }
+    out
+}
+
+/// The shade over a whole presentation of `presentation` game pixels,
+/// drawn translucent: it dims the level (and its status bar) under the
+/// in-game menu, whose entries are drawn after it at full brightness.
+pub fn shade_sprites(presentation: (u32, u32)) -> Vec<ScreenSprite> {
+    let step = SHADE_SIZE as i32;
+    let (w, h) = (presentation.0 as i32, presentation.1 as i32);
+    let mut out = Vec::new();
+    // A square more on every side: the picture may overhang the output.
+    let mut y = -step;
+    while y < h + step {
+        let mut x = -step;
+        while x < w + step {
+            out.push(ScreenSprite {
+                mode: DrawMode::GHOST,
+                ..ScreenSprite::new(SHADE_SET, -1, Anchor::TopLeft, x + step / 2, y + step / 2)
+            });
+            x += step;
+        }
+        y += step;
+    }
+    out
+}
+
+/// A notice in the bitmap font at the top of the canvas.
+fn notice_sprites(art: &mut dyn draw::Art, text: &str) -> Vec<ScreenSprite> {
+    let (w, _) = draw::text_size(art, text);
+    draw::text_sprites(art, text, Anchor::TopLeft, 320 - w / 2, 8)
+}
+
+/// A palette fade holding `brightness` (0 to 1).
+fn steady_fade(brightness: f64) -> Option<PaletteFade> {
+    if brightness >= 1.0 {
+        return None;
+    }
+    let level = (brightness.clamp(0.0, 1.0) * f64::from(FULL_BRIGHTNESS)).round() as u32;
+    Some(PaletteFade {
+        from: level,
+        to: level,
+        start_tick: 0,
+        duration_ms: 1,
+    })
+}
+
+/// Dims a built scene to `brightness`.
+fn dim(scene: &mut Scene, brightness: f64) {
+    if let Some(f) = steady_fade(brightness) {
+        scene.palette = palette::faded(&scene.palette, Some(&f), 0.0);
+        scene.brightness *= brightness as f32;
+    }
+}
+
+/// The letter or digit of a key, for menu hotkeys.
+fn key_char(code: KeyCode) -> Option<char> {
+    use KeyCode as K;
+    let letters = [
+        K::KeyA,
+        K::KeyB,
+        K::KeyC,
+        K::KeyD,
+        K::KeyE,
+        K::KeyF,
+        K::KeyG,
+        K::KeyH,
+        K::KeyI,
+        K::KeyJ,
+        K::KeyK,
+        K::KeyL,
+        K::KeyM,
+        K::KeyN,
+        K::KeyO,
+        K::KeyP,
+        K::KeyQ,
+        K::KeyR,
+        K::KeyS,
+        K::KeyT,
+        K::KeyU,
+        K::KeyV,
+        K::KeyW,
+        K::KeyX,
+        K::KeyY,
+        K::KeyZ,
+    ];
+    let digits = [
+        K::Digit0,
+        K::Digit1,
+        K::Digit2,
+        K::Digit3,
+        K::Digit4,
+        K::Digit5,
+        K::Digit6,
+        K::Digit7,
+        K::Digit8,
+        K::Digit9,
+    ];
+    if let Some(i) = letters.iter().position(|&k| k == code) {
+        return Some(char::from(b'A' + i as u8));
+    }
+    digits
+        .iter()
+        .position(|&k| k == code)
+        .map(|i| char::from(b'0' + i as u8))
+}
+
 struct App {
     settings: Settings,
     mode: WindowMode,
-    bundle: LevelBundle,
-    graphics: LevelGraphics,
+    level: Option<Level>,
+    screens: Option<Screens>,
+    flow: Option<Flow>,
     router: InputRouter,
     audio: Option<AudioBridge>,
     recorder: Option<Recorder>,
-    /// The numbers the title shows: health, score, lives, paused.
-    shown: Option<(i32, u32, i32, bool)>,
-    session: Option<Session>,
+    /// True once the recorder was attached to a session.
+    recorded: bool,
+    /// Levels started so far.
+    levels_started: u32,
+    /// The level loaded before the window opened, for the first start.
+    first_level: Option<(LevelBundle, LevelGraphics)>,
+    /// The text the title shows.
+    shown: Option<String>,
+    /// Sound cues of the ticks of the current frame, played after it.
+    cues: Vec<AudioCue>,
     live: Option<Live>,
     clock: FrameClock,
     pacer: FramePacer,
@@ -99,17 +461,30 @@ struct App {
     aspect: Aspect,
     scale: Scale,
     interp: bool,
-    user_paused: bool,
+    pauses: Pauses,
     focused: bool,
     size_index: usize,
     started: Instant,
     load_ms: f64,
     preloaded: usize,
     display_hz: Option<f64>,
+    first_output: (u32, u32),
     bench: Option<BenchState>,
     report: Option<Report>,
     error: Option<anyhow::Error>,
     announced_end: bool,
+}
+
+/// Says when widened activation follows the first output's shape.
+fn announce_widening(settings: &Settings, first_output: (u32, u32), sim: &Sim) {
+    if settings.widens() {
+        let (w, h) = sim.config().activation.view;
+        eprintln!(
+            "rusty-claw: widened activation follows the first output's shape \
+             ({}x{}): {w}x{h} game pixels stay active until the level is loaded again",
+            first_output.0, first_output.1
+        );
+    }
 }
 
 /// Records a window event once until the next present.
@@ -135,32 +510,45 @@ fn present_mode(modes: &[wgpu::PresentMode], vsync: bool) -> wgpu::PresentMode {
 
 impl App {
     fn title(&self) -> String {
-        let mut t = format!("rusty-claw: {}", self.bundle.name);
-        if let Some(session) = &self.session {
-            let s = session.sim().stats();
-            t.push_str(&format!(
-                " | health {} | score {} | lives {}",
-                s.health, s.score, s.lives
-            ));
-        }
-        if self.user_paused {
+        let Some(level) = &self.level else {
+            return "rusty-claw".to_string();
+        };
+        let s = level.session.sim().stats();
+        let mut t = format!(
+            "rusty-claw: {} | health {} | score {} | lives {}",
+            level.bundle.name, s.health, s.score, s.lives
+        );
+        if self.pauses.user || self.pauses.menu {
             t.push_str(" (paused)");
         }
         t
     }
 
-    /// Sets the window title when the numbers it shows changed.
+    /// Sets the window title when the text changed.
     fn update_title(&mut self) {
-        let Some(session) = &self.session else { return };
-        let s = session.sim().stats();
-        let now = Some((s.health, s.score, s.lives, self.user_paused));
-        if now != self.shown {
-            self.shown = now;
-            let title = self.title();
+        let title = self.title();
+        if self.shown.as_ref() != Some(&title) {
             if let Some(live) = &self.live {
                 live.window.set_title(&title);
             }
+            self.shown = Some(title);
         }
+    }
+
+    /// The frame pacing for a surface presenting with `mode`.
+    fn pacing_for(&mut self, mode: wgpu::PresentMode) {
+        // Waiting for the display paces the frames; any other mode is held
+        // to the frame-rate cap.
+        let (pacer, pacing) = if mode == wgpu::PresentMode::Fifo {
+            (FramePacer::uncapped(), "display refresh".to_string())
+        } else {
+            match self.settings.fps_cap {
+                Some(n) => (FramePacer::capped(Some(n)), format!("{n} fps cap")),
+                None => (FramePacer::uncapped(), "none (throughput run)".to_string()),
+            }
+        };
+        self.pacer = pacer;
+        self.pacing = pacing;
     }
 
     fn open(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
@@ -204,25 +592,14 @@ impl App {
         config.format = format;
         config.present_mode = present_mode(&caps.present_modes, self.settings.vsync);
         surface.configure(&gpu.device, &config);
-        // Waiting for the display paces the frames; any other mode is held
-        // to the frame-rate cap.
-        let (pacer, pacing) = if config.present_mode == wgpu::PresentMode::Fifo {
-            (FramePacer::uncapped(), "display refresh".to_string())
-        } else {
-            match self.settings.fps_cap {
-                Some(n) => (FramePacer::capped(Some(n)), format!("{n} fps cap")),
-                None => (FramePacer::uncapped(), "none (throughput run)".to_string()),
-            }
-        };
-        self.pacer = pacer;
-        self.pacing = pacing;
+        self.pacing_for(config.present_mode);
 
         // The simulation starts now that the output size is known: widened
         // activation follows the first output's shape.
         let surface_size = (config.width, config.height);
         // A fullscreen window may not have its final size yet; the monitor
         // tells the shape it will have.
-        let first_output = if self.settings.fullscreen {
+        self.first_output = if self.settings.fullscreen {
             window
                 .current_monitor()
                 .map(|m| m.size())
@@ -231,24 +608,195 @@ impl App {
         } else {
             surface_size
         };
-        let sim = new_sim(
-            &self.bundle,
-            self.settings.sim_config(first_output),
-            self.settings.start,
+        let view = view_for(
+            self.aspect,
+            self.scale,
+            self.settings.widen_activation,
+            surface_size,
         );
-        if self.settings.widens() {
-            let (w, h) = sim.config().activation.view;
-            eprintln!(
-                "rusty-claw: widened activation follows the first output's shape \
-                 ({}x{}): {w}x{h} game pixels stay active until the level is loaded again",
-                first_output.0, first_output.1
-            );
+        let screen_builder = ScreenBuilder::new(&view, max);
+        let mut live = Live {
+            window,
+            surface,
+            config,
+            renderer: Renderer::new(&gpu),
+            builder: None,
+            screen_renderer: Renderer::new(&gpu),
+            screen_builder,
+            gpu,
+            offscreen: None,
+        };
+        if let Some(s) = &self.screens {
+            live.screen_renderer.set_level(&s.graphics);
         }
-        self.preloaded = preload(&mut self.graphics, &self.bundle.level, &sim.snapshot());
+        self.display_hz = live
+            .window
+            .current_monitor()
+            .and_then(|m| m.refresh_rate_millihertz())
+            .filter(|&mhz| mhz > 0)
+            .map(|mhz| f64::from(mhz) / 1000.0);
+
+        if self.flow.is_none() {
+            // Watching a script or the benchmark: one level, no menus.
+            let first_output = self.first_output;
+            let Some((bundle, mut graphics)) = self.first_level.take() else {
+                bail!("no level to show");
+            };
+            let sim = new_sim(
+                &bundle,
+                self.settings.sim_config(first_output),
+                self.settings.start,
+            );
+            announce_widening(&self.settings, first_output, &sim);
+            self.preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
+            let status = StatusLayer::new(&mut graphics, &bundle);
+            let mut session = Session::new(sim);
+            if self.settings.record.is_some() && !matches!(self.mode, WindowMode::Bench(_)) {
+                let recorder = Recorder::new();
+                session.set_before_tick(recorder.hook());
+                self.recorder = Some(recorder);
+                self.recorded = true;
+            }
+            match &self.mode {
+                WindowMode::Play => {}
+                WindowMode::Watch(script) => session = session.with_replay(script.clone()),
+                WindowMode::Bench(seconds) => {
+                    let script = route(seconds + WARMUP_S);
+                    let route_ticks = script.ticks.len();
+                    session = session.with_looped_replay(script);
+                    self.bench = Some(BenchState {
+                        seconds: *seconds,
+                        route_ticks,
+                        ..BenchState::default()
+                    });
+                }
+            }
+            let level = self.level.insert(Level {
+                bundle,
+                graphics,
+                session,
+                status,
+            });
+            live.renderer.set_level(&level.graphics);
+            live.builder = Some(SceneBuilder::new(&level.graphics, view, max));
+            let want = self.settings.res;
+            if self.bench.is_some() && !self.settings.fullscreen && surface_size != want {
+                // The desktop cannot hold a window of the requested size (a
+                // compositor keeps windows inside the screen). Draw each frame
+                // a second time offscreen at that size, so the measured work
+                // and the refresh pacing include the full-size frame.
+                if want.0 > max || want.1 > max {
+                    bail!(
+                        "--res {}x{} is larger than this GPU's largest image ({max} pixels a side)",
+                        want.0,
+                        want.1
+                    );
+                }
+                eprintln!(
+                    "rusty-claw: the window got {}x{} instead of {}x{}; every frame is also drawn \
+                     offscreen at {}x{} and counted in the frame work",
+                    surface_size.0, surface_size.1, want.0, want.1, want.0, want.1
+                );
+                let mut renderer = Renderer::new(&live.gpu);
+                renderer.set_level(&level.graphics);
+                let view = view_for(
+                    self.aspect,
+                    self.scale,
+                    self.settings.widen_activation,
+                    want,
+                );
+                live.offscreen = Some(OffscreenCopy {
+                    renderer,
+                    builder: SceneBuilder::new(&level.graphics, view, max),
+                    output: Offscreen::new(&live.gpu, want),
+                });
+            }
+        }
+        self.load_ms = self.started.elapsed().as_secs_f64() * 1000.0;
+        eprintln!(
+            "rusty-claw: {} at {}x{} on {}, {:?}, paced by {}, ready in {:.0} ms",
+            self.level
+                .as_ref()
+                .map_or("menus", |l| l.bundle.name.as_str()),
+            live.config.width,
+            live.config.height,
+            live.gpu.describe(),
+            live.config.present_mode,
+            self.pacing,
+            self.load_ms,
+        );
+        if !matches!(self.mode, WindowMode::Bench(_)) {
+            eprintln!("rusty-claw: {}", self.router.help());
+        }
+        self.live = Some(live);
+        self.clock.reset();
+        // The flow's first effects (the title, or the level to play).
+        self.run_effects(event_loop);
+        Ok(())
+    }
+
+    /// Loads `choice` and starts playing it from `start`.
+    fn start_level(
+        &mut self,
+        choice: &crate::settings::LevelChoice,
+        start: claw_sim::StartState,
+    ) -> Result<()> {
+        let t = Instant::now();
+        let (bundle, mut graphics) = match self.first_level.take() {
+            Some(l) if *choice == self.settings.level => l,
+            _ => {
+                let bundle = load_level(&self.settings.install, choice)?;
+                let graphics = load_graphics(&bundle, self.settings.pack.as_deref())?;
+                for w in graphics.pack_warnings() {
+                    eprintln!("rusty-claw: image pack: {w}");
+                }
+                (bundle, graphics)
+            }
+        };
+        let at = start_override(&self.settings, self.levels_started == 0, choice, &start);
+        let mut sim = Sim::with_start(
+            bundle.sim_level.clone(),
+            self.settings.sim_config(self.first_output),
+            start,
+        );
+        if let Some((x, y)) = at {
+            settle_at(&mut sim, x, y);
+        }
+        self.levels_started += 1;
+        announce_widening(&self.settings, self.first_output, &sim);
+        self.preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
+        let mut status = StatusLayer::new(&mut graphics, &bundle);
         let mut session = Session::new(sim);
-        if matches!(self.mode, WindowMode::Play) && self.settings.audio {
-            let mut audio = AudioBridge::new(self.settings.audio_settings());
-            let r = audio.load_level(&self.bundle.store, &self.bundle.level.registries);
+        if self.settings.record.is_some() && !self.recorded {
+            let recorder = Recorder::new();
+            session.set_before_tick(recorder.hook());
+            self.recorder = Some(recorder);
+            self.recorded = true;
+        }
+        // The in-game menu, drawn from the level's art.
+        let tree = self
+            .screens
+            .as_ref()
+            .map(|s| s.assets.menu(MenuKind::InGame))
+            .transpose()
+            .unwrap_or_else(|e| {
+                eprintln!("rusty-claw: the in-game menu cannot be read: {e}");
+                None
+            })
+            .map(|ifc| MenuTree::from_ifc(ifc, &CommandCatalogue::new(MenuKind::InGame)));
+        if let Some(t) = &tree {
+            graphics.preload(t.image_sets());
+            graphics.preload(draw::extra_sets(MenuKind::InGame));
+            graphics.preload(["GAME_CONFIGCONTROLS"]);
+        }
+        graphics.preload([SHADE_SET]);
+        if let Some(flow) = self.flow.as_mut() {
+            flow.set_in_game_menu(tree);
+            flow.measure(MenuKind::InGame, &mut graphics);
+            status.set_centred(flow.status_bar_centred());
+        }
+        if let Some(audio) = &mut self.audio {
+            let r = audio.load_level(&bundle.store, &bundle.level.registries);
             eprintln!(
                 "rusty-claw: {} of {} sounds ready in {:.0} ms ({:.1} MB)",
                 r.decoded,
@@ -259,101 +807,202 @@ impl App {
             for (key, why) in r.failed.iter().take(5) {
                 eprintln!("rusty-claw: sound {key} left out: {why}");
             }
-            self.audio = Some(audio);
         }
-        if self.settings.record.is_some() && !matches!(self.mode, WindowMode::Bench(_)) {
-            let recorder = Recorder::new();
-            session.set_before_tick(recorder.hook());
-            self.recorder = Some(recorder);
-        }
-        match &self.mode {
-            WindowMode::Play => {}
-            WindowMode::Watch(script) => session = session.with_replay(script.clone()),
-            WindowMode::Bench(seconds) => {
-                let script = route(seconds + WARMUP_S);
-                let route_ticks = script.ticks.len();
-                session = session.with_looped_replay(script);
-                self.bench = Some(BenchState {
-                    seconds: *seconds,
-                    route_ticks,
-                    ..BenchState::default()
-                });
-            }
-        }
-        let mut renderer = Renderer::new(&gpu);
-        renderer.set_level(&self.graphics);
-        let view = view_for(
-            self.aspect,
-            self.scale,
-            self.settings.widen_activation,
-            surface_size,
-        );
-        let builder = SceneBuilder::new(&self.graphics, view, max);
-        let mut offscreen = None;
-        let want = self.settings.res;
-        if self.bench.is_some() && !self.settings.fullscreen && surface_size != want {
-            // The desktop cannot hold a window of the requested size (a
-            // compositor keeps windows inside the screen). Draw each frame a
-            // second time offscreen at that size, so the measured work and
-            // the refresh pacing include the full-size frame.
-            if want.0 > max || want.1 > max {
-                bail!(
-                    "--res {}x{} is larger than this GPU's largest image ({max} pixels a side)",
-                    want.0,
-                    want.1
-                );
-            }
-            eprintln!(
-                "rusty-claw: the window got {}x{} instead of {}x{}; every frame is also drawn \
-                 offscreen at {}x{} and counted in the frame work",
-                surface_size.0, surface_size.1, want.0, want.1, want.0, want.1
-            );
-            let mut renderer = Renderer::new(&gpu);
-            renderer.set_level(&self.graphics);
+        if let Some(live) = &mut self.live {
+            live.renderer.set_level(&graphics);
             let view = view_for(
                 self.aspect,
                 self.scale,
                 self.settings.widen_activation,
-                want,
+                (live.config.width, live.config.height),
             );
-            offscreen = Some(OffscreenCopy {
-                renderer,
-                builder: SceneBuilder::new(&self.graphics, view, max),
-                output: Offscreen::new(&gpu, want),
-            });
+            live.builder = Some(SceneBuilder::new(&graphics, view, live.gpu.max_target()));
         }
-        self.display_hz = window
-            .current_monitor()
-            .and_then(|m| m.refresh_rate_millihertz())
-            .filter(|&mhz| mhz > 0)
-            .map(|mhz| f64::from(mhz) / 1000.0);
-        self.load_ms = self.started.elapsed().as_secs_f64() * 1000.0;
         eprintln!(
-            "rusty-claw: {} at {}x{} on {}, {:?}, paced by {}, {} activation, ready in {:.0} ms",
-            self.bundle.name,
-            config.width,
-            config.height,
-            gpu.describe(),
-            config.present_mode,
-            self.pacing,
-            session.sim().config().activation.mode.name(),
-            self.load_ms,
+            "rusty-claw: {} ready in {:.0} ms",
+            bundle.name,
+            t.elapsed().as_secs_f64() * 1000.0
         );
-        if matches!(self.mode, WindowMode::Play | WindowMode::Watch(_)) {
-            eprintln!("rusty-claw: {}", self.router.help());
-        }
-        self.session = Some(session);
-        self.live = Some(Live {
-            window,
-            surface,
-            config,
-            gpu,
-            renderer,
-            builder,
-            offscreen,
+        self.level = Some(Level {
+            bundle,
+            graphics,
+            session,
+            status,
         });
         self.clock.reset();
+        self.pacer.reset();
         Ok(())
+    }
+
+    /// Leaves the level in play.
+    fn end_level(&mut self) {
+        self.save_recording();
+        self.level = None;
+        if let Some(live) = &mut self.live {
+            live.builder = None;
+        }
+    }
+
+    fn save_recording(&mut self) {
+        if let (Some(recorder), Some(level), Some(path)) =
+            (self.recorder.take(), &self.level, &self.settings.record)
+        {
+            match recorder.save(&level.session, path) {
+                Ok(n) => eprintln!("rusty-claw: recorded {n} ticks to {}", path.display()),
+                Err(e) => eprintln!("rusty-claw: {e:#}"),
+            }
+        }
+    }
+
+    /// Carries out what the flow asked for.
+    fn run_effects(&mut self, event_loop: &ActiveEventLoop) {
+        for _ in 0..8 {
+            let Some(flow) = self.flow.as_mut() else {
+                return;
+            };
+            let effects = flow.take_effects();
+            if effects.is_empty() {
+                return;
+            }
+            for e in effects {
+                self.effect(event_loop, e);
+            }
+        }
+    }
+
+    fn effect(&mut self, event_loop: &ActiveEventLoop, e: Effect) {
+        // Every way into or out of a level, and the in-game menu, sets the
+        // pauses first, so a level left from the menu never leaves the
+        // sounds paused for the next one.
+        self.pauses.effect(&e);
+        match e {
+            Effect::StartLevel { level, start } => {
+                if let Err(err) = self.start_level(&level, start) {
+                    eprintln!("rusty-claw: {err:#}");
+                    if let Some(f) = self.flow.as_mut() {
+                        f.level_failed(&format!("{err:#}"));
+                    }
+                }
+                self.update_pause();
+            }
+            Effect::EndLevel => {
+                self.end_level();
+                self.update_pause();
+            }
+            Effect::PauseGame => self.update_pause(),
+            Effect::ResumeGame => {
+                self.update_pause();
+                if let Some(audio) = &mut self.audio {
+                    audio.restart_music();
+                }
+            }
+            Effect::Sound(cue) => {
+                if let Some(audio) = &mut self.audio {
+                    audio.apply(&[cue], &ViewInfo::default());
+                }
+            }
+            Effect::MenuChord => {
+                if let Some(audio) = &mut self.audio {
+                    audio.play_menu_music();
+                }
+            }
+            Effect::ScreenSounds => {
+                if let (Some(audio), Some(s)) = (&mut self.audio, &self.screens) {
+                    audio.load_level(&s.assets.store, &s.assets.registries);
+                }
+            }
+            Effect::AudioSettings => {
+                if let (Some(audio), Some(f)) = (&mut self.audio, &self.flow) {
+                    audio.set_settings(f.audio_settings());
+                }
+            }
+            Effect::Video(v) => self.video(v),
+            Effect::Bindings => {
+                if let Some(f) = &self.flow {
+                    let s = f.settings();
+                    self.router.set_keymap(s.keymap.clone());
+                    self.router.set_pad_map(s.pad.map.clone(), s.pad.dead_zone);
+                }
+            }
+            Effect::Capture { action, pad } => {
+                if pad {
+                    let first = self
+                        .router
+                        .pad_settings()
+                        .map
+                        .buttons_of(action)
+                        .first()
+                        .copied();
+                    self.router.capture_next_pad_button(action, first);
+                } else {
+                    let first = self.router.keymap().keys(action).first().copied();
+                    self.router.capture_next_key(action, first);
+                }
+            }
+            Effect::ShowTitle => {
+                if let (Some(f), Some(s)) = (self.flow.as_mut(), &self.screens) {
+                    f.set_title(s.title());
+                }
+            }
+            Effect::ShowBooty(stats) => {
+                if let (Some(f), Some(s)) = (self.flow.as_mut(), self.screens.as_mut()) {
+                    f.set_booty(s.booty(stats));
+                }
+            }
+            Effect::Quit => event_loop.exit(),
+        }
+    }
+
+    fn video(&mut self, v: VideoSetting) {
+        let Some(f) = &self.flow else { return };
+        let s = f.settings().clone();
+        let centred = f.status_bar_centred();
+        match v {
+            VideoSetting::Resolution => {
+                if let Some(live) = &self.live
+                    && live.window.fullscreen().is_none()
+                {
+                    let _ = live
+                        .window
+                        .request_inner_size(PhysicalSize::new(s.res.0, s.res.1));
+                }
+                self.size_index = WINDOW_SIZES
+                    .iter()
+                    .position(|&w| w == s.res)
+                    .unwrap_or(self.size_index);
+            }
+            VideoSetting::Aspect | VideoSetting::Scale => {
+                self.aspect = s.aspect;
+                self.scale = s.scale;
+                self.rebuild_view();
+            }
+            VideoSetting::Fullscreen => {
+                if let Some(live) = &self.live {
+                    live.window
+                        .set_fullscreen(s.fullscreen.then_some(Fullscreen::Borderless(None)));
+                }
+            }
+            VideoSetting::Vsync | VideoSetting::FrameCap => {
+                self.settings.vsync = s.vsync;
+                self.settings.fps_cap = s.fps_cap;
+                let mut mode = None;
+                if let Some(live) = &mut self.live {
+                    let caps = live.surface.get_capabilities(&live.gpu.adapter);
+                    live.config.present_mode = present_mode(&caps.present_modes, s.vsync);
+                    live.surface.configure(&live.gpu.device, &live.config);
+                    mode = Some(live.config.present_mode);
+                }
+                if let Some(m) = mode {
+                    self.pacing_for(m);
+                }
+            }
+            VideoSetting::Interpolation => self.interp = s.interpolation,
+            VideoSetting::StatusBar => {
+                if let Some(l) = &mut self.level {
+                    l.status.set_centred(centred);
+                }
+            }
+        }
     }
 
     fn rebuild_view(&mut self) {
@@ -364,7 +1013,14 @@ impl App {
             self.settings.widen_activation,
             (live.config.width, live.config.height),
         );
-        live.builder = SceneBuilder::new(&self.graphics, view, live.gpu.max_target());
+        if let Some(level) = &self.level {
+            live.builder = Some(SceneBuilder::new(
+                &level.graphics,
+                view,
+                live.gpu.max_target(),
+            ));
+        }
+        live.screen_builder = ScreenBuilder::new(&view, live.gpu.max_target());
         note(&mut self.events, "view rebuilt");
     }
 
@@ -388,13 +1044,24 @@ impl App {
     }
 
     fn command(&mut self, event_loop: &ActiveEventLoop, cmd: Command) {
+        if let Some(f) = self.flow.as_mut()
+            && matches!(cmd, Command::Quit | Command::Pause)
+        {
+            if f.pause_key() {
+                self.run_effects(event_loop);
+            }
+            return;
+        }
         match cmd {
             Command::Quit => event_loop.exit(),
             Command::ToggleFullscreen => {
                 if let Some(live) = &self.live {
-                    let full = live.window.fullscreen().is_some();
+                    let full = live.window.fullscreen().is_none();
                     live.window
-                        .set_fullscreen((!full).then_some(Fullscreen::Borderless(None)));
+                        .set_fullscreen(full.then_some(Fullscreen::Borderless(None)));
+                    if let Some(f) = self.flow.as_mut() {
+                        f.view_changed(|s| s.fullscreen = full);
+                    }
                 }
             }
             Command::NextWindowSize => {
@@ -407,16 +1074,27 @@ impl App {
                     let (w, h) = WINDOW_SIZES[self.size_index];
                     eprintln!("rusty-claw: window {w}x{h}");
                     let _ = live.window.request_inner_size(PhysicalSize::new(w, h));
+                    if let Some(f) = self.flow.as_mut() {
+                        f.view_changed(|s| s.res = (w, h));
+                    }
                 }
             }
             Command::NextAspect => {
                 self.aspect = self.aspect.next();
                 eprintln!("rusty-claw: aspect {}", self.aspect.name());
                 self.rebuild_view();
+                let aspect = self.aspect;
+                if let Some(f) = self.flow.as_mut() {
+                    f.view_changed(|s| s.aspect = aspect);
+                }
             }
             Command::ToggleScale => {
                 self.scale = self.scale.toggled();
                 self.rebuild_view();
+                let scale = self.scale;
+                if let Some(f) = self.flow.as_mut() {
+                    f.view_changed(|s| s.scale = scale);
+                }
             }
             Command::ToggleInterpolation => {
                 self.interp = !self.interp;
@@ -424,32 +1102,28 @@ impl App {
                     "rusty-claw: interpolation {}",
                     if self.interp { "on" } else { "off" }
                 );
+                let interp = self.interp;
+                if let Some(f) = self.flow.as_mut() {
+                    f.view_changed(|s| s.interpolation = interp);
+                }
             }
             Command::Pause => {
-                self.user_paused = !self.user_paused;
+                self.pauses.user = !self.pauses.user;
                 self.update_pause();
                 self.update_title();
             }
         }
     }
 
+    /// Brings the level in play and the sounds in line with the pauses
+    /// (see [`Pauses`]).
     fn update_pause(&mut self) {
-        let paused = self.user_paused || (!self.focused && self.bench.is_none());
-        let Some(session) = &mut self.session else {
-            return;
-        };
-        if paused && !session.is_paused() {
-            let at = session.stamp(self.last_frame.elapsed());
-            session.release_all(at);
-            session.pause();
-            if let Some(audio) = &mut self.audio {
-                audio.pause();
-            }
-        } else if !paused && session.is_paused() {
-            session.resume();
-            if let Some(audio) = &mut self.audio {
-                audio.resume();
-            }
+        self.pauses.background = !self.focused && self.bench.is_none();
+        let session = self.level.as_mut().map(|l| &mut l.session);
+        let change = self
+            .pauses
+            .apply(session, self.audio.as_mut(), self.last_frame.elapsed());
+        if change == Change::Resumed {
             self.clock.reset();
             self.pacer.reset();
             if let Some(b) = &mut self.bench {
@@ -458,53 +1132,93 @@ impl App {
         }
     }
 
-    fn key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode, down: bool) {
-        if let Some(r) = self.router.key(code, down) {
-            self.route(event_loop, r);
+    fn key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, down: bool) {
+        let routed = self.router.key(code, down);
+        let menu = self.flow.as_ref().map(Flow::screen);
+        if down
+            && self.router.context() == InputContext::Menu
+            && !self.router.capturing()
+            && matches!(menu, Some(Screen::MainMenu | Screen::Pause))
+            && !matches!(routed, Some(Routed::Menu(_)))
+            && !(menu == Some(Screen::Pause) && routed == Some(Routed::Command(Command::Pause)))
+            && let Some(c) = key_char(code)
+            && let Some(f) = self.flow.as_mut()
+        {
+            f.hotkey(c);
+            self.run_effects(event_loop);
+            return;
+        }
+        if let Some(r) = routed {
+            self.route(event_loop, r, false);
         }
     }
 
     /// Acts on one routed input.
-    fn route(&mut self, event_loop: &ActiveEventLoop, r: Routed) {
+    fn route(&mut self, event_loop: &ActiveEventLoop, r: Routed, from_pad: bool) {
         match r {
             Routed::Button(b, down) => {
                 if self.bench.is_some() {
                     return;
                 }
-                if let Some(session) = &mut self.session {
-                    let at = session.stamp(self.last_frame.elapsed());
-                    session.key(at, b, down);
+                if let Some(level) = &mut self.level {
+                    let at = level.session.stamp(self.last_frame.elapsed());
+                    level.session.key(at, b, down);
                 }
             }
             Routed::Command(cmd) => self.command(event_loop, cmd),
-            Routed::Menu(_) => {}
+            Routed::Menu(m) => {
+                if let Some(f) = self.flow.as_mut() {
+                    f.menu_input(flow::menu_input(m), from_pad);
+                    self.run_effects(event_loop);
+                }
+            }
         }
     }
 
     /// Polls the input devices other than the keyboard.
     fn poll_inputs(&mut self, event_loop: &ActiveEventLoop) {
         for r in self.router.poll(Instant::now()) {
-            self.route(event_loop, r);
+            self.route(event_loop, r, true);
+        }
+        if let Some(outcome) = self.router.take_capture()
+            && let Some(f) = self.flow.as_mut()
+        {
+            let pad = self.router.pad_settings().map.clone();
+            f.captured(outcome, self.router.keymap(), &pad);
+            self.run_effects(event_loop);
         }
     }
 
-    /// Plays the sound cues of the ticks just run; drops their game events,
-    /// which nothing uses yet.
-    fn play_outputs(&mut self) {
-        let Some(session) = &mut self.session else {
-            return;
+    /// Sends inputs to the menus or to play, as the flow's screen asks.
+    fn sync_context(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(f) = &self.flow else { return };
+        let want = if f.screen() == Screen::Play {
+            InputContext::Play
+        } else {
+            InputContext::Menu
         };
-        let (cues, _events) = session.drain_outputs();
-        if let Some(audio) = &mut self.audio {
-            let r = session.sim().view().rect;
-            let view = ViewInfo {
-                left: r.left,
-                top: r.top,
-                width: (r.right - r.left + 1).max(0) as u32,
-                height: (r.bottom - r.top + 1).max(0) as u32,
-            };
-            audio.apply(&cues, &view);
+        for r in self.router.set_context(want) {
+            self.route(event_loop, r, false);
         }
+    }
+
+    /// Plays the sound cues of the ticks just run.
+    fn play_outputs(&mut self) {
+        let cues = std::mem::take(&mut self.cues);
+        let Some(audio) = &mut self.audio else { return };
+        let view = match &self.level {
+            Some(level) => {
+                let r = level.session.sim().view().rect;
+                ViewInfo {
+                    left: r.left,
+                    top: r.top,
+                    width: (r.right - r.left + 1).max(0) as u32,
+                    height: (r.bottom - r.top + 1).max(0) as u32,
+                }
+            }
+            None => ViewInfo::default(),
+        };
+        audio.apply(&cues, &view);
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
@@ -512,23 +1226,219 @@ impl App {
             return;
         }
         self.poll_inputs(event_loop);
-        self.frame_inner(event_loop);
+        if self.flow.is_some() {
+            self.flow_frame(event_loop);
+        } else {
+            self.frame_inner(event_loop);
+        }
         self.play_outputs();
         self.update_title();
     }
 
+    /// A frame of the game with menus.
+    fn flow_frame(&mut self, event_loop: &ActiveEventLoop) {
+        self.pacer.wait();
+        let dt = self.clock.frame();
+        self.last_frame = Instant::now();
+        let dt_ms = dt.as_secs_f64() * 1000.0;
+        // Play: run the ticks of this frame and hand over their outputs.
+        if let Some(level) = &mut self.level {
+            let f = level.session.frame(dt);
+            let (cues, mut events) = level.session.drain_outputs();
+            self.cues.extend(cues);
+            if let Some(audio) = &mut self.audio {
+                // The level-complete music stop.
+                audio.events(&events);
+            }
+            if let Some(flow) = self.flow.as_mut() {
+                flow.play_events(&events, level.session.sim());
+                flow.hide_messages(&mut events);
+            }
+            level.status.events(&events);
+            level.status.update(level.session.sim(), f.ticks);
+        }
+        let held = self
+            .router
+            .menu_held()
+            .first()
+            .copied()
+            .map(flow::menu_input);
+        if let Some(flow) = self.flow.as_mut() {
+            let sim = self.level.as_ref().map(|l| l.session.sim());
+            flow.update(dt_ms, held, sim);
+        }
+        self.run_effects(event_loop);
+        self.sync_context(event_loop);
+        if let Some(s) = self.screens.as_mut()
+            && self
+                .flow
+                .as_ref()
+                .is_some_and(|f| f.screen() == Screen::MainMenu)
+        {
+            s.sparkles.update(dt_ms);
+        }
+        self.draw_flow();
+    }
+
+    /// The standalone screen the flow shows, if any.
+    fn screen_scene(&mut self) -> Option<ScreenScene> {
+        let flow = self.flow.as_ref()?;
+        let screens = self.screens.as_mut()?;
+        let fade = steady_fade(flow.brightness());
+        let mut scene = match flow.screen() {
+            Screen::Title => flow.title()?.scene(),
+            Screen::Booty => flow.booty()?.scene(),
+            Screen::MainMenu => {
+                let (bg, pal) = match &screens.menu {
+                    Some((id, pal)) => (Some(*id), pal.clone()),
+                    None => (None, Palette::default()),
+                };
+                let mut sprites = screens.sparkles.sprites();
+                if let Some(nav) = flow.main_menu() {
+                    if nav.page() == Page::Controls {
+                        sprites.extend(controls_panel("DIALOGS_CONFIGCONTROLS"));
+                    }
+                    sprites.extend(draw::sprites(
+                        nav,
+                        &mut screens.graphics,
+                        &flow.menu_state(),
+                        flow.elapsed_ms(),
+                    ));
+                }
+                ScreenScene {
+                    background: bg,
+                    palette: pal,
+                    sprites,
+                    fade: None,
+                }
+            }
+            _ => return None,
+        };
+        if let Some(text) = flow.notice() {
+            scene
+                .sprites
+                .extend(notice_sprites(&mut screens.graphics, text));
+        }
+        scene.fade = fade;
+        Some(scene)
+    }
+
+    /// The in-game menu's sprites over the level, and the notice.
+    fn overlay(flow: &Flow, graphics: &mut LevelGraphics) -> Vec<ScreenSprite> {
+        let mut sprites = Vec::new();
+        if flow.screen() == Screen::Pause
+            && let Some(nav) = flow.in_game_menu()
+        {
+            if nav.page() == Page::Controls {
+                sprites.extend(controls_panel("GAME_CONFIGCONTROLS"));
+            }
+            sprites.extend(draw::sprites(
+                nav,
+                graphics,
+                &flow.menu_state(),
+                flow.elapsed_ms(),
+            ));
+        }
+        if let Some(text) = flow.notice() {
+            sprites.extend(notice_sprites(graphics, text));
+        }
+        draw::centred(sprites)
+    }
+
+    fn draw_flow(&mut self) {
+        let screen = self.screen_scene();
+        let Some(live) = &mut self.live else { return };
+        let scene;
+        let use_screens;
+        if let Some(sc) = screen {
+            let Some(s) = self.screens.as_mut() else {
+                return;
+            };
+            scene = live.screen_builder.build(&mut s.graphics, &sc, 0.0);
+            use_screens = true;
+        } else if let (Some(level), Some(builder)) = (&mut self.level, live.builder.as_mut()) {
+            let view = *builder.view();
+            let frame = level.session.interpolated(self.interp);
+            let mut input = FrameInput::from_frame(&frame, &view);
+            let presentation = builder.composition().presentation;
+            level
+                .status
+                .apply(&mut input, level.session.sim(), presentation);
+            if let Some(f) = &self.flow {
+                if f.screen() == Screen::Pause {
+                    input.screen.extend(shade_sprites(presentation));
+                }
+                input.screen.extend(App::overlay(f, &mut level.graphics));
+            }
+            let mut built = builder.build(&mut level.graphics, &input);
+            if let Some(g) = self.flow.as_ref().and_then(Flow::game_over) {
+                dim(&mut built, g.brightness());
+            }
+            scene = built;
+            use_screens = false;
+        } else {
+            // Nothing to show yet (a level loading failed, or no art).
+            let Some(s) = self.screens.as_mut() else {
+                return;
+            };
+            let blank = ScreenScene {
+                background: None,
+                palette: Palette::default(),
+                sprites: Vec::new(),
+                fade: None,
+            };
+            scene = live.screen_builder.build(&mut s.graphics, &blank, 0.0);
+            use_screens = true;
+        }
+        let texture = match live.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                live.surface.configure(&live.gpu.device, &live.config);
+                return;
+            }
+            _ => return,
+        };
+        if (texture.texture.width(), texture.texture.height()) != scene.comp.output {
+            return;
+        }
+        let target = texture.texture.create_view(&Default::default());
+        if use_screens {
+            if let Some(s) = &self.screens {
+                live.screen_renderer
+                    .render(&s.graphics, &scene, &target, live.config.format);
+            }
+        } else if let Some(level) = &self.level {
+            live.renderer
+                .render(&level.graphics, &scene, &target, live.config.format);
+        }
+        live.window.pre_present_notify();
+        live.gpu.queue.present(texture);
+    }
+
+    /// A frame of a watched script or the benchmark.
     fn frame_inner(&mut self, event_loop: &ActiveEventLoop) {
-        let (Some(live), Some(session)) = (&mut self.live, &mut self.session) else {
+        let (Some(live), Some(level)) = (&mut self.live, &mut self.level) else {
             return;
         };
+        let Some(builder) = live.builder.as_mut() else {
+            return;
+        };
+        let session = &mut level.session;
+        let status = &mut level.status;
         // The cap's wait comes before the frame's clock and work timer.
         self.pacer.wait();
         let dt = self.clock.frame();
         self.last_frame = Instant::now();
         let t0 = self.last_frame;
-        let sets_before = self.graphics.loaded_while_drawing();
-        let images_before = self.graphics.images.records.len();
+        let sets_before = level.graphics.loaded_while_drawing();
+        let images_before = level.graphics.images.records.len();
         let f = session.frame(dt);
+        // Sound cues are played after the frame; messages show in it.
+        let (cues, game_events) = session.drain_outputs();
+        self.cues.extend(cues);
+        status.events(&game_events);
+        status.update(session.sim(), f.ticks);
         if !self.announced_end && matches!(self.mode, WindowMode::Watch(_)) && !session.replaying()
         {
             self.announced_end = true;
@@ -537,16 +1447,20 @@ impl App {
                 session.ticks()
             );
         }
-        let view = *live.builder.view();
+        let view = *builder.view();
         let frame = session.interpolated(self.interp);
-        let input = FrameInput::from_frame(&frame, &view);
-        let scene = live.builder.build(&mut self.graphics, &input);
+        let mut input = FrameInput::from_frame(&frame, &view);
+        let presentation = builder.composition().presentation;
+        status.apply(&mut input, session.sim(), presentation);
+        let scene = builder.build(&mut level.graphics, &input);
         if let Some(copy) = &mut live.offscreen {
             let view = *copy.builder.view();
-            let input = FrameInput::from_frame(&frame, &view);
-            let scene = copy.builder.build(&mut self.graphics, &input);
+            let mut input = FrameInput::from_frame(&frame, &view);
+            let presentation = copy.builder.composition().presentation;
+            status.apply(&mut input, session.sim(), presentation);
+            let scene = copy.builder.build(&mut level.graphics, &input);
             copy.renderer
-                .render(&self.graphics, &scene, &copy.output.view, COLOR_FORMAT);
+                .render(&level.graphics, &scene, &copy.output.view, COLOR_FORMAT);
         }
         let cpu = t0.elapsed();
         let ta = Instant::now();
@@ -573,7 +1487,7 @@ impl App {
         let t1 = Instant::now();
         let target = texture.texture.create_view(&Default::default());
         live.renderer
-            .render(&self.graphics, &scene, &target, live.config.format);
+            .render(&level.graphics, &scene, &target, live.config.format);
         let work = (cpu + t1.elapsed()).as_secs_f64() * 1000.0;
         live.window.pre_present_notify();
         let tp = Instant::now();
@@ -586,7 +1500,7 @@ impl App {
         let measured = now.duration_since(since).as_secs_f64();
         if measured < WARMUP_S {
             b.last_present = Some(now);
-            b.images_at_start = self.graphics.images.records.len();
+            b.images_at_start = level.graphics.images.records.len();
             session.time_ticks();
             return;
         }
@@ -600,8 +1514,8 @@ impl App {
                 acquire_ms: ms(acquire),
                 present_call_ms: ms(now - tp),
                 ticks: f.ticks,
-                sets_loaded: self.graphics.loaded_while_drawing() - sets_before,
-                images_loaded: self.graphics.images.records.len() - images_before,
+                sets_loaded: level.graphics.loaded_while_drawing() - sets_before,
+                images_loaded: level.graphics.images.records.len() - images_before,
                 events,
             });
         }
@@ -632,7 +1546,7 @@ impl App {
             };
             self.report = Some(Report {
                 mode: "window",
-                level: self.bundle.name.clone(),
+                level: level.bundle.name.clone(),
                 res: self.settings.res,
                 output: (live.config.width, live.config.height),
                 offscreen_copy: live.offscreen.as_ref().map(|c| c.output.size),
@@ -648,7 +1562,7 @@ impl App {
                 activation: sim.config().activation.mode.name(),
                 images: b.images_at_start,
                 preloaded_sets: self.preloaded,
-                images_loaded_during_run: self.graphics.images.records.len() - b.images_at_start,
+                images_loaded_during_run: level.graphics.images.records.len() - b.images_at_start,
                 load_ms: self.load_ms,
                 route_ticks: b.route_ticks,
                 ticks_past_route: session.ticks_past_script(),
@@ -677,6 +1591,9 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => self.resize(size),
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
+                for r in self.router.set_focused(focused) {
+                    self.route(event_loop, r, false);
+                }
                 self.update_pause();
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -699,13 +1616,46 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Opens the window and runs until it is closed. For a benchmark, returns
-/// the report.
+/// Opens the window and runs until it is closed: `bundle` with `graphics`
+/// is the level to watch or benchmark, or the first level played with
+/// [`WindowMode::Play`]. For a benchmark, returns the report.
 pub fn run(
     settings: Settings,
     mode: WindowMode,
     bundle: LevelBundle,
     graphics: LevelGraphics,
+    started: Instant,
+) -> Result<Option<Report>> {
+    match mode {
+        WindowMode::Play => run_app(
+            settings,
+            mode,
+            Some(Start::Play),
+            Some((bundle, graphics)),
+            started,
+        ),
+        _ => run_app(settings, mode, None, Some((bundle, graphics)), started),
+    }
+}
+
+/// Opens the window at the title and runs the game with its menus until
+/// it is closed.
+pub fn run_menus(settings: Settings, started: Instant) -> Result<()> {
+    run_app(
+        settings,
+        WindowMode::Play,
+        Some(Start::Title),
+        None,
+        started,
+    )
+    .map(|_| ())
+}
+
+fn run_app(
+    settings: Settings,
+    mode: WindowMode,
+    menus: Option<Start>,
+    level: Option<(LevelBundle, LevelGraphics)>,
     started: Instant,
 ) -> Result<Option<Report>> {
     let event_loop = EventLoop::new().context("opening the display")?;
@@ -714,44 +1664,89 @@ pub fn run(
         .iter()
         .position(|&s| s == settings.res)
         .unwrap_or(1);
+    // The level is built in `open`, once the output size is known.
+    if menus.is_none() && level.is_none() {
+        bail!("no level to show");
+    }
+    let first_level = level;
+    let mut screens = None;
+    let mut flow = None;
+    let mut audio = None;
+    if let Some(start) = menus {
+        let s = Screens::load(&settings.install)?;
+        let main = match s.assets.menu(MenuKind::Main) {
+            Ok(ifc) => Some(MenuTree::from_ifc(
+                ifc,
+                &CommandCatalogue::new(MenuKind::Main),
+            )),
+            Err(e) => {
+                eprintln!("rusty-claw: the main menu cannot be read: {e}");
+                None
+            }
+        };
+        let mut s = s;
+        let font = FontArt::from_art(&mut s.graphics);
+        let (saves, saves_off) =
+            match SaveStore::open_default(&UserDirs::from_env(), Some(&settings.install)) {
+                Ok(store) => (Some(store), None),
+                Err(e) => (None, Some(format!("saved games are off: {e:#}"))),
+            };
+        let mut f = Flow::new(settings.clone(), saves, main, font, start);
+        if let Some(why) = saves_off {
+            // Shown on screen at start-up (and written to the terminal).
+            f.notify(why);
+        }
+        f.measure(MenuKind::Main, &mut s.graphics);
+        let mut bridge = AudioBridge::new(f.audio_settings());
+        bridge.load_level(&s.assets.store, &s.assets.registries);
+        f.set_music_available(bridge.has_soundfont());
+        audio = Some(bridge);
+        screens = Some(s);
+        flow = Some(f);
+    }
     let mut app = App {
         aspect: settings.aspect,
         scale: settings.scale,
         interp: settings.interpolation,
+        // A benchmark reads the keyboard only, so no gamepad is opened.
+        router: if matches!(mode, WindowMode::Bench(_)) {
+            InputRouter::keyboard_only(settings.keymap.clone())
+        } else {
+            InputRouter::from_settings(&settings)
+        },
         settings,
         mode,
-        bundle,
-        graphics,
-        router: InputRouter::new(Keymap::default()),
-        audio: None,
+        level: None,
+        screens,
+        flow,
+        audio,
         recorder: None,
+        recorded: false,
+        levels_started: 0,
+        first_level,
         shown: None,
-        session: None,
+        cues: Vec::new(),
         live: None,
         clock: FrameClock::new(),
         pacer: FramePacer::uncapped(),
         pacing: String::new(),
         events: Vec::new(),
         last_frame: Instant::now(),
-        user_paused: false,
+        pauses: Pauses::default(),
         focused: true,
         size_index,
         started,
         load_ms: 0.0,
         preloaded: 0,
         display_hz: None,
+        first_output: (0, 0),
         bench: None,
         report: None,
         error: None,
         announced_end: false,
     };
     event_loop.run_app(&mut app).context("running the window")?;
-    if let (Some(recorder), Some(session), Some(path)) =
-        (&app.recorder, &app.session, &app.settings.record)
-    {
-        let n = recorder.save(session, path)?;
-        eprintln!("rusty-claw: recorded {n} ticks to {}", path.display());
-    }
+    app.save_recording();
     if let Some(e) = app.error {
         return Err(e);
     }
@@ -759,4 +1754,109 @@ pub fn run(
         bail!("the window closed before the benchmark finished");
     }
     Ok(app.report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use claw_frame::{Point, TransitionKind};
+
+    fn transition(closing: bool) -> ScreenTransition {
+        ScreenTransition {
+            kind: TransitionKind::Circle,
+            closing,
+            start_tick: 10,
+            duration_ms: 100,
+            center: Point::default(),
+        }
+    }
+
+    #[test]
+    fn an_opening_transition_stops_running_at_its_end() {
+        // The first tick at or after `ms` from the start.
+        let ticks = |ms: u32| 10 + u64::from(ms.div_ceil(TICK_MS));
+        let open = transition(false);
+        assert!(transition_running(&open, 10));
+        assert!(transition_running(&open, ticks(100) - 1));
+        assert!(!transition_running(&open, ticks(100)));
+        assert!(!transition_running(&open, ticks(5000)));
+        // A closing one runs until another one replaces it.
+        assert!(transition_running(&transition(true), ticks(5000)));
+    }
+
+    #[test]
+    fn the_shade_halves_the_brightness_under_it() {
+        use claw_assets::Frame;
+        use claw_render::MemoryImages;
+        use claw_render::cpu;
+        use claw_render::effects::LevelTables;
+
+        // A grey ramp: index i is (i, i, i).
+        let mut palette = Palette::default();
+        for (i, c) in palette.0.iter_mut().enumerate() {
+            *c = [i as u8; 3];
+        }
+        let mut images = MemoryImages::default();
+        images.insert(SHADE_SET, 1, crate::load::shade_frame(&palette));
+        let mut graphics = LevelGraphics::new(
+            Vec::new(),
+            true,
+            palette.clone(),
+            LevelTables::generate(&palette),
+            Box::new(images),
+            None,
+        );
+        let picture = graphics.add_image(&Frame {
+            width: 640,
+            height: 480,
+            offset_x: 0,
+            offset_y: 0,
+            flags: 0,
+            indices: vec![200; 640 * 480],
+            opaque: None,
+        });
+        let builder = ScreenBuilder::new(&claw_frame::ViewConfig::default(), 4096);
+        let presentation = builder.composition().presentation;
+        let mut screen = ScreenScene {
+            background: Some(picture),
+            palette,
+            sprites: Vec::new(),
+            fade: None,
+        };
+        let middle = |graphics: &mut LevelGraphics, screen: &ScreenScene| {
+            let scene = builder.build(graphics, screen, 0.0);
+            let c = cpu::compose(graphics, &scene);
+            c.index[(c.height / 2 * c.width + c.width / 2) as usize]
+        };
+        assert_eq!(middle(&mut graphics, &screen), 200);
+        screen.sprites = shade_sprites(presentation);
+        let shaded = middle(&mut graphics, &screen);
+        assert!((99..=102).contains(&shaded), "{shaded}");
+    }
+
+    #[test]
+    fn the_shade_covers_the_whole_picture_once() {
+        for presentation in [(640, 480), (1708, 480), (853, 480), (1, 1)] {
+            let sprites = shade_sprites(presentation);
+            let step = SHADE_SIZE as i32;
+            let half = step / 2;
+            assert!(sprites.iter().all(|s| s.key == SHADE_SET
+                && s.mode == DrawMode::GHOST
+                && s.anchor == Anchor::TopLeft));
+            // Every pixel of the picture (and a margin) is under exactly
+            // one square.
+            let (w, h) = (presentation.0 as i32, presentation.1 as i32);
+            for (x, y) in [(-1, -1), (0, 0), (w - 1, h - 1), (w, h), (w / 2, h / 2)] {
+                let n = sprites
+                    .iter()
+                    .filter(|s| {
+                        (s.x - half..s.x + half).contains(&x)
+                            && (s.y - half..s.y + half).contains(&y)
+                    })
+                    .count();
+                assert_eq!(n, 1, "{presentation:?} at {x},{y}");
+            }
+        }
+    }
 }
