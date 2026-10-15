@@ -35,11 +35,12 @@
 //! the game) is renamed aside with a timestamp
 //! (`LEVEL1-1.save.unreadable-<seconds>` or `.newer-<seconds>`) and
 //! reported. A save that cannot be read at all (no permission, a disk
-//! error, not a regular file) is reported and left where it is, so it
-//! still counts once it can be read again. Saves are never deleted. A second copy of the game running at
-//! the same time sees the saves but cannot write them. The store only ever
-//! touches its own folder.
+//! error, not a regular file) is reported once per run and left where it
+//! is, so it still counts once it can be read again. Saves are never
+//! deleted. A second copy of the game running at the same time sees the
+//! saves but cannot write them. The store only ever touches its own folder.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -329,6 +330,8 @@ pub struct SaveStore {
     dir: PathBuf,
     lock: Option<File>,
     reports: Vec<String>,
+    /// Saves reported as unreadable, so each is reported once per run.
+    unreadable: HashSet<PathBuf>,
 }
 
 impl SaveStore {
@@ -344,6 +347,7 @@ impl SaveStore {
             dir,
             lock: None,
             reports: Vec::new(),
+            unreadable: HashSet::new(),
         };
         let path = store.dir.join(LOCK_FILE);
         let lock = OpenOptions::new()
@@ -496,7 +500,7 @@ impl SaveStore {
     }
 
     /// Reads one save file; moves it aside when its contents are not
-    /// usable, and only reports it when it cannot be read.
+    /// usable, and only reports it (once per run) when it cannot be read.
     fn load(&mut self, path: &Path, level: &str, slot: u8) -> Option<SaveRecord> {
         let result = match read_bounded(path, MAX_SAVE_BYTES) {
             Ok(None) => return None,
@@ -505,10 +509,12 @@ impl SaveStore {
                 Err(SaveError::Unreadable(e.to_string()))
             }
             Err(e) => {
-                self.report(format!(
-                    "the save {} cannot be read ({e}); it is left as it is",
-                    path.display()
-                ));
+                if self.unreadable.insert(path.to_path_buf()) {
+                    self.report(format!(
+                        "the save {} cannot be read ({e}); it is left as it is",
+                        path.display()
+                    ));
+                }
                 return None;
             }
             Ok(Some(bytes)) => match String::from_utf8(bytes) {
