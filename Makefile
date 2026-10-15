@@ -7,7 +7,17 @@ MODULE_ROOTS := engine app tools tests
 
 module_dir = $(firstword $(foreach root,$(MODULE_ROOTS),$(if $(wildcard $(root)/$(1)/Cargo.toml),$(root)/$(1))))
 
-.PHONY: help check fmt test-install run-viewer run-game bench replay
+# The default General MIDI SoundFont for music: GeneralUser GS 2.0.3 by
+# S. Christian Collins (https://www.schristiancollins.com/generaluser), under
+# its own permissive licence. It is never committed and never fetched by
+# cargo; `make soundfont` downloads this pinned file into the user data
+# directory, where the game finds it, and checks its SHA-256.
+SOUNDFONT_URL ?= https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/684543d5e5efaef08d02be50dcda8d552478fa60/GeneralUser-GS.sf2
+SOUNDFONT_SHA256 := 9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe
+SOUNDFONT_FILE := GeneralUser-GS.sf2
+SOUNDFONT_DIR ?= $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/rusty-claw/soundfonts
+
+.PHONY: help check fmt test-install run-viewer run-game bench replay soundfont
 
 help:
 	@echo "make check                     format check, clippy and all unit tests"
@@ -17,6 +27,7 @@ help:
 	@echo "make run-game ARGS=...         run the game"
 	@echo "make bench ARGS=...            run the game with --bench SECONDS in ARGS"
 	@echo "make replay ARGS=...           run the replay tool"
+	@echo "make soundfont                 fetch the music SoundFont into your data directory"
 
 check:
 	$(CARGO) fmt --all --check
@@ -52,3 +63,17 @@ bench:
 
 replay:
 	$(CARGO) run --release --locked -p claw-replay -- $(ARGS)
+
+soundfont:
+	@dest="$(SOUNDFONT_DIR)/$(SOUNDFONT_FILE)"; \
+	if [ -f "$$dest" ] && echo "$(SOUNDFONT_SHA256)  $$dest" | sha256sum -c --status; then \
+		echo "$$dest is already in place"; exit 0; \
+	fi; \
+	mkdir -p "$(SOUNDFONT_DIR)" || exit 1; \
+	part="$$dest.part"; \
+	echo "fetching $(SOUNDFONT_URL)"; \
+	if ! curl -fL --retry 2 -o "$$part" "$(SOUNDFONT_URL)"; then rm -f "$$part"; exit 1; fi; \
+	if ! echo "$(SOUNDFONT_SHA256)  $$part" | sha256sum -c --status; then \
+		rm -f "$$part"; echo "the download does not match SHA-256 $(SOUNDFONT_SHA256); nothing was installed" >&2; exit 1; \
+	fi; \
+	mv "$$part" "$$dest" && echo "installed $$dest"
