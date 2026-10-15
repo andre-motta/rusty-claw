@@ -20,24 +20,31 @@ are never run.
 
 ## Status
 
-First playable version. Claw stands, walks, runs, jumps (higher the longer
-Jump is held), falls, lands, crouches, looks up and climbs, with tile
-collision and a camera that follows him, in every retail level and in
-community custom levels. Movement is tuned to cover the same distances in
-the same times as the original played at 60 frames per second.
+Claw stands, walks, runs, jumps (higher the longer Jump is held), falls,
+lands, crouches, looks up and climbs, with tile collision and a camera that
+follows him, in every retail level and in community custom levels.
+Movement is tuned to cover the same distances in the same times as the
+original played at 60 frames per second.
 
-Not there yet: enemies, pickups, attacks, damage, sound, music, menus, the
-status bar, movies and saved games. Other objects are drawn where the level
-places them but do not move yet.
+Claw fights with his sword, fists and feet: standing he swipes, punches,
+uppercuts or kicks, and he swipes crouching and in the air. Officers, the
+sword-fighting guards of the first level, stand guard, pace, strike back,
+flinch and die. Claw loses health when he is struck and cannot be hurt again for a moment. The
+game plays its sounds; the window title shows health, score and lives.
+
+Not there yet: the other enemies, the pistol, magic and dynamite, pickups,
+dying, music, menus, the status bar, movies and saved games. Other objects
+are drawn where the level places them but do not move yet.
 
 ## Building on Fedora
 
-You need a C linker, `make`, and Vulkan drivers (Mesa's for AMD and Intel
-GPUs; the NVIDIA driver brings its own), plus the Rust toolchain from
-[rustup](https://rustup.rs). No other development packages are needed.
+You need a C linker, `make`, Vulkan drivers (Mesa's for AMD and Intel
+GPUs; the NVIDIA driver brings its own), the ALSA and udev development
+packages (for sound and, later, game controllers), plus the Rust toolchain
+from [rustup](https://rustup.rs).
 
 ```sh
-sudo dnf install gcc make git vulkan-loader mesa-vulkan-drivers
+sudo dnf install gcc make git vulkan-loader mesa-vulkan-drivers alsa-lib-devel systemd-devel
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # then open a new shell
 git clone https://github.com/andre-motta/rusty-claw.git
 cd rusty-claw
@@ -65,6 +72,11 @@ rusty-claw --install /path/to/your/install --custom "My Level.WWD"
 | Up | climb up; look up when standing |
 | Down | climb down; crouch when standing |
 | Space | jump; hold for a higher jump |
+| Ctrl | attack: sword, punch, uppercut or kick; crouching and in the air, a sword swipe |
+| Alt | fire the selected weapon (not there yet) |
+| Shift | switch weapons: pistol, magic, dynamite |
+| 1, 2, 3 | select the pistol, magic or dynamite |
+| Z | lift and throw (not there yet) |
 | P or Pause | pause |
 | F7 | interpolation between game ticks on or off |
 | F8 | fit or integer scaling |
@@ -74,6 +86,20 @@ rusty-claw --install /path/to/your/install --custom "My Level.WWD"
 | Escape | quit |
 
 The game pauses when its window loses focus.
+
+## Sound
+
+The game plays the sounds of your install: every sound of a level is read
+and decoded when the level loads. It uses the default output device of
+your desktop (PipeWire, PulseAudio or ALSA); without one it runs silently
+and says so once. Game sounds pause with the game. Music comes later.
+
+| Option | What it does |
+| --- | --- |
+| `--no-audio` | no sound; no audio device is opened |
+
+In the config file, `audio = off` does the same. Replays, benchmarks and
+headless runs are always silent.
 
 ## Resolution, aspect and refresh
 
@@ -120,15 +146,24 @@ widen_activation = false
 vsync = true
 fps_cap = 300              # with vsync off; 0 for no cap
 interpolation = true
+audio = on                 # on or off
 ```
 
 ## Replays and benchmarks
 
 An input script is a CSV file with the columns `tick,held_mask,pressed_mask`,
-one row per 18 ms game tick (masks: Jump 0x1, Left 0x1000000, Right
-0x2000000, Up 0x4000000, Down 0x8000000).
+one row per 18 ms game tick (masks: Jump 0x1, Attack 0x2, Fire 0x4, Switch
+weapon 0x8, Lift 0x20, Pistol 0x40, Magic 0x80, Dynamite 0x100, Left
+0x1000000, Right 0x2000000, Up 0x4000000, Down 0x8000000).
+
+`--record FILE.csv` writes the input of every tick you play in the window
+to such a script when the game ends; replaying it with the same level and
+start gives the same game.
 
 ```sh
+# play and record, then watch the recording
+rusty-claw --install PATH --record game.csv
+rusty-claw --install PATH --replay game.csv
 # watch a script in the window, then take over with the keyboard
 rusty-claw --install PATH --replay walk.csv
 # no window: write one trace row per tick, with a simulated 144 Hz display
