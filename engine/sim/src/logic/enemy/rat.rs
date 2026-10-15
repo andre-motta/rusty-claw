@@ -69,7 +69,7 @@ pub const SMARTS: i32 = 10;
 /// Depth base of the depth against Claw.
 pub const Z_BASE: i32 = 5;
 /// Walking speed, px/s.
-pub const WALK_SPEED: f64 = 60.0;
+pub const WALK_SPEED: f64 = super::states::WALK_SPEED;
 
 /// Logic of a bomb.
 pub const BOMB_LOGIC: &str = "RatBomb";

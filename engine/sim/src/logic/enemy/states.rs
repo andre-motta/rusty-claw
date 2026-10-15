@@ -9,6 +9,14 @@
 //! Patrol limits are compared for equality with the position: the
 //! movement step clamps a walker onto a limit it would cross, so it stands
 //! exactly on it on the tick it arrives.
+//!
+//! A walker turns at a limit with the speed it had, reversed. A wall the
+//! movement step runs into also reverses its speed (at half) and moves the
+//! limit to where it stood; turning that already reversed speed again
+//! would point it back into the wall and hold it on the limit for good.
+//! So a walker whose speed no longer leads away from the limit turns at
+//! the walking speed instead: it walks back and forth between walls as it
+//! does between ledges.
 
 use crate::logic::World;
 use crate::object::{ObjectId, Rect};
@@ -24,6 +32,9 @@ use super::{
 pub const ADVANCE_SPEED: f64 = 60.0;
 /// Running speed toward Claw, px/s.
 pub const FAST_ADVANCE_SPEED: f64 = 120.0;
+/// Walking speed of a walker turning away from a wall, px/s (the rat's
+/// walking speed).
+pub const WALK_SPEED: f64 = 60.0;
 /// Pacing speed, px/s.
 pub const PACE_SPEED: f64 = 120.0;
 /// Knockback speed of a hit, px/s.
@@ -321,22 +332,33 @@ pub fn move_right(w: &mut World, id: ObjectId, speed: f64) {
     set_anim(w, id, anim);
 }
 
-/// MoveLeft: at the left limit it walks right at its current speed.
+/// MoveLeft: at the left limit it walks right at its current speed, or
+/// at [`WALK_SPEED`] when a wall already turned that speed around.
 pub fn walk_left_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     if obj(w, id).x == bounds(w, id).0 {
         let vx = data(w, id).map_or(0.0, |d| d.vx);
-        move_right(w, id, (-vx).trunc());
+        move_right(w, id, turn_speed(-vx));
     }
 }
 
-/// MoveRight: at the right limit it walks left at its current speed.
+/// MoveRight: at the right limit it walks left at its current speed, or
+/// at [`WALK_SPEED`] when a wall already turned that speed around.
 pub fn walk_right_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     if obj(w, id).x == bounds(w, id).1 {
         let vx = data(w, id).map_or(0.0, |d| d.vx);
-        move_left(w, id, vx.trunc());
+        move_left(w, id, turn_speed(vx));
     }
+}
+
+/// The speed a walker turns at, given its current speed reversed (so a
+/// positive value leads away from the limit): that speed, truncated, or
+/// [`WALK_SPEED`] when it does not lead away (see the module
+/// documentation).
+pub fn turn_speed(reversed: f64) -> f64 {
+    let speed = reversed.trunc();
+    if speed > 0.0 { speed } else { WALK_SPEED }
 }
 
 // ----------------------------------------------------------------------

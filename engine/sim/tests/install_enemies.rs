@@ -322,11 +322,34 @@ fn install_two_idle_minutes_with_every_enemy_awake() {
     let mut costs = Vec::with_capacity(ticks);
     let mut outside = Vec::new();
     let mut states: BTreeMap<&str, usize> = BTreeMap::new();
+    // Per walking rat: ticks in a row walking one way with a speed the
+    // other way (held against a limit), the longest such run, and how
+    // often it turned.
+    let mut held: BTreeMap<ObjectId, (usize, usize, usize, f64)> = BTreeMap::new();
     for t in 0..ticks {
         let t0 = Instant::now();
         sim.step(TickInput::default());
         costs.push(t0.elapsed().as_secs_f64() * 1e6);
-        for (_, o) in sim.objects().all() {
+        for (id, o) in sim.objects().all() {
+            if o.kind == LogicKind::Game(GameLogic::Rat)
+                && let Some(d) = enemy::data_of(o)
+                && !d.stationary
+            {
+                let e = held.entry(id).or_default();
+                let pinned = match EnemyState::from_id(o.state) {
+                    Some(EnemyState::MoveLeft) => d.vx > 0.0,
+                    Some(EnemyState::MoveRight) => d.vx < 0.0,
+                    _ => false,
+                };
+                e.0 = if pinned { e.0 + 1 } else { 0 };
+                e.1 = e.1.max(e.0);
+                if d.vx != 0.0 {
+                    if e.3 != 0.0 && d.vx.signum() != e.3.signum() {
+                        e.2 += 1;
+                    }
+                    e.3 = d.vx;
+                }
+            }
             if is_enemy(o) {
                 if o.x < 0 || o.y < 0 || o.x >= w || o.y >= h {
                     outside.push(format!("tick {t}: {} at ({}, {})", o.logic, o.x, o.y));
@@ -361,6 +384,20 @@ fn install_two_idle_minutes_with_every_enemy_awake() {
         outside.is_empty(),
         "enemies outside the level: {outside:#?}"
     );
+    // A walking rat turns at a wall as at a ledge: it is never held
+    // against a limit walking into it, and keeps walking back and forth.
+    let rats: Vec<String> = held
+        .iter()
+        .map(|(id, (_, longest, turns, _))| format!("{id}: held {longest}, turns {turns}"))
+        .collect();
+    eprintln!("walking rats: {rats:?}");
+    let stuck: Vec<&String> = held
+        .iter()
+        .zip(&rats)
+        .filter(|((_, (_, longest, turns, _)), _)| *longest > 2 || *turns < 10)
+        .map(|(_, r)| r)
+        .collect();
+    assert!(stuck.is_empty(), "walking rats held on a limit: {stuck:#?}");
     // The enemies' own share: every enemy's logic call, once per round.
     let ids: Vec<ObjectId> = sim
         .objects()

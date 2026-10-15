@@ -12,7 +12,9 @@ use claw_frame::{AudioCue, TickInput};
 use claw_sim::activation::ActivationConfig;
 use claw_sim::anim::Animation;
 use claw_sim::level::ObjectSpec;
-use claw_sim::logic::enemy::{self, DeathKind, EnemyState, lift, motion, officer, rat, soldier};
+use claw_sim::logic::enemy::{
+    self, DeathKind, EnemyState, lift, motion, officer, rat, soldier, states,
+};
 use claw_sim::logic::pickup::PickupData;
 use claw_sim::logic::projectile::{ProjectileData, ProjectileSpec};
 use claw_sim::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags, types};
@@ -396,6 +398,91 @@ fn a_walking_rat_turns_at_its_limits_without_turning_its_sprite() {
         state_of(&sim, id),
         Some(EnemyState::MoveLeft | EnemyState::MoveRight)
     ));
+}
+
+/// True when a walker walks one way with a speed the other way, as one
+/// held against a limit is (a wall turns the speed for a tick or two).
+fn pinned(sim: &Sim, id: ObjectId) -> bool {
+    let vx = data(sim, id).vx;
+    match state_of(sim, id) {
+        Some(EnemyState::MoveLeft) => vx > 0.0,
+        Some(EnemyState::MoveRight) => vx < 0.0,
+        _ => false,
+    }
+}
+
+#[test]
+fn an_unbounded_rat_walks_back_and_forth_between_two_walls() {
+    // A corridor six tiles wide between two walls on a flat floor.
+    let mut rows = vec![".".repeat(200); 15];
+    for r in rows.iter_mut().skip(10) {
+        r.replace_range(40..41, "#");
+        r.replace_range(47..48, "#");
+    }
+    rows.push("#".repeat(200));
+    rows.push("#".repeat(200));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut sim = sim_with(
+        level(&rows, (1000, 600), vec![record("Rat", 44 * 64, 926)]),
+        7,
+    );
+    send_claw_away(&mut sim);
+    let id = first(&sim, GameLogic::Rat);
+    assert_eq!(feet_of(obj(&sim, id)), 959, "on the floor");
+    let mut pinned_ticks = 0;
+    let mut longest = 0;
+    let mut late_turns = 0;
+    let mut last_dir = 0.0f64;
+    let (mut lo, mut hi) = (i32::MAX, i32::MIN);
+    for t in 0..3000 {
+        sim.step(TickInput::default());
+        if pinned(&sim, id) {
+            pinned_ticks += 1;
+            longest = longest.max(pinned_ticks);
+        } else {
+            pinned_ticks = 0;
+        }
+        let x = obj(&sim, id).x;
+        let vx = data(&sim, id).vx;
+        if t >= 1000 {
+            lo = lo.min(x);
+            hi = hi.max(x);
+            if vx != 0.0 && last_dir != 0.0 && vx.signum() != last_dir.signum() {
+                late_turns += 1;
+            }
+        }
+        if vx != 0.0 {
+            last_dir = vx;
+        }
+    }
+    assert!(longest <= 2, "held on a limit for {longest} ticks");
+    // Both walls became its limits, and it keeps walking between them at
+    // its walking speed.
+    let d = data(&sim, id);
+    assert!(
+        d.bounds.0 > 41 * 64 - 30 && d.bounds.1 < 47 * 64 + 30,
+        "{d:?}"
+    );
+    assert_eq!((lo, hi), d.bounds, "it covers the whole corridor");
+    assert!(late_turns >= 4, "{late_turns} turns");
+    assert!(
+        matches!(
+            state_of(&sim, id),
+            Some(EnemyState::MoveLeft | EnemyState::MoveRight)
+        ),
+        "still walking"
+    );
+}
+
+#[test]
+fn a_walker_turns_at_its_speed_or_at_the_walking_speed_after_a_wall() {
+    // At a limit or ledge: the speed it had, reversed and truncated.
+    assert_eq!(states::turn_speed(60.0), 60.0);
+    assert_eq!(states::turn_speed(45.9), 45.0);
+    // After a wall turned it at half speed: away at the walking speed.
+    assert_eq!(states::turn_speed(-30.0), states::WALK_SPEED);
+    assert_eq!(states::turn_speed(0.4), states::WALK_SPEED);
+    assert_eq!(states::turn_speed(0.0), states::WALK_SPEED);
 }
 
 #[test]
