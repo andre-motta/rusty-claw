@@ -116,6 +116,7 @@ pub struct Sim {
     camera_point: (i32, i32),
     camera_override: Option<(i32, i32)>,
     rng: Rng,
+    sound_rng: Rng,
     tick: u64,
     input: TickInput,
     events: Vec<CollisionEvent>,
@@ -135,6 +136,7 @@ struct Runner<'a> {
     camera_point: &'a mut (i32, i32),
     camera_override: &'a mut Option<(i32, i32)>,
     rng: &'a mut Rng,
+    sound_rng: &'a mut Rng,
     out: &'a mut Outbox,
     input: TickInput,
     tick: u64,
@@ -166,6 +168,7 @@ impl Runner<'_> {
             claw: &mut *self.claw,
             level: self.level,
             rng: &mut *self.rng,
+            sound_rng: &mut *self.sound_rng,
             tuning: &self.cfg.tuning,
             tick: self.tick,
             now_ms: self.now_ms,
@@ -174,8 +177,9 @@ impl Runner<'_> {
         }
     }
 
-    /// Runs `f` on Claw's object `id` with the player context; `None` when
-    /// the object does not exist.
+    /// Runs `f` on Claw's object `id` with the player context, then carries
+    /// out the voice requests it made; `None` when the object does not
+    /// exist.
     fn with_claw<R>(
         &mut self,
         objects: &mut Container,
@@ -200,17 +204,34 @@ impl Runner<'_> {
                 input: self.input,
                 t: &self.cfg.tuning,
                 rng: &mut *self.rng,
+                sound_rng: &mut *self.sound_rng,
                 camera_override: &mut *self.camera_override,
                 plane_centre: centre,
                 out: &mut *self.out,
                 tick: self.tick,
                 now_ms: self.now_ms,
                 view,
+                level_logics: self.cfg.level_logics,
             };
             f(&mut ctx)
         };
         objects.swap_payload(id, &mut held);
+        let voice = self.out.take_voice();
+        if !voice.is_empty() {
+            let mut w = self.world(objects);
+            for v in voice {
+                logic::sound::claw_say(&mut w, &v.key, v.force);
+            }
+        }
         Some(r)
+    }
+
+    /// Starts the screen shake asked for since the last call, timed from
+    /// the current tick.
+    fn apply_shake(&mut self) {
+        if let Some(ms) = self.out.take_shake() {
+            self.camera.start_shake(self.now_ms, u64::from(ms));
+        }
     }
 
     fn run(&mut self, objects: &mut Container, id: ObjectId) {
@@ -229,6 +250,7 @@ impl Runner<'_> {
                     physics_type: o.physics_type,
                     look_down_time: self.claw.look_down_time,
                 });
+                self.apply_shake();
                 self.camera.tick(
                     followed.as_ref(),
                     *self.camera_override,
@@ -300,6 +322,13 @@ impl Runner<'_> {
     }
 }
 
+/// Seed of the sound-only random stream of a level: it depends on the
+/// game seed and the level number only, so it restarts with each level.
+pub fn sound_seed(seed: u32, level_number: u32) -> u32 {
+    seed.wrapping_add(level_number.wrapping_mul(7919))
+        .rotate_left(16)
+}
+
 /// Platform objects in list order, with the move each made this tick.
 pub(crate) fn platforms(objects: &Container) -> Vec<Platform> {
     let mut out = Vec::new();
@@ -340,6 +369,7 @@ impl Sim {
         let activation = Activation::new(cfg.activation.clone(), plane);
         let mut sim = Sim {
             rng: Rng::new(cfg.seed),
+            sound_rng: Rng::new(sound_seed(cfg.seed, level.number)),
             cfg,
             registry: Registry::standard(),
             objects: Container::new(),
@@ -482,6 +512,7 @@ impl Sim {
                 camera_point: &mut self.camera_point,
                 camera_override: &mut self.camera_override,
                 rng: &mut self.rng,
+                sound_rng: &mut self.sound_rng,
                 out: &mut self.out,
                 input: self.input,
                 tick: self.tick,
@@ -511,6 +542,9 @@ impl Sim {
             let (mut runner, objects, activation) = self.parts();
             activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
             runner.list_spawned(objects);
+            // A shake asked for after the camera ran starts from this tick
+            // too; the camera applies it from its next call.
+            runner.apply_shake();
         }
         self.tick += 1;
         let (audio, events) = self.out.take_tick();
@@ -780,6 +814,11 @@ impl Sim {
         &self.rng
     }
 
+    /// The sound-only random stream.
+    pub fn sound_rng(&self) -> &Rng {
+        &self.sound_rng
+    }
+
     /// Points the camera at a scripted point, or back at Claw with `None`.
     pub fn set_camera_point(&mut self, point: Option<(i32, i32)>) {
         self.camera_override = point;
@@ -866,4 +905,88 @@ fn renderable(o: &Object) -> Option<Renderable> {
         draw_mode: DrawMode::NORMAL,
         teleported: o.teleported,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use claw_frame::{SoundChannel, SoundCue};
+
+    use super::*;
+    use crate::tiles::TileMap;
+
+    fn flat() -> SimLevel {
+        let mut rows = vec![".".repeat(60); 15];
+        rows.push("#".repeat(60));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600))
+    }
+
+    /// Runs `f` on Claw's handler context, as his logic gets it.
+    fn with_ctx<R>(sim: &mut Sim, f: impl FnOnce(&mut Ctx) -> R) -> R {
+        let id = sim.player.unwrap();
+        let (mut runner, objects, _) = sim.parts();
+        let r = runner.with_claw(objects, id, f).unwrap();
+        runner.list_spawned(objects);
+        r
+    }
+
+    #[test]
+    fn claws_code_sees_the_logics_switch_the_level_number_and_attempts() {
+        let mut level = flat();
+        level.number = 4;
+        for logics in [true, false] {
+            let cfg = SimConfig {
+                level_logics: logics,
+                ..SimConfig::default()
+            };
+            let mut sim = Sim::new(level.clone(), cfg);
+            sim.claw.stats.count_attempt();
+            let seen = with_ctx(&mut sim, |c| {
+                (c.level_logics, c.level_number(), c.attempt())
+            });
+            assert_eq!(seen, (logics, 4, 1));
+        }
+    }
+
+    #[test]
+    fn lines_claws_code_asks_for_are_said_after_his_handler() {
+        let mut level = flat();
+        level.sounds.insert("CLAW_LINE".into(), Some(900));
+        level.sounds.insert("CLAW_OTHER".into(), Some(900));
+        let mut sim = Sim::new(level, SimConfig::default());
+        with_ctx(&mut sim, |c| {
+            c.say("CLAW_LINE", false);
+            c.say("NOT_REGISTERED", false);
+            // Refused: the first line still runs.
+            c.say("CLAW_OTHER", false);
+            assert_eq!(c.out.voice_requests().len(), 3);
+            assert!(c.out.audio().is_empty(), "nothing is said during the call");
+        });
+        assert!(sim.with_world(|w| logic::sound::claw_is_speaking(w)));
+        let snap = sim.step(TickInput::default());
+        let voice: Vec<&SoundCue> = snap
+            .audio
+            .iter()
+            .filter_map(|c| match c {
+                AudioCue::Play(s) if s.channel == SoundChannel::Voice => Some(s),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(voice.len(), 1);
+        assert_eq!(voice[0].key, "CLAW_LINE");
+        // A forced line is said over the running one.
+        with_ctx(&mut sim, |c| c.say("CLAW_OTHER", true));
+        let snap = sim.step(TickInput::default());
+        assert!(snap.audio.iter().any(
+            |c| matches!(c, AudioCue::Play(s) if s.key == "CLAW_OTHER" && s.channel == SoundChannel::Voice)
+        ));
+    }
+
+    #[test]
+    fn the_sound_seed_depends_on_the_seed_and_the_level() {
+        assert_eq!(sound_seed(1, 1), sound_seed(1, 1));
+        assert_ne!(sound_seed(1, 1), sound_seed(1, 2));
+        assert_ne!(sound_seed(1, 1), sound_seed(2, 1));
+        assert_ne!(sound_seed(1, 1), 1);
+    }
 }

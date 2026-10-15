@@ -13,7 +13,7 @@ use super::projectile::ProjectileSpec;
 use super::*;
 use crate::anim::{AnimFrame, Animation, FRAME_SOUND_IN_VIEW};
 use crate::container::CollisionEvent;
-use crate::level::{ObjectSpec, SimLevel};
+use crate::level::{ImageFrames, ObjectSpec, SimLevel};
 use crate::object::{Rect, engine_state, types};
 use crate::physics::ptype;
 use crate::sim::{Sim, SimConfig};
@@ -196,26 +196,16 @@ fn cross_family_stubs_leave_placeholders_that_record_the_request() {
     });
     assert!(!curse);
     assert_eq!(sim.treasure_census(), [0; 9]);
-    for id in [p, e] {
-        let o = sim.objects().get(id).unwrap();
-        assert!(o.is_listed());
-        assert_eq!(o.kind, LogicKind::Inert);
-        assert!(o.flags & flags::NO_COLLIDE != 0);
-        assert!(o.image_set.is_empty(), "placeholders are not drawn");
+    // Projectiles and effects, placeholders or filled in, record the
+    // request they were spawned with.
+    match &sim.objects().get(p).unwrap().data {
+        ObjectData::Projectile(data) => assert_eq!(data.spec, Some(spec)),
+        other => panic!("projectile data expected, got {other:?}"),
     }
-    let o = sim.objects().get(p).unwrap();
-    assert_eq!(&*o.logic, "PistolBullet");
-    assert_eq!((o.x, o.y, o.z, o.speed_x), (1050, 880, 4000, 500));
-    assert_eq!(
-        o.data,
-        ObjectData::Projectile(projectile::ProjectileData { spec: Some(spec) })
-    );
-    assert_eq!(
-        sim.objects().get(e).unwrap().data,
-        ObjectData::Effect(effect::EffectData {
-            request: Some(EffectKind::Splash)
-        })
-    );
+    match &sim.objects().get(e).unwrap().data {
+        ObjectData::Effect(data) => assert_eq!(data.request, Some(EffectKind::Splash)),
+        other => panic!("effect data expected, got {other:?}"),
+    }
     // Drops are real: a bouncing goodie that remembers its code.
     let o = sim.objects().get(d).unwrap();
     assert!(o.is_listed());
@@ -576,10 +566,14 @@ fn animation_frames_play_their_sounds() {
     l.animations.insert(a.key.clone(), std::sync::Arc::new(a));
     let mut sim = Sim::new(l, SimConfig::default());
     let mut heard = Vec::new();
-    let mut rng = sim.rng().clone();
+    let game_rng = sim.rng().clone();
+    let mut rng = sim.sound_rng().clone();
     for _ in 0..4 {
         heard.push(played(&sim.step(TickInput::default()).audio));
     }
+    // The choice comes from the sound-only stream: the game's stream is
+    // untouched.
+    assert_eq!(sim.rng(), &game_rng);
     // Both objects are live (the second is outside the view but inside
     // its activation window); the in-view sound plays for the first only.
     let two = |r: &mut crate::rng::Rng| ["TWO_A", "TWO_B"][r.below(2) as usize].to_string();
@@ -607,6 +601,104 @@ fn claws_own_frames_play_their_sounds() {
         assert_eq!(played(&sim.step(TickInput::default()).audio), vec!["STEP"]);
     }
     assert_eq!(played(sim.last_audio()), vec!["STEP"]);
+}
+
+fn cycler(w: &mut World, id: ObjectId) {
+    if w.objects.get(id).unwrap().state == 0 {
+        let o = w.objects.get_mut(id).unwrap();
+        o.state = 1;
+        o.image_set = "TEST_CYCLE".into();
+        o.frame = 3;
+        assert!(w.set_anim(id, "TEST_NEXT"));
+    }
+    w.advance_anim(id);
+    let o = w.objects.get(id).unwrap();
+    log(format!("{}", o.frame));
+}
+
+#[test]
+fn animations_step_within_the_image_set_of_their_object() {
+    install(GameLogic::Decor, cycler);
+    let mut l = level(&[("FrontCandy", 1050, 800, 5)]);
+    let next = Animation::looping("TEST_NEXT", &[(0, 1)]);
+    let mut next = next;
+    next.frames[0].image_op = 1;
+    l.animations
+        .insert(next.key.clone(), std::sync::Arc::new(next));
+    l.images
+        .insert("TEST_CYCLE".into(), ImageFrames::range(2, 4));
+    let mut sim = Sim::new(l, SimConfig::default());
+    take_log();
+    idle(&mut sim, 5);
+    assert_eq!(take_log(), vec!["4", "2", "3", "4", "2"]);
+}
+
+#[test]
+fn in_view_frame_sounds_follow_the_draw_box() {
+    install(GameLogic::Decor, sounding);
+    let mut l = level(&[
+        ("FrontCandy", 1050, 800, 5),
+        ("FrontCandy", 1350, 800, 5),
+        ("FrontCandy", 1340, 800, 5),
+    ]);
+    // The second object is past the right edge of the view, but its wide
+    // image reaches into it; the third has no known image.
+    l.objects[1].image_set = "WIDE".into();
+    let mut wide = ImageFrames::range(1, 4);
+    for f in 1..=4 {
+        wide.boxes.insert(f, Rect::new(-100, -10, 100, 10));
+    }
+    l.images.insert("WIDE".into(), wide);
+    let a = sound_anim();
+    l.animations.insert(a.key.clone(), std::sync::Arc::new(a));
+    let mut sim = Sim::new(l, SimConfig::default());
+    let view = sim.view().rect;
+    assert!(!view.contains(1340, 800) && !view.contains(1350, 800));
+    let mut heard = Vec::new();
+    for _ in 0..4 {
+        heard.push(played(&sim.step(TickInput::default()).audio));
+    }
+    assert_eq!(heard[0], vec!["ONE", "ONE", "ONE"]);
+    assert_eq!(heard[3], vec!["IN_VIEW", "IN_VIEW"]);
+}
+
+fn shaker(w: &mut World, id: ObjectId) {
+    let o = w.objects.get_mut(id).unwrap();
+    if o.state == 0 {
+        o.state = 1;
+        w.shake(300);
+        w.shake(500);
+        w.shake(100);
+        assert_eq!(w.out.pending_shake(), Some(500), "the longest is kept");
+    }
+}
+
+#[test]
+fn a_shake_asked_for_by_a_logic_starts_in_its_tick() {
+    install(GameLogic::Decor, shaker);
+    // One object runs before the camera, the other after it.
+    for z in [5, 20_000] {
+        let mut sim = Sim::new(level(&[("FrontCandy", 1050, 800, z)]), SimConfig::default());
+        idle(&mut sim, 3);
+        assert_eq!(sim.camera().shake_until_ms, 500, "z {z}");
+    }
+}
+
+fn killable(w: &mut World, id: ObjectId) {
+    let o = w.objects.get(id).unwrap();
+    log(format!("{} {}", o.state, o.kill_kind));
+}
+
+#[test]
+fn a_kill_reaches_the_logic_with_its_kind() {
+    install(GameLogic::Decor, killable);
+    let mut sim = Sim::new(level(&[("FrontCandy", 1050, 800, 5)]), SimConfig::default());
+    idle(&mut sim, 1);
+    let id = find(&sim, "FrontCandy")[0];
+    assert!(sim.with_world(|w| w.kill(id, 2)));
+    assert!(!sim.with_world(|w| w.kill(9999, 2)));
+    idle(&mut sim, 1);
+    assert_eq!(take_log(), vec!["0 0", "28 2"]);
 }
 
 // ------------------------------------------------------------- cloning
