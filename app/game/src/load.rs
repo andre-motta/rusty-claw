@@ -142,22 +142,40 @@ pub fn load_graphics(bundle: &LevelBundle, pack: Option<&Path>) -> Result<LevelG
     ))
 }
 
-/// Decodes every sprite set the level's objects and the first snapshot
-/// name, so that no file is read or decoded while frames are drawn.
-/// Returns the number of sets that loaded.
+/// Decodes every sprite set the level's objects, the simulation's
+/// run-time sets and the first snapshot name, so that no file is read or
+/// decoded while frames are drawn. Returns the number of sets that loaded.
 pub fn preload(graphics: &mut LevelGraphics, level: &LevelData, first: &SimSnapshot) -> usize {
-    let mut keys: Vec<&str> = level
-        .objects
-        .iter()
-        .map(|o| o.image_set.as_str())
+    let runtime = claw_sim::logic::runtime_image_sets();
+    preload_keys(
+        level.objects.iter().map(|o| o.image_set.as_str()),
+        &runtime,
+        first,
+    )
+    .iter()
+    .filter(|k| graphics.sprite(k, -1).is_some())
+    .count()
+}
+
+/// The sprite sets [`preload`] loads, sorted and without duplicates: the
+/// sets `placed` objects start with, Claw's own, the sets the simulation's
+/// logics switch objects to while the level runs (`runtime`, for example
+/// the mark a sound object shows) and the sets `first` names.
+pub fn preload_keys<'a>(
+    placed: impl IntoIterator<Item = &'a str>,
+    runtime: &[&'a str],
+    first: &'a SimSnapshot,
+) -> Vec<&'a str> {
+    let mut keys: Vec<&str> = placed
+        .into_iter()
+        .chain(claw_sim::level::RUNTIME_IMAGE_SETS)
+        .chain(runtime.iter().copied())
         .chain(first.renderables.iter().map(|r| r.image_set_key.as_str()))
         .filter(|k| !k.is_empty())
         .collect();
     keys.sort_unstable();
     keys.dedup();
-    keys.iter()
-        .filter(|k| graphics.sprite(k, -1).is_some())
-        .count()
+    keys
 }
 
 /// Ticks to wait at most for Claw and the camera to settle.
@@ -212,6 +230,7 @@ pub fn settle_at(sim: &mut Sim, x: i32, y: i32) {
 mod tests {
     use super::*;
 
+    use claw_frame::{DrawMode, Renderable};
     use claw_sim::SavePos;
 
     #[test]
@@ -237,6 +256,43 @@ mod tests {
         assert_eq!(start_override(&s, true, &two, &at_save), None);
         s.start = None;
         assert_eq!(start_override(&s, true, &two, &fresh), None);
+    }
+
+    #[test]
+    fn preloading_covers_the_sets_objects_switch_to_while_running() {
+        let sprite = |key: &str| Renderable {
+            id: 1,
+            image_set_key: key.to_string(),
+            frame: 1,
+            x: 0.0,
+            y: 0.0,
+            z: 0,
+            mirror: false,
+            invert: false,
+            flash: false,
+            draw_mode: DrawMode::default(),
+            teleported: false,
+        };
+        let first = SimSnapshot {
+            renderables: vec![sprite("LEVEL_FIRST"), sprite("")],
+            ..SimSnapshot::default()
+        };
+        let runtime = claw_sim::logic::runtime_image_sets();
+        let keys = preload_keys(["LEVEL_PLACED", "", "LEVEL_PLACED"], &runtime, &first);
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(keys, sorted, "sorted and without duplicates");
+        assert!(!keys.contains(&""));
+        for key in ["LEVEL_PLACED", "LEVEL_FIRST"]
+            .into_iter()
+            .chain(claw_sim::level::RUNTIME_IMAGE_SETS)
+            .chain(runtime.iter().copied())
+        {
+            assert!(keys.contains(&key), "{key} is not preloaded");
+        }
+        // The mark a sound object shows only appears once the level runs.
+        assert!(keys.contains(&claw_sim::logic::sound::EXCLAMATION_IMAGE_SET));
     }
 
     #[test]

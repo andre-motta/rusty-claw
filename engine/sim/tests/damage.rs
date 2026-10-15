@@ -469,10 +469,15 @@ fn enemy_contact_hurts_with_a_window_between_hits() {
     enemy(&mut sim, 10);
     let mut health = Vec::new();
     let mut first_audio = Vec::new();
+    let mut first_burst = None;
     for i in 0..60 {
         let (audio, _) = step(&mut sim);
         if i == 0 {
             first_audio = audio;
+            // A hit burst plays once and removes itself, so it is looked
+            // for right after the hit.
+            let o = sim.player().unwrap();
+            first_burst = Some((burst_near(&sim), (o.x, o.y)));
         }
         health.push(sim.stats().health);
     }
@@ -490,19 +495,22 @@ fn enemy_contact_hurts_with_a_window_between_hits() {
     assert!(lines.iter().any(|k| played(&first_audio, k)));
     assert!(!played(&first_audio, "CLAW_HIT"));
     // The hit burst is asked for next to Claw.
-    let burst = sim
-        .objects()
+    let (burst, claw) = first_burst.unwrap();
+    let burst = burst.expect("a hit burst");
+    assert!(
+        (burst.0 - claw.0).abs() <= 8 && (burst.1 - claw.1).abs() <= 60,
+        "{burst:?}"
+    );
+}
+
+/// Where a hit burst stands, if one exists now.
+fn burst_near(sim: &Sim) -> Option<(i32, i32)> {
+    sim.objects()
         .all()
         .find(|(_, o)| {
             matches!(&o.data, ObjectData::Effect(e) if e.request == Some(EffectKind::HitBurst))
         })
         .map(|(_, o)| (o.x, o.y))
-        .expect("a hit burst");
-    let o = sim.player().unwrap();
-    assert!(
-        (burst.0 - o.x).abs() <= 8 && (burst.1 - o.y).abs() <= 60,
-        "{burst:?}"
-    );
 }
 
 #[test]
