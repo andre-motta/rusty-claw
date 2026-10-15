@@ -316,8 +316,12 @@ impl Container {
             };
             if v.flags & flags::AUTO_HIT_DAMAGE != 0 {
                 v.health -= damage;
-                if v.health <= 0 {
+                if v.health <= 0 && v.state != engine_state::KILLED {
+                    // An ordinary kill: no kind, even when an earlier kill
+                    // of another kind left one behind. A kill not yet
+                    // seen by the object keeps its kind.
                     v.state = engine_state::KILLED;
+                    v.kill_kind = 0;
                 }
                 handler(self, CollisionEvent::Damage { attacker, victim });
             } else if v.hit_handler {
@@ -394,5 +398,37 @@ mod tests {
         c.get_mut(v).unwrap().x = 110;
         c.get_mut(v).unwrap().flags |= flags::SAFE;
         assert!(c.pair_collision().is_empty());
+    }
+
+    #[test]
+    fn a_damage_kill_has_no_kind_unless_a_kill_is_pending() {
+        let mut c = Container::new();
+        let mut attacker = obj(0);
+        attacker.flags = flags::WORLD;
+        attacker.type_flags = 0x20;
+        attacker.damage = 30;
+        attacker.attack_rect = Rect::new(-5, -5, 5, 5);
+        let mut victim = obj(1);
+        victim.flags = flags::WORLD | flags::AUTO_HIT_DAMAGE;
+        victim.hit_type_flags = 0x20;
+        victim.health = 20;
+        victim.hit_rect = Rect::new(-5, -5, 5, 5);
+        // A kill of kind 2 the object survived: its logic left KILLED.
+        victim.kill_kind = 2;
+        victim.state = 1;
+        let a = c.add(attacker);
+        let v = c.add(victim);
+        c.insert(a);
+        c.insert(v);
+        c.pair_collision();
+        let o = c.get(v).unwrap();
+        assert_eq!((o.state, o.kill_kind), (engine_state::KILLED, 0));
+        // A kill of kind 2 not yet seen keeps its kind.
+        let o = c.get_mut(v).unwrap();
+        o.kill_kind = 2;
+        o.health = 20;
+        c.pair_collision();
+        let o = c.get(v).unwrap();
+        assert_eq!((o.state, o.kill_kind), (engine_state::KILLED, 2));
     }
 }

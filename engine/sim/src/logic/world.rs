@@ -17,7 +17,7 @@ use crate::player::Claw;
 use crate::rng::Rng;
 use crate::tuning::{TICK_MS, Tuning};
 
-/// A line Claw's code asks him to say (see [`Outbox::say`]).
+/// A line Claw's code asks him to say (see [`crate::player::Ctx::say`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoiceRequest {
     /// Sound key of the line.
@@ -34,7 +34,8 @@ pub struct VoiceRequest {
 /// states: they stay until a logic changes them. A screen shake request is
 /// applied to the camera at its next call, or at the end of the tick when
 /// the camera has already run; a voice request made by Claw's code is
-/// carried out as soon as his handler returns.
+/// carried out as soon as his handler returns, and one still waiting at
+/// the end of the tick is carried out then, so none outlives its tick.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Outbox {
     audio: Vec<AudioCue>,
@@ -85,11 +86,13 @@ impl Outbox {
     }
 
     /// Asks for Claw to say the line `key` (see
-    /// [`crate::logic::sound::claw_say`] for when a line is refused). Meant
-    /// for Claw's own code, which runs without a [`World`]: the simulation
-    /// passes the request to `claw_say` as soon as his handler returns, in
-    /// request order.
-    pub fn say(&mut self, key: &str, force: bool) {
+    /// [`crate::logic::sound::claw_say`] for when a line is refused). Only
+    /// Claw's own code asks, through [`crate::player::Ctx::say`], since it
+    /// runs without a [`World`]; level logics call `claw_say` directly. The
+    /// simulation passes the request to `claw_say` as soon as his handler
+    /// returns, in request order, and passes any request still waiting at
+    /// the end of the tick then.
+    pub(crate) fn say(&mut self, key: &str, force: bool) {
         self.voice.push(VoiceRequest {
             key: key.to_string(),
             force,
@@ -384,6 +387,11 @@ impl World<'_> {
     /// [`Object::kill_kind`], and its logic decides what that kind of kill
     /// does (a powder keg explodes on kind 2). False when there is no such
     /// object.
+    ///
+    /// The kill takes effect at the object's next logic call, not during
+    /// this one: an object that has already run in the current update pass
+    /// reacts in the next tick, up to one tick later than an immediate
+    /// kill would.
     pub fn kill(&mut self, id: ObjectId, kind: i32) -> bool {
         let Some(o) = self.objects.get_mut(id) else {
             return false;
