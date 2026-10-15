@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use claw_assets::Palette;
 use claw_assets::ifc::IfcNode;
-use claw_audio::{AudioSettings, Pcm, SoundBank};
+use claw_audio::{AudioSettings, AudioStats, Pcm, SoundBank};
 use claw_frame::{AudioCue, GameEvent, SoundChannel, SoundCue, Weapon};
 use claw_game::Session;
 use claw_game::audio::{AudioBridge, ViewInfo};
@@ -847,15 +847,30 @@ fn a_startup_notice_shows() {
 
 /// A sound effect a tenth of a second long.
 const HIT: &str = "HIT";
+/// An ambient sound four seconds long, played as a loop.
+const AMB: &str = "AMB";
+/// The handle of the ambient loop.
+const AMB_VOICE: u32 = 7;
+
+/// The sounds of the synthetic level and of the menus.
+fn sounds() -> SoundBank {
+    let mut bank = SoundBank::new();
+    bank.insert(HIT, Pcm::mono(22050, vec![500i16; 2205]).into());
+    bank.insert(AMB, Pcm::mono(22050, vec![500i16; 22050 * 4]).into());
+    bank
+}
 
 /// The flow with a level in play and the sound bridge, carrying out the
-/// flow's effects as the window does: every effect first goes through the
-/// pauses, then the level starts or ends, then the pauses are applied.
+/// flow's effects as the window does: the level starts or ends, then every
+/// effect goes through [`Pauses::follow`]; the screens' sounds replace the
+/// level's.
 struct Played {
     flow: Flow,
     session: Option<Session>,
     audio: AudioBridge,
     pauses: Pauses,
+    /// Levels left, counted at the screens' sounds that follow.
+    left: u32,
     _dir: TempDir,
 }
 
@@ -873,14 +888,13 @@ impl Played {
             Start::Play,
         );
         let mut audio = AudioBridge::silent(AudioSettings::default());
-        let mut bank = SoundBank::new();
-        bank.insert(HIT, Pcm::mono(22050, vec![500i16; 2205]).into());
-        audio.set_sounds(bank);
+        audio.set_sounds(sounds());
         let mut p = Played {
             flow,
             session: None,
             audio,
             pauses: Pauses::default(),
+            left: 0,
             _dir: dir,
         };
         p.effects();
@@ -894,7 +908,6 @@ impl Played {
                 return;
             }
             for e in effects {
-                self.pauses.effect(&e);
                 match &e {
                     Effect::StartLevel { start, .. } => {
                         let sim = Sim::with_start(level(), SimConfig::default(), start.clone());
@@ -902,13 +915,28 @@ impl Played {
                         self.flow.set_in_game_menu(Some(in_game_menu()));
                     }
                     Effect::EndLevel => self.session = None,
-                    Effect::Sound(cue) => self
-                        .audio
-                        .apply(std::slice::from_ref(cue), &ViewInfo::default()),
                     _ => {}
                 }
-                self.pauses
-                    .apply(self.session.as_mut(), Some(&mut self.audio), Duration::ZERO);
+                self.pauses.follow(
+                    &e,
+                    self.session.as_mut(),
+                    Some(&mut self.audio),
+                    Duration::ZERO,
+                );
+                if e == Effect::ScreenSounds {
+                    // Between the level left and the screens' sounds, the
+                    // level's sounds are over: nothing plays but an
+                    // interface sound, and no loop is kept for later.
+                    self.left += 1;
+                    assert!(!self.audio.is_paused(), "level {} left", self.left);
+                    assert_eq!(self.audio.live_loops(), 0, "level {} left", self.left);
+                    assert!(
+                        self.only_the_interface_plays(),
+                        "level {} left: a game sound plays on",
+                        self.left
+                    );
+                    self.audio.set_sounds(sounds());
+                }
             }
         }
     }
@@ -982,11 +1010,41 @@ impl Played {
             ..SoundCue::default()
         });
         self.audio.apply(&[cue], &ViewInfo::default());
+        self.wait(|s| s.voices_started > before && s.active_voices == 0)
+    }
+
+    /// Starts the level's ambient loop, as the simulation would, and
+    /// waits for it to play.
+    fn ambient_loop(&mut self) {
+        let before = self.audio.engine().stats().voices_started;
+        let cue = AudioCue::Play(SoundCue {
+            key: AMB.into(),
+            volume: 100,
+            looped: true,
+            channel: SoundChannel::Ambient,
+            voice: Some(AMB_VOICE),
+            ..SoundCue::default()
+        });
+        self.audio.apply(&[cue], &ViewInfo::default());
+        assert!(self.wait(|s| s.voices_started > before && s.active_voices >= 1));
+        assert_eq!(self.audio.live_loops(), 1);
+    }
+
+    /// Plays an interface sound and waits for it to end with nothing else
+    /// left playing. The commands sent before it are carried out first, so
+    /// a loop started again by them is still playing then.
+    fn only_the_interface_plays(&mut self) -> bool {
+        let before = self.audio.engine().stats().voices_started;
+        self.audio.play_ui(HIT);
+        self.wait(|s| s.voices_started > before && s.active_voices == 0)
+    }
+
+    /// Polls the sound engine until `done`, for at most 3 s.
+    fn wait(&mut self, done: impl Fn(&AudioStats) -> bool) -> bool {
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(3) {
             self.audio.apply(&[], &ViewInfo::default());
-            let s = self.audio.engine().stats();
-            if s.voices_started > before && s.active_voices == 0 {
+            if done(&self.audio.engine().stats()) {
                 return true;
             }
             std::thread::sleep(Duration::from_millis(5));
@@ -1020,14 +1078,19 @@ fn every_way_out_of_the_in_game_menu_leaves_the_sounds_running() {
     p.effects();
     assert!(p.sounds_run(), "after the pause key");
 
-    // End the game, then start a new one: the new level's sounds play.
+    // End the game, then start a new one: the new level's sounds play,
+    // and the old level's ambient loop, stopped by the menu, does not come
+    // back over the main menu (checked at the screens' sounds).
+    p.ambient_loop();
     p.end_game();
+    assert_eq!(p.left, 1);
     assert!(!p.audio.is_paused(), "the menus are not paused");
     p.new_game();
     p.update(100.0);
     assert!(p.sounds_run(), "after ending the game and starting again");
 
     // The same after a game over.
+    p.ambient_loop();
     p.flow
         .play_events(&[GameEvent::GameOver], p.session.as_ref().unwrap().sim());
     p.effects();
@@ -1039,6 +1102,22 @@ fn every_way_out_of_the_in_game_menu_leaves_the_sounds_running() {
         guard += 1;
         assert!(guard < 200, "stuck at {:?}", p.flow.screen());
     }
+    assert_eq!(p.left, 2);
     p.new_game();
     assert!(p.sounds_run(), "after a game over");
+
+    // A level won: its ambient loop, still playing, ends with it.
+    p.ambient_loop();
+    p.flow.play_events(
+        &[GameEvent::LevelComplete { after_ms: 100 }],
+        p.session.as_ref().unwrap().sim(),
+    );
+    let mut guard = 0;
+    while p.flow.screen() != Screen::Booty {
+        p.update(50.0);
+        guard += 1;
+        assert!(guard < 200, "stuck at {:?}", p.flow.screen());
+    }
+    assert_eq!(p.left, 3);
+    assert!(p.session.is_none());
 }

@@ -649,7 +649,8 @@ impl App {
             );
             announce_widening(&self.settings, first_output, &sim);
             self.preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
-            let status = StatusLayer::new(&mut graphics, &bundle);
+            let mut status = StatusLayer::new(&mut graphics, &bundle);
+            status.set_centred(self.settings.status_bar_centred);
             let mut session = Session::new(sim);
             if self.settings.record.is_some() && !matches!(self.mode, WindowMode::Bench(_)) {
                 let recorder = Recorder::new();
@@ -871,41 +872,35 @@ impl App {
     }
 
     fn effect(&mut self, event_loop: &ActiveEventLoop, e: Effect) {
-        // Every way into or out of a level, and the in-game menu, sets the
-        // pauses first, so a level left from the menu never leaves the
-        // sounds paused for the next one.
-        self.pauses.effect(&e);
-        match e {
+        // The level starts or ends first; then every effect goes through
+        // the pauses and the sounds (see [`Pauses::follow`]), so a level
+        // left from the menu never leaves the sounds paused for the next
+        // one, nor its loops playing over the menus.
+        match &e {
             Effect::StartLevel { level, start } => {
-                if let Err(err) = self.start_level(&level, start) {
+                if let Err(err) = self.start_level(level, start.clone()) {
                     eprintln!("rusty-claw: {err:#}");
                     if let Some(f) = self.flow.as_mut() {
                         f.level_failed(&format!("{err:#}"));
                     }
                 }
-                self.update_pause();
             }
-            Effect::EndLevel => {
-                self.end_level();
-                self.update_pause();
-            }
-            Effect::PauseGame => self.update_pause(),
-            Effect::ResumeGame => {
-                self.update_pause();
-                if let Some(audio) = &mut self.audio {
-                    audio.restart_music();
-                }
-            }
-            Effect::Sound(cue) => {
-                if let Some(audio) = &mut self.audio {
-                    audio.apply(&[cue], &ViewInfo::default());
-                }
-            }
-            Effect::MenuChord => {
-                if let Some(audio) = &mut self.audio {
-                    audio.play_menu_music();
-                }
-            }
+            Effect::EndLevel => self.end_level(),
+            _ => {}
+        }
+        self.pauses.background = self.in_background();
+        let session = self.level.as_mut().map(|l| &mut l.session);
+        let change =
+            self.pauses
+                .follow(&e, session, self.audio.as_mut(), self.last_frame.elapsed());
+        self.pause_changed(change);
+        match e {
+            Effect::StartLevel { .. }
+            | Effect::EndLevel
+            | Effect::PauseGame
+            | Effect::ResumeGame
+            | Effect::Sound(_)
+            | Effect::MenuChord => {}
             Effect::ScreenSounds => {
                 if let (Some(audio), Some(s)) = (&mut self.audio, &self.screens) {
                     audio.load_level(&s.assets.store, &s.assets.registries);
@@ -1118,11 +1113,21 @@ impl App {
     /// Brings the level in play and the sounds in line with the pauses
     /// (see [`Pauses`]).
     fn update_pause(&mut self) {
-        self.pauses.background = !self.focused && self.bench.is_none();
+        self.pauses.background = self.in_background();
         let session = self.level.as_mut().map(|l| &mut l.session);
         let change = self
             .pauses
             .apply(session, self.audio.as_mut(), self.last_frame.elapsed());
+        self.pause_changed(change);
+    }
+
+    /// True when the window is in the background (a benchmark never is).
+    fn in_background(&self) -> bool {
+        !self.focused && self.bench.is_none()
+    }
+
+    /// Restarts the frame clock when the level in play runs again.
+    fn pause_changed(&mut self, change: Change) {
         if change == Change::Resumed {
             self.clock.reset();
             self.pacer.reset();
