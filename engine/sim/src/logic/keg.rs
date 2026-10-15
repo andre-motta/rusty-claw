@@ -7,19 +7,23 @@
 //! [`lifted`]: it follows his lifting frames, then rides over his head on
 //! the side he faces. [`thrown`] sends it flying under gravity and
 //! [`dropped`] lets it fall; either way it explodes when it lands, and a
-//! thrown keg also explodes on the first enemy it strikes.
+//! thrown keg also explodes on the first enemy it strikes that can be hit
+//! by thrown objects (it flies past the others, other kegs among them). A
+//! kill of kind [`KILL_EXPLODE`] (see [`World::kill`]) also sets it off;
+//! any other kill removes it without a blast.
 //!
 //! Exploding plays the blast sound and the keg's explosion animation; when
 //! the animation reaches its blast frame the keg requests one explosion
-//! (damage 20) centred on the blast, and it is removed when the animation
-//! ends. A keg explodes only once.
+//! (damage 20) centred on the blast and a screen shake of
+//! [`BLAST_SHAKE_MS`], and it is removed when the animation ends. A keg
+//! explodes only once.
 
 use claw_frame::SoundChannel;
 
 use super::effect::{self, EffectKind};
 use super::{ObjectData, World, sound};
 use crate::level::runtime_image_set;
-use crate::object::{Object, ObjectId, Rect, draw_flags, flags, special, types};
+use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags, special, types};
 use crate::physics::ptype;
 use crate::player::state as claw_state;
 use crate::tuning::TICK_MS;
@@ -55,6 +59,10 @@ pub const BLAST_RADIUS: i32 = 50;
 /// Centre of the explosion relative to the keg (mirrored when it faces
 /// left).
 pub const BLAST_OFFSET: (i32, i32) = (5, 15);
+/// Screen shake started by the blast, ms.
+pub const BLAST_SHAKE_MS: u32 = 500;
+/// Kind of kill (see [`World::kill`]) that makes a keg explode.
+pub const KILL_EXPLODE: i32 = 2;
 /// Event of the explosion animation's blast frame.
 pub const BLAST_EVENT: i32 = 1;
 /// Gravity on a flying keg, px/s/s.
@@ -147,6 +155,20 @@ pub fn tick(w: &mut World, id: ObjectId) {
         init(o);
         return;
     }
+    if o.state == engine_state::KILLED {
+        let kind = o.kill_kind;
+        o.state = state::READY;
+        if data_mut(o).phase == Phase::Exploding {
+            return;
+        }
+        if kind == KILL_EXPLODE {
+            explode(w, id);
+        } else {
+            o.flags |= flags::NO_COLLIDE | flags::SAFE;
+            w.destroy(id);
+        }
+        return;
+    }
     if o.state != state::READY {
         return;
     }
@@ -194,13 +216,16 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
 }
 
 /// `id` attacked `victim`: a thrown keg explodes on the first enemy it
-/// strikes.
+/// strikes that can be hit by thrown objects.
 pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
-    let _ = victim;
+    let accepts = w
+        .objects
+        .get(victim)
+        .is_some_and(|v| v.hit_type_flags & types::THROWN != 0);
     let Some(o) = w.objects.get_mut(id) else {
         return;
     };
-    if data_mut(o).phase == Phase::Thrown {
+    if accepts && data_mut(o).phase == Phase::Thrown {
         explode(w, id);
     }
 }
@@ -401,6 +426,7 @@ fn blast(w: &mut World, id: ObjectId) {
         source: Some(id),
     };
     let blast = effect::spawn(w, kind, x + dx, y + BLAST_OFFSET.1);
+    w.shake(BLAST_SHAKE_MS);
     if let Some(o) = w.objects.get_mut(id) {
         data_mut(o).blast = blast;
     }

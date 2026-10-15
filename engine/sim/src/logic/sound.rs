@@ -17,13 +17,16 @@
 //!   kind says one line at a time: a request that is not forced is refused
 //!   while a line of the same kind is still running. While a line runs an
 //!   exclamation mark is drawn over the speaker. A line never freezes
-//!   anything or blocks input.
+//!   anything or blocks input. The two helper objects that run the lines
+//!   are made on first use and recorded with the ambient manager (see
+//!   [`sound_object::find_manager`]), so the queries below do not search
+//!   the level's objects.
 
 use std::sync::Arc;
 
 use claw_frame::{AudioCue, SoundChannel, SoundCue};
 
-use super::sound_object::{SoundData, SoundPart};
+use super::sound_object::{self, SoundData, SoundPart};
 use super::{GameLogic, ObjectData, World};
 use crate::level::runtime_image_set;
 use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, engine_state, flags};
@@ -229,13 +232,14 @@ fn dialog_mut<'a>(w: &'a mut World, id: ObjectId) -> Option<&'a mut DialogData> 
     }
 }
 
+/// The dialog helper of `kind`, once made: the one the ambient manager
+/// recorded, as every helper is recorded when it is made.
 fn find_dialog_helper(w: &World, kind: Speaker) -> Option<ObjectId> {
-    w.objects.all().find_map(|(id, o)| match &o.data {
-        ObjectData::Sound(SoundData {
-            part: SoundPart::Dialog(d),
-        }) if d.speaker_kind == kind => Some(id),
-        _ => None,
-    })
+    let m = sound_object::find_manager(w.objects, w.claw_id)?;
+    let id = sound_object::manager_at(w.objects, m)?.dialog_helper(kind)?;
+    dialog(w, id)
+        .is_some_and(|d| d.speaker_kind == kind)
+        .then_some(id)
 }
 
 /// The dialog helper of `kind`, created on first use: an always active,
@@ -267,7 +271,9 @@ fn dialog_helper(w: &mut World, kind: Speaker) -> ObjectId {
             ..DialogData::default()
         }),
     });
-    w.spawn(o)
+    let id = w.spawn(o);
+    sound_object::register_dialog_helper(w, kind, id);
+    id
 }
 
 /// One logic call of a dialog helper: while a line runs, follow the
