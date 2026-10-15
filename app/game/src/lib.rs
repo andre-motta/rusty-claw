@@ -12,16 +12,18 @@
 //!   recording the input of a game;
 //! - [`saves`]: saved games;
 //! - [`audio`]: playing the game's sounds;
+//! - [`flow`]: the game flow: title, menus, play, the end-of-level tally
+//!   and the end of a game;
 //! - [`window`]: the game window;
 //! - [`bench`]: benchmarks in a window or offscreen;
 //! - [`replay_headless`]: replaying an input script without a window.
 //!
-//! Claw stands, walks, runs, jumps, falls, lands, crouches, looks up and
-//! climbs, with tile collision and a following camera, and fights with his
-//! sword, fists and feet. Officers fight back, and the game plays its
-//! sounds. Keys can be rebound, gamepads work, options are written back to
-//! the config file and games can be saved. Other enemies, shots, pickups,
-//! music, menus and the status bar come later.
+//! The game starts at the title and its main menu (new game, load game,
+//! options, quit) built from the game's own menu files and art; the
+//! in-game menu pauses play, finishing a level shows the treasure tally,
+//! save points save the game, and options are written back to the config
+//! file. Claw stands, walks, runs, jumps, climbs and fights, with sound,
+//! music, the status bar, gamepads and rebindable keys.
 
 use claw_frame::SimulatedRefresh;
 use claw_sim::InputScript;
@@ -29,6 +31,7 @@ use claw_sim::trace::TraceRow;
 
 pub mod audio;
 pub mod bench;
+pub mod flow;
 pub mod input;
 pub mod keymap;
 pub mod load;
