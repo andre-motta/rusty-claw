@@ -82,11 +82,24 @@ const OFFSETS: [i32; 6] = [-60, 60, -45, 45, -75, 75];
 /// and facing it, and lets him and the camera settle; returns the officer.
 fn place(sim: &mut Sim, level: &SimLevel) -> ObjectId {
     let (x, y) = first_officer_record(level);
+    place_near(sim, x, y, |trial| officer_near(trial, x, y))
+}
+
+/// Puts Claw beside the live officer `id` again, as [`place`] does.
+fn place_beside(sim: &mut Sim, id: ObjectId) {
+    let o = sim.objects().get(id).expect("officer");
+    let (x, y) = (o.x, o.y);
+    place_near(sim, x, y, |trial| trial.objects().get(id).map(|_| id));
+}
+
+/// Tries the [`OFFSETS`] from (x, y) until Claw stands, facing the officer
+/// `find` names, within its range; returns the officer.
+fn place_near(sim: &mut Sim, x: i32, y: i32, find: impl Fn(&Sim) -> Option<ObjectId>) -> ObjectId {
     for dx in OFFSETS {
         let mut trial = sim.clone();
         trial.teleport_player(x + dx, y - 40);
         settle(&mut trial);
-        let Some(id) = officer_near(&trial, x, y) else {
+        let Some(id) = find(&trial) else {
             continue;
         };
         let (c, o) = (trial.player().unwrap(), trial.objects().get(id).unwrap());
@@ -115,9 +128,10 @@ fn new_sim(level: &Arc<SimLevel>) -> Sim {
     Sim::new(level.clone(), SimConfig::default())
 }
 
-/// Taps Attack every 450 ms, `n` times, then waits.
+/// Taps Attack every 450 ms, `n` times, then waits. The first tap comes
+/// at once, before the officer's next strike can knock Claw away.
 fn attack_script(n: usize) -> InputScript {
-    let mut held = vec![0u32; 10];
+    let mut held = Vec::new();
     for _ in 0..n {
         held.extend([ATTACK; 2]);
         held.extend([0u32; 23]);
@@ -162,6 +176,21 @@ fn claw_fights_the_first_officer() {
         "the strike costs its damage"
     );
     assert_eq!(sim.stats().invulnerable_ms, 850);
+    // The blow knocks Claw back out of reach: once the hit reaction is
+    // over he is put beside the officer again.
+    for _ in 0..120 {
+        if sim.player().unwrap().state != state::HIT {
+            break;
+        }
+        sim.step(TickInput::default());
+        collect(&sim, &mut sounds);
+    }
+    assert_ne!(
+        sim.player().unwrap().state,
+        state::HIT,
+        "the hit reaction ended"
+    );
+    place_beside(&mut sim, id);
     // Scripted attack presses kill it.
     let mut killed = false;
     let mut blows = Vec::new();

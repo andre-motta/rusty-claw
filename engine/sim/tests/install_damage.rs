@@ -323,13 +323,20 @@ fn install_the_first_officer_hurts_claw_until_he_dies_and_respawns() {
     let at = nearest(&l, "Officer");
     let mut sim = Sim::new(l, SimConfig::default());
     let officer = object_at(&sim, "Officer", at);
-    // Claw stands still in front of the officer and lets him strike.
+    // Claw stands still in front of the officer and lets him strike. Each
+    // blow knocks him back out of reach, so once the hit reaction is over
+    // he is put back in front of the officer.
     sim.teleport_player(at.0 - 60, at.1);
     let mut health = sim.stats().health;
     let mut hits = Vec::new();
     let mut blow = 0;
     let mut died = None;
     for i in 0..900 {
+        let (c, o) = (sim.player().unwrap(), sim.objects().get(officer).unwrap());
+        if !hits.is_empty() && c.state == state::STAND && o.x - c.x > 60 {
+            let (x, y) = (o.x - 60, c.y);
+            sim.teleport_player(x, y);
+        }
         let snap = sim.step(TickInput::default());
         let now = sim.stats().health;
         if now != health {
