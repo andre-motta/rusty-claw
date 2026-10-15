@@ -19,15 +19,21 @@
 //! Items released by crates and enemies are bouncing goodies
 //! ([`spawn_drop`], [`drop_loot`]): they hop out, can be taken 125 ms after
 //! they appear, bounce up to four times at half speed and then become the
-//! ordinary pickup of their code where they are.
+//! ordinary pickup of their code where they are. An item whose picture the
+//! level does not have is not dropped.
+//!
+//! The map piece that ends a level shows `GAME_MAPPIECE` on odd levels
+//! other than 13 and `LEVEL_GEM` on the others (see [`map_piece_set`]).
+//!
+//! A pickup touches Claw with the box of its picture's current frame, as
+//! the level reports it (padded for treasure, special and curse pickups);
+//! when the level does not know the frame it uses a 32 px square instead.
 //!
 //! [`census`] counts the treasure a level holds, by kind, for the end of
 //! level tally.
 //!
-//! Two things are simplified until the level model carries image sizes and
-//! frame counts: every pickup touches with a 32 px box (padded like the
-//! original for treasure, special and curse pickups), and pickups and
-//! glitter show a still image instead of cycling through their set.
+//! Pickups and glitter show a still image instead of cycling through their
+//! set.
 
 use claw_frame::SoundChannel;
 
@@ -444,9 +450,44 @@ pub fn powerup(code: i32) -> Option<&'static Powerup> {
     usize::try_from(code).ok().and_then(|c| POWERUPS.get(c))
 }
 
-/// The code a picture belongs to: the first row showing it. The map piece
-/// is found under either of its pictures (odd levels use one, even levels
-/// the other; the level number is not known here, so both are accepted).
+/// The picture of the map piece on level `level`: `GAME_MAPPIECE` on odd
+/// levels other than 13, `LEVEL_GEM` on the others.
+pub fn map_piece_set(level: u32) -> &'static str {
+    if level % 2 == 1 && level != 13 {
+        "GAME_MAPPIECE"
+    } else {
+        "LEVEL_GEM"
+    }
+}
+
+/// The picture of powerup `code` on level `level` (see [`map_piece_set`]).
+pub fn image_set_in(code: i32, level: u32) -> Option<&'static str> {
+    if code == MAP_PIECE_CODE {
+        return Some(map_piece_set(level));
+    }
+    powerup(code).map(|e| e.image_set)
+}
+
+/// The code a picture belongs to on level `level`: the first row showing
+/// it, with the map piece's row showing that level's picture only. The
+/// other map piece picture belongs to no row there.
+pub fn code_in(image_set: &str, level: u32) -> Option<i32> {
+    if image_set.is_empty() {
+        return None;
+    }
+    if image_set == map_piece_set(level) {
+        return Some(MAP_PIECE_CODE);
+    }
+    POWERUPS
+        .iter()
+        .enumerate()
+        .find(|&(c, e)| c as i32 != MAP_PIECE_CODE && e.image_set == image_set)
+        .map(|(c, _)| c as i32)
+}
+
+/// The code a picture belongs to on any level: the first row showing it,
+/// with the map piece found under either of its pictures (see
+/// [`code_in`] for one level).
 pub fn code_of(image_set: &str) -> Option<i32> {
     if image_set.is_empty() {
         return None;
@@ -593,8 +634,8 @@ pub mod state {
     pub const GOODIE_DYING: i32 = 102;
 }
 
-/// Box of a pickup's picture, relative to its position: the touch box
-/// before padding. Every pickup uses this 32 px square.
+/// Box of a pickup's picture, relative to its position, when the level does
+/// not know its frame: the touch box before padding.
 pub const FRAME_BOX: Rect = Rect::new(-16, -16, 15, 15);
 /// Touch box of treasure, special and curse pickups: the picture's box
 /// grown by 6 px left and right, 10 px up and 2 px down.
@@ -612,6 +653,31 @@ pub const GOODIE_BOX: Rect = Rect::new(
     FRAME_BOX.right,
     FRAME_BOX.bottom,
 );
+
+/// A treasure, special or curse pickup's touch box around the picture box
+/// `b`: grown by 6 px left and right, 10 px up and 2 px down.
+pub const fn padded(b: Rect) -> Rect {
+    Rect::new(b.left - 6, b.top - 10, b.right + 6, b.bottom + 2)
+}
+
+/// A collectable goodie's touch box around the picture box `b`: its top
+/// raised 10 px.
+pub const fn goodie_box(b: Rect) -> Rect {
+    Rect::new(b.left, b.top - 10, b.right, b.bottom)
+}
+
+/// Box of `o`'s current frame relative to its position, as the level
+/// reports it (frame -1 is the set's first frame); [`FRAME_BOX`] when the
+/// level does not know the frame.
+pub fn picture_box(w: &World, o: &Object) -> Rect {
+    let frame = if o.frame < 0 {
+        w.image_frames(&o.image_set)
+            .map_or(o.frame, |(first, _)| first)
+    } else {
+        o.frame
+    };
+    w.frame_box(&o.image_set, frame).unwrap_or(FRAME_BOX)
+}
 
 /// Pickups start a glitter next to themselves (the high-detail setting of
 /// the original, on by default here).
@@ -697,6 +763,8 @@ fn pickup_tick(w: &mut World, id: ObjectId) {
 
 /// The first call of a pickup: picture, kind, amount, touch box, glitter.
 fn init_pickup(w: &mut World, id: ObjectId) {
+    let level = w.level_number();
+    let picture = picture_box(w, w.objects.get(id).expect("caller checked"));
     let o = w.objects.get_mut(id).expect("caller checked");
     let logic = o.logic.clone();
     if &*logic == CURSE {
@@ -723,9 +791,13 @@ fn init_pickup(w: &mut World, id: ObjectId) {
         &*logic,
         TREASURE | "GlitterlessPowerup" | "GoldPowerup" | "CoinPowerup" | SPECIAL
     );
-    o.attack_rect = if padded { PADDED_BOX } else { FRAME_BOX };
+    o.attack_rect = if padded {
+        self::padded(picture)
+    } else {
+        picture
+    };
     let smarts = o.record.as_ref().map_or(0, |r| r[17]);
-    let code = code_of(&o.image_set);
+    let code = code_in(&o.image_set, level);
     let glitter = GLITTER_ON
         && match &*logic {
             "GlitterlessPowerup" | "GoldPowerup" | "CoinPowerup" => false,
@@ -918,15 +990,26 @@ fn points_icon_tick(w: &mut World, id: ObjectId) {
 
 // ------------------------------------------------------------ goodies
 
+/// True when the level has the image set `set`. A level that reports no
+/// image sets at all (a level made in code) is taken to have every set.
+pub fn level_has_set(level: &SimLevel, set: &str) -> bool {
+    level.images.is_empty() || level.images.contains_key(set)
+}
+
 /// Drops the pickup `powerup_code` at (x, y), as a broken crate does, and
 /// returns its id: a bouncing goodie that hops up at 300 px/s. A negative
-/// code drops a coin; a code past the table drops nothing. The goodie's
-/// depth is [`GOODIE_Z`]; callers may change it before the pass ends.
+/// code drops a coin; a code past the table, or one whose picture the
+/// level does not have (see [`level_has_set`]), drops nothing. The
+/// goodie's depth is [`GOODIE_Z`]; callers may change it before the pass
+/// ends.
 pub fn spawn_drop(w: &mut World, x: i32, y: i32, powerup_code: i32) -> Option<ObjectId> {
     let code = powerup_code.max(0);
-    let e = powerup(code)?;
+    let set = image_set_in(code, w.level_number())?;
+    if !level_has_set(w.level, set) {
+        return None;
+    }
     let mut o = new_object(BOUNCING_GOODIE, x, y, GOODIE_Z);
-    o.image_set = runtime_image_set(e.image_set);
+    o.image_set = runtime_image_set(set);
     o.frame = -1;
     // A goodie is not a pickup yet: it cannot touch anything until it can
     // be taken, and it stays active wherever it flies.
@@ -987,14 +1070,14 @@ pub fn drop_loot(w: &mut World, x: i32, y: i32, slots: [i32; 9]) -> Vec<ObjectId
 }
 
 /// Gives a goodie its pickup values from its picture and lets it touch
-/// Claw.
-fn make_collectable(o: &mut Object) {
-    let code = code_of(&o.image_set);
+/// Claw with `picture`, its picture's box.
+fn make_collectable(o: &mut Object, level: u32, picture: Rect) {
+    let code = code_in(&o.image_set, level);
     if o.type_flags == 1 {
         o.type_flags = code.and_then(powerup).map_or(1, |e| e.type_flags);
     }
     o.flags &= !flags::NO_COLLIDE;
-    o.attack_rect = GOODIE_BOX;
+    o.attack_rect = goodie_box(picture);
     let d = data_mut(o);
     match code.and_then(|c| powerup(c).map(|e| (c, e))) {
         Some((c, e)) => {
@@ -1025,6 +1108,8 @@ fn settle(w: &mut World, id: ObjectId) {
 }
 
 fn goodie_tick(w: &mut World, id: ObjectId) {
+    let level = w.level_number();
+    let picture = picture_box(w, w.objects.get(id).expect("caller checked"));
     let o = w.objects.get_mut(id).expect("caller checked");
     let st = o.state;
     if st == engine_state::DESTROYING {
@@ -1077,7 +1162,7 @@ fn goodie_tick(w: &mut World, id: ObjectId) {
     let taken = o.special_flags & special::FLYING_TO_HUD != 0;
     if st == state::GOODIE_FALLING {
         if g.age_ms >= GOODIE_COLLECT_MS && o.type_flags == 1 {
-            make_collectable(o);
+            make_collectable(o, level, picture);
         }
         if taken {
             data_mut(o).goodie = Some(g);
@@ -1085,7 +1170,7 @@ fn goodie_tick(w: &mut World, id: ObjectId) {
             return;
         }
         if landed {
-            make_collectable(o);
+            make_collectable(o, level, picture);
             bounce(o, &mut g);
             data_mut(o).goodie = Some(g);
             sound::play_from(w, id, "GAME_PUBOUNCE1", SoundChannel::Effect);
@@ -1232,6 +1317,31 @@ mod tests {
     fn padded_boxes() {
         assert_eq!(PADDED_BOX, Rect::new(-22, -26, 21, 17));
         assert_eq!(GOODIE_BOX, Rect::new(-16, -26, 15, 15));
+        assert_eq!(padded(FRAME_BOX), PADDED_BOX);
+        assert_eq!(goodie_box(FRAME_BOX), GOODIE_BOX);
+    }
+
+    #[test]
+    fn the_map_piece_picture_depends_on_the_level() {
+        for (level, set) in [
+            (1, "GAME_MAPPIECE"),
+            (2, "LEVEL_GEM"),
+            (11, "GAME_MAPPIECE"),
+            (13, "LEVEL_GEM"),
+            (14, "LEVEL_GEM"),
+        ] {
+            assert_eq!(map_piece_set(level), set, "level {level}");
+            assert_eq!(image_set_in(MAP_PIECE_CODE, level), Some(set));
+            assert_eq!(code_in(set, level), Some(MAP_PIECE_CODE));
+        }
+        // The other picture is no map piece there.
+        assert_eq!(code_in("LEVEL_GEM", 1), None);
+        assert_eq!(code_in("GAME_MAPPIECE", 2), None);
+        assert_eq!(code_in("GAME_TREASURE_COINS", 2), Some(0));
+        assert_eq!(code_in("LEVEL_HEALTH", 1), Some(24));
+        assert_eq!(code_in("", 1), None);
+        assert_eq!(image_set_in(0, 2), Some("GAME_TREASURE_COINS"));
+        assert_eq!(image_set_in(62, 1), None);
     }
 
     #[test]

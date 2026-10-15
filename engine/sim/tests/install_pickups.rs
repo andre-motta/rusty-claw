@@ -424,3 +424,69 @@ fn install_level1_crate_and_keg_traces_are_identical_at_60_144_and_240_hz() {
         assert!(trace_at_rate(&l, &s, hz) == direct, "{hz} Hz");
     }
 }
+
+#[test]
+fn install_level1_pickups_and_crates_touch_with_their_pictures() {
+    let Some(store) = store() else { return };
+    let l = level1(&store);
+    let mut sim = Sim::new(l.clone(), SimConfig::default());
+    init_all(&mut sim);
+    let (mut pickups, mut crates_seen) = (0, 0);
+    for (_, o) in sim.objects().all() {
+        if !matches!(
+            o.kind,
+            LogicKind::Game(GameLogic::Crate | GameLogic::Pickup)
+        ) || o.flags & flags::DESTROY != 0
+        {
+            continue;
+        }
+        let first = l.image_frames(&o.image_set).map(|(f, _)| f);
+        let frame = if o.frame < 0 { first.unwrap() } else { o.frame };
+        let picture = l.frame_box(&o.image_set, frame);
+        match &*o.logic {
+            "FrontCrate" | "BehindCrate" => {
+                assert_eq!(Some(o.frame), first, "{}: the set's first image", o.logic);
+                assert_eq!(Some(o.hit_rect), picture, "{} {}", o.logic, o.image_set);
+                crates_seen += 1;
+            }
+            "TreasurePowerup" | "GlitterlessPowerup" | "SpecialPowerup" => {
+                let b = picture.unwrap_or_else(|| panic!("{} has a box", o.image_set));
+                assert_eq!(o.attack_rect, pickup::padded(b), "{}", o.image_set);
+                pickups += 1;
+            }
+            "HealthPowerup" | "AmmoPowerup" | "MagicPowerup" => {
+                let b = picture.unwrap_or_else(|| panic!("{} has a box", o.image_set));
+                assert_eq!(o.attack_rect, b, "{}", o.image_set);
+                pickups += 1;
+            }
+            _ => {}
+        }
+    }
+    eprintln!("{pickups} pickups and {crates_seen} crates checked");
+    assert_eq!(crates_seen, 25 + 9);
+    assert!(pickups > 400, "{pickups}");
+    // Not every picture is the old 32 px square.
+    let sizes: std::collections::BTreeSet<(i32, i32)> = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| o.kind == LogicKind::Game(GameLogic::Pickup))
+        .map(|(_, o)| {
+            (
+                o.attack_rect.right - o.attack_rect.left,
+                o.attack_rect.bottom - o.attack_rect.top,
+            )
+        })
+        .collect();
+    assert!(sizes.len() > 3, "{sizes:?}");
+    // The first level shows its map piece as GAME_MAPPIECE: the record is
+    // the level's end.
+    assert_eq!(l.number, 1);
+    assert_eq!(pickup::map_piece_set(l.number), "GAME_MAPPIECE");
+    let pieces: Vec<(i32, i32)> = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| o.image_set == "GAME_MAPPIECE")
+        .filter_map(|(_, o)| pickup::data_of(o).map(|d| (d.kind, d.points)))
+        .collect();
+    assert_eq!(pieces, vec![(pickup::MAP_PIECE_CODE, pickup::END_OF_LEVEL)]);
+}

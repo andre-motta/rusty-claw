@@ -262,8 +262,49 @@ impl ImageSource for MemoryImages {
     }
 }
 
+/// Claw's image set.
+pub const CLAW_SET: &str = "CLAW";
+
+/// Extra vertical draw offsets of Claw's climb-over frames, 383 to 389.
+/// The game adds these when it sets Claw up, so the pose follows his feet
+/// while he climbs over a ladder top; the files alone draw it up to 45 px
+/// too high.
+pub const CLIMB_OVER_FIX: [(i32, i32); 7] = [
+    (383, 4),
+    (384, 8),
+    (385, 12),
+    (386, 16),
+    (387, 40),
+    (388, 54),
+    (389, 58),
+];
+
+/// The vertical draw offset added to frame `number` of the set `key`.
+pub fn draw_offset_fix(key: &str, number: i32) -> i32 {
+    if key != CLAW_SET {
+        return 0;
+    }
+    CLIMB_OVER_FIX
+        .iter()
+        .find(|&&(n, _)| n == number)
+        .map_or(0, |&(_, dy)| dy)
+}
+
 /// Frames of one loaded set: frame number to image id.
 pub type FrameMap = BTreeMap<i32, u32>;
+
+/// Size and hotspot offsets of one loaded frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FrameInfo {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Horizontal hotspot offset.
+    pub offset_x: i32,
+    /// Vertical hotspot offset.
+    pub offset_y: i32,
+}
 
 /// Everything the renderer draws for one level.
 pub struct LevelGraphics {
@@ -362,6 +403,14 @@ impl LevelGraphics {
         )
     }
 
+    /// Graphics with no level, for standalone screens: sprite sets come from
+    /// `source`, backgrounds are added with [`LevelGraphics::add_image`], and
+    /// the tables are blank (the table draw modes draw index 0).
+    pub fn for_screens(palette: Palette, source: Box<dyn ImageSource>) -> LevelGraphics {
+        let tables = LevelTables::blank(&palette);
+        LevelGraphics::new(Vec::new(), true, palette, tables, source, None)
+    }
+
     fn load_set(&mut self, key: &str) -> Option<FrameMap> {
         let frames = self.source.image_set(key)?;
         let mut map = FrameMap::new();
@@ -372,6 +421,7 @@ impl LevelGraphics {
             let id = self
                 .images
                 .add(&f.frame, f.path.as_deref(), self.pack.as_mut());
+            self.images.meta[id as usize].offset_y += draw_offset_fix(key, f.number);
             map.insert(f.number, id);
         }
         Some(map)
@@ -479,6 +529,42 @@ impl LevelGraphics {
     /// Placement data of image `id`.
     pub fn meta(&self, id: u32) -> &ImageMeta {
         &self.images.meta[id as usize]
+    }
+
+    /// Size and hotspot offsets of `frame` of sprite set `key` (frame -1 is
+    /// the set's first frame), loading the set like [`LevelGraphics::sprite`]
+    /// when it was not preloaded.
+    pub fn frame_info(&mut self, key: &str, frame: i32) -> Option<FrameInfo> {
+        let id = self.sprite(key, frame)?;
+        let r = self.images.record(id);
+        let m = self.meta(id);
+        Some(FrameInfo {
+            width: r.width,
+            height: r.height,
+            offset_x: m.offset_x,
+            offset_y: m.offset_y,
+        })
+    }
+
+    /// The frame numbers of sprite set `key` in ascending order (empty when
+    /// there is no such set), loading the set like [`LevelGraphics::sprite`]
+    /// when it was not preloaded.
+    pub fn frame_numbers(&mut self, key: &str) -> Vec<i32> {
+        if self.sprite(key, -1).is_none() {
+            return Vec::new();
+        }
+        self.sprites
+            .get(key)
+            .and_then(Option::as_ref)
+            .map(|m| m.keys().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Adds an image that belongs to no set, such as a screen's background,
+    /// and returns its id. It is drawn as is: every pixel opaque, without a
+    /// replacement image.
+    pub fn add_image(&mut self, frame: &Frame) -> u32 {
+        self.images.add(frame, None, None)
     }
 
     /// Warnings from the image pack, if one is in use.
@@ -677,5 +763,28 @@ mod tests {
         );
         assert_eq!(g.plane_slots[0].len(), 6);
         assert_eq!((g.planes[1].w_tiles, g.plane_slots[1].len()), (0, 0));
+    }
+    #[test]
+    fn claw_climb_over_frames_are_drawn_lower() {
+        let mut src = MemoryImages::default();
+        for n in [1, 383, 386, 389] {
+            src.insert(CLAW_SET, n, frame(2, 2, 0, |_, _| 1));
+        }
+        src.insert("OTHER", 389, frame(2, 2, 0, |_, _| 1));
+        let pal = Palette::default();
+        let mut g = LevelGraphics::new(
+            Vec::new(),
+            true,
+            pal.clone(),
+            LevelTables::blank(&pal),
+            Box::new(src),
+            None,
+        );
+        let dy = |g: &mut LevelGraphics, key: &str, n: i32| g.frame_info(key, n).unwrap().offset_y;
+        assert_eq!(dy(&mut g, CLAW_SET, 1), 0);
+        assert_eq!(dy(&mut g, CLAW_SET, 383), 4);
+        assert_eq!(dy(&mut g, CLAW_SET, 386), 16);
+        assert_eq!(dy(&mut g, CLAW_SET, 389), 58);
+        assert_eq!(dy(&mut g, "OTHER", 389), 0, "other sets keep their offsets");
     }
 }

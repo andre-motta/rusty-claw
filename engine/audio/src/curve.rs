@@ -12,7 +12,10 @@
 //! - Pitch: a percent change of the sample's own rate,
 //!   `f = base + trunc(base * pitch / 100)`, clamped to 101..=99999 Hz with an
 //!   unsigned comparison, so a negative result lands on 99999.
-//! - Music: a 0..=100 volume maps linearly to the 0..=127 MIDI master volume.
+//! - Music: a 0..=100 volume maps linearly to the 0..=127 MIDI master volume
+//!   `m`, which scales every channel volume of the music by `m / 127`; the
+//!   synthesizer squares channel volume into gain, so the music's gain is
+//!   `(m / 127)^2`.
 
 /// The silent level, in hundredths of a decibel.
 pub const SILENCE: i32 = -10000;
@@ -100,9 +103,10 @@ pub fn music_master(v: u8) -> u8 {
 }
 
 /// Linear gain applied to the music source at a 0..=100 music volume: the
-/// MIDI master volume over 127.
+/// square of the MIDI master volume over 127.
 pub fn music_gain(v: u8) -> f32 {
-    f32::from(music_master(v)) / 127.0
+    let m = f32::from(music_master(v)) / 127.0;
+    m * m
 }
 
 /// A request volume of 0..=100 taken relative to a configured channel volume
@@ -199,6 +203,11 @@ mod tests {
         assert_eq!(music_master(250), 127);
         assert_eq!(music_gain(100), 1.0);
         assert_eq!(music_gain(0), 0.0);
+        // The default 50 is about -12.2 dB.
+        let db = 20.0 * music_gain(50).log10();
+        assert!((db + 12.2).abs() < 0.05, "{db}");
+        assert_eq!(music_master(1), 1);
+        assert_eq!(music_master(99), 125);
     }
 
     #[test]

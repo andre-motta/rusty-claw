@@ -208,3 +208,37 @@ fn install_level1_walk_emits_only_registered_sounds() {
         voices.len()
     );
 }
+
+#[test]
+fn install_level1_finds_the_manager_and_dialog_helpers_without_a_search() {
+    let Some(store) = store() else { return };
+    let (_, l) = level1(&store);
+    let mut sim = Sim::new(l.clone(), SimConfig::default());
+    idle(&mut sim, 2);
+    let claw = sim.with_world(|w| w.claw_id.unwrap());
+    let m = sound_object::find_manager(sim.objects(), Some(claw)).expect("a manager");
+    assert!(
+        m > claw && m - claw <= sound_object::MANAGER_PROBE,
+        "the manager ({m}) is among the first objects made after Claw ({claw})"
+    );
+    // A line of Claw's and one of an enemy's are run by helpers the manager
+    // records.
+    let key = records(&l, &DIALOG)
+        .map(|o| o.anim.clone())
+        .find(|k| l.sounds.contains_key(k))
+        .expect("a dialog line the level registers");
+    assert!(sim.with_world(|w| sound::claw_say(w, &key, false)));
+    assert!(sim.with_world(|w| sound::enemy_say(w, claw, &key, false)));
+    let mgr = sound_object::manager_at(sim.objects(), m).unwrap();
+    let (c, e) = (mgr.claw_dialog.unwrap(), mgr.enemy_dialog.unwrap());
+    assert_eq!(
+        &*sim.objects().get(c).unwrap().logic,
+        sound::CLAW_DIALOG_LOGIC
+    );
+    assert_eq!(
+        &*sim.objects().get(e).unwrap().logic,
+        sound::ENEMY_DIALOG_LOGIC
+    );
+    assert!(sim.with_world(|w| sound::claw_is_speaking(w)));
+    assert!(sim.with_world(|w| sound::enemy_is_speaking(w, claw)));
+}

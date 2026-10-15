@@ -17,11 +17,13 @@
 
 use bytemuck::{Pod, Zeroable};
 use claw_assets::Palette;
-use claw_frame::{AspectPolicy, DrawMode, InterpolatedFrame, PaletteFade, ScaleMode, ViewConfig};
+use claw_frame::{
+    AspectPolicy, DrawMode, InterpolatedFrame, PaletteFade, ScaleMode, ScreenTransition, ViewConfig,
+};
 
 use crate::effects::{Effect, Table};
 use crate::images::{IMAGE_GHOST, IMAGE_RLE, LevelGraphics};
-use crate::palette;
+use crate::screen::{self, Mask, ScreenSprite};
 use crate::view::{PLANE_X_WRAP, PLANE_Y_WRAP, Rect, WorldView};
 
 /// Default largest composition target width or height.
@@ -221,6 +223,11 @@ pub struct FrameInput<'a> {
     pub time_ms: f64,
     /// Palette fade in progress.
     pub fade: Option<PaletteFade>,
+    /// Screen-layer sprites (the status bar and messages), drawn after the
+    /// world in this order; see [`crate::screen`].
+    pub screen: Vec<ScreenSprite>,
+    /// Screen transition in progress; see [`crate::screen`].
+    pub transition: Option<ScreenTransition>,
 }
 
 impl<'a> FrameInput<'a> {
@@ -249,6 +256,8 @@ impl<'a> FrameInput<'a> {
                 .collect(),
             time_ms: frame.time_ms,
             fade: frame.palette_fade,
+            screen: Vec::new(),
+            transition: None,
         }
     }
 }
@@ -268,6 +277,8 @@ pub struct Scene {
     pub palette: Palette,
     /// Brightness of this frame for replacement images, 0 to 1.
     pub brightness: f32,
+    /// Transition mask applied after every item.
+    pub mask: Option<Mask>,
 }
 
 /// The visible rectangle of every plane for a camera, in fractional plane
@@ -534,14 +545,44 @@ impl SceneBuilder {
             sprite_z.push(s.z);
         }
 
-        let items = order_items(graphics, &sprite_z, main);
+        let mut items = order_items(graphics, &sprite_z, main);
+
+        // The screen layer, after the whole world.
+        for s in &input.screen {
+            if let Some(params) = screen::sprite_params(graphics, s, self.comp.presentation, k) {
+                let (x0, y0, x1, y1) = params.quad();
+                if x1 <= 0 || y1 <= 0 || x0 >= tw || y0 >= th {
+                    continue;
+                }
+                items.push(Item::Sprite(sprites.len() as u32));
+                sprites.push(params);
+            }
+        }
+
+        let effect = input
+            .transition
+            .as_ref()
+            .map(|t| {
+                // The centre in the presentation: level pixels relative to
+                // the main plane's view.
+                let at = (t.center.x - main_left, t.center.y - main_top);
+                screen::transition_effect(t, input.time_ms, at, self.comp.presentation, k)
+            })
+            .unwrap_or_default();
+        let (palette, brightness) = screen::frame_palette(
+            &graphics.palette,
+            input.fade.as_ref(),
+            &effect,
+            input.time_ms,
+        );
         Scene {
             comp: self.comp,
             planes,
             sprites,
             items,
-            palette: palette::faded(&graphics.palette, input.fade.as_ref(), input.time_ms),
-            brightness: palette::brightness(input.fade.as_ref(), input.time_ms),
+            palette,
+            brightness,
+            mask: effect.mask,
         }
     }
 }
