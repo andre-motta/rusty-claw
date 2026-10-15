@@ -265,6 +265,19 @@ impl ImageSource for MemoryImages {
 /// Frames of one loaded set: frame number to image id.
 pub type FrameMap = BTreeMap<i32, u32>;
 
+/// Size and hotspot offsets of one loaded frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FrameInfo {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Horizontal hotspot offset.
+    pub offset_x: i32,
+    /// Vertical hotspot offset.
+    pub offset_y: i32,
+}
+
 /// Everything the renderer draws for one level.
 pub struct LevelGraphics {
     /// Planes in level order.
@@ -360,6 +373,14 @@ impl LevelGraphics {
             Box::new(StoreImages::new(store.clone(), level.registries.clone())),
             pack,
         )
+    }
+
+    /// Graphics with no level, for standalone screens: sprite sets come from
+    /// `source`, backgrounds are added with [`LevelGraphics::add_image`], and
+    /// the tables are blank (the table draw modes draw index 0).
+    pub fn for_screens(palette: Palette, source: Box<dyn ImageSource>) -> LevelGraphics {
+        let tables = LevelTables::blank(&palette);
+        LevelGraphics::new(Vec::new(), true, palette, tables, source, None)
     }
 
     fn load_set(&mut self, key: &str) -> Option<FrameMap> {
@@ -479,6 +500,42 @@ impl LevelGraphics {
     /// Placement data of image `id`.
     pub fn meta(&self, id: u32) -> &ImageMeta {
         &self.images.meta[id as usize]
+    }
+
+    /// Size and hotspot offsets of `frame` of sprite set `key` (frame -1 is
+    /// the set's first frame), loading the set like [`LevelGraphics::sprite`]
+    /// when it was not preloaded.
+    pub fn frame_info(&mut self, key: &str, frame: i32) -> Option<FrameInfo> {
+        let id = self.sprite(key, frame)?;
+        let r = self.images.record(id);
+        let m = self.meta(id);
+        Some(FrameInfo {
+            width: r.width,
+            height: r.height,
+            offset_x: m.offset_x,
+            offset_y: m.offset_y,
+        })
+    }
+
+    /// The frame numbers of sprite set `key` in ascending order (empty when
+    /// there is no such set), loading the set like [`LevelGraphics::sprite`]
+    /// when it was not preloaded.
+    pub fn frame_numbers(&mut self, key: &str) -> Vec<i32> {
+        if self.sprite(key, -1).is_none() {
+            return Vec::new();
+        }
+        self.sprites
+            .get(key)
+            .and_then(Option::as_ref)
+            .map(|m| m.keys().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Adds an image that belongs to no set, such as a screen's background,
+    /// and returns its id. It is drawn as is: every pixel opaque, without a
+    /// replacement image.
+    pub fn add_image(&mut self, frame: &Frame) -> u32 {
+        self.images.add(frame, None, None)
     }
 
     /// Warnings from the image pack, if one is in use.

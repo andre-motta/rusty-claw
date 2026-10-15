@@ -8,8 +8,11 @@
 //! sets them off. The record's smarts field counts the uses: 0 (read as
 //! 99999) plays once per life, N plays at most N times, each in a
 //! different life, and 1 removes the trigger after its use. A used trigger
-//! re-arms once Claw has died and come back (the ambient manager counts
-//! those returns as Claw leaves a dying state). Smarts -1 instead re-arms
+//! re-arms once Claw's attempt counter rises (see [`World::attempt`]), that
+//! is at his next death. A dying spell that ends without the counter
+//! rising (Claw's code did not count that death) counts too: the ambient
+//! manager adds it to the counter (see [`AmbientManager::attempt`]).
+//! Smarts -1 instead re-arms
 //! when Claw leaves the square, at the earliest the sound's length plus
 //! 100 ms later, so it plays on every new entry (puddle splashes). A
 //! trigger only watches Claw while it is awake.
@@ -25,8 +28,9 @@
 //! the view:
 //!
 //! - `GlobalAmbientSound` registers at level load and `AmbientSound` when
-//!   it first wakes; both then remove themselves (one without a sound
-//!   stays, idle) and their loop lasts to the end of the level. Without an
+//!   it first wakes; both then remove themselves (one whose sound the level
+//!   does not register removes itself without a loop) and their loop lasts
+//!   to the end of the level. Without an
 //!   area the loop plays everywhere at once; with one it fades in over a
 //!   second while the view centre is inside it and fades out over a second
 //!   once it leaves. A record with a movement box makes the loop come and
@@ -41,13 +45,17 @@
 //! takes the level and balance of the loudest one that plays. A Play cue
 //! for a voice that already plays changes its volume and balance; it does
 //! not restart the sound. A loop that stops ends with a Stop cue.
+//!
+//! The manager also keeps the ids of the dialog helpers that run Claw's
+//! and enemies' lines (see [`sound::claw_say`]), so finding them does not
+//! search the level's objects.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use claw_frame::{AudioCue, SoundChannel, SoundCue};
 
-use super::sound::{self, DialogData};
+use super::sound::{self, DialogData, Speaker};
 use super::{GameLogic, ObjectData, World};
 use crate::container::Container;
 use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, engine_state, flags};
@@ -167,7 +175,8 @@ pub struct SpotData {
     pub manager: Option<ObjectId>,
 }
 
-/// Every ambient loop of the level, and Claw's death count.
+/// Every ambient loop of the level, the deaths Claw's code did not count
+/// and the dialog helpers.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AmbientManager {
     /// The loops, in registration order.
@@ -176,10 +185,17 @@ pub struct AmbientManager {
     pub voices: BTreeMap<String, KeyVoice>,
     /// Voices handed out so far.
     pub next_voice: u32,
-    /// Times Claw has died and come back.
-    pub attempt: u32,
+    /// Dying spells that ended without Claw's attempt counter rising.
+    pub uncounted: u32,
+    /// Claw's attempt counter at the last update in which he was not
+    /// dying.
+    pub attempt_seen: u32,
     /// Claw was dying at the last update.
     pub claw_dying: bool,
+    /// The helper that runs Claw's lines, once made.
+    pub claw_dialog: Option<ObjectId>,
+    /// The helper that runs enemies' lines, once made.
+    pub enemy_dialog: Option<ObjectId>,
 }
 
 /// The looping voice of one sound key.
@@ -332,12 +348,68 @@ pub fn rand_range(rng: &mut Rng, lo: i32, hi: i32) -> i32 {
 
 /// The ambient manager of a level, once a sound object has made one.
 pub fn manager_of(objects: &Container) -> Option<&AmbientManager> {
-    objects.all().find_map(|(_, o)| match &o.data {
+    objects.all().find_map(|(_, o)| as_manager(o))
+}
+
+/// How many ids after Claw's [`find_manager`] looks at before it searches
+/// every object.
+pub const MANAGER_PROBE: u32 = 64;
+
+fn as_manager(o: &Object) -> Option<&AmbientManager> {
+    match &o.data {
         ObjectData::Sound(SoundData {
             part: SoundPart::Manager(m),
         }) => Some(&**m),
         _ => None,
-    })
+    }
+}
+
+/// The id of the ambient manager among `objects`, `claw` being Claw's id.
+/// Objects made while the level runs come after Claw's in id order and
+/// the manager is made by the first sound object that runs, so the
+/// [`MANAGER_PROBE`] ids after Claw's are looked at first; every object is
+/// searched only when it is not among them.
+pub fn find_manager(objects: &Container, claw: Option<ObjectId>) -> Option<ObjectId> {
+    let near = claw.and_then(|c| {
+        (1..=MANAGER_PROBE)
+            .map_while(|k| c.checked_add(k))
+            .find(|&id| objects.get(id).and_then(as_manager).is_some())
+    });
+    near.or_else(|| objects.all().find_map(|(id, o)| as_manager(o).map(|_| id)))
+}
+
+/// The ambient manager `id`, when it is one.
+pub fn manager_at(objects: &Container, id: ObjectId) -> Option<&AmbientManager> {
+    objects.get(id).and_then(as_manager)
+}
+
+impl AmbientManager {
+    /// The attempt counter the sound triggers re-arm on: Claw's attempt
+    /// counter `claw_attempt` plus the dying spells it did not count.
+    pub fn attempt(&self, claw_attempt: u32) -> u32 {
+        claw_attempt.wrapping_add(self.uncounted)
+    }
+
+    /// The dialog helper of `kind`, once made.
+    pub fn dialog_helper(&self, kind: Speaker) -> Option<ObjectId> {
+        match kind {
+            Speaker::Claw => self.claw_dialog,
+            Speaker::Enemy => self.enemy_dialog,
+        }
+    }
+
+    /// Notes one update with Claw dying (`dying`) or not and his attempt
+    /// counter at `claw_attempt`: a dying spell that ends without the
+    /// counter rising since before it began counts as an uncounted death.
+    pub fn watch_claw(&mut self, dying: bool, claw_attempt: u32) {
+        if self.claw_dying && !dying && claw_attempt == self.attempt_seen {
+            self.uncounted = self.uncounted.wrapping_add(1);
+        }
+        if !dying {
+            self.attempt_seen = claw_attempt;
+        }
+        self.claw_dying = dying;
+    }
 }
 
 /// One logic call.
@@ -428,25 +500,16 @@ fn manager_mut<'a>(w: &'a mut World, id: ObjectId) -> Option<&'a mut AmbientMana
     }
 }
 
-/// The ambient manager: `cached` when it still is one, else the level's,
-/// made on first use. It runs after every other object, from the tick it
-/// is made in.
+/// The ambient manager: `cached` when it still is one, else the level's
+/// (see [`find_manager`]), made on first use. It runs after every other
+/// object, from the tick it is made in.
 fn manager(w: &mut World, cached: Option<ObjectId>) -> ObjectId {
     if let Some(id) = cached
         && manager_mut(w, id).is_some()
     {
         return id;
     }
-    let found = w.objects.all().find_map(|(id, o)| {
-        matches!(
-            o.data,
-            ObjectData::Sound(SoundData {
-                part: SoundPart::Manager(_)
-            })
-        )
-        .then_some(id)
-    });
-    if let Some(id) = found {
+    if let Some(id) = find_manager(w.objects, w.claw_id) {
         return id;
     }
     let mut o = Object::new(
@@ -465,10 +528,25 @@ fn manager(w: &mut World, cached: Option<ObjectId>) -> ObjectId {
     w.spawn(o)
 }
 
+/// Records `id` as the dialog helper of `kind` in the level's ambient
+/// manager, making the manager when there is none yet.
+pub(super) fn register_dialog_helper(w: &mut World, kind: Speaker, id: ObjectId) {
+    let m = manager(w, None);
+    if let Some(m) = manager_mut(w, m) {
+        match kind {
+            Speaker::Claw => m.claw_dialog = Some(id),
+            Speaker::Enemy => m.enemy_dialog = Some(id),
+        }
+    }
+}
+
+/// The attempt counter triggers re-arm on (see
+/// [`AmbientManager::attempt`]).
 fn attempt(w: &mut World, manager: Option<ObjectId>) -> u32 {
+    let claw = w.attempt();
     manager
         .and_then(|id| manager_mut(w, id))
-        .map_or(0, |m| m.attempt)
+        .map_or(claw, |m| m.attempt(claw))
 }
 
 /// Marks `id` as an undrawn, non-colliding sound object.
@@ -612,11 +690,12 @@ fn ambient_tick(w: &mut World, id: ObjectId, global: bool) {
     let r = record_of(o);
     quiet(w, id);
     let Some(key) = sound_key(w, id) else {
-        // Without a sound there is nothing to register: the object stays,
-        // idle.
+        // Without a sound there is nothing to register: the object removes
+        // itself all the same.
         if let Some(o) = w.objects.get_mut(id) {
             o.state = trigger_state::ARMED;
         }
+        w.destroy(id);
         return;
     };
     let mut area = area_of(r[23], r[24], r[25], r[26]);
@@ -727,11 +806,7 @@ fn manager_tick(w: &mut World, id: ObjectId) {
         part: SoundPart::Manager(m),
     }) = &mut data
     {
-        let dying = sound::claw_dying(w, false);
-        if m.claw_dying && !dying {
-            m.attempt = m.attempt.wrapping_add(1);
-        }
-        m.claw_dying = dying;
+        m.watch_claw(sound::claw_dying(w, false), w.attempt());
         let objects = &*w.objects;
         m.entries
             .retain(|e| e.owner.is_none_or(|o| objects.get(o).is_some()));

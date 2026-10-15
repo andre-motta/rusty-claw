@@ -1,10 +1,12 @@
 //! Crates: single crates and stacks of crates that break open and release
 //! what they hold.
 //!
-//! A single crate (`FrontCrate`, `BehindCrate`) breaks on one accepted hit,
-//! or two when the level gives it more than 1 health (with 500 ms between
-//! counted hits); with 999 health or more it cannot be broken. Claw's
-//! attacks, thrown objects and every kind of shot or blast count. Breaking
+//! A single crate (`FrontCrate`, `BehindCrate`) shows the first image of
+//! its set and is hit within the box of that image. It breaks on one
+//! accepted hit, or two when the level gives it more than 1 health (with
+//! 500 ms between counted hits, the first showing the next image of the
+//! set); with 999 health or more it cannot be broken. Claw's attacks,
+//! thrown objects and every kind of shot or blast count. Breaking
 //! plays the break animation, releases the crate's powerup code 24 px above
 //! its position as a bouncing goodie (a crate holding nothing releases a
 //! coin), plays one of two break sounds at random and removes the crate
@@ -63,8 +65,8 @@ pub const CRATE_HIT_BY: u32 = types::PLAYER
     | types::LEVEL_SHOT
     | MAGIC_SHOT;
 
-/// Box of a single crate that attacks hit, relative to its position (the
-/// crate picture's box).
+/// Box of a single crate that attacks hit, relative to its position, when
+/// the level does not know its picture's frame.
 pub const CRATE_BOX: Rect = Rect::new(-23, -28, 32, 23);
 /// Box of a crate in a stack that attacks hit.
 pub const STACKED_BOX: Rect = Rect::new(-20, -20, 20, 20);
@@ -224,14 +226,31 @@ fn break_sound(w: &mut World, id: ObjectId) {
 
 // ------------------------------------------------------------ single crates
 
+/// The frame a crate showing `frame` shows after a counted hit: the next
+/// image of its set, wrapping to the first after the last (`frames`, the
+/// set's first and last frames, when known).
+pub fn next_frame(frame: i32, frames: Option<(i32, i32)>) -> i32 {
+    match frames {
+        Some((first, last)) if frame >= last || frame < first => first,
+        _ => frame.saturating_add(1),
+    }
+}
+
 fn single_tick(w: &mut World, id: ObjectId) {
+    let o = w.objects.get(id).expect("caller checked");
+    let (frames, st) = (w.image_frames(&o.image_set), o.state);
+    let first = frames.map_or(o.frame, |(first, _)| first);
+    let picture = (st == state::INIT)
+        .then(|| w.frame_box(&o.image_set, first))
+        .flatten();
     let o = w.objects.get_mut(id).expect("caller checked");
     match o.state {
         state::INIT => {
+            o.frame = first;
             o.type_flags = CRATE_TYPE;
             o.hit_type_flags = CRATE_HIT_BY;
             o.hit_handler = true;
-            o.hit_rect = CRATE_BOX;
+            o.hit_rect = picture.unwrap_or(CRATE_BOX);
             if o.z == 0 {
                 o.z = if &*o.logic == FRONT_CRATE { 5000 } else { 1100 };
                 o.flags |= flags::RESORT;
@@ -269,13 +288,14 @@ fn single_tick(w: &mut World, id: ObjectId) {
 
 fn hit_single(w: &mut World, id: ObjectId, attacker: ObjectId) {
     absorb_shot(w, attacker);
+    let frames = w.objects.get(id).and_then(|o| w.image_frames(&o.image_set));
     let o = w.objects.get_mut(id).expect("caller checked");
     if o.state != state::IDLE || data_mut(o).cooldown_ms > 0 {
         return;
     }
     o.health -= 1;
     if o.health > 0 {
-        o.frame = o.frame.max(1) + 1;
+        o.frame = next_frame(o.frame, frames);
         data_mut(o).cooldown_ms = HIT_COOLDOWN_MS;
         sound::play_from(w, id, "GAME_CRATEDAMAGE", SoundChannel::Effect);
         return;

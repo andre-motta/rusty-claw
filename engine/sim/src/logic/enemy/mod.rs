@@ -2,52 +2,63 @@
 //! behaviour.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
+//! Each class handles a few states itself and inherits every other one from
+//! the shared behaviour: the officer and the soldier are human enemies
+//! (they pace, advance, flinch, can be lifted and drop loot), the rat is a
+//! plain enemy (it walks, throws bombs and dies at the first blow).
+//!
 //! Each logic call after the first runs, in order:
 //!
-//! 1. the pre-tick: one draw of 0..=1000 from the random stream (kept so the
-//!    stream stays in step with the game; nothing reads it), which side
-//!    Claw is on, and the range mode (see [`mode`]); human enemies then
-//!    update their liftable flag and contact box, notice Claw leaving
-//!    range and become stationary on a platform; each class may add steps
-//!    after these;
+//! 1. the pre-tick ([`pre_tick`]): one draw of 0..=1000 from the random
+//!    stream (kept so the stream stays in step with the game; nothing
+//!    reads it), which side Claw is on and, unless Claw is invisible, the
+//!    range mode ([`range_mode`]); human enemies then refresh their
+//!    liftable flag and contact box, notice Claw leaving range, become
+//!    stationary on a platform and check for a narrow ledge; each class may
+//!    add steps after these;
 //! 2. the handler of the current state: the class's own, or the shared one
-//!    in `provisional` when the class has none;
-//! 3. the post-tick: a scheduled call (going idle after Claw left range),
-//!    then the movement step with the tiles, the ledge guard and the depth
-//!    against Claw.
+//!    ([`states`]);
+//! 3. the post-tick: a scheduled call (going idle after Claw left range,
+//!    or the jump at Claw from a narrow ledge), then the movement step and
+//!    what follows it ([`motion`]): death tiles, the ledge guard and the
+//!    depth against Claw.
 //!
 //! The first call builds the enemy (its class's `construct`). Hits arrive
-//! from the collision pass through [`on_hit`], which skips the same attack
-//! of Claw twice and a running hit cooldown, applies the hit by what hit,
-//! and kills the enemy when its health runs out.
+//! from the collision pass through the class's `on_hit`.
 //!
 //! Random draws happen in the game's order, from the shared stream the
-//! whole level draws from; every draw an enemy makes is listed with the
-//! function that makes it.
+//! whole level draws from; every function that draws says which draws it
+//! makes, in order.
 //!
-//! Only the officer is filled in. The soldier and the rat stand still and
-//! cannot be hurt yet.
+//! Two things are shared by every enemy of the level: the strike token (one
+//! armed strike at a time across the level, see [`take_strike_token`]) and
+//! the enemies' speaking slot (one line at a time, see
+//! [`crate::logic::sound::enemy_say`]).
 
 use claw_frame::SoundChannel;
 
-use crate::logic::{GameLogic, ObjectData, World, sound};
-use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags};
+use crate::anim::AnimPlayer;
+use crate::logic::{GameLogic, ObjectData, World, pickup, sound};
+use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, engine_state, flags, types};
+use crate::physics::ptype;
+use crate::tiles::SOLID;
 use crate::tuning::TICK_MS;
 
+pub mod lift;
+pub mod motion;
 pub mod officer;
-mod provisional;
 pub mod rat;
 pub mod soldier;
+pub mod states;
 
-pub use provisional::{
-    die, drop_loot, enter_hit, enter_pause, enter_strike, go_home, start_pacing,
-};
+pub use states::{enter_hit, enter_pause, enter_strike, go_home, human_home_tick, start_pacing};
 
 /// Image sets every enemy may switch to.
 pub const IMAGE_SETS: &[&str] = &[];
 
-/// Prefixes of the animations every enemy may play.
-pub const ANIM_PREFIXES: &[&str] = &[];
+/// Prefixes of the animations every enemy may play: the deaths by fire
+/// and by ice, chosen by what dealt the last blow.
+pub const ANIM_PREFIXES: &[&str] = &["GAME_FIREDEATH", "GAME_ICEDEATH"];
 
 /// Damage factor of the difficulty: enemies' damage is multiplied by it
 /// when they are built. 1.0 in normal play.
@@ -72,7 +83,7 @@ pub fn smarts(base: i32) -> i32 {
 
 /// Kinds of object (type flags) that can hit a human enemy: Claw, his
 /// thrown objects, his pistol shots, springboard-like objects, the level's
-/// own shots and his magic.
+/// own shots and explosions, and his magic.
 pub const HUMAN_HIT_BY: u32 = 0x300_1032;
 
 /// What a hit came from, by the attacker's type flags.
@@ -87,17 +98,26 @@ pub mod attacker {
     pub const PISTOL_SHOT: u32 = types::PISTOL_SHOT;
     /// A springboard-like object.
     pub const SPRING: u32 = 0x1000;
-    /// A shot of the level itself.
+    /// A shot of the level itself, and explosions.
     pub const LEVEL_SHOT: u32 = types::LEVEL_SHOT;
     /// Claw's magic.
     pub const MAGIC: u32 = 0x200_0000;
 }
 
+/// Special flags of a blow that kill with fire.
+pub const FIRE_BLOW: u32 = 0x4_0000 | 0x10_0000;
+/// Special flag of a blow that kills with ice.
+pub const ICE_BLOW: u32 = 0x8_0000;
+/// Death animation of a kill by fire.
+pub const FIRE_DEATH_ANIM: &str = "GAME_FIREDEATH";
+/// Death animation of a kill by ice.
+pub const ICE_DEATH_ANIM: &str = "GAME_ICEDEATH";
+
 /// The powerup code that hides Claw from enemies.
 pub const INVISIBILITY_POWERUP: u32 = 0x26B7;
 
 /// Time after the level starts during which enemies skip their per-tick
-/// draw, ms.
+/// draw and a few random choices, ms.
 pub const STARTUP_QUIET_MS: u64 = 100;
 
 /// Time Claw must stay out of range, on screen, before the mode says so,
@@ -113,6 +133,28 @@ pub const TICK_S: f64 = TICK_MS as f64 * 0.001;
 /// Unbounded patrol limits.
 pub const UNBOUNDED: (i32, i32) = (i32::MIN, i32::MAX);
 
+/// Indices of the level record fields enemies read.
+pub mod field {
+    /// Powerup: the last loot slot.
+    pub const POWERUP: usize = 15;
+    /// First user box: left, top, right, bottom (loot slots).
+    pub const USER_RECT_1: [usize; 4] = [35, 36, 37, 38];
+    /// Second user box: left, top, right, bottom (loot slots).
+    pub const USER_RECT_2: [usize; 4] = [39, 40, 41, 42];
+    /// First user value: above 0, the enemy never walks.
+    pub const USER_0: usize = 43;
+    /// Patrol limits.
+    pub const X_MIN: usize = 51;
+    /// Patrol limits.
+    pub const Y_MIN: usize = 52;
+    /// Patrol limits.
+    pub const X_MAX: usize = 53;
+    /// Patrol limits.
+    pub const Y_MAX: usize = 54;
+    /// Horizontal speed.
+    pub const SPEED_X: usize = 55;
+}
+
 /// An enemy's named states. The numbers are fixed: traces show them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(i32)]
@@ -120,7 +162,7 @@ pub enum EnemyState {
     /// Waiting where it stands.
     #[default]
     Idle = 2000,
-    /// Deciding what to do next, facing Claw.
+    /// Deciding what to do next.
     Home = 2001,
     /// Swinging at Claw.
     Strike = 2002,
@@ -134,11 +176,39 @@ pub enum EnemyState {
     Dead = 2006,
     /// Waiting before going back to the previous state.
     Pause = 2007,
+    /// Falling until it lands.
+    Falling = 2008,
+    /// Walking toward Claw.
+    Advance = 2009,
+    /// Running toward Claw.
+    FastAdvance = 2010,
+    /// Leaping at Claw from a narrow ledge.
+    JumpAtClaw = 2011,
+    /// Thrown into the air by a springboard.
+    Jump = 2012,
+    /// Firing a shot.
+    Fire = 2013,
+    /// Walking left.
+    MoveLeft = 2014,
+    /// Walking right.
+    MoveRight = 2015,
+    /// Throwing a bomb.
+    Throw = 2016,
+    /// Being picked up by Claw.
+    Lifted = 2017,
+    /// Held over Claw's head.
+    Flailing = 2018,
+    /// Flying after Claw threw it.
+    Thrown = 2019,
+    /// Bouncing on landing after a throw.
+    Bounce = 2020,
+    /// Let go by Claw.
+    Dropped = 2021,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 8] = [
+    pub const ALL: [EnemyState; 22] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -147,11 +217,27 @@ impl EnemyState {
         EnemyState::HitHigh,
         EnemyState::Dead,
         EnemyState::Pause,
+        EnemyState::Falling,
+        EnemyState::Advance,
+        EnemyState::FastAdvance,
+        EnemyState::JumpAtClaw,
+        EnemyState::Jump,
+        EnemyState::Fire,
+        EnemyState::MoveLeft,
+        EnemyState::MoveRight,
+        EnemyState::Throw,
+        EnemyState::Lifted,
+        EnemyState::Flailing,
+        EnemyState::Thrown,
+        EnemyState::Bounce,
+        EnemyState::Dropped,
     ];
 
     /// The state with this number.
     pub fn from_id(id: i32) -> Option<EnemyState> {
-        EnemyState::ALL.iter().copied().find(|s| *s as i32 == id)
+        let first = EnemyState::Idle as i32;
+        let i = usize::try_from(id.checked_sub(first)?).ok()?;
+        EnemyState::ALL.get(i).copied()
     }
 
     /// Name.
@@ -165,6 +251,20 @@ impl EnemyState {
             EnemyState::HitHigh => "HitHigh",
             EnemyState::Dead => "Dead",
             EnemyState::Pause => "Pause",
+            EnemyState::Falling => "Falling",
+            EnemyState::Advance => "Advance",
+            EnemyState::FastAdvance => "FastAdvance",
+            EnemyState::JumpAtClaw => "JumpAtClaw",
+            EnemyState::Jump => "Jump",
+            EnemyState::Fire => "Fire",
+            EnemyState::MoveLeft => "MoveLeft",
+            EnemyState::MoveRight => "MoveRight",
+            EnemyState::Throw => "Throw",
+            EnemyState::Lifted => "Lifted",
+            EnemyState::Flailing => "Flailing",
+            EnemyState::Thrown => "Thrown",
+            EnemyState::Bounce => "Bounce",
+            EnemyState::Dropped => "Dropped",
         }
     }
 }
@@ -174,6 +274,11 @@ impl EnemyState {
 pub enum Deferred {
     /// Go idle (Claw left range).
     GoIdle,
+    /// Standing on a narrow ledge: leap at Claw when he is near, otherwise
+    /// stay put for good.
+    JumpCheck,
+    /// Let go by Claw.
+    Dropped,
 }
 
 /// Why an enemy died.
@@ -211,6 +316,20 @@ impl Timer {
     }
 }
 
+/// A shot or bomb an enemy is about to release: where it leaves, relative
+/// to the enemy, and its speed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Shot {
+    /// Offset from the enemy, px.
+    pub dx: i32,
+    /// Offset from the enemy, px.
+    pub dy: i32,
+    /// Speed, px/s.
+    pub vx: i32,
+    /// Speed, px/s.
+    pub vy: i32,
+}
+
 /// Data every enemy keeps, boxed so that the objects of other families
 /// stay small; it reads and writes as [`EnemyFields`].
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -241,12 +360,12 @@ impl From<EnemyFields> for EnemyData {
 pub struct EnemyFields {
     /// State before the last change.
     pub prev: EnemyState,
-    /// Busy: striking, flinching or dead; the enemy may not start
-    /// something else on its own.
+    /// Busy: striking, flinching, jumping, carried or dead; nothing is
+    /// scheduled for it in the post-tick.
     pub busy: bool,
     /// Claw is to the right (at or past the enemy's x).
     pub claw_right: bool,
-    /// Range mode, 0 to 6 (see [`mode`]).
+    /// Range mode, 0 to 6 (see [`range_mode`]).
     pub mode: u8,
     /// Claw has left every range box (set on the first tick out of range).
     pub out_of_range: bool,
@@ -254,9 +373,14 @@ pub struct EnemyFields {
     pub miss_since: Option<u64>,
     /// This tick's draw of 0..=1000.
     pub roll: i32,
-    /// Patrol limits (x min, x max); [`UNBOUNDED`] without.
+    /// Half width and half height of the five range boxes, outermost
+    /// first.
+    pub ranges: [(i32, i32); 5],
+    /// Patrol limits across (min, max); [`UNBOUNDED`] without.
     pub bounds: (i32, i32),
-    /// Never paces.
+    /// Limits up and down (min, max); [`UNBOUNDED`] without.
+    pub bounds_y: (i32, i32),
+    /// Never walks: no pacing, no ledge guard, no leap at Claw.
     pub stationary: bool,
     /// Turns at ledges.
     pub ledge_guard: bool,
@@ -264,8 +388,11 @@ pub struct EnemyFields {
     pub z_sort: bool,
     /// Depth base of the depth against Claw.
     pub z_base: i32,
-    /// Has died once (no second loot drop).
+    /// Has died once (no second loot drop, no second death on a death
+    /// tile).
     pub dead: bool,
+    /// Goes by sight: notices Claw only when it can see him.
+    pub sight: bool,
     /// Claw may lift it.
     pub may_lift: bool,
     /// Number of the last attack of Claw that hit it.
@@ -284,34 +411,57 @@ pub struct EnemyFields {
     pub vy: f64,
     /// Vertical acceleration, px/s^2.
     pub ay: f64,
-    /// Sub-pixel movement carried to the next tick.
+    /// Sub-pixel position carried to the next tick.
     pub carry: (f64, f64),
-    /// No movement at all (frozen in place).
+    /// Where the last movement step left the object; a move made by
+    /// anything else drops the carried fraction.
+    pub moved_to: Option<(i32, i32)>,
+    /// No movement at all (dead in place, or carried by Claw).
     pub frozen: bool,
     /// Call scheduled for the post-tick.
     pub deferred: Option<Deferred>,
-    /// The enemy's strike token: one armed strike per swing.
-    pub strike_token: bool,
+    /// Object holding the level's strike token.
+    pub token_at: Option<ObjectId>,
     /// Contact box, facing left (the sprites' own direction).
     pub contact_rect: Rect,
     /// Strike box in use, facing left.
     pub strike_rect: Rect,
     /// Strike animation in use.
     pub strike_anim: &'static str,
-    /// Death animation.
+    /// Death animation in use.
     pub death_anim: &'static str,
     /// Death sound.
     pub death_sound: &'static str,
+    /// Spoken when lifted.
+    pub lifted_voice: &'static str,
     /// Stand pose timer.
     pub pose: Timer,
     /// Time idle before pacing may start.
     pub pace_wait: Timer,
-    /// The enemy's spoken line ends at this time, ms.
-    pub talking_until: u64,
     /// Smarts, a percentage some decisions roll against.
     pub smarts: i32,
     /// Loot codes, in drop order (0 for an empty slot).
     pub loot: [i32; 9],
+    /// The alert has been shouted (once per soldier).
+    pub alerted: bool,
+    /// Wait between shots or throws.
+    pub fire_wait: Timer,
+    /// Event ticks of the current firing or throwing animation.
+    pub shots: u32,
+    /// The shot or bomb of the current firing or throwing animation.
+    pub shot: Shot,
+    /// Lifting: the movement box saved while carried.
+    pub saved_move_rect: Rect,
+    /// Lifting: Claw is winding up a throw.
+    pub winding_up: bool,
+    /// Lifting: time after a throw before it can be lifted again.
+    pub lift_guard: Timer,
+    /// Lifting: time a thrown enemy flies before it is gone.
+    pub thrown_timer: Timer,
+    /// Lifting: landings after a throw.
+    pub bounces: u32,
+    /// Lifting: it is let go once its pause after a throw ends.
+    pub dropped_timer: Timer,
 }
 
 impl Default for EnemyFields {
@@ -324,12 +474,15 @@ impl Default for EnemyFields {
             out_of_range: false,
             miss_since: None,
             roll: 0,
+            ranges: [(0, 0); 5],
             bounds: UNBOUNDED,
+            bounds_y: UNBOUNDED,
             stationary: false,
             ledge_guard: false,
             z_sort: false,
             z_base: 0,
             dead: false,
+            sight: false,
             may_lift: false,
             serial_seen: None,
             cooldown: Timer::default(),
@@ -338,21 +491,32 @@ impl Default for EnemyFields {
             pause: Timer::default(),
             vx: 0.0,
             vy: 0.0,
-            ay: 0.0,
+            ay: GRAVITY,
             carry: (0.0, 0.0),
+            moved_to: None,
             frozen: false,
             deferred: None,
-            strike_token: true,
+            token_at: None,
             contact_rect: Rect::UNSET,
             strike_rect: Rect::UNSET,
             strike_anim: "",
             death_anim: "",
             death_sound: "",
+            lifted_voice: "",
             pose: Timer::default(),
             pace_wait: Timer::default(),
-            talking_until: 0,
             smarts: 0,
             loot: [0; 9],
+            alerted: false,
+            fire_wait: Timer::default(),
+            shots: 0,
+            shot: Shot::default(),
+            saved_move_rect: Rect::UNSET,
+            winding_up: false,
+            lift_guard: Timer::default(),
+            thrown_timer: Timer::default(),
+            bounces: 0,
+            dropped_timer: Timer::default(),
         }
     }
 }
@@ -360,39 +524,65 @@ impl Default for EnemyFields {
 /// A state handler.
 pub type Handler = fn(&mut World, ObjectId);
 
-/// One enemy class: its slots and its own state handlers.
+/// One enemy class: its own handlers and what the shared states use.
 #[derive(Debug)]
 pub struct Class {
     /// Name, for messages.
     pub name: &'static str,
+    /// A human enemy (officer, soldier): the human pre-tick, hit rule,
+    /// death and states apply.
+    pub human: bool,
     /// Builds the enemy on its first logic call.
     pub construct: fn(&mut World, ObjectId),
     /// The class's pre-tick steps, run after the shared ones.
     pub pre_tick: fn(&mut World, ObjectId),
     /// The class's own handler of a state, when it has one.
     pub handler: fn(EnemyState) -> Option<Handler>,
+    /// Goes Home.
+    pub go_home: fn(&mut World, ObjectId),
     /// Goes idle.
     pub go_idle: fn(&mut World, ObjectId),
+    /// How Claw carries it; `None` when it cannot be lifted.
+    pub carry: Option<lift::Carry>,
+    /// Picks the line it says when lifted (into
+    /// [`EnemyFields::lifted_voice`]).
+    pub pick_lift_voice: fn(&mut World, ObjectId),
     /// Animations the shared states play.
     pub anims: ClassAnims,
     /// Sounds the shared states play.
     pub sounds: ClassSounds,
 }
 
-/// Animations of a class used by the shared states.
+/// Animations of a class used by the shared states ("" for none).
 #[derive(Debug, Clone, Copy)]
 pub struct ClassAnims {
+    /// Walking toward Claw.
+    pub advance: &'static str,
+    /// Running toward Claw.
+    pub fast_advance: &'static str,
     /// Pacing.
     pub pace: &'static str,
+    /// Walking (the rat).
+    pub walk: &'static str,
     /// Low hit reaction.
     pub hit_low: &'static str,
     /// High hit reaction.
     pub hit_high: &'static str,
-    /// Standing at home before a pause.
+    /// Standing at home before a pause, and after landing from a throw.
     pub home: &'static str,
+    /// Jumping.
+    pub jump: &'static str,
+    /// Falling.
+    pub fall: &'static str,
+    /// Being lifted.
+    pub lifted: &'static str,
+    /// Held overhead, and flying after a throw.
+    pub lifted2: &'static str,
+    /// Bouncing after a throw.
+    pub bounce: &'static str,
 }
 
-/// Sounds of a class used by the shared states.
+/// Sounds of a class used by the shared states ("" for none).
 #[derive(Debug, Clone, Copy)]
 pub struct ClassSounds {
     /// The strike landing.
@@ -405,12 +595,16 @@ pub struct ClassSounds {
 
 /// The four sounds one of which follows a high hit.
 pub const HIT_SOUNDS: [&str; 4] = ["GAME_HIT1", "GAME_HIT2", "GAME_HIT3", "GAME_HIT4"];
+/// The second sound of a low hit.
+pub const HIT_LOW_SECOND: &str = "GAME_HIT1";
 /// The sound of loot being dropped.
 pub const DROP_SOUND: &str = "GAME_PURELEASE1";
 /// The sound of a dead enemy leaving the screen.
 pub const SPLASH_SOUND: &str = "GAME_SPLASH";
 /// The sound of an enemy dying on spikes or in goo.
 pub const DEATH_TILE_SOUND: &str = "LEVEL_DEATHTILE";
+/// The sound of a thrown enemy landing for the first time.
+pub const LAND_SOUND: &str = "GAME_LELAND";
 /// Claw's lines after a kill, one chosen at random.
 pub const CLAW_KILL_LINES: [&str; 10] = [
     "CLAW_1001",
@@ -425,10 +619,15 @@ pub const CLAW_KILL_LINES: [&str; 10] = [
     "CLAW_1110058",
 ];
 
+/// A class step that does nothing.
+pub fn nothing(_: &mut World, _: ObjectId) {}
+
 /// The class of an enemy family.
 pub fn class(g: GameLogic) -> Option<&'static Class> {
     match g {
         GameLogic::Officer => Some(&officer::CLASS),
+        GameLogic::Soldier => Some(&soldier::CLASS),
+        GameLogic::Rat => Some(&rat::CLASS),
         _ => None,
     }
 }
@@ -493,6 +692,14 @@ pub fn data_mut<'a>(w: &'a mut World, id: ObjectId) -> Option<&'a mut EnemyData>
     }
 }
 
+/// The enemy data of `o`, if it has any.
+pub fn data_of(o: &Object) -> Option<&EnemyData> {
+    match &o.data {
+        ObjectData::Enemy(d) => Some(d),
+        _ => None,
+    }
+}
+
 /// The enemy's state.
 pub fn state(w: &World, id: ObjectId) -> Option<EnemyState> {
     EnemyState::from_id(w.objects.get(id)?.state)
@@ -512,14 +719,14 @@ pub fn rand(w: &mut World, n: u32) -> i32 {
     w.rng.below(n) as i32
 }
 
-/// True when the enemy is on screen: its hit box (or position) is inside
-/// the view.
-pub fn on_screen(w: &World, o: &Object) -> bool {
-    if o.hit_rect.is_set() {
-        o.hit_rect.translate(o.x, o.y).overlaps(&w.view)
-    } else {
-        w.view.contains(o.x, o.y)
-    }
+/// True when the enemy is on screen (its picture overlaps the view).
+pub fn on_screen(w: &World, id: ObjectId) -> bool {
+    w.objects.get(id).is_some_and(|o| w.on_screen(o))
+}
+
+/// True while Claw's invisibility powerup runs: enemies do not see him.
+pub fn claw_invisible(w: &World) -> bool {
+    w.claw.stats.powerup_ms > 0 && w.claw.stats.powerup_kind == INVISIBILITY_POWERUP
 }
 
 /// True when the enemy faces right (its sprite is mirrored).
@@ -547,11 +754,21 @@ pub fn facing_rect(o: &Object, r: Rect) -> Rect {
     if faces_right(o) { r.mirrored() } else { r }
 }
 
+/// Starts animation `key` on the enemy. When the level has no such
+/// animation the enemy plays none, as the game shows its empty animation
+/// instead: a state that waits for its animation to end goes on at once.
+pub fn set_anim(w: &mut World, id: ObjectId, key: &str) {
+    if !w.set_anim(id, key)
+        && let Some(o) = w.objects.get_mut(id)
+    {
+        o.anim = AnimPlayer::default();
+    }
+}
+
 /// Starts animation `key` on the enemy and advances it one tick.
 pub fn set_anim_now(w: &mut World, id: ObjectId, key: &str) {
-    if w.set_anim(id, key) {
-        w.advance_anim(id);
-    }
+    set_anim(w, id, key);
+    w.advance_anim(id);
 }
 
 /// Plays an enemy sound on the effects channel, centred.
@@ -561,17 +778,262 @@ pub fn play(w: &mut World, key: &str) {
     }
 }
 
-/// The enemy says `key` unless it is still saying something; spoken lines
-/// play on the voice channel.
+/// The enemy says `key` through the enemies' speaking slot, unless
+/// another enemy line is running.
 pub fn say(w: &mut World, id: ObjectId, key: &str) {
-    let now = w.now_ms;
-    let len = u64::from(w.sound_ms(key).unwrap_or(0));
-    let Some(d) = data_mut(w, id) else { return };
-    if d.talking_until > now {
-        return;
+    if !key.is_empty() {
+        sound::enemy_say(w, id, key, false);
     }
-    d.talking_until = now + len;
-    sound::play(w, key, SoundChannel::Voice);
+}
+
+/// A level record field of the enemy (0 without a record).
+pub fn record(w: &World, id: ObjectId, i: usize) -> i32 {
+    w.objects
+        .get(id)
+        .and_then(|o| o.record.as_deref())
+        .map_or(0, |r| r[i])
+}
+
+/// The loot slots of a record, in drop order: the first user box's left,
+/// right, top and bottom, the second's, then the powerup field.
+pub fn loot_of(w: &World, id: ObjectId) -> [i32; 9] {
+    let r = |i| record(w, id, i);
+    let [l1, t1, r1, b1] = field::USER_RECT_1;
+    let [l2, t2, r2, b2] = field::USER_RECT_2;
+    [
+        r(l1),
+        r(r1),
+        r(t1),
+        r(b1),
+        r(l2),
+        r(r2),
+        r(t2),
+        r(b2),
+        r(field::POWERUP),
+    ]
+}
+
+/// A patrol limit from the record: 0 means none.
+pub fn limit(v: i32, none: i32) -> i32 {
+    if v == 0 { none } else { v }
+}
+
+/// The record's patrol limits across.
+pub fn record_bounds(w: &World, id: ObjectId) -> (i32, i32) {
+    (
+        limit(record(w, id, field::X_MIN), UNBOUNDED.0),
+        limit(record(w, id, field::X_MAX), UNBOUNDED.1),
+    )
+}
+
+// ----------------------------------------------------------------------
+// Building
+
+/// Health of a human enemy of the first level, and of later levels.
+pub const HUMAN_HEALTH: (i32, i32) = (3, 7);
+
+/// Health of an officer or a soldier on the level being played: 3 on the
+/// first level, 7 on the others, before the difficulty factor.
+pub fn human_health(w: &World) -> i32 {
+    if w.level_number() == 1 {
+        HUMAN_HEALTH.0
+    } else {
+        HUMAN_HEALTH.1
+    }
+}
+
+/// The fields every human enemy starts with, before its class sets its
+/// own: range mode 6, the record's patrol limits across (none up and
+/// down), stationary when the record's first user value is above 0, the
+/// ledge guard, the depth sort with base 10, liftable, smarts from 50, and
+/// the record's loot.
+pub fn human_fields(w: &World, id: ObjectId) -> EnemyFields {
+    EnemyFields {
+        mode: 6,
+        bounds: record_bounds(w, id),
+        bounds_y: UNBOUNDED,
+        stationary: record(w, id, field::USER_0) > 0,
+        ledge_guard: true,
+        z_sort: true,
+        z_base: 10,
+        may_lift: true,
+        smarts: smarts(50),
+        loot: loot_of(w, id),
+        ..EnemyFields::default()
+    }
+}
+
+/// An enemy's body: what its class gives its object when it is built.
+#[derive(Debug, Clone, Copy)]
+pub struct Body {
+    /// Image set.
+    pub image_set: &'static str,
+    /// Movement box, facing left.
+    pub move_rect: Rect,
+    /// Hit box, facing left.
+    pub hit_rect: Rect,
+    /// Attack (contact) box, facing left.
+    pub attack_rect: Rect,
+    /// Health before the difficulty factor.
+    pub health: i32,
+    /// Damage before the difficulty factor.
+    pub damage: i32,
+    /// Kinds of object that can hit it.
+    pub hit_by: u32,
+}
+
+/// Gives the enemy its body and `fields`: an enemy that can be hit, is
+/// removed far outside the level and (for human enemies) is told before it
+/// is removed; then it is dropped to the floor below it.
+pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human: bool) {
+    let o = obj_mut(w, id);
+    o.image_set = crate::level::runtime_image_set(body.image_set);
+    o.type_flags = types::ENEMY;
+    o.hit_type_flags = body.hit_by;
+    o.special_flags &= !crate::object::special::LIFTABLE;
+    o.flags |= flags::DESTROY_FAR;
+    if human {
+        o.flags |= flags::NOTIFY_DESTROY;
+        o.special_flags |= crate::player::attack::PUNCHABLE;
+    }
+    o.hit_handler = true;
+    o.move_rect = body.move_rect;
+    o.hit_rect = body.hit_rect;
+    o.attack_rect = body.attack_rect;
+    if faces_right(o) {
+        o.mirror_rects();
+    }
+    o.health = scaled(body.health, HEALTH_FACTOR);
+    o.damage = scaled(body.damage, DAMAGE_FACTOR);
+    o.data = ObjectData::Enemy(fields.into());
+    drop_to_floor(w, id);
+}
+
+/// Puts the enemy 32 px higher, then down on the first floor below it,
+/// standing.
+pub fn drop_to_floor(w: &mut World, id: ObjectId) {
+    let map = &w.level.map;
+    if let Some(o) = w.objects.get_mut(id) {
+        o.y -= 32;
+        crate::physics::align_to_ground(map, o);
+        o.physics_type = ptype::STAND;
+    }
+}
+
+// ----------------------------------------------------------------------
+// Sight
+
+/// The step of the sight ray, px.
+pub const SIGHT_STEP: i32 = 32;
+/// How far above or below the enemy Claw can be seen, px (exclusive).
+pub const SIGHT_HEIGHT: i32 = 50;
+
+/// True when nothing Solid lies on the row `y` between `x1` and `x2`,
+/// looking every `step` px from `x1` toward `x2` and at `x2` itself.
+/// Only Solid pixels block; one-way floors, ladders and death tiles do
+/// not. Points outside the plane read as its nearest edge.
+pub fn line_of_sight(w: &World, x1: i32, y: i32, x2: i32, step: i32) -> bool {
+    let map = &w.level.map;
+    let step = step.max(1);
+    let mut x = x1;
+    if x1 <= x2 {
+        while x < x2 {
+            if map.attr(x, y) == SOLID {
+                return false;
+            }
+            x = x.saturating_add(step);
+        }
+    } else {
+        while x > x2 {
+            if map.attr(x, y) == SOLID {
+                return false;
+            }
+            x = x.saturating_sub(step);
+        }
+    }
+    map.attr(x2, y) != SOLID
+}
+
+/// True when the enemy sees Claw: Claw is not invisible, he is less than
+/// 50 px above or below it, the enemy is on screen, and nothing Solid lies
+/// on the enemy's row between it and Claw.
+pub fn sees_claw(w: &World, id: ObjectId) -> bool {
+    if claw_invisible(w) {
+        return false;
+    }
+    let Some((cx, cy)) = w.claw_object().map(|c| (c.x, c.y)) else {
+        return false;
+    };
+    let o = obj(w, id);
+    (cy - o.y).abs() < SIGHT_HEIGHT && w.on_screen(o) && line_of_sight(w, o.x, o.y, cx, SIGHT_STEP)
+}
+
+// ----------------------------------------------------------------------
+// The level's strike token
+
+/// Logic name of the hidden object holding the level's strike token.
+pub const STRIKE_TOKEN_LOGIC: &str = "EnemyStrikeToken";
+
+/// The object holding the level's strike token, created on first use: a
+/// hidden object outside the live list whose health counts the tokens
+/// (one at the start).
+pub fn strike_token_holder(w: &mut World) -> ObjectId {
+    if let Some(id) = w
+        .objects
+        .all()
+        .find(|(_, o)| &*o.logic == STRIKE_TOKEN_LOGIC)
+        .map(|(id, _)| id)
+    {
+        return id;
+    }
+    let mut o = Object::new(0, 0, 0, 0, STRIKE_TOKEN_LOGIC.into(), LogicKind::Inert);
+    o.flags = flags::UNLISTED | flags::NO_COLLIDE;
+    o.draw_flags = draw_flags::HIDDEN;
+    o.health = 1;
+    w.spawn(o)
+}
+
+/// Takes the level's strike token for `id`; false when another enemy's
+/// strike holds it.
+pub fn take_strike_token(w: &mut World, id: ObjectId) -> bool {
+    let holder = match data(w, id).and_then(|d| d.token_at) {
+        Some(h) if w.objects.get(h).is_some() => h,
+        _ => {
+            let h = strike_token_holder(w);
+            if let Some(d) = data_mut(w, id) {
+                d.token_at = Some(h);
+            }
+            h
+        }
+    };
+    let Some(o) = w.objects.get_mut(holder) else {
+        return false;
+    };
+    if o.health != 0 {
+        o.health -= 1;
+        true
+    } else {
+        false
+    }
+}
+
+/// Gives the level's strike token back (any strike ending does).
+pub fn give_strike_token(w: &mut World, id: ObjectId) {
+    let holder = match data(w, id).and_then(|d| d.token_at) {
+        Some(h) if w.objects.get(h).is_some() => h,
+        _ => strike_token_holder(w),
+    };
+    if let Some(o) = w.objects.get_mut(holder) {
+        o.health = 1;
+    }
+}
+
+/// The level's strike tokens left (1 or 0).
+pub fn strike_tokens(w: &World) -> i32 {
+    w.objects
+        .all()
+        .find(|(_, o)| &*o.logic == STRIKE_TOKEN_LOGIC)
+        .map_or(1, |(_, o)| o.health)
 }
 
 // ----------------------------------------------------------------------
@@ -581,27 +1043,44 @@ pub fn say(w: &mut World, id: ObjectId, key: &str) {
 /// then runs the pre-tick, the state's handler and the post-tick.
 pub fn tick(w: &mut World, id: ObjectId, class: &Class) {
     let raw = obj(w, id).state;
-    if raw == crate::object::engine_state::INIT {
-        (class.construct)(w, id);
+    match raw {
+        engine_state::INIT => {
+            (class.construct)(w, id);
+            return;
+        }
+        engine_state::DESTROYING => {
+            // Being removed: its running line ends.
+            sound::enemy_silence(w, id);
+            return;
+        }
+        engine_state::KILLED => {
+            // Another logic killed it outright.
+            if data(w, id).is_some_and(|d| d.dead) {
+                obj_mut(w, id).state = EnemyState::Dead as i32;
+            } else {
+                obj_mut(w, id).state = EnemyState::Home as i32;
+                die(w, id, DeathKind::Hit, None);
+            }
+            return;
+        }
+        _ => {}
+    }
+    if EnemyState::from_id(raw).is_none() {
         return;
     }
-    let Some(s) = EnemyState::from_id(raw) else {
-        // Engine notices (destroying, sleeping) need nothing.
-        return;
-    };
-    pre_tick(w, id);
+    pre_tick(w, id, class);
     (class.pre_tick)(w, id);
-    let s = state(w, id).unwrap_or(s);
-    match (class.handler)(s) {
-        Some(h) => h(w, id),
-        None => provisional::handler(s)(w, id),
+    let s = state(w, id).unwrap_or_default();
+    if let Some(h) = (class.handler)(s).or_else(|| states::shared_handler(s, class.human)) {
+        h(w, id);
     }
     post_tick(w, id, class);
 }
 
-/// The shared pre-tick: the per-tick draw, the side and range mode, and
-/// the human steps.
-pub fn pre_tick(w: &mut World, id: ObjectId) {
+/// The shared pre-tick: the per-tick draw, the side and range mode, and,
+/// for human enemies, the human steps (see the module documentation).
+/// Draws: one of 0..=1000, skipped while the level starts.
+pub fn pre_tick(w: &mut World, id: ObjectId, class: &Class) {
     let roll = if w.now_ms < STARTUP_QUIET_MS {
         0x1FFF_FFFF
     } else {
@@ -612,64 +1091,110 @@ pub fn pre_tick(w: &mut World, id: ObjectId) {
         (o.x, o.y)
     };
     let claw = w.claw_object().map(|c| (c.x, c.y));
-    let invisible =
-        w.claw.stats.powerup_ms > 0 && w.claw.stats.powerup_kind == INVISIBILITY_POWERUP;
-    let screen = on_screen(w, obj(w, id));
+    let invisible = claw_invisible(w);
+    let screen = on_screen(w, id);
     let now = w.now_ms;
     let Some(d) = data_mut(w, id) else { return };
     d.roll = roll;
     if let Some((cx, cy)) = claw {
         d.claw_right = cx >= ex;
         if !invisible {
-            d.mode = mode(d, (ex, ey), (cx, cy), screen, now);
+            d.mode = range_mode(d, (ex, ey), (cx, cy), screen, now);
         }
     }
-    // The human steps.
-    let free = !d.busy;
-    let mut go_idle = false;
-    if d.mode >= 5 {
-        if !d.out_of_range {
-            d.out_of_range = true;
-            go_idle = free;
-        }
-    } else {
-        d.out_of_range = false;
-    }
-    if go_idle {
-        d.deferred = Some(Deferred::GoIdle);
-    }
-    let contact = d.contact_rect;
-    provisional::update_liftable(w, id);
-    let o = obj_mut(w, id);
-    o.attack_rect = facing_rect(o, contact);
-    if o.flags & crate::object::flags::ON_ELEVATOR != 0
-        && let Some(d) = data_mut(w, id)
-    {
-        d.stationary = true;
+    if class.human {
+        human_pre_tick(w, id);
     }
 }
 
-/// Half sizes of the five range boxes every class here uses: Claw within
-/// 100 px across and 40 px up or down.
-pub const RANGE_BOX: (i32, i32) = (100, 40);
+/// The human steps of the pre-tick, in order: the liftable flag and the
+/// contact box; a sight-driven enemy that sees Claw stops here; noticing
+/// Claw leaving range (going idle in the post-tick when free); on a
+/// platform, becoming stationary; on a narrow ledge, the leap check in the
+/// post-tick when free.
+fn human_pre_tick(w: &mut World, id: ObjectId) {
+    let now = w.now_ms;
+    let Some((may_lift, guard, contact, sight)) =
+        data(w, id).map(|d| (d.may_lift, d.lift_guard, d.contact_rect, d.sight))
+    else {
+        return;
+    };
+    {
+        let o = obj_mut(w, id);
+        if may_lift && guard.done(now) {
+            o.special_flags |= crate::object::special::LIFTABLE;
+        } else {
+            o.special_flags &= !crate::object::special::LIFTABLE;
+        }
+        o.attack_rect = facing_rect(o, contact);
+        if faces_right(o) {
+            o.special_flags |= MIRRORED;
+        } else {
+            o.special_flags &= !MIRRORED;
+        }
+    }
+    if sight && sees_claw(w, id) {
+        return;
+    }
+    if let Some(d) = data_mut(w, id) {
+        if d.mode >= 5 {
+            if !d.out_of_range {
+                d.out_of_range = true;
+                if !d.busy {
+                    d.deferred = Some(Deferred::GoIdle);
+                }
+            }
+        } else {
+            d.out_of_range = false;
+        }
+    }
+    let o = obj(w, id);
+    if o.flags & flags::ON_ELEVATOR != 0 && o.object_below.is_some() {
+        if let Some(d) = data_mut(w, id) {
+            d.stationary = true;
+        }
+        return;
+    }
+    let free = data(w, id).is_some_and(|d| !d.stationary && !d.busy);
+    if free
+        && motion::on_narrow_ledge(w, id)
+        && let Some(d) = data_mut(w, id)
+    {
+        d.deferred = Some(Deferred::JumpCheck);
+    }
+}
 
-/// The range mode: 0 to 4 when Claw is inside the range boxes around the
-/// enemy (here all five are the same box, so 4), 6 when he is outside and
-/// the enemy is off screen, 5 once he has been outside for
-/// [`OUT_OF_RANGE_MS`] with the enemy on screen (until then the mode keeps
-/// its value).
-pub fn mode(
+/// Special flag of a human enemy that faces right.
+pub const MIRRORED: u32 = 0x2;
+
+/// The range mode: 4 down to 0 when Claw is inside range box 4 (the
+/// innermost) down to 0 (the outermost), tested from the innermost out;
+/// otherwise 6 while the enemy is off screen, and 5 once Claw has been
+/// outside every box for [`OUT_OF_RANGE_MS`] with the enemy on screen
+/// (until then the mode keeps its value).
+///
+/// Box `i` is centred on the enemy with the half sizes in
+/// [`EnemyFields::ranges`], cut across to the patrol limits widened by box
+/// 3's half width; its right and bottom edges are outside it.
+pub fn range_mode(
     d: &mut EnemyFields,
     (ex, ey): (i32, i32),
     (cx, cy): (i32, i32),
     screen: bool,
     now: u64,
 ) -> u8 {
-    let (hw, hh) = RANGE_BOX;
-    let inside = cx >= ex - hw && cx < ex + hw && cy >= ey - hh && cy < ey + hh;
-    if inside {
-        d.miss_since = None;
-        return 4;
+    let reach = i64::from(d.ranges[3].0);
+    let lo = i64::from(d.bounds.0) - reach;
+    let hi = i64::from(d.bounds.1) + reach;
+    let (ex, ey, cx, cy) = (i64::from(ex), i64::from(ey), i64::from(cx), i64::from(cy));
+    for i in (0..5).rev() {
+        let (hw, hh) = (i64::from(d.ranges[i].0), i64::from(d.ranges[i].1));
+        let left = (ex - hw).max(lo);
+        let right = (ex + hw).min(hi);
+        if cx >= left && cx < right && cy >= ey - hh && cy < ey + hh {
+            d.miss_since = None;
+            return i as u8;
+        }
     }
     if !screen {
         return 6;
@@ -685,49 +1210,58 @@ pub fn mode(
 /// The post-tick: the scheduled call, then the movement step.
 pub fn post_tick(w: &mut World, id: ObjectId, class: &Class) {
     let deferred = data_mut(w, id).and_then(|d| d.deferred.take());
-    if deferred == Some(Deferred::GoIdle) {
-        (class.go_idle)(w, id);
+    match deferred {
+        Some(Deferred::GoIdle) => (class.go_idle)(w, id),
+        Some(Deferred::JumpCheck) => states::jump_check(w, id, class),
+        Some(Deferred::Dropped) => lift::let_go(w, id),
+        None => {}
     }
-    provisional::integrate(w, id);
+    motion::integrate(w, id);
 }
 
 // ----------------------------------------------------------------------
 // Hits
 
-/// The shared hit rule of human enemies: `attacker` hit `id`.
+/// The hit rule of human enemies: `attacker` hit `id`.
 ///
-/// The same attack of Claw hits only once, and nothing hits during the hit
-/// cooldown. Then, by what hit:
+/// A blow carrying fire or ice picks the matching death. The same attack
+/// of Claw hits only once (any attacker counts as Claw's current attack),
+/// and nothing hits during the hit cooldown. Then, by what hit:
 ///
-/// - Claw himself: during a hit reaction the enemy only turns back to
-///   Home (no damage); otherwise it takes the damage, shows a hit burst,
-///   starts a 300 ms cooldown and flinches high after an uppercut, low
-///   otherwise;
+/// - Claw himself: during a hit reaction the enemy only goes back Home
+///   (no damage); otherwise it takes the damage, shows a hit burst, starts
+///   a 300 ms cooldown and flinches high after an uppercut, low otherwise;
 /// - a pistol shot: damage, burst, the shot is destroyed, low flinch;
 /// - magic or a thrown object: damage, burst, low flinch;
-/// - a shot of the level: damage, burst, 2000 ms cooldown, low flinch.
+/// - a shot of the level or an explosion: damage, burst, 2000 ms cooldown,
+///   low flinch;
+/// - a springboard: thrown toward the springboard's target.
 ///
-/// At 0 health or below it dies. Draws: the burst's two, then one more for
-/// a high flinch, then the death draws.
+/// At 0 health or below it dies (again, for a body that is hit).
+///
+/// Draws: the burst's two, then one more for a high flinch, then the
+/// death's.
 pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
     let Some(class) = class_of(w, id) else { return };
-    let serial = w.claw.attack.serial;
+    let blow = w.objects.get(attacker).map_or(0, |a| a.special_flags);
+    if let Some(d) = data_mut(w, id) {
+        if blow & FIRE_BLOW != 0 {
+            d.death_anim = FIRE_DEATH_ANIM;
+        } else if blow & ICE_BLOW != 0 {
+            d.death_anim = ICE_DEATH_ANIM;
+        }
+    }
+    if !accept_hit(w, id) {
+        return;
+    }
     let now = w.now_ms;
-    let Some(d) = data_mut(w, id) else { return };
-    if d.serial_seen == Some(serial) {
-        return;
-    }
-    d.serial_seen = Some(serial);
-    if !d.cooldown.done(now) {
-        return;
-    }
     let Some(kind) = w.objects.get(attacker).map(|a| a.type_flags) else {
         return;
     };
     match kind {
         attacker::CLAW => {
             if matches!(state(w, id), Some(EnemyState::HitLow | EnemyState::HitHigh)) {
-                go_home(w, id);
+                (class.go_home)(w, id);
             } else {
                 take_damage(w, id, attacker);
                 hit_burst(w, id, attacker);
@@ -735,19 +1269,19 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
                     d.cooldown = Timer::new(now, 300);
                 }
                 let high = w.claw.attack.uppercut;
-                provisional::enter_hit(w, id, high, class);
+                states::enter_hit(w, id, high);
             }
         }
         attacker::PISTOL_SHOT => {
             take_damage(w, id, attacker);
             hit_burst(w, id, attacker);
             w.destroy(attacker);
-            provisional::enter_hit(w, id, false, class);
+            states::enter_hit(w, id, false);
         }
         attacker::MAGIC | attacker::THROWN => {
             take_damage(w, id, attacker);
             hit_burst(w, id, attacker);
-            provisional::enter_hit(w, id, false, class);
+            states::enter_hit(w, id, false);
         }
         attacker::LEVEL_SHOT => {
             take_damage(w, id, attacker);
@@ -755,13 +1289,31 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
             if let Some(d) = data_mut(w, id) {
                 d.cooldown = Timer::new(now, 2000);
             }
-            provisional::enter_hit(w, id, false, class);
+            states::enter_hit(w, id, false);
         }
+        attacker::SPRING => states::enter_spring_jump(w, id, attacker),
         _ => {}
     }
     if obj(w, id).health <= 0 {
         die(w, id, DeathKind::Hit, Some(attacker));
     }
+}
+
+/// The gate every enemy hit goes through first: the attack of Claw that
+/// hit last does not hit again (whatever the attacker is), and a running
+/// hit cooldown turns hits away. The attack's number is remembered even
+/// when the cooldown turns the hit away.
+pub fn accept_hit(w: &mut World, id: ObjectId) -> bool {
+    let serial = w.claw.attack.serial;
+    let now = w.now_ms;
+    let Some(d) = data_mut(w, id) else {
+        return false;
+    };
+    if d.serial_seen == Some(serial) {
+        return false;
+    }
+    d.serial_seen = Some(serial);
+    d.cooldown.done(now)
 }
 
 /// The attacker's damage comes off the enemy's health while it has some.
@@ -778,33 +1330,151 @@ pub const BURST_DEPTH: i32 = 8501;
 
 /// A hit burst at the enemy's x and at the height of the middle of the
 /// attacker's attack box (kept inside the enemy's hit box), each moved by
-/// up to 4 px at random. Draws: the height's, then the x's.
+/// up to 4 px at random. Draws: the height's, then the x's (then the
+/// burst's own).
 pub fn hit_burst(w: &mut World, id: ObjectId, attacker: ObjectId) {
-    let (x, z, hit) = {
+    let (x, y, z, hit) = {
         let o = obj(w, id);
-        (o.x, o.z, o.hit_rect.translate(o.x, o.y))
+        (o.x, o.y, o.z, o.hit_rect)
     };
     let mid = w
         .objects
         .get(attacker)
         .filter(|a| a.attack_rect.is_set())
-        .map_or(obj(w, id).y, |a| {
+        .map_or(y, |a| {
             let r = a.attack_rect.translate(a.x, a.y);
             (r.top + r.bottom) / 2
         });
-    let mid = if hit.left != Rect::UNSET_LEFT {
+    let mid = if hit.is_set() {
+        let hit = hit.translate(x, y);
         mid.clamp(hit.top, hit.bottom.max(hit.top))
     } else {
         mid
     };
     let dy = rand(w, 9) - 4;
     let dx = rand(w, 9) - 4;
-    crate::logic::effect::spawn_hit_burst(w, x + dx, mid + dy, z + BURST_DEPTH, None, false);
+    crate::logic::effect::spawn_hit_burst(
+        w,
+        x + dx,
+        mid + dy,
+        z.saturating_add(BURST_DEPTH),
+        None,
+        false,
+    );
 }
 
 /// `id` attacked `victim`: enemies need nothing here.
 pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     let _ = (w, id, victim);
+}
+
+// ----------------------------------------------------------------------
+// Death
+
+/// Speed of a killed body, px/s across (away from Claw) and up.
+pub const DEATH_LAUNCH: (f64, f64) = (150.0, -700.0);
+/// Depth of a killed body: in front of everything.
+pub const DEATH_DEPTH: i32 = 8500;
+/// Removal delay of a death on spikes or after a throw, ms.
+pub const DEATH_DELAY_MS: u64 = 1000;
+
+/// Dies of `kind`, `by` being what dealt the blow. Human enemies first
+/// drop their loot (once). Then the enemy is dead, busy and harmless to
+/// others:
+///
+/// - killed by a hit, the body is drawn in front of everything and thrown
+///   up at 700 px/s and away from Claw at 150 px/s, under gravity and
+///   through the tiles; a quarter of the time Claw says a line (for kills
+///   by his blows or his pistol only), otherwise the death sound plays;
+/// - killed by a landing, on spikes or in goo, the body stays where it is:
+///   spikes and goo play the death tile sound; goo removes it at once, the
+///   others after a second.
+///
+/// Draws: the loot's, then one of 0..100 for a kill by a hit, and one of
+/// 0..10 when Claw speaks.
+pub fn die(w: &mut World, id: ObjectId, kind: DeathKind, by: Option<ObjectId>) {
+    let human = class_of(w, id).is_some_and(|c| c.human);
+    if human && data(w, id).is_some_and(|d| !d.dead) {
+        drop_loot(w, id);
+    }
+    let by_type = by
+        .and_then(|a| w.objects.get(a))
+        .map_or(0, |a| a.type_flags);
+    if let Some(d) = data_mut(w, id) {
+        d.death = kind;
+        d.busy = true;
+        d.cooldown = Timer::default();
+    }
+    set_state(w, id, EnemyState::Dead);
+    obj_mut(w, id).flags |= flags::HARMLESS;
+    let now = w.now_ms;
+    match kind {
+        DeathKind::Hit => {
+            let o = obj_mut(w, id);
+            o.z = DEATH_DEPTH;
+            o.flags |= flags::RESORT;
+            if rand(w, 100) < 25 {
+                if by_type == attacker::CLAW || by_type == attacker::PISTOL_SHOT {
+                    let line = CLAW_KILL_LINES[rand(w, 10) as usize];
+                    sound::claw_say(w, line, false);
+                }
+            } else {
+                let s = data(w, id).map_or("", |d| d.death_sound);
+                play(w, s);
+            }
+            let anim = data(w, id).map_or("", |d| d.death_anim);
+            set_anim(w, id, anim);
+            obj_mut(w, id).physics_type = ptype::DIRECT;
+            if let Some(d) = data_mut(w, id) {
+                d.z_sort = false;
+                d.bounds = UNBOUNDED;
+                d.bounds_y = UNBOUNDED;
+                d.ay = GRAVITY;
+                d.vx = if d.claw_right {
+                    -DEATH_LAUNCH.0
+                } else {
+                    DEATH_LAUNCH.0
+                };
+                d.vy = DEATH_LAUNCH.1;
+            }
+        }
+        DeathKind::Landing | DeathKind::Spikes | DeathKind::Goo => {
+            if kind != DeathKind::Landing {
+                play(w, DEATH_TILE_SOUND);
+            }
+            if let Some(d) = data_mut(w, id) {
+                d.frozen = true;
+                d.death_timer = Timer::new(now, DEATH_DELAY_MS);
+            }
+            if kind == DeathKind::Goo {
+                w.destroy(id);
+            } else {
+                obj_mut(w, id).draw_flags |= draw_flags::FLASH;
+            }
+        }
+    }
+    if let Some(d) = data_mut(w, id) {
+        d.dead = true;
+    }
+}
+
+/// Drops the enemy's loot: the drop sound once, then one pickup per
+/// filled slot through the shared loot drop (fanned out 25 px/s apart, a
+/// single one at a random speed across, all thrown up at random; see
+/// [`pickup::drop_loot`]). Nothing plays when the enemy carries no loot.
+pub fn drop_loot(w: &mut World, id: ObjectId) {
+    let Some(loot) = data(w, id).map(|d| d.loot) else {
+        return;
+    };
+    if loot.iter().all(|&c| c == 0) {
+        return;
+    }
+    let (x, y) = {
+        let o = obj(w, id);
+        (o.x, o.y)
+    };
+    play(w, DROP_SOUND);
+    pickup::drop_loot(w, x, y, loot);
 }
 
 #[cfg(test)]
@@ -817,8 +1487,16 @@ mod tests {
             assert_eq!(EnemyState::from_id(s as i32), Some(s));
         }
         assert_eq!(EnemyState::Idle as i32, 2000);
+        assert_eq!(EnemyState::Pause as i32, 2007);
+        assert_eq!(EnemyState::Dropped as i32, 2021);
         assert_eq!(EnemyState::from_id(0), None);
+        assert_eq!(EnemyState::from_id(1999), None);
+        assert_eq!(EnemyState::from_id(2022), None);
+        assert_eq!(EnemyState::from_id(i32::MIN), None);
         assert_eq!(EnemyState::Strike.name(), "Strike");
+        for (i, s) in EnemyState::ALL.iter().enumerate() {
+            assert_eq!(*s as i32, 2000 + i as i32);
+        }
     }
 
     #[test]
@@ -827,23 +1505,54 @@ mod tests {
         assert_eq!(scaled(7, 1.5), 10);
         assert_eq!(smarts(50), 99);
         assert_eq!(smarts(25), 99);
+        assert_eq!(smarts(10), 99);
+    }
+
+    fn officer_ranges() -> EnemyFields {
+        EnemyFields {
+            ranges: [(100, 40); 5],
+            ..EnemyFields::default()
+        }
     }
 
     #[test]
     fn range_modes() {
-        let mut d = EnemyFields::default();
-        assert_eq!(mode(&mut d, (100, 100), (150, 120), true, 0), 4);
+        let mut d = officer_ranges();
+        assert_eq!(range_mode(&mut d, (100, 100), (150, 120), true, 0), 4);
         d.mode = 4;
         // Out of range on screen: the mode holds for 500 ms, then is 5.
-        assert_eq!(mode(&mut d, (100, 100), (300, 100), true, 1000), 4);
-        assert_eq!(mode(&mut d, (100, 100), (300, 100), true, 1499), 4);
-        assert_eq!(mode(&mut d, (100, 100), (300, 100), true, 1500), 5);
+        assert_eq!(range_mode(&mut d, (100, 100), (300, 100), true, 1000), 4);
+        assert_eq!(range_mode(&mut d, (100, 100), (300, 100), true, 1499), 4);
+        assert_eq!(range_mode(&mut d, (100, 100), (300, 100), true, 1500), 5);
         // Off screen: 6 at once.
-        assert_eq!(mode(&mut d, (100, 100), (300, 100), false, 1500), 6);
+        assert_eq!(range_mode(&mut d, (100, 100), (300, 100), false, 1500), 6);
         // The box excludes its right and bottom edges.
-        assert_eq!(mode(&mut d, (100, 100), (200, 100), false, 0), 6);
-        assert_eq!(mode(&mut d, (100, 100), (0, 60), false, 0), 4);
-        assert_eq!(mode(&mut d, (100, 100), (0, 140), false, 0), 6);
+        assert_eq!(range_mode(&mut d, (100, 100), (200, 100), false, 0), 6);
+        assert_eq!(range_mode(&mut d, (100, 100), (0, 60), false, 0), 4);
+        assert_eq!(range_mode(&mut d, (100, 100), (0, 140), false, 0), 6);
+    }
+
+    #[test]
+    fn range_boxes_nest_from_the_inside_out() {
+        // The soldier's boxes: fire at 400 and 300, strike at 80.
+        let mut d = EnemyFields {
+            ranges: [(400, 50), (300, 50), (300, 50), (80, 50), (80, 50)],
+            ..EnemyFields::default()
+        };
+        let at = |d: &mut EnemyFields, cx: i32| range_mode(d, (1000, 500), (cx, 500), false, 0);
+        assert_eq!(at(&mut d, 1050), 4);
+        assert_eq!(at(&mut d, 920), 4);
+        assert_eq!(at(&mut d, 1080), 2);
+        assert_eq!(at(&mut d, 1299), 2);
+        assert_eq!(at(&mut d, 1300), 0);
+        assert_eq!(at(&mut d, 600), 0);
+        assert_eq!(at(&mut d, 1400), 6);
+        // The patrol limits, widened by box 3's half width, cut the boxes.
+        d.bounds = (950, 1050);
+        assert_eq!(at(&mut d, 1129), 2);
+        assert_eq!(at(&mut d, 1130), 6);
+        assert_eq!(at(&mut d, 870), 2);
+        assert_eq!(at(&mut d, 869), 6);
     }
 
     #[test]

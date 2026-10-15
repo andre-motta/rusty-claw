@@ -7,15 +7,13 @@ use std::sync::Arc;
 
 use claw_sim::anim::{AnimFrame, Animation};
 use claw_sim::container::CollisionEvent;
-use claw_sim::level::ObjectSpec;
-use claw_sim::logic::decor::{self, DecorData};
-use claw_sim::logic::platform::{self, NOT_PLATFORM, PLATFORM, PlatformData, Rider, state};
+use claw_sim::level::{ImageFrames, ObjectSpec};
+use claw_sim::logic::decor;
+use claw_sim::logic::platform::{self, NOT_PLATFORM, PLATFORM, Rider, SurfaceKind, state};
 use claw_sim::object::{ObjectId, draw_flags, flags};
 use claw_sim::player::state as claw_state;
 use claw_sim::trace::{self, TraceRow};
-use claw_sim::{
-    ActivationConfig, InputLatch, InputScript, ObjectData, Sim, SimConfig, SimLevel, TickInput,
-};
+use claw_sim::{ActivationConfig, InputLatch, InputScript, Sim, SimConfig, SimLevel, TickInput};
 use common::*;
 
 const X_MIN: usize = 51;
@@ -89,23 +87,12 @@ fn find(sim: &Sim, logic: &str) -> ObjectId {
         .unwrap_or_else(|| panic!("no {logic}"))
 }
 
-/// Tells the object `id` that its image set runs from frame `first` to
-/// `last`, as the level would.
-fn give_frames(sim: &mut Sim, id: ObjectId, frames: (i32, i32)) {
-    sim.with_world(|w| {
-        let o = w.objects.get_mut(id).unwrap();
-        o.data = if o.logic.contains("Candy") {
-            ObjectData::Decor(DecorData {
-                frames: Some(frames),
-                ..DecorData::default()
-            })
-        } else {
-            ObjectData::Platform(PlatformData {
-                frames: Some(frames),
-                ..PlatformData::default()
-            })
-        };
-    });
+/// Registers the test image set with frames `first..=last` in `level`.
+fn with_frames(mut level: SimLevel, (first, last): (i32, i32)) -> SimLevel {
+    level
+        .images
+        .insert("TEST_SET".into(), ImageFrames::range(first, last));
+    level
 }
 
 fn pos(sim: &Sim, id: ObjectId) -> (i32, i32) {
@@ -498,13 +485,11 @@ fn a_one_way_elevator_stops_at_its_end() {
     assert_eq!(pos(&sim, id), (1300, 700));
 }
 
+/// A peg whose image set the level reports as frames 1 to 12.
 fn peg_sim(logic: &str, x: i32, fields: &[(usize, i32)]) -> (Sim, ObjectId) {
-    let mut sim = Sim::new(
-        level_with(vec![spec(logic, x, 800, 0, fields)]),
-        SimConfig::default(),
-    );
+    let level = with_frames(level_with(vec![spec(logic, x, 800, 0, fields)]), (1, 12));
+    let sim = Sim::new(level, SimConfig::default());
     let id = find(&sim, logic);
-    give_frames(&mut sim, id, (1, 12));
     (sim, id)
 }
 
@@ -705,10 +690,9 @@ fn decorations_loop_and_never_collide() {
             },
         ],
     );
-    let mut sim = Sim::new(level, SimConfig::default());
+    let mut sim = Sim::new(with_frames(level, (1, 4)), SimConfig::default());
     let torch = find(&sim, "BehindAniCandy");
     let hand = find(&sim, "FrontAniCandy");
-    give_frames(&mut sim, torch, (1, 4));
     sim.step(TickInput::default());
     let o = sim.objects().get(torch).unwrap();
     assert_eq!((o.state, o.z, o.frame), (decor::SET_UP, decor::BEHIND_Z, 2));
@@ -763,4 +747,144 @@ fn pegs_without_their_animations_still_work() {
         NOT_PLATFORM,
         "not a platform once gone"
     );
+}
+
+/// Claw's code counts a death: the attempt counter rises, as the lives
+/// step of a death does.
+fn count_death(sim: &mut Sim) {
+    sim.with_world(|w| w.claw.stats.count_attempt());
+}
+
+/// Puts Claw on the floor at `x`, off every platform.
+fn stand_at(sim: &mut Sim, x: i32) {
+    sim.teleport_player(x, 899);
+    idle(sim, 3);
+}
+
+#[test]
+fn a_death_sends_trigger_elevators_back_and_brings_crumbled_pegs_back() {
+    let level = with_frames(
+        level_with(vec![
+            spec(
+                "TriggerElevator",
+                1500,
+                700,
+                0,
+                &[(Y_MIN, 500), (Y_MAX, 700)],
+            ),
+            spec("CrumblingPeg", 1100, 800, 0, &[]),
+        ]),
+        (1, 12),
+    );
+    let cfg = SimConfig {
+        activation: ActivationConfig::widened((100_000, 100_000)),
+        ..SimConfig::default()
+    };
+    let mut sim = Sim::new(level, cfg);
+    let lift = find(&sim, "TriggerElevator");
+    let peg = find(&sim, "CrumblingPeg");
+    // Ride the elevator up, then leave it running.
+    land_on(&mut sim, lift);
+    idle(&mut sim, 30);
+    stand_at(&mut sim, 1800);
+    idle(&mut sim, 10);
+    assert_ne!(pos(&sim, lift), (1500, 700), "it runs for good");
+    // Crumble the peg. A death during the crumble does not bring it back:
+    // the peg notes the counter when the crumble ends.
+    land_on(&mut sim, peg);
+    idle(&mut sim, 20);
+    assert_eq!(obj_state(&sim, peg), state::RUNNING_ANIM);
+    count_death(&mut sim);
+    // That death sends the elevator back where it was placed, waiting.
+    sim.step(TickInput::default());
+    assert_eq!(pos(&sim, lift), (1500, 700));
+    idle(&mut sim, 40);
+    assert_eq!(pos(&sim, lift), (1500, 700), "waits for Claw again");
+    assert_eq!(obj_state(&sim, peg), state::GONE);
+    stand_at(&mut sim, 1800);
+    idle(&mut sim, 20);
+    assert_eq!(obj_state(&sim, peg), state::GONE);
+    // The next death brings the peg back, whole, solid and drawn.
+    count_death(&mut sim);
+    sim.step(TickInput::default());
+    assert_eq!(obj_state(&sim, peg), state::SET_UP);
+    sim.step(TickInput::default());
+    let o = sim.objects().get(peg).unwrap();
+    assert_eq!((o.state, o.frame), (state::STOPPED, 1));
+    assert_eq!(o.type_flags, PLATFORM);
+    assert_eq!(o.draw_flags & draw_flags::HIDDEN, 0);
+    assert_eq!(pos(&sim, lift), (1500, 700));
+}
+
+#[test]
+fn the_level_number_picks_the_platform_rectangles() {
+    let mut level = level_with(vec![
+        track_elevator(1160),
+        spec("TogglePeg", 1250, 800, 0, &[]),
+    ]);
+    level.number = 7;
+    let mut sim = Sim::new(level, SimConfig::default());
+    sim.step(TickInput::default());
+    let lift = sim.objects().get(find(&sim, "Elevator")).unwrap();
+    assert_eq!(lift.hit_rect, platform::surface(7, SurfaceKind::Elevator));
+    assert_eq!(lift.hit_rect.top, 70);
+    let peg = sim.objects().get(find(&sim, "TogglePeg")).unwrap();
+    assert_eq!(peg.hit_rect, platform::surface(7, SurfaceKind::TogglePeg));
+    // The trap elevator of level 10 uses the big rectangle.
+    let mut trap = track_elevator(1160);
+    trap.image_set = "LEVEL_TRAPELEVATOR".into();
+    let mut level = level_with(vec![trap.clone()]);
+    level.number = 10;
+    let mut sim = Sim::new(level, SimConfig::default());
+    sim.step(TickInput::default());
+    let lift = sim.objects().get(find(&sim, "Elevator")).unwrap();
+    assert_eq!(
+        lift.hit_rect,
+        platform::surface(10, SurfaceKind::BigElevator)
+    );
+    let mut sim = Sim::new(level_with(vec![trap]), SimConfig::default());
+    sim.step(TickInput::default());
+    let lift = sim.objects().get(find(&sim, "Elevator")).unwrap();
+    assert_eq!(lift.hit_rect, platform::surface(1, SurfaceKind::Elevator));
+}
+
+/// True when the snapshot draws `id` without interpolation.
+fn drawn_at_once(sim: &Sim, snap: &claw_sim::SimSnapshot, id: ObjectId) -> bool {
+    let serial = sim.objects().get(id).unwrap().serial;
+    snap.renderables
+        .iter()
+        .find(|r| r.id == serial)
+        .is_some_and(|r| r.teleported)
+}
+
+#[test]
+fn an_elevator_set_up_away_from_its_clock_place_jumps_there_at_once() {
+    // Live from the start: its first move is a normal one.
+    let mut sim = Sim::new(level_with(vec![track_elevator(1160)]), SimConfig::default());
+    let id = find(&sim, "Elevator");
+    for _ in 0..40 {
+        let snap = sim.step(TickInput::default());
+        assert!(!drawn_at_once(&sim, &snap, id), "tick {}", sim.tick());
+    }
+    // Woken late, it is set up where it was placed and its first move takes
+    // it to where the clock puts it, which is drawn as a jump.
+    let far = 9160;
+    let mut sim = Sim::new(level_with(vec![track_elevator(far)]), SimConfig::default());
+    let id = find(&sim, "Elevator");
+    idle(&mut sim, 140);
+    assert_eq!(pos(&sim, id), (far, 700));
+    sim.teleport_player(far, 800);
+    let mut first_move = None;
+    for _ in 0..40 {
+        let snap = sim.step(TickInput::default());
+        let o = sim.objects().get(id).unwrap();
+        if first_move.is_none() && o.state == state::RUNNING && o.platform_move != (0, 0) {
+            first_move = Some(o.platform_move);
+            assert!(o.platform_move.0.abs() > 6, "{:?}", o.platform_move);
+            assert!(drawn_at_once(&sim, &snap, id), "the jump is not swept");
+        } else if first_move.is_some() {
+            assert!(!drawn_at_once(&sim, &snap, id), "later moves are smooth");
+        }
+    }
+    assert!(first_move.is_some(), "it woke and moved");
 }

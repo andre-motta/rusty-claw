@@ -207,6 +207,61 @@ fn output_side_does_not_allocate() {
 }
 
 #[test]
+fn music_render_does_not_allocate() {
+    use crate::music::convert::{BankMode, XmidiEvent, XmidiKind};
+    use crate::music::{Bank, Song, Track, music, soundfont};
+
+    let bank = Bank::from_bytes(&soundfont::build_test_bank()).unwrap();
+    let mut events = Vec::new();
+    for k in 0..40u32 {
+        events.push(XmidiEvent::new(
+            k * 6,
+            XmidiKind::Note {
+                channel: (k % 16) as u8,
+                key: 40 + (k % 40) as u8,
+                velocity: 100,
+                duration: 30,
+            },
+        ));
+        events.push(XmidiEvent::new(
+            k * 6 + 1,
+            XmidiKind::Controller {
+                channel: (k % 16) as u8,
+                controller: 7,
+                value: (k * 3 % 128) as u8,
+            },
+        ));
+    }
+    events.push(XmidiEvent::new(260, XmidiKind::EndOfTrack));
+    let song = Song::from_xmidi(&events, BankMode::GeneralMidi).unwrap();
+    let (mut player, mut source) = music(
+        &bank,
+        &[(Track::Level, song.clone()), (Track::Powerup, song)],
+        48000,
+    )
+    .unwrap();
+    let mut out = vec![0.0f32; 2 * 1024];
+
+    let ops = heap_ops(|| {
+        player.play(Track::Level, true);
+        for round in 0..200 {
+            let n = 64 + (round * 37) % 900;
+            let rate = if round % 3 == 0 { 44100 } else { 48000 };
+            source.render(&mut out[..2 * n], rate);
+            match round {
+                50 => player.play(Track::Powerup, true),
+                80 => player.set_speed(150, 500),
+                120 => player.play(Track::Level, true),
+                150 => player.stop(),
+                160 => player.restart(false),
+                _ => {}
+            }
+        }
+    });
+    assert_eq!(ops, 0, "heap operations while synthesizing");
+}
+
+#[test]
 fn counter_sees_heap_operations() {
     let ops = heap_ops(|| {
         let v = std::hint::black_box(vec![1u8; 64]);

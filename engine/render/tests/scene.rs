@@ -19,6 +19,8 @@ fn single(sprite: claw_render::SpriteInput<'_>, center: (f64, f64)) -> FrameInpu
         sprites: vec![sprite],
         time_ms: 0.0,
         fade: None,
+        screen: Vec::new(),
+        transition: None,
     }
 }
 
@@ -94,6 +96,8 @@ fn interleaved_and_plain_draw_order() {
         ],
         time_ms: 0.0,
         fade: None,
+        screen: Vec::new(),
+        transition: None,
     };
     let scene = b.build(&mut g, &frame);
     use Item::*;
@@ -230,6 +234,8 @@ fn modes_and_defaults() {
         sprites: vec![remap, ghostly, hidden, missing, shadow],
         time_ms: 0.0,
         fade: None,
+        screen: Vec::new(),
+        transition: None,
     };
     let scene = b.build(&mut g, &f);
     // Remap has no default table, mode 9 draws nothing, the missing set is
@@ -254,6 +260,8 @@ fn ghost_reads_what_is_below() {
         sprites: vec![base, ghost],
         time_ms: 0.0,
         fade: None,
+        screen: Vec::new(),
+        transition: None,
     };
     let scene = b.build(&mut g, &f);
     let below = {

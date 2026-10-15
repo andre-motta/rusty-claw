@@ -10,7 +10,9 @@ use claw_assets::{Frame, Palette, Plane};
 use claw_frame::{AspectPolicy, DrawMode, ScaleMode, ViewConfig};
 use claw_render::effects::{LevelTables, Table};
 use claw_render::view::{CELL_EMPTY, CELL_FILL, PLANE_MAIN, PLANE_X_WRAP, PLANE_Y_WRAP};
-use claw_render::{FrameInput, HdPack, LevelGraphics, MemoryImages, SpriteInput};
+use claw_render::{
+    Anchor, FrameInput, HdPack, LevelGraphics, MemoryImages, ScreenSprite, SpriteInput,
+};
 
 pub const TILE: i32 = 16;
 
@@ -132,7 +134,69 @@ pub fn images() -> MemoryImages {
     let mut ghost = sprite_frame(10, 8, 170, (0, 0));
     ghost.flags |= 0x40;
     src.insert("GHOSTLY", 1, ghost);
+    // Screen-layer art: a one-pixel dot, a panel with a hotspot offset and a
+    // keyed digit-like frame.
+    src.insert("DOT", 1, frame(1, 1, 0, |_, _| 222));
+    let mut panel = frame(9, 7, 0, |x, y| (230 + x + y) as u8);
+    panel.offset_x = 1;
+    panel.offset_y = -1;
+    src.insert("PANEL", 1, panel);
+    src.insert(
+        "PANEL",
+        2,
+        frame(5, 5, FLAG_COLOR_KEY, |x, y| if x == y { 0 } else { 245 }),
+    );
     src
+}
+
+/// Graphics with no level, for standalone screens.
+pub fn screen_graphics() -> LevelGraphics {
+    LevelGraphics::for_screens(palette(), Box::new(images()))
+}
+
+/// Screen-layer sprites at every anchor, in every draw mode that draws
+/// without a table, plus one translucent and one off-picture sprite.
+pub fn screen_sprites() -> Vec<ScreenSprite> {
+    let mut out = Vec::new();
+    for (i, anchor) in [
+        Anchor::TopLeft,
+        Anchor::TopRight,
+        Anchor::BottomLeft,
+        Anchor::BottomRight,
+        Anchor::TopCenter,
+        Anchor::Center,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let i = i as i32;
+        let (sx, sy) = match anchor {
+            Anchor::TopLeft => (1, 1),
+            Anchor::TopRight => (-1, 1),
+            Anchor::BottomLeft => (1, -1),
+            Anchor::BottomRight => (-1, -1),
+            Anchor::TopCenter => (0, 1),
+            Anchor::Center => (0, 0),
+        };
+        out.push(ScreenSprite::new(
+            "PANEL",
+            1,
+            anchor,
+            sx * (5 + i),
+            sy * (4 + i),
+        ));
+        out.push(ScreenSprite::new("PANEL", 2, anchor, sx * (12 + i), sy * 6));
+        out.push(ScreenSprite::new("DOT", 1, anchor, 0, 0));
+    }
+    let mut ghost = ScreenSprite::new("SPR", 2, Anchor::Center, 3, 2);
+    ghost.mode = DrawMode::GHOST;
+    out.push(ghost);
+    let mut fill = ScreenSprite::new("SPR", 1, Anchor::TopCenter, -20, 30);
+    fill.mode = DrawMode::COLOR_FILL;
+    out.push(fill);
+    out.push(ScreenSprite::new("PANEL", 1, Anchor::TopLeft, -50, 10));
+    out.push(ScreenSprite::new("MISSING", 1, Anchor::TopLeft, 10, 10));
+    out
 }
 
 pub fn planes() -> Vec<Plane> {
@@ -243,5 +307,7 @@ pub fn busy_frame<'a>(center: (f64, f64)) -> FrameInput<'a> {
         sprites,
         time_ms: 1000.0,
         fade: None,
+        screen: Vec::new(),
+        transition: None,
     }
 }

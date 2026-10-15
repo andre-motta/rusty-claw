@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use claw_sim::anim::{AnimFrame, Animation};
-use claw_sim::level::ObjectSpec;
+use claw_sim::container::CollisionEvent;
+use claw_sim::level::{ImageFrames, ObjectSpec};
 use claw_sim::logic::effect::{EffectData, EffectKind};
 use claw_sim::logic::pickup::{self, PickupData, state as pstate};
 use claw_sim::logic::{self, ObjectData, crates, keg};
@@ -766,24 +767,22 @@ fn a_thrown_keg_explodes_on_the_first_enemy_it_strikes() {
     let mut sim = Sim::new(keg_level(false), SimConfig::default());
     step(&mut sim, 2);
     let k = find(&sim, "PowderKeg")[0];
-    let mut enemy = Object::new(0, 1300, 900, 3000, "Enemy".into(), LogicKind::Inert);
+    let mut enemy = Object::new(0, 1260, 900, 3000, "Enemy".into(), LogicKind::Inert);
     enemy.flags = flags::WORLD;
     enemy.type_flags = types::ENEMY;
     enemy.hit_type_flags = types::THROWN;
     enemy.hit_rect = Rect::new(-20, -60, 20, 60);
     sim.spawn(enemy);
-    sim.with_world(|w| logic::thrown(w, k, 600, 0));
+    // Up and forward: it would land some 360 px on.
+    sim.with_world(|w| logic::thrown(w, k, 600, -600));
     let mut ticks = 0;
     while explosions(&sim, k).is_empty() {
         step(&mut sim, 1);
         ticks += 1;
         assert!(ticks < 30, "it hits the enemy before landing");
     }
-    assert!(obj_or_gone_x(&sim, k) < 1300 + 60);
-}
-
-fn obj_or_gone_x(sim: &Sim, id: ObjectId) -> i32 {
-    sim.objects().get(id).map_or(i32::MIN, |o| o.x)
+    let (bx, ..) = explosions(&sim, k)[0];
+    assert!(bx - keg::BLAST_OFFSET.0 < 1300, "it went off at the enemy");
 }
 
 // ------------------------------------------------------------ curses
@@ -1298,5 +1297,211 @@ fn crates_kegs_and_goodies_run_the_same_every_time() {
         sim.step(TickInput::default());
         twin.step(TickInput::default());
         assert_eq!(digest(&sim), digest(&twin));
+    }
+}
+
+// ------------------------------------------------------------ level details
+
+/// Registers the image set `set` with frames `first..=last` and the given
+/// frame boxes in `l`.
+fn register(l: &mut SimLevel, set: &str, (first, last): (i32, i32), boxes: &[(i32, Rect)]) {
+    let mut frames = ImageFrames::range(first, last);
+    frames.boxes.extend(boxes.iter().copied());
+    l.images.insert(set.to_string(), frames);
+}
+
+#[test]
+fn a_thrown_keg_flies_past_an_idle_keg() {
+    let mut l = keg_level(false);
+    l.objects
+        .push(spec("PowderKeg", "LEVEL_POWDERKEG", 1240, 890));
+    let mut sim = Sim::new(l, SimConfig::default());
+    step(&mut sim, 2);
+    let kegs = find(&sim, "PowderKeg");
+    let (k, idle) = (kegs[0], kegs[1]);
+    // Thrown up and forward, it passes through the lying keg as it rises
+    // and lands some 360 px on.
+    sim.with_world(|w| logic::thrown(w, k, 600, -600));
+    let mut struck = false;
+    let mut ticks = 0;
+    while explosions(&sim, k).is_empty() {
+        step(&mut sim, 1);
+        struck |= sim.collision_events().iter().any(|e| {
+            matches!(*e, CollisionEvent::Attack { attacker, victim } if attacker == k && victim == idle)
+        });
+        assert_eq!(
+            keg::data_of(obj(&sim, idle)).unwrap().phase,
+            keg::Phase::Idle,
+            "the lying keg is not set off"
+        );
+        ticks += 1;
+        assert!(ticks < 60, "the thrown keg lands");
+    }
+    assert!(struck, "the thrown keg touched the lying one");
+    let (bx, ..) = explosions(&sim, k)[0];
+    assert!(
+        bx - keg::BLAST_OFFSET.0 > 1500,
+        "it went off where it landed, at {bx}"
+    );
+}
+
+#[test]
+fn a_keg_blast_shakes_the_screen_for_half_a_second() {
+    let mut sim = Sim::new(keg_level(true), SimConfig::default());
+    step(&mut sim, 2);
+    let k = find(&sim, "PowderKeg")[0];
+    let claw = claw(&mut sim);
+    hit(&mut sim, k, claw);
+    let mut shaken = None;
+    for _ in 0..20 {
+        let now = 18 * sim.tick();
+        step(&mut sim, 1);
+        if !explosions(&sim, k).is_empty() {
+            shaken = Some(now);
+            break;
+        }
+        assert_eq!(sim.camera().shake_until_ms, 0, "no shake before the blast");
+    }
+    let now = shaken.expect("the blast came");
+    assert_eq!(
+        sim.camera().shake_until_ms,
+        now + u64::from(keg::BLAST_SHAKE_MS)
+    );
+}
+
+#[test]
+fn a_kill_of_kind_two_sets_a_keg_off_and_other_kills_remove_it() {
+    let mut sim = Sim::new(keg_level(true), SimConfig::default());
+    step(&mut sim, 2);
+    let k = find(&sim, "PowderKeg")[0];
+    assert!(sim.with_world(|w| w.kill(k, keg::KILL_EXPLODE)));
+    let snap = sim.step(TickInput::default());
+    assert!(sounds(&snap.audio).contains(&keg::BLAST_SOUND.to_string()));
+    assert_eq!(
+        keg::data_of(obj(&sim, k)).unwrap().phase,
+        keg::Phase::Exploding
+    );
+    step(&mut sim, 60);
+    assert_eq!(explosions(&sim, k).len(), 1);
+    assert!(sim.objects().get(k).is_none());
+
+    let mut sim = Sim::new(keg_level(true), SimConfig::default());
+    step(&mut sim, 2);
+    let k = find(&sim, "PowderKeg")[0];
+    sim.with_world(|w| w.kill(k, 1));
+    let snap = sim.step(TickInput::default());
+    assert!(!sounds(&snap.audio).contains(&keg::BLAST_SOUND.to_string()));
+    step(&mut sim, 2);
+    assert!(sim.objects().get(k).is_none());
+    assert!(explosions(&sim, k).is_empty());
+}
+
+#[test]
+fn pickup_and_crate_boxes_come_from_the_pictures() {
+    let coin = Rect::new(-8, -9, 7, 8);
+    let food = Rect::new(-12, -10, 11, 9);
+    let crate_box = Rect::new(-30, -40, 29, 39);
+    let mut l = level(vec![
+        spec("TreasurePowerup", "GAME_TREASURE_COINS", 1200, 900),
+        spec("HealthPowerup", "LEVEL_HEALTH", 1300, 900),
+        crate_with("FrontCrate", 1100, 0),
+    ]);
+    register(&mut l, "GAME_TREASURE_COINS", (1, 8), &[(1, coin)]);
+    register(&mut l, "LEVEL_HEALTH", (1, 1), &[(1, food)]);
+    register(&mut l, "LEVEL_CRATES", (1, 3), &[(1, crate_box)]);
+    let mut sim = Sim::new(l, SimConfig::default());
+    step(&mut sim, 2);
+    let t = find(&sim, "TreasurePowerup")[0];
+    assert_eq!(obj(&sim, t).attack_rect, pickup::padded(coin));
+    assert_eq!(pickup::padded(coin), Rect::new(-14, -19, 13, 10));
+    let h = find(&sim, "HealthPowerup")[0];
+    assert_eq!(obj(&sim, h).attack_rect, food, "health is not padded");
+    let c = find(&sim, "FrontCrate")[0];
+    assert_eq!((obj(&sim, c).hit_rect, obj(&sim, c).frame), (crate_box, 1));
+    // The crate's coin comes out showing the set's first image, -1, and
+    // touches with that image's box once it can be taken.
+    let claw = claw(&mut sim);
+    hit(&mut sim, c, claw);
+    let g = find(&sim, pickup::BOUNCING_GOODIE)[0];
+    assert_eq!(obj(&sim, g).frame, -1);
+    step(&mut sim, 10);
+    assert_eq!(obj(&sim, g).attack_rect, pickup::goodie_box(coin));
+}
+
+#[test]
+fn a_damaged_crate_shows_the_next_image_of_its_set() {
+    assert_eq!(crates::next_frame(3, Some((3, 4))), 4);
+    assert_eq!(crates::next_frame(4, Some((3, 4))), 3, "wraps to the first");
+    assert_eq!(crates::next_frame(9, Some((3, 4))), 3);
+    assert_eq!(crates::next_frame(1, Some((3, 4))), 3);
+    assert_eq!(crates::next_frame(7, None), 8);
+    // A two-hit crate placed on another image starts on the set's first,
+    // and in a set of one image a hit keeps it.
+    for ((first, last), placed, damaged) in [((3, 4), 1, 4), ((7, 7), 1, 7)] {
+        let mut two = crate_with("FrontCrate", 1200, 0);
+        two.record[18] = 5;
+        two.frame = placed;
+        let mut l = level(vec![two]);
+        register(&mut l, "LEVEL_CRATES", (first, last), &[]);
+        register(&mut l, "GAME_TREASURE_COINS", (1, 8), &[]);
+        let mut sim = Sim::new(l, SimConfig::default());
+        step(&mut sim, 2);
+        let c = find(&sim, "FrontCrate")[0];
+        assert_eq!(obj(&sim, c).frame, first);
+        let claw = claw(&mut sim);
+        hit(&mut sim, c, claw);
+        let o = obj(&sim, c);
+        assert_eq!((o.health, o.frame), (1, damaged));
+    }
+}
+
+#[test]
+fn an_item_whose_picture_the_level_lacks_is_not_dropped() {
+    let mut l = level(Vec::new());
+    register(&mut l, "GAME_TREASURE_COINS", (1, 8), &[]);
+    register(&mut l, "LEVEL_GEM", (1, 1), &[]);
+    let mut sim = Sim::new(l, SimConfig::default());
+    sim.with_world(|w| {
+        assert!(pickup::spawn_drop(w, 1100, 800, 0).is_some());
+        assert!(pickup::spawn_drop(w, 1100, 800, -5).is_some(), "a coin");
+        assert_eq!(pickup::spawn_drop(w, 1100, 800, 1), None, "no gold bars");
+        assert_eq!(pickup::spawn_drop(w, 1100, 800, 62), None);
+        // Level 1 shows the map piece as GAME_MAPPIECE, which it lacks.
+        assert_eq!(
+            pickup::spawn_drop(w, 1100, 800, pickup::MAP_PIECE_CODE),
+            None
+        );
+    });
+    // A level made in code reports no image sets and drops everything.
+    let mut sim = Sim::new(level(Vec::new()), SimConfig::default());
+    sim.with_world(|w| assert!(pickup::spawn_drop(w, 1100, 800, 1).is_some()));
+}
+
+#[test]
+fn the_map_piece_picture_follows_the_level_number() {
+    for (number, picture, other) in [
+        (1, "GAME_MAPPIECE", "LEVEL_GEM"),
+        (2, "LEVEL_GEM", "GAME_MAPPIECE"),
+        (13, "LEVEL_GEM", "GAME_MAPPIECE"),
+    ] {
+        let mut l = level(vec![
+            spec("EndOfLevelPowerup", picture, 1200, 900),
+            spec("EndOfLevelPowerup", other, 1300, 900),
+        ]);
+        l.number = number;
+        let mut sim = Sim::new(l, SimConfig::default());
+        step(&mut sim, 2);
+        let ids = find(&sim, "EndOfLevelPowerup");
+        let (right, wrong) = (data(obj(&sim, ids[0])), data(obj(&sim, ids[1])));
+        assert_eq!(
+            (right.kind, right.points),
+            (pickup::MAP_PIECE_CODE, pickup::END_OF_LEVEL),
+            "level {number}"
+        );
+        assert_eq!((wrong.kind, wrong.points), (0, 100), "level {number}");
+        let g = sim
+            .with_world(|w| pickup::spawn_drop(w, 1100, 800, pickup::MAP_PIECE_CODE))
+            .unwrap();
+        assert_eq!(obj(&sim, g).image_set, picture, "level {number}");
     }
 }
