@@ -270,6 +270,15 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
     }
 }
 
+/// Claw starts winding up a throw of `id`: a held officer or soldier
+/// shifts a little back and down (see [`enemy::lift::wind_up`]); other
+/// families ignore it.
+pub fn wind_up(w: &mut World, id: ObjectId) {
+    if matches!(family(w, id), Some(GameLogic::Officer | GameLogic::Soldier)) {
+        enemy::lift::wind_up(w, id);
+    }
+}
+
 /// `id` was put down or let go.
 pub fn dropped(w: &mut World, id: ObjectId) {
     match family(w, id) {
@@ -438,6 +447,31 @@ mod unit {
             dropped(w, rat);
         });
         assert_eq!(look(&sim, rat), rat_before);
+    }
+
+    #[test]
+    fn winding_up_reaches_a_lifted_officer_or_soldier() {
+        let (sim, claw, [officer, soldier, rat]) = enemies_beside_claw();
+        for id in [officer, soldier] {
+            let mut sim = sim.clone();
+            let winding = |sim: &Sim| {
+                enemy::data_of(sim.objects().get(id).expect("the enemy exists"))
+                    .expect("enemy data")
+                    .winding_up
+            };
+            sim.with_world(|w| lifted(w, id, claw));
+            assert!(!winding(&sim));
+            sim.with_world(|w| wind_up(w, id));
+            assert!(winding(&sim));
+            // Lifted again, it starts without the wind-up.
+            sim.with_world(|w| lifted(w, id, claw));
+            assert!(!winding(&sim));
+        }
+        // The rat is never carried and ignores it.
+        let mut sim = sim.clone();
+        let before = look(&sim, rat);
+        sim.with_world(|w| wind_up(w, rat));
+        assert_eq!(look(&sim, rat), before);
     }
 
     #[test]

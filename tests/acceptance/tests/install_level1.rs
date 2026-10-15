@@ -618,6 +618,8 @@ fn death_stop(p: &mut Player, peg: (i32, i32, i32), level: &SimLevel, n: &mut No
     let elevator = records(level, "StartElevator")[0];
     let lives = p.sim.stats().lives;
     let k = p.events.len();
+    let tile_sounds = |p: &Player| p.sounds.get(death::DEATH_TILE_SOUND).copied().unwrap_or(0);
+    let tile_sounds_before = tile_sounds(p);
     p.teleport(peg.0, peg.1 - 120);
     let id = placed_object(&p.sim, "CrumblingPeg", peg).expect("the peg");
     let died = |p: &Player| {
@@ -642,10 +644,7 @@ fn death_stop(p: &mut Player, peg: (i32, i32, i32), level: &SimLevel, n: &mut No
             lives_left: lives - 1
         }]
     );
-    assert!(
-        p.sounds.contains_key(death::DEATH_TILE_SOUND),
-        "the spikes killed him"
-    );
+    assert!(tile_sounds(p) > tile_sounds_before, "the spikes killed him");
     // He comes back at the last checkpoint once the circle has opened.
     p.until(300, |p| {
         (p.state() != state::STAND || p.sim.transition().is_some()).then_some(0)

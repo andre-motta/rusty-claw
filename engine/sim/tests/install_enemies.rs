@@ -225,7 +225,11 @@ fn fight(sim: &mut Sim, id: ObjectId, rat: bool, ticks: usize) -> Option<usize> 
         };
         sim.step(input);
     }
-    None
+    // A kill on the last tick of the budget counts too.
+    match outcome(sim, id) {
+        Outcome::Killed => Some(ticks),
+        _ => None,
+    }
 }
 
 /// Strikes at the enemy `id` from the air: Claw is put beside it at its

@@ -82,9 +82,9 @@
 //! # Weapons
 //!
 //! The toggle key cycles pistol, magic and dynamite while no attack runs
-//! (the post-tick step changes the weapon) and plays a click; the click is
-//! played from the attack hosts and Claw's special states, see
-//! [`toggle_click`]. The keys 1, 2 and 3 select a weapon and fire it.
+//! and plays [`TOGGLE_SOUND`]; both happen in the post-tick step, after
+//! the state's handler, so the toggle works the same in every state. The
+//! keys 1, 2 and 3 select a weapon and fire it.
 //!
 //! # Lifting
 //!
@@ -574,19 +574,7 @@ pub fn select(c: &mut Ctx) -> bool {
     } else if pressed.contains(Buttons::LIFT) && c.o.physics_type == ptype::STAND {
         lifted = try_lift(c);
     }
-    toggle_click(c);
     c.p.attacking || lifted
-}
-
-/// Plays the toggle click when the toggle key is pressed while no attack
-/// runs: the post-tick step then moves to the next weapon.
-///
-/// The attack hosts (through [`select`]) and Claw's special states call
-/// it; in the other states the weapon changes without the click.
-pub fn toggle_click(c: &mut Ctx) {
-    if c.input.pressed.contains(Buttons::TOGGLE) && !c.p.attacking {
-        c.play(TOGGLE_SOUND, SoundChannel::Effect);
-    }
 }
 
 /// Starts the selected weapon's attack for the state Claw is in.
@@ -1123,14 +1111,9 @@ fn sword_shot(c: &mut Ctx) {
 /// and Claw can no longer hit anything. Claw's special states read the
 /// end of their own entry from here too (see [`special::SpecialData`]).
 ///
-/// One exception keeps an air attack (the jumping swipe, shot, magic or
-/// dynamite throw) going when the jump turns into a fall at its top: the
-/// fall's own animation is then the one to come back to.
+/// The jump's handover to the fall at its top does not come here while an
+/// air attack runs (see [`carry_over_jump_top`]).
 pub fn cancel(c: &mut Ctx) {
-    if jump_top_with_air_attack(c) {
-        c.p.attack.restore_anim = Some("CLAW_FALL".to_string());
-        return;
-    }
     if let Some(held) = c.p.special.lifted.take() {
         c.with_world(|w| logic::dropped(w, held));
     }
@@ -1147,14 +1130,20 @@ pub fn cancel(c: &mut Ctx) {
     }
 }
 
-/// True while Claw, rising in a jump with an air attack running, has
-/// reached the top of the jump: the jump hands over to the fall there,
-/// and the air attack carries on through it.
-fn jump_top_with_air_attack(c: &Ctx) -> bool {
-    air_attack_running(c)
+/// Keeps an air attack (the jumping swipe, shot, magic or dynamite throw)
+/// going when the jump turns into a fall at its top; true when one does.
+/// The fall's own animation is then the one to come back to when the
+/// attack ends. Only the jump's handover to the fall asks this; every
+/// other change of state ends the attack through [`cancel`].
+pub fn carry_over_jump_top(c: &mut Ctx) -> bool {
+    let at_top = air_attack_running(c)
         && c.o.state == state::JUMP
         && c.o.physics_type == ptype::JUMP
-        && c.o.y <= c.p.jump_peak_y
+        && c.o.y <= c.p.jump_peak_y;
+    if at_top {
+        c.p.attack.restore_anim = Some("CLAW_FALL".to_string());
+    }
+    at_top
 }
 
 /// True while an air attack runs: the jumping swipe, shot, magic or

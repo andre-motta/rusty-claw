@@ -28,6 +28,11 @@ Where a line says "as in the original", compare with the original game.
 22. On a Steam Deck: the d-pad and left stick move Claw, the stick does not drift him when centred, A jumps, B strikes, X fires, Start opens the menu, and the menus follow the d-pad.
 23. Suspend the window (switch away): play pauses and resumes where it was, with no stuck keys or pad buttons.
 24. Lift a defeated officer's body, or an officer still standing: decide whether this should be possible (today Claw lifts only live officers and soldiers).
-25. Climb a ladder and press Shift to switch weapons: a click plays (today the click is missing while climbing).
-26. Get hit next to a ledge: Claw may show a short landing before he falls; decide whether that looks right.
-27. Hit an officer with magic: compare the burst with the original (today no lingering flame or frost shows on the enemy).
+25. Get hit next to a ledge: Claw may show a short landing before he falls; decide whether that looks right.
+26. Hit an officer with magic: compare the burst with the original (today no lingering flame or frost shows on the enemy).
+27. Charge a keg throw on a crumbling peg until it gives way: the keg drops from Claw's hands as he falls; after any throw the keg never stays in his hands.
+28. Get hit with speech switched off in the options: the hit sound still plays and Claw's pain line is silent.
+29. Take catnip and let it run out: every sparkle around Claw disappears at once when it ends.
+30. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
+31. Watch a rat walk into a wall: it turns back and walks away at its usual pace, as in the original.
+32. Not on level 1, so not checked here: enemies stepping into goo (they take it like spikes), springboards (Claw's jump height, and enemies on them do not launch), loot carried through a warp, and enemies on moving elevators (they stay put).
