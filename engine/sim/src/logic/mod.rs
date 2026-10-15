@@ -12,8 +12,9 @@
 //!   before destroying an object flagged [`flags::NOTIFY_DESTROY`], and
 //!   with [`engine_state::SLEEPING`] when an object flagged
 //!   [`flags::NOTIFY_SLEEP`] goes dormant; an object whose health ran out
-//!   through automatic hit damage sees [`engine_state::KILLED`] on its next
-//!   call;
+//!   through automatic hit damage, or that another logic killed with
+//!   [`World::kill`], sees [`engine_state::KILLED`] on its next call (with
+//!   the kind of kill in [`Object::kill_kind`]);
 //! - `on_hit(w, id, attacker)` and `on_attack(w, id, victim)`: called by
 //!   the pair-collision pass, in the order the pairs are tested, for
 //!   objects with [`Object::hit_handler`] or [`Object::attack_handler`];
@@ -24,8 +25,11 @@
 //! [`on_attack`] and the lift hooks dispatch a call to the object's
 //! family.
 //!
-//! [`World`] is the context of every call. A family adds helpers of its
-//! own in an `impl World` block in its own file.
+//! [`World`] is the context of every call. Besides the objects and Claw
+//! it gives the level's number, Claw's attempt counter, the frame ranges
+//! and frame boxes of the image sets, the screen shake request and the
+//! sound-only random stream. A family adds helpers of its own in an
+//! `impl World` block in its own file.
 //!
 //! Families that need another family's objects go through the spawn
 //! functions [`projectile::spawn`], [`effect::spawn`] and
