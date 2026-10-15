@@ -279,6 +279,11 @@ fn track_selection_and_fallback() {
         Some("CHORD")
     );
     assert_eq!(Track::Level.name(), "LEVEL");
+    // No file is known for the credits yet: the level's music is not
+    // taken for it.
+    for mode in [BankMode::GeneralMidi, BankMode::Original] {
+        assert_eq!(select_file(Track::Credits, mode, &["PLAY", "PLAY0"]), None);
+    }
 }
 
 #[test]
@@ -577,6 +582,39 @@ fn the_music_switch() {
     render(&mut source, 100, RATE);
     assert_eq!(player.sounding(), None);
     assert!(!player.enabled());
+}
+
+#[test]
+fn the_music_switch_keeps_a_paused_level_track_paused() {
+    // A power-up pauses the level; the Music switch goes off and on (the
+    // power-up track restarts); when the power-up ends the level carries on
+    // where it was paused, exactly as if the switch had not been touched.
+    let tracks = || vec![(Track::Level, song(30, 60)), (Track::Powerup, song(30, 72))];
+    let (mut a, mut sa) = deck(&tracks());
+    a.play(Track::Level, true);
+    let mut first = render(&mut sa, 300, RATE);
+    a.play(Track::Powerup, true);
+    render(&mut sa, 200, RATE);
+    a.set_enabled(false);
+    render(&mut sa, 100, RATE);
+    assert_eq!(a.sounding(), None, "off: nothing plays");
+    a.set_enabled(true);
+    render(&mut sa, 100, RATE);
+    assert_eq!(a.sounding(), Some(Track::Powerup), "on: the power-up again");
+    a.play(Track::Level, true);
+    first.extend(render(&mut sa, 300, RATE));
+    assert_eq!(a.sounding(), Some(Track::Level));
+
+    let (mut b, mut sb) = deck(&tracks());
+    b.play(Track::Level, true);
+    let straight = render(&mut sb, 600, RATE);
+    assert_eq!(first.len(), straight.len());
+    let diff = first
+        .iter()
+        .zip(&straight)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0f32, f32::max);
+    assert!(diff < 1e-6, "the level resumes where it paused: {diff}");
 }
 
 #[test]

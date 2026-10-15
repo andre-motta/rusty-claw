@@ -1,20 +1,27 @@
 //! The game flow without a window: synthetic menus and levels, game events
 //! as the simulation sends them, saves in a temporary folder and options
-//! written to a temporary config file.
+//! written to a temporary config file; and the pauses and sounds of play
+//! around the in-game menu, with a silent sound engine.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use claw_assets::Palette;
 use claw_assets::ifc::IfcNode;
-use claw_frame::{AudioCue, GameEvent, Weapon};
+use claw_audio::{AudioSettings, Pcm, SoundBank};
+use claw_frame::{AudioCue, GameEvent, SoundChannel, SoundCue, Weapon};
+use claw_game::Session;
+use claw_game::audio::{AudioBridge, ViewInfo};
 use claw_game::flow::{
     self, Effect, FADE_MS, Flow, MENU_BED, Progress, START_SLOT, Screen, Start, control_row,
 };
 use claw_game::keymap::{Keymap, PadMap};
+use claw_game::pause::Pauses;
 use claw_game::saves::{SaveRecord, SaveStore, retail_level_name};
 use claw_game::settings::{LevelChoice, Settings};
+use claw_sim::logic::checkpoint::{MESSAGE_NOT_SAVED, MESSAGE_SAVED};
 use claw_sim::{Carry, SavePos, Sim, SimConfig, SimLevel, StartState, TileMap};
 use claw_ui::menu::command::{CommandCatalogue, MenuCommand, MenuKind, Page};
 use claw_ui::menu::draw::FontArt;
@@ -649,7 +656,7 @@ fn the_pad_dead_zone_steps_applies_and_persists() {
     assert_eq!(nav.tree.items[row].command, MenuCommand::PadDeadZone);
     assert_eq!(
         nav.tree.items[row].text.as_deref(),
-        Some("STICK DEAD ZONE 66")
+        Some("STICK DEAD ZONE 34")
     );
     let _ = r.flow.take_effects();
 
@@ -659,9 +666,9 @@ fn the_pad_dead_zone_steps_applies_and_persists() {
         r.flow.take_effects().contains(&Effect::Bindings),
         "the new dead zone is applied"
     );
-    assert_eq!(r.flow.settings().pad.dead_zone, 0.7);
+    assert_eq!(r.flow.settings().pad.dead_zone, 0.35);
     let text = fs::read_to_string(&r.config).unwrap();
-    assert!(text.lines().any(|l| l == "pad_dead_zone = 0.7"), "{text}");
+    assert!(text.lines().any(|l| l == "pad_dead_zone = 0.35"), "{text}");
     assert_eq!(
         other_lines(&text, &["pad_dead_zone"]),
         other_lines(CONFIG, &[]),
@@ -670,7 +677,7 @@ fn the_pad_dead_zone_steps_applies_and_persists() {
     let nav = r.flow.main_menu().unwrap();
     assert_eq!(
         nav.tree.items[row].text.as_deref(),
-        Some("STICK DEAD ZONE 70")
+        Some("STICK DEAD ZONE 35")
     );
 
     // Left lowers it and stops at the lowest step.
@@ -728,4 +735,310 @@ fn quitting_from_the_main_menu_fades_then_ends() {
     r.update(FADE_MS);
     assert!(r.quit);
     assert_eq!(r.flow.screen(), Screen::Exit);
+}
+
+#[test]
+fn custom_levels_show_no_saved_message() {
+    let saved = GameEvent::Message {
+        id: MESSAGE_SAVED,
+        ms: 5000,
+    };
+    let not_saved = GameEvent::Message {
+        id: MESSAGE_NOT_SAVED,
+        ms: 5000,
+    };
+    let events = vec![
+        GameEvent::Checkpoint { x: 1, y: 2 },
+        GameEvent::SavePoint { slot: 1 },
+        saved,
+        not_saved,
+    ];
+    for (level, shown) in [
+        (LevelChoice::Retail(1), events.clone()),
+        (
+            LevelChoice::Custom("X.WWD".into()),
+            vec![
+                GameEvent::Checkpoint { x: 1, y: 2 },
+                GameEvent::SavePoint { slot: 1 },
+                not_saved,
+            ],
+        ),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let mut settings = Settings::new(dir.path(), level.clone());
+        settings.config_path = None;
+        let f = Flow::new(settings, None, None, FontArt::uniform(8, 10), Start::Play);
+        let mut got = events.clone();
+        f.hide_messages(&mut got);
+        assert_eq!(got, shown, "{level:?}");
+    }
+}
+
+#[test]
+fn the_status_bar_placement_persists() {
+    let mut r = Rig::new(Start::Title, |_| {});
+    r.reach_main_menu();
+    assert!(!r.flow.status_bar_centred());
+    r.input(MenuInput::Down);
+    r.choose(); // options
+    r.input(MenuInput::Down);
+    r.choose(); // display
+    let n = r.flow.main_menu().unwrap().entries().len();
+    for _ in 0..n - 2 {
+        r.input(MenuInput::Down);
+    }
+    r.choose(); // video
+    assert_eq!(r.page(), Page::Video);
+    for _ in 0..flow::VIDEO_SETTINGS.len() - 1 {
+        r.input(MenuInput::Down);
+    }
+    let _ = r.flow.take_effects();
+    r.choose(); // status bar: edges -> centred
+    assert!(r.flow.status_bar_centred());
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(text.lines().any(|l| l == "status_bar = centred"), "{text}");
+    let nav = r.flow.main_menu().unwrap();
+    let item = nav.selected().unwrap();
+    assert_eq!(
+        nav.tree.items[item].text.as_deref(),
+        Some("STATUS BAR CENTRED")
+    );
+    // The next run starts with it.
+    let reread = Settings::from_args(
+        &<claw_game::settings::Args as clap::Parser>::try_parse_from([
+            "rusty-claw",
+            "--config",
+            r.config.to_str().unwrap(),
+            "--install",
+            "/i",
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(reread.status_bar_centred);
+    let f = Flow::new(reread, None, None, FontArt::uniform(8, 10), Start::Title);
+    assert!(f.status_bar_centred());
+}
+
+#[test]
+fn window_keys_show_on_the_video_page_without_saving() {
+    let mut r = Rig::new(Start::Title, |_| {});
+    r.reach_main_menu();
+    let before = fs::read_to_string(&r.config).unwrap();
+    r.flow.view_changed(|s| s.fullscreen = true);
+    assert!(r.flow.settings().fullscreen);
+    let nav = r.flow.main_menu().unwrap();
+    let full = nav
+        .tree
+        .find(MenuCommand::Video(
+            claw_ui::menu::command::VideoSetting::Fullscreen,
+        ))
+        .unwrap();
+    assert_eq!(nav.tree.items[full].text.as_deref(), Some("FULLSCREEN ON"));
+    assert_eq!(fs::read_to_string(&r.config).unwrap(), before);
+}
+
+#[test]
+fn a_startup_notice_shows() {
+    let mut r = Rig::new(Start::Title, |_| {});
+    r.flow.notify("saved games are off: no folder");
+    assert_eq!(r.flow.notice(), Some("saved games are off: no folder"));
+}
+
+/// A sound effect a tenth of a second long.
+const HIT: &str = "HIT";
+
+/// The flow with a level in play and the sound bridge, carrying out the
+/// flow's effects as the window does: every effect first goes through the
+/// pauses, then the level starts or ends, then the pauses are applied.
+struct Played {
+    flow: Flow,
+    session: Option<Session>,
+    audio: AudioBridge,
+    pauses: Pauses,
+    _dir: TempDir,
+}
+
+impl Played {
+    fn new() -> Played {
+        let dir = TempDir::new().unwrap();
+        let mut settings = Settings::new(dir.path().join("install"), LevelChoice::Retail(1));
+        settings.config_path = None;
+        let store = SaveStore::open(dir.path().join("saves")).unwrap();
+        let flow = Flow::new(
+            settings,
+            Some(store),
+            Some(main_menu()),
+            FontArt::uniform(8, 10),
+            Start::Play,
+        );
+        let mut audio = AudioBridge::silent(AudioSettings::default());
+        let mut bank = SoundBank::new();
+        bank.insert(HIT, Pcm::mono(22050, vec![500i16; 2205]).into());
+        audio.set_sounds(bank);
+        let mut p = Played {
+            flow,
+            session: None,
+            audio,
+            pauses: Pauses::default(),
+            _dir: dir,
+        };
+        p.effects();
+        p
+    }
+
+    fn effects(&mut self) {
+        for _ in 0..8 {
+            let effects = self.flow.take_effects();
+            if effects.is_empty() {
+                return;
+            }
+            for e in effects {
+                self.pauses.effect(&e);
+                match &e {
+                    Effect::StartLevel { start, .. } => {
+                        let sim = Sim::with_start(level(), SimConfig::default(), start.clone());
+                        self.session = Some(Session::new(sim));
+                        self.flow.set_in_game_menu(Some(in_game_menu()));
+                    }
+                    Effect::EndLevel => self.session = None,
+                    Effect::Sound(cue) => self
+                        .audio
+                        .apply(std::slice::from_ref(cue), &ViewInfo::default()),
+                    _ => {}
+                }
+                self.pauses
+                    .apply(self.session.as_mut(), Some(&mut self.audio), Duration::ZERO);
+            }
+        }
+    }
+
+    fn update(&mut self, ms: f64) {
+        let mut left = ms;
+        while left > 0.0 {
+            let dt = left.min(50.0);
+            left -= dt;
+            if let Some(s) = self.session.as_mut() {
+                s.frame(Duration::from_secs_f64(dt / 1000.0));
+                let (cues, events) = s.drain_outputs();
+                self.audio.apply(&cues, &ViewInfo::default());
+                self.flow.play_events(&events, s.sim());
+            }
+            let sim = self.session.as_ref().map(Session::sim);
+            self.flow.update(dt, None, sim);
+            self.effects();
+        }
+    }
+
+    fn input(&mut self, i: MenuInput) {
+        self.flow.menu_input(i, false);
+        self.effects();
+    }
+
+    fn choose(&mut self) {
+        self.input(MenuInput::Confirm);
+        self.update(PRESS_MS + 1.0);
+    }
+
+    fn pause_key(&mut self) {
+        assert!(self.flow.pause_key());
+        self.effects();
+        assert_eq!(self.flow.screen(), Screen::Pause);
+        assert!(self.audio.is_paused());
+    }
+
+    fn end_game(&mut self) {
+        self.pause_key();
+        self.input(MenuInput::Down);
+        self.choose(); // end life, greyed out
+        for _ in 0..3 {
+            self.input(MenuInput::Down);
+        }
+        self.choose(); // end game
+        self.choose(); // yes
+        assert_eq!(self.flow.screen(), Screen::MainMenu);
+        assert!(self.session.is_none());
+    }
+
+    /// From the main menu, a new game at level 1.
+    fn new_game(&mut self) {
+        self.update(FADE_MS);
+        self.choose(); // single player
+        self.choose(); // new game
+        self.choose(); // level 1
+        self.update(FADE_MS + 50.0);
+        assert_eq!(self.flow.screen(), Screen::Play);
+        assert!(self.session.is_some());
+    }
+
+    /// Plays the hit as the simulation would, and waits for it to play to
+    /// its end in the mixer.
+    fn hit_plays(&mut self) -> bool {
+        let before = self.audio.engine().stats().voices_started;
+        let cue = AudioCue::Play(SoundCue {
+            key: HIT.into(),
+            volume: 100,
+            channel: SoundChannel::Effect,
+            ..SoundCue::default()
+        });
+        self.audio.apply(&[cue], &ViewInfo::default());
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(3) {
+            self.audio.apply(&[], &ViewInfo::default());
+            let s = self.audio.engine().stats();
+            if s.voices_started > before && s.active_voices == 0 {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    fn sounds_run(&mut self) -> bool {
+        !self.audio.is_paused() && !self.audio.engine().game_paused() && self.hit_plays()
+    }
+}
+
+#[test]
+fn every_way_out_of_the_in_game_menu_leaves_the_sounds_running() {
+    let mut p = Played::new();
+    assert_eq!(p.flow.screen(), Screen::Play);
+    p.update(100.0);
+    assert!(p.sounds_run(), "at the start");
+
+    // Resume with Escape, with the resume entry and with the pause key.
+    p.pause_key();
+    p.input(MenuInput::Back);
+    assert_eq!(p.flow.screen(), Screen::Play);
+    assert!(p.sounds_run(), "after Escape");
+    p.pause_key();
+    p.choose();
+    assert_eq!(p.flow.screen(), Screen::Play);
+    assert!(p.sounds_run(), "after the resume entry");
+    p.pause_key();
+    assert!(p.flow.pause_key());
+    p.effects();
+    assert!(p.sounds_run(), "after the pause key");
+
+    // End the game, then start a new one: the new level's sounds play.
+    p.end_game();
+    assert!(!p.audio.is_paused(), "the menus are not paused");
+    p.new_game();
+    p.update(100.0);
+    assert!(p.sounds_run(), "after ending the game and starting again");
+
+    // The same after a game over.
+    p.flow
+        .play_events(&[GameEvent::GameOver], p.session.as_ref().unwrap().sim());
+    p.effects();
+    assert_eq!(p.flow.screen(), Screen::GameOver);
+    assert!(p.audio.is_paused());
+    let mut guard = 0;
+    while p.flow.screen() != Screen::MainMenu {
+        p.update(100.0);
+        guard += 1;
+        assert!(guard < 200, "stuck at {:?}", p.flow.screen());
+    }
+    p.new_game();
+    assert!(p.sounds_run(), "after a game over");
 }

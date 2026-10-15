@@ -11,14 +11,16 @@
 //! and the end-of-level screens are drawn as standalone 640x480 screens
 //! with their own palettes; a level in play is drawn with its status bar,
 //! the in-game message and the screen transition in progress
-//! ([`StatusLayer`]), and the in-game menu is drawn over the frozen level.
+//! ([`StatusLayer`]), and the in-game menu is drawn over a dimmed copy of
+//! the frozen level.
 //! The window loads levels when the flow asks, plays the sound cues of
 //! every tick it runs and applies the options changed in the menus at once
 //! (the output size, the aspect policy, the scaling, fullscreen, vsync,
 //! the frame-rate cap, interpolation and the key bindings).
 //!
 //! Watching a script and the benchmark show one level without menus and
-//! are silent. The window title shows Claw's health, score and lives.
+//! are silent; the benchmark reads the keyboard only. The window title
+//! shows Claw's health, score and lives.
 //!
 //! With vsync on, waiting for the display paces the frames. Otherwise each
 //! frame first waits for the frame-rate cap (300 frames per second unless
@@ -31,7 +33,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use claw_assets::{Install, Palette};
 use claw_frame::{
-    AudioCue, FrameClock, FramePacer, GameEvent, PaletteFade, ScreenTransition, TICK_MS,
+    AudioCue, DrawMode, FrameClock, FramePacer, GameEvent, PaletteFade, ScreenTransition, TICK_MS,
 };
 use claw_render::gpu::COLOR_FORMAT;
 use claw_render::palette::{self, FULL_BRIGHTNESS};
@@ -63,7 +65,11 @@ use crate::bench::{PresentDetail, Report, Samples, Summary, WARMUP_S, route};
 use crate::flow::{self, Effect, Flow, Screen, Start};
 use crate::input::{InputContext, InputRouter, Recorder, Routed};
 use crate::keymap::Command;
-use crate::load::{LevelBundle, load_graphics, load_level, new_sim, preload, settle_at};
+use crate::load::{
+    LevelBundle, SHADE_SET, SHADE_SIZE, load_graphics, load_level, new_sim, preload, settle_at,
+    start_override,
+};
+use crate::pause::{Change, Pauses};
 use crate::saves::SaveStore;
 use crate::session::Session;
 use crate::settings::{Aspect, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
@@ -73,12 +79,23 @@ use crate::settings::{Aspect, Scale, Settings, UserDirs, WINDOW_SIZES, view_for}
 ///
 /// Messages age with game time only: by the ticks that run, and not while a
 /// transition runs (or while paused, when no tick runs). They are hidden
-/// while a transition runs.
+/// while a transition runs (see [`transition_running`]).
 #[derive(Debug, Clone)]
 pub struct StatusLayer {
     hud: Hud,
     transition: Option<ScreenTransition>,
+    running: bool,
     fresh: bool,
+}
+
+/// True while `t` runs at tick `tick`: a closing transition until the next
+/// one replaces it, an opening one until its length has passed.
+pub fn transition_running(t: &ScreenTransition, tick: u64) -> bool {
+    if t.closing {
+        return true;
+    }
+    let elapsed = tick.saturating_sub(t.start_tick) as f64 * f64::from(TICK_MS);
+    elapsed < f64::from(t.duration_ms)
 }
 
 impl StatusLayer {
@@ -95,6 +112,7 @@ impl StatusLayer {
         StatusLayer {
             hud: Hud::new(art),
             transition: None,
+            running: false,
             fresh: true,
         }
     }
@@ -117,9 +135,12 @@ impl StatusLayer {
     pub fn update(&mut self, sim: &Sim, ticks: u32) {
         if ticks > 0 || self.fresh {
             self.fresh = false;
-            self.transition = sim.snapshot().transition;
+            self.transition = sim.transition();
+            self.running = self
+                .transition
+                .is_some_and(|t| transition_running(&t, sim.tick()));
         }
-        if ticks > 0 && self.transition.is_none() {
+        if ticks > 0 && !self.running {
             self.hud
                 .messages
                 .advance(f64::from(ticks) * f64::from(TICK_MS));
@@ -135,7 +156,7 @@ impl StatusLayer {
     /// `sim` in a presentation of `presentation` game pixels.
     pub fn apply(&mut self, input: &mut FrameInput<'_>, sim: &Sim, presentation: (u32, u32)) {
         input.screen = self.hud.layout(&sim.hud(), presentation, input.time_ms);
-        if self.transition.is_none() {
+        if !self.running {
             input.screen.extend(self.hud.message_layout());
         }
         input.transition = self.transition;
@@ -307,6 +328,29 @@ fn controls_panel(set: &str) -> Vec<ScreenSprite> {
     out
 }
 
+/// The shade over a whole presentation of `presentation` game pixels,
+/// drawn translucent: it dims the level (and its status bar) under the
+/// in-game menu, whose entries are drawn after it at full brightness.
+pub fn shade_sprites(presentation: (u32, u32)) -> Vec<ScreenSprite> {
+    let step = SHADE_SIZE as i32;
+    let (w, h) = (presentation.0 as i32, presentation.1 as i32);
+    let mut out = Vec::new();
+    // A square more on every side: the picture may overhang the output.
+    let mut y = -step;
+    while y < h + step {
+        let mut x = -step;
+        while x < w + step {
+            out.push(ScreenSprite {
+                mode: DrawMode::GHOST,
+                ..ScreenSprite::new(SHADE_SET, -1, Anchor::TopLeft, x + step / 2, y + step / 2)
+            });
+            x += step;
+        }
+        y += step;
+    }
+    out
+}
+
 /// A notice in the bitmap font at the top of the canvas.
 fn notice_sprites(art: &mut dyn draw::Art, text: &str) -> Vec<ScreenSprite> {
     let (w, _) = draw::text_size(art, text);
@@ -417,8 +461,7 @@ struct App {
     aspect: Aspect,
     scale: Scale,
     interp: bool,
-    user_paused: bool,
-    menu_paused: bool,
+    pauses: Pauses,
     focused: bool,
     size_index: usize,
     started: Instant,
@@ -475,7 +518,7 @@ impl App {
             "rusty-claw: {} | health {} | score {} | lives {}",
             level.bundle.name, s.health, s.score, s.lives
         );
-        if self.user_paused || self.menu_paused {
+        if self.pauses.user || self.pauses.menu {
             t.push_str(" (paused)");
         }
         t
@@ -596,17 +639,17 @@ impl App {
         if self.flow.is_none() {
             // Watching a script or the benchmark: one level, no menus.
             let first_output = self.first_output;
-            let Some(level) = self.level.as_mut() else {
+            let Some((bundle, mut graphics)) = self.first_level.take() else {
                 bail!("no level to show");
             };
             let sim = new_sim(
-                &level.bundle,
+                &bundle,
                 self.settings.sim_config(first_output),
                 self.settings.start,
             );
             announce_widening(&self.settings, first_output, &sim);
-            self.preloaded = preload(&mut level.graphics, &level.bundle.level, &sim.snapshot());
-            level.status = StatusLayer::new(&mut level.graphics, &level.bundle);
+            self.preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
+            let status = StatusLayer::new(&mut graphics, &bundle);
             let mut session = Session::new(sim);
             if self.settings.record.is_some() && !matches!(self.mode, WindowMode::Bench(_)) {
                 let recorder = Recorder::new();
@@ -628,7 +671,12 @@ impl App {
                     });
                 }
             }
-            level.session = session;
+            let level = self.level.insert(Level {
+                bundle,
+                graphics,
+                session,
+                status,
+            });
             live.renderer.set_level(&level.graphics);
             live.builder = Some(SceneBuilder::new(&level.graphics, view, max));
             let want = self.settings.res;
@@ -705,14 +753,13 @@ impl App {
                 (bundle, graphics)
             }
         };
+        let at = start_override(&self.settings, self.levels_started == 0, choice, &start);
         let mut sim = Sim::with_start(
             bundle.sim_level.clone(),
             self.settings.sim_config(self.first_output),
             start,
         );
-        if self.levels_started == 0
-            && let Some((x, y)) = self.settings.start
-        {
+        if let Some((x, y)) = at {
             settle_at(&mut sim, x, y);
         }
         self.levels_started += 1;
@@ -742,6 +789,7 @@ impl App {
             graphics.preload(draw::extra_sets(MenuKind::InGame));
             graphics.preload(["GAME_CONFIGCONTROLS"]);
         }
+        graphics.preload([SHADE_SET]);
         if let Some(flow) = self.flow.as_mut() {
             flow.set_in_game_menu(tree);
             flow.measure(MenuKind::InGame, &mut graphics);
@@ -781,8 +829,6 @@ impl App {
             session,
             status,
         });
-        self.menu_paused = false;
-        self.user_paused = false;
         self.clock.reset();
         self.pacer.reset();
         Ok(())
@@ -795,8 +841,6 @@ impl App {
         if let Some(live) = &mut self.live {
             live.builder = None;
         }
-        self.menu_paused = false;
-        self.user_paused = false;
     }
 
     fn save_recording(&mut self) {
@@ -827,6 +871,10 @@ impl App {
     }
 
     fn effect(&mut self, event_loop: &ActiveEventLoop, e: Effect) {
+        // Every way into or out of a level, and the in-game menu, sets the
+        // pauses first, so a level left from the menu never leaves the
+        // sounds paused for the next one.
+        self.pauses.effect(&e);
         match e {
             Effect::StartLevel { level, start } => {
                 if let Err(err) = self.start_level(&level, start) {
@@ -835,14 +883,14 @@ impl App {
                         f.level_failed(&format!("{err:#}"));
                     }
                 }
-            }
-            Effect::EndLevel => self.end_level(),
-            Effect::PauseGame => {
-                self.menu_paused = true;
                 self.update_pause();
             }
+            Effect::EndLevel => {
+                self.end_level();
+                self.update_pause();
+            }
+            Effect::PauseGame => self.update_pause(),
             Effect::ResumeGame => {
-                self.menu_paused = false;
                 self.update_pause();
                 if let Some(audio) = &mut self.audio {
                     audio.restart_music();
@@ -1008,9 +1056,12 @@ impl App {
             Command::Quit => event_loop.exit(),
             Command::ToggleFullscreen => {
                 if let Some(live) = &self.live {
-                    let full = live.window.fullscreen().is_some();
+                    let full = live.window.fullscreen().is_none();
                     live.window
-                        .set_fullscreen((!full).then_some(Fullscreen::Borderless(None)));
+                        .set_fullscreen(full.then_some(Fullscreen::Borderless(None)));
+                    if let Some(f) = self.flow.as_mut() {
+                        f.view_changed(|s| s.fullscreen = full);
+                    }
                 }
             }
             Command::NextWindowSize => {
@@ -1023,16 +1074,27 @@ impl App {
                     let (w, h) = WINDOW_SIZES[self.size_index];
                     eprintln!("rusty-claw: window {w}x{h}");
                     let _ = live.window.request_inner_size(PhysicalSize::new(w, h));
+                    if let Some(f) = self.flow.as_mut() {
+                        f.view_changed(|s| s.res = (w, h));
+                    }
                 }
             }
             Command::NextAspect => {
                 self.aspect = self.aspect.next();
                 eprintln!("rusty-claw: aspect {}", self.aspect.name());
                 self.rebuild_view();
+                let aspect = self.aspect;
+                if let Some(f) = self.flow.as_mut() {
+                    f.view_changed(|s| s.aspect = aspect);
+                }
             }
             Command::ToggleScale => {
                 self.scale = self.scale.toggled();
                 self.rebuild_view();
+                let scale = self.scale;
+                if let Some(f) = self.flow.as_mut() {
+                    f.view_changed(|s| s.scale = scale);
+                }
             }
             Command::ToggleInterpolation => {
                 self.interp = !self.interp;
@@ -1040,34 +1102,28 @@ impl App {
                     "rusty-claw: interpolation {}",
                     if self.interp { "on" } else { "off" }
                 );
+                let interp = self.interp;
+                if let Some(f) = self.flow.as_mut() {
+                    f.view_changed(|s| s.interpolation = interp);
+                }
             }
             Command::Pause => {
-                self.user_paused = !self.user_paused;
+                self.pauses.user = !self.pauses.user;
                 self.update_pause();
                 self.update_title();
             }
         }
     }
 
+    /// Brings the level in play and the sounds in line with the pauses
+    /// (see [`Pauses`]).
     fn update_pause(&mut self) {
-        let paused =
-            self.user_paused || self.menu_paused || (!self.focused && self.bench.is_none());
-        let Some(level) = &mut self.level else {
-            return;
-        };
-        let session = &mut level.session;
-        if paused && !session.is_paused() {
-            let at = session.stamp(self.last_frame.elapsed());
-            session.release_all(at);
-            session.pause();
-            if let Some(audio) = &mut self.audio {
-                audio.pause();
-            }
-        } else if !paused && session.is_paused() {
-            session.resume();
-            if let Some(audio) = &mut self.audio {
-                audio.resume();
-            }
+        self.pauses.background = !self.focused && self.bench.is_none();
+        let session = self.level.as_mut().map(|l| &mut l.session);
+        let change = self
+            .pauses
+            .apply(session, self.audio.as_mut(), self.last_frame.elapsed());
+        if change == Change::Resumed {
             self.clock.reset();
             self.pacer.reset();
             if let Some(b) = &mut self.bench {
@@ -1188,16 +1244,18 @@ impl App {
         // Play: run the ticks of this frame and hand over their outputs.
         if let Some(level) = &mut self.level {
             let f = level.session.frame(dt);
-            let (cues, events) = level.session.drain_outputs();
+            let (cues, mut events) = level.session.drain_outputs();
             self.cues.extend(cues);
-            level.status.events(&events);
-            level.status.update(level.session.sim(), f.ticks);
             if let Some(audio) = &mut self.audio {
+                // The level-complete music stop.
                 audio.events(&events);
             }
             if let Some(flow) = self.flow.as_mut() {
                 flow.play_events(&events, level.session.sim());
+                flow.hide_messages(&mut events);
             }
+            level.status.events(&events);
+            level.status.update(level.session.sim(), f.ticks);
         }
         let held = self
             .router
@@ -1307,6 +1365,9 @@ impl App {
                 .status
                 .apply(&mut input, level.session.sim(), presentation);
             if let Some(f) = &self.flow {
+                if f.screen() == Screen::Pause {
+                    input.screen.extend(shade_sprites(presentation));
+                }
                 input.screen.extend(App::overlay(f, &mut level.graphics));
             }
             let mut built = builder.build(&mut level.graphics, &input);
@@ -1603,22 +1664,11 @@ fn run_app(
         .iter()
         .position(|&s| s == settings.res)
         .unwrap_or(1);
-    let mut first_level = None;
-    let mut level_state = None;
-    match (&menus, level) {
-        (Some(_), l) => first_level = l,
-        (None, Some((bundle, mut graphics))) => {
-            let status = StatusLayer::new(&mut graphics, &bundle);
-            let sim = Sim::new(bundle.sim_level.clone(), settings.sim_config(settings.res));
-            level_state = Some(Level {
-                bundle,
-                graphics,
-                session: Session::new(sim),
-                status,
-            });
-        }
-        (None, None) => bail!("no level to show"),
+    // The level is built in `open`, once the output size is known.
+    if menus.is_none() && level.is_none() {
+        bail!("no level to show");
     }
+    let first_level = level;
     let mut screens = None;
     let mut flow = None;
     let mut audio = None;
@@ -1636,14 +1686,16 @@ fn run_app(
         };
         let mut s = s;
         let font = FontArt::from_art(&mut s.graphics);
-        let saves = match SaveStore::open_default(&UserDirs::from_env(), Some(&settings.install)) {
-            Ok(store) => Some(store),
-            Err(e) => {
-                eprintln!("rusty-claw: saved games are off: {e:#}");
-                None
-            }
-        };
+        let (saves, saves_off) =
+            match SaveStore::open_default(&UserDirs::from_env(), Some(&settings.install)) {
+                Ok(store) => (Some(store), None),
+                Err(e) => (None, Some(format!("saved games are off: {e:#}"))),
+            };
         let mut f = Flow::new(settings.clone(), saves, main, font, start);
+        if let Some(why) = saves_off {
+            // Shown on screen at start-up (and written to the terminal).
+            f.notify(why);
+        }
         f.measure(MenuKind::Main, &mut s.graphics);
         let mut bridge = AudioBridge::new(f.audio_settings());
         bridge.load_level(&s.assets.store, &s.assets.registries);
@@ -1656,10 +1708,15 @@ fn run_app(
         aspect: settings.aspect,
         scale: settings.scale,
         interp: settings.interpolation,
-        router: InputRouter::from_settings(&settings),
+        // A benchmark reads the keyboard only, so no gamepad is opened.
+        router: if matches!(mode, WindowMode::Bench(_)) {
+            InputRouter::keyboard_only(settings.keymap.clone())
+        } else {
+            InputRouter::from_settings(&settings)
+        },
         settings,
         mode,
-        level: level_state,
+        level: None,
         screens,
         flow,
         audio,
@@ -1675,8 +1732,7 @@ fn run_app(
         pacing: String::new(),
         events: Vec::new(),
         last_frame: Instant::now(),
-        user_paused: false,
-        menu_paused: false,
+        pauses: Pauses::default(),
         focused: true,
         size_index,
         started,
@@ -1698,4 +1754,109 @@ fn run_app(
         bail!("the window closed before the benchmark finished");
     }
     Ok(app.report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use claw_frame::{Point, TransitionKind};
+
+    fn transition(closing: bool) -> ScreenTransition {
+        ScreenTransition {
+            kind: TransitionKind::Circle,
+            closing,
+            start_tick: 10,
+            duration_ms: 100,
+            center: Point::default(),
+        }
+    }
+
+    #[test]
+    fn an_opening_transition_stops_running_at_its_end() {
+        // The first tick at or after `ms` from the start.
+        let ticks = |ms: u32| 10 + u64::from(ms.div_ceil(TICK_MS));
+        let open = transition(false);
+        assert!(transition_running(&open, 10));
+        assert!(transition_running(&open, ticks(100) - 1));
+        assert!(!transition_running(&open, ticks(100)));
+        assert!(!transition_running(&open, ticks(5000)));
+        // A closing one runs until another one replaces it.
+        assert!(transition_running(&transition(true), ticks(5000)));
+    }
+
+    #[test]
+    fn the_shade_halves_the_brightness_under_it() {
+        use claw_assets::Frame;
+        use claw_render::MemoryImages;
+        use claw_render::cpu;
+        use claw_render::effects::LevelTables;
+
+        // A grey ramp: index i is (i, i, i).
+        let mut palette = Palette::default();
+        for (i, c) in palette.0.iter_mut().enumerate() {
+            *c = [i as u8; 3];
+        }
+        let mut images = MemoryImages::default();
+        images.insert(SHADE_SET, 1, crate::load::shade_frame(&palette));
+        let mut graphics = LevelGraphics::new(
+            Vec::new(),
+            true,
+            palette.clone(),
+            LevelTables::generate(&palette),
+            Box::new(images),
+            None,
+        );
+        let picture = graphics.add_image(&Frame {
+            width: 640,
+            height: 480,
+            offset_x: 0,
+            offset_y: 0,
+            flags: 0,
+            indices: vec![200; 640 * 480],
+            opaque: None,
+        });
+        let builder = ScreenBuilder::new(&claw_frame::ViewConfig::default(), 4096);
+        let presentation = builder.composition().presentation;
+        let mut screen = ScreenScene {
+            background: Some(picture),
+            palette,
+            sprites: Vec::new(),
+            fade: None,
+        };
+        let middle = |graphics: &mut LevelGraphics, screen: &ScreenScene| {
+            let scene = builder.build(graphics, screen, 0.0);
+            let c = cpu::compose(graphics, &scene);
+            c.index[(c.height / 2 * c.width + c.width / 2) as usize]
+        };
+        assert_eq!(middle(&mut graphics, &screen), 200);
+        screen.sprites = shade_sprites(presentation);
+        let shaded = middle(&mut graphics, &screen);
+        assert!((99..=102).contains(&shaded), "{shaded}");
+    }
+
+    #[test]
+    fn the_shade_covers_the_whole_picture_once() {
+        for presentation in [(640, 480), (1708, 480), (853, 480), (1, 1)] {
+            let sprites = shade_sprites(presentation);
+            let step = SHADE_SIZE as i32;
+            let half = step / 2;
+            assert!(sprites.iter().all(|s| s.key == SHADE_SET
+                && s.mode == DrawMode::GHOST
+                && s.anchor == Anchor::TopLeft));
+            // Every pixel of the picture (and a margin) is under exactly
+            // one square.
+            let (w, h) = (presentation.0 as i32, presentation.1 as i32);
+            for (x, y) in [(-1, -1), (0, 0), (w - 1, h - 1), (w, h), (w / 2, h / 2)] {
+                let n = sprites
+                    .iter()
+                    .filter(|s| {
+                        (s.x - half..s.x + half).contains(&x)
+                            && (s.y - half..s.y + half).contains(&y)
+                    })
+                    .count();
+                assert_eq!(n, 1, "{presentation:?} at {x},{y}");
+            }
+        }
+    }
 }

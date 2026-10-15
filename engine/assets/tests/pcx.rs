@@ -94,13 +94,16 @@ fn size_comes_from_both_corners() {
 }
 
 #[test]
-fn the_palette_needs_its_marker() {
+fn the_palette_is_read_without_checking_its_marker() {
     let pal = palette();
     let mut data = pcx::build(2, 2, &[0xC4, 1], Some(&pal));
-    assert_eq!(pcx::decode(&data).unwrap().1, Some(pal));
+    assert_eq!(pcx::decode(&data).unwrap().1, Some(pal.clone()));
     let at = data.len() - 769;
     assert_eq!(data[at], PALETTE_MARKER);
     data[at] = 0;
+    assert_eq!(pcx::decode(&data).unwrap().1, Some(pal.clone()));
+    // Fewer than 768 bytes after the stream (here 767): no palette.
+    data.truncate(data.len() - 2);
     assert_eq!(pcx::decode(&data).unwrap().1, None);
 }
 
@@ -155,21 +158,7 @@ proptest! {
 
     #[test]
     fn round_trips(w in 1u32..120, h in 1u32..40, seed in any::<u32>()) {
-        let pixels: Vec<u8> = (0..w * h)
-            .map(|i| ((i / (1 + seed % 70)) ^ (seed >> 8)) as u8)
-            .collect();
-        let data = pcx::build(w as u16, h as u16, &pcx::encode(&pixels), None);
-        let (img, pal) = pcx::decode(&data).unwrap();
-        prop_assert_eq!(img.pixels, pixels);
-        // A file without a palette reads as having one when its stream
-        // happens to hold the marker 769 bytes from the end.
-        let marker_at_end = data
-            .len()
-            .checked_sub(769)
-            .is_some_and(|at| at >= HEADER_SIZE && data[at] == PALETTE_MARKER);
-        if !marker_at_end {
-            prop_assert_eq!(pal, None);
-        }
+        round_trip(w, h, seed)?;
     }
 
     #[test]
@@ -183,6 +172,35 @@ proptest! {
             data[pos % len] = value;
         }
         let _ = pcx::decode(&data);
+    }
+}
+
+/// Encodes a picture of `w` x `h` made from `seed` with no palette, and
+/// checks that it decodes to the same pixels and no palette.
+fn round_trip(w: u32, h: u32, seed: u32) -> Result<(), TestCaseError> {
+    let pixels: Vec<u8> = (0..w * h)
+        .map(|i| ((i / (1 + seed % 70)) ^ (seed >> 8)) as u8)
+        .collect();
+    let data = pcx::build(w as u16, h as u16, &pcx::encode(&pixels), None);
+    let (img, pal) = pcx::decode(&data).unwrap();
+    prop_assert_eq!(img.pixels, pixels);
+    // Nothing follows the stream, so there is no palette, whatever byte
+    // sits 769 bytes from the end.
+    prop_assert_eq!(pal, None);
+    Ok(())
+}
+
+#[test]
+fn round_trips_of_known_cases() {
+    // Pictures whose stream holds the usual palette marker 769 bytes from
+    // the end.
+    for (w, h, seed) in [(107, 33, 721_683_558), (99, 17, 2_888_244_940)] {
+        let pixels: Vec<u8> = (0..w * h)
+            .map(|i| ((i / (1 + seed % 70)) ^ (seed >> 8)) as u8)
+            .collect();
+        let data = pcx::build(w as u16, h as u16, &pcx::encode(&pixels), None);
+        assert_eq!(data[data.len() - 769], PALETTE_MARKER, "{w}x{h} {seed}");
+        round_trip(w, h, seed).unwrap();
     }
 }
 
