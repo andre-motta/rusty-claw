@@ -196,7 +196,7 @@ fn cross_family_stubs_leave_placeholders_that_record_the_request() {
     });
     assert!(!curse);
     assert_eq!(sim.treasure_census(), [0; 9]);
-    for id in [p, e, d] {
+    for id in [p, e] {
         let o = sim.objects().get(id).unwrap();
         assert!(o.is_listed());
         assert_eq!(o.kind, LogicKind::Inert);
@@ -216,12 +216,18 @@ fn cross_family_stubs_leave_placeholders_that_record_the_request() {
             request: Some(EffectKind::Splash)
         })
     );
-    assert_eq!(
-        sim.objects().get(d).unwrap().data,
+    // Drops are real: a bouncing goodie that remembers its code.
+    let o = sim.objects().get(d).unwrap();
+    assert!(o.is_listed());
+    assert_eq!(o.kind, LogicKind::Game(GameLogic::Pickup));
+    assert_eq!(&*o.logic, pickup::BOUNCING_GOODIE);
+    assert!(matches!(
+        o.data,
         ObjectData::Pickup(PickupData {
-            drop_code: Some(33)
+            drop_code: Some(33),
+            ..
         })
-    );
+    ));
     // The sound goes out with the next tick, centred.
     let snap = sim.step(TickInput::default());
     assert_eq!(
@@ -252,10 +258,15 @@ fn mover(w: &mut World, id: ObjectId) {
 fn holder(w: &mut World, id: ObjectId) {
     let o = w.objects.get_mut(id).unwrap();
     let n = match o.data {
-        ObjectData::Pickup(PickupData { drop_code: Some(n) }) => n + 1,
+        ObjectData::Pickup(PickupData {
+            drop_code: Some(n), ..
+        }) => n + 1,
         _ => 1,
     };
-    o.data = ObjectData::Pickup(PickupData { drop_code: Some(n) });
+    o.data = ObjectData::Pickup(PickupData {
+        drop_code: Some(n),
+        ..PickupData::default()
+    });
     if n % 10 == 0 {
         w.event(GameEvent::Message {
             id: n as u32,
@@ -286,7 +297,8 @@ fn logics_move_objects_and_keep_their_data() {
     assert_eq!(
         sim.objects().get(gem).unwrap().data,
         ObjectData::Pickup(PickupData {
-            drop_code: Some(20)
+            drop_code: Some(20),
+            ..PickupData::default()
         })
     );
     assert_eq!(
