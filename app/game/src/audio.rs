@@ -19,15 +19,21 @@
 //! - a looping cue with a handle that is already playing updates its volume
 //!   and balance; such loops come back at once when their switch (or sound
 //!   as a whole) is turned on again;
-//! - pausing the game (or losing focus) stops one-shot game sounds, holds
-//!   loops and music where they are, and keeps interface sounds playing.
+//! - pausing the game (or losing focus) stops every effect, speech and
+//!   ambient sound, holds the music where it is and keeps interface sounds
+//!   playing; resuming starts the live ambient loops again at their current
+//!   level, while the effects and lines the pause stopped stay stopped.
 //!
 //! Music rules: one track at a time, looping as the cue asks; the power-up
 //! track pauses the level track, which resumes where it was when the level
-//! track is asked for again; the Music switch stops the music and, turned
-//! on, restarts the current track. Music needs a General MIDI SoundFont
-//! (see [`claw_audio::music::soundfont`]); without one, music is off, one
-//! message says how to get a bank, and sound effects are unaffected.
+//! track is asked for again; the Music switch pauses the current track and,
+//! turned on, restarts it. While the game is paused the switch is only
+//! recorded: the resume pauses or restarts the current track when the
+//! switch changed, and otherwise lets the music carry on. The music stops
+//! when the level is won ([`AudioBridge::events`]). Music needs a General
+//! MIDI SoundFont (see [`claw_audio::music::soundfont`]); without one,
+//! music is off, one message says how to get a bank, and sound effects are
+//! unaffected.
 //!
 //! Only the window's normal play opens an audio device. Replays, benchmarks
 //! and headless runs never create a bridge.
@@ -280,6 +286,16 @@ pub fn load_soundfont(settings: &AudioSettings) -> Option<Bank> {
     }
 }
 
+/// Whether `settings` let `channel` sound.
+fn channel_on(settings: &AudioSettings, channel: Channel) -> bool {
+    settings.enabled
+        && match channel {
+            Channel::Voice => settings.voice,
+            Channel::Ambient => settings.ambient,
+            Channel::Effect | Channel::Interface => true,
+        }
+}
+
 /// Plays the game's sound cues and music.
 #[derive(Debug)]
 pub struct AudioBridge {
@@ -365,6 +381,14 @@ impl AudioBridge {
             m.play(Track::Level, true);
         }
         report
+    }
+
+    /// Stops what plays and replaces the sounds with `bank` (tests and
+    /// tools; a level's sounds come with [`AudioBridge::load_level`]).
+    pub fn set_sounds(&mut self, bank: SoundBank) {
+        self.engine.stop_all();
+        self.loops.clear();
+        self.engine.set_bank(bank);
     }
 
     /// Loads the menu's music (the chord played after a music volume
@@ -500,47 +524,56 @@ impl AudioBridge {
 
     /// Applies new settings: volumes and switches at once; sound off closes
     /// the output device. Loops silenced by a switch come back when it is
-    /// turned on again, and the Music switch stops or restarts the music. A
-    /// different SoundFont takes effect from the next level.
+    /// turned on again, and the Music switch pauses or restarts the current
+    /// track; while the game is paused both wait for the resume. A different
+    /// SoundFont takes effect from the next level.
     pub fn set_settings(&mut self, settings: AudioSettings) {
         let before = self.settings.clone();
         let soundfont_changed = settings.soundfont != before.soundfont;
         self.engine.set_settings(settings.clone());
         self.settings = settings;
-        let on = |s: &AudioSettings, c: Channel| {
-            s.enabled
-                && match c {
-                    Channel::Voice => s.voice,
-                    Channel::Ambient => s.ambient,
-                    Channel::Effect | Channel::Interface => true,
+        if !self.paused {
+            // While paused, the resume starts the loops again.
+            for r in self.loops.values() {
+                if channel_on(&self.settings, r.channel) && !channel_on(&before, r.channel) {
+                    self.engine.play(r);
                 }
-        };
-        for r in self.loops.values() {
-            if on(&self.settings, r.channel) && !on(&before, r.channel) {
-                self.engine.play(r);
             }
-        }
-        if let Some(m) = self.music.as_mut() {
-            m.set_enabled(self.settings.music);
+            if let Some(m) = self.music.as_mut() {
+                m.set_enabled(self.settings.music);
+            }
         }
         if soundfont_changed {
             self.font = load_soundfont(&self.settings);
         }
     }
 
-    /// Pauses the game's sounds: one-shot sounds stop, loops and music hold.
+    /// Pauses the game's sounds: every effect, speech and ambient sound
+    /// stops (loops included) and the music holds. Only the ambient loops
+    /// come back at the resume.
     pub fn pause(&mut self) {
         if !self.paused {
             self.paused = true;
             self.engine.pause_game();
+            self.loops.retain(|_, r| r.channel == Channel::Ambient);
         }
     }
 
-    /// Resumes the loops and the music where they stopped.
+    /// Resumes the game's sounds: the music carries on where it was (or
+    /// follows a Music switch changed during the pause) and the live
+    /// ambient loops start again at their current level.
     pub fn resume(&mut self) {
         if self.paused {
             self.paused = false;
             self.engine.resume_game();
+            for r in self.loops.values() {
+                if channel_on(&self.settings, r.channel) {
+                    self.engine.play(r);
+                }
+            }
+            if let Some(m) = self.music.as_mut() {
+                m.set_enabled(self.settings.music);
+            }
         }
     }
 
@@ -756,6 +789,88 @@ mod tests {
         bridge.apply(&[], &ViewInfo::default());
         std::thread::sleep(Duration::from_millis(30));
         assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 0));
+    }
+
+    #[test]
+    fn a_pause_ends_game_sounds_and_the_resume_brings_back_ambient_loops() {
+        let settings = AudioSettings::default();
+        let mut bridge = AudioBridge::silent(settings.clone());
+        let mut bank = SoundBank::new();
+        for k in ["AMB", "SAW", "LINE"] {
+            bank.insert(k, Pcm::mono(22050, vec![100i16; 22050 * 4]).into());
+        }
+        bridge.engine.set_bank(bank);
+        bridge.apply(
+            &[
+                play("AMB", SoundChannel::Ambient, Some(7), true),
+                play("SAW", SoundChannel::Effect, Some(3), true),
+                play("LINE", SoundChannel::Voice, None, false),
+            ],
+            &ViewInfo::default(),
+        );
+        assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 3));
+        // Every game sound ends at the pause, the looping effect included.
+        bridge.pause();
+        assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 0));
+        // Interface sounds still play.
+        bridge.play_ui("LINE");
+        assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 1));
+        // The resume starts the ambient loop again, and only it.
+        bridge.resume();
+        assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 2));
+        // The interface sound and the ambient loop.
+        let started = bridge.engine().stats().voices_started;
+        assert_eq!(started, 5, "three plays, the interface sound, the loop");
+        // The effect loop does not come back with a switch either.
+        bridge.set_settings(AudioSettings {
+            enabled: false,
+            ..settings.clone()
+        });
+        assert!(wait(&mut bridge, |b| b.engine().stats().active_voices == 0));
+        bridge.set_settings(settings);
+        assert!(wait(&mut bridge, |b| b.engine().stats().voices_started == 6));
+        std::thread::sleep(Duration::from_millis(30));
+        bridge.apply(&[], &ViewInfo::default());
+        assert_eq!(bridge.engine().stats().voices_started, 6);
+    }
+
+    #[test]
+    fn the_music_switch_waits_for_the_resume() {
+        let (_dir, store, reg) = music_store();
+        let mut bridge =
+            AudioBridge::silent_with_music(AudioSettings::default(), Some(test_bank()));
+        bridge.load_level(&store, &reg);
+        let sounding = |b: &AudioBridge| b.music().and_then(|m| m.sounding());
+        let enabled = |b: &AudioBridge| b.music().is_some_and(|m| m.enabled());
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Level)));
+        let off = AudioSettings {
+            music: false,
+            ..AudioSettings::default()
+        };
+
+        // Off during a pause: recorded, then applied by the resume.
+        bridge.pause();
+        bridge.set_settings(off.clone());
+        assert!(enabled(&bridge), "only recorded while paused");
+        bridge.resume();
+        assert!(!enabled(&bridge));
+        assert!(wait(&mut bridge, |b| sounding(b).is_none()));
+
+        // On during a pause: the resume restarts the current track.
+        bridge.pause();
+        bridge.set_settings(AudioSettings::default());
+        assert!(!enabled(&bridge));
+        bridge.resume();
+        assert!(enabled(&bridge));
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Level)));
+
+        // Off and on again during a pause: no change at the resume.
+        bridge.pause();
+        bridge.set_settings(off);
+        bridge.set_settings(AudioSettings::default());
+        bridge.resume();
+        assert!(enabled(&bridge));
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Level)));
     }
 
     fn note(time: u32, channel: u8, key: u8, duration: u32) -> XmiEvent {

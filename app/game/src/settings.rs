@@ -18,6 +18,7 @@
 //! vsync = true
 //! fps_cap = 300             # with vsync off, 1 to 10000
 //! interpolation = true
+//! status_bar = "edges"      # edges, or centred in the 4:3 area
 //! audio = on                # on or off
 //! sound_volume = 80         # 0 to 100
 //! music_volume = 50         # 0 to 100
@@ -25,7 +26,7 @@
 //! ambient = on              # ambient sounds
 //! soundfont = "/path/to/a/soundfont.sf2"
 //! gamepad = on              # on or off
-//! pad_dead_zone = 0.66      # stick dead zone, 0.05 to 0.95
+//! pad_dead_zone = 0.34      # stick dead zone, 0.05 to 0.95
 //! key_jump = "Space"        # key_<action>: key names, comma separated
 //! pad_jump = "South"        # pad_<action>: pad button names
 //! ```
@@ -349,6 +350,9 @@ pub struct Settings {
     pub fps_cap: Option<u32>,
     /// Interpolate between ticks.
     pub interpolation: bool,
+    /// Keep the status bar inside the centred 4:3 area rather than at the
+    /// picture's edges.
+    pub status_bar_centred: bool,
     /// Image pack folder.
     pub pack: Option<PathBuf>,
     /// Claw's start point override.
@@ -381,8 +385,10 @@ pub struct Settings {
 }
 
 /// Default radial dead zone of the sticks, as a fraction of a full
-/// deflection.
-pub const DEFAULT_PAD_DEAD_ZONE: f32 = 0.66;
+/// deflection: 0.34, the feel of the original joystick, which reads a
+/// direction once the stick leaves the middle 66 % of the way to either
+/// end of an axis, that is about 34 % of a full deflection off centre.
+pub const DEFAULT_PAD_DEAD_ZONE: f32 = 0.34;
 
 /// Accepted dead zones.
 pub const PAD_DEAD_ZONE_RANGE: std::ops::RangeInclusive<f32> = 0.05..=0.95;
@@ -423,6 +429,7 @@ impl Settings {
             vsync: true,
             fps_cap: Some(DEFAULT_FPS_CAP),
             interpolation: true,
+            status_bar_centred: false,
             pack: None,
             start: None,
             audio: true,
@@ -603,6 +610,12 @@ impl Settings {
             "vsync" => self.vsync.to_string(),
             "fps_cap" => self.fps_cap?.to_string(),
             "interpolation" => self.interpolation.to_string(),
+            "status_bar" => if self.status_bar_centred {
+                "centred"
+            } else {
+                "edges"
+            }
+            .to_string(),
             "pack" => path(&self.pack)?,
             "audio" => on_off(self.audio),
             "sound_volume" => self.sound_volume.to_string(),
@@ -781,7 +794,7 @@ pub struct ConfigFile {
 
 /// Keys a config file may hold, besides the `key_<action>` and
 /// `pad_<action>` bindings.
-pub const CONFIG_KEYS: [&str; 20] = [
+pub const CONFIG_KEYS: [&str; 21] = [
     "install",
     "level",
     "custom",
@@ -793,6 +806,7 @@ pub const CONFIG_KEYS: [&str; 20] = [
     "vsync",
     "fps_cap",
     "interpolation",
+    "status_bar",
     "pack",
     "audio",
     "sound_volume",
@@ -904,6 +918,15 @@ impl ConfigFile {
                     s.fps_cap = fps_cap(n).map_err(|e| err(key, e))?;
                 }
                 "interpolation" => s.interpolation = flag(key, v)?,
+                "status_bar" => {
+                    s.status_bar_centred = match v.to_ascii_lowercase().as_str() {
+                        "edges" => false,
+                        "centred" | "centered" => true,
+                        _ => {
+                            return Err(err(key, format!("expected edges or centred, got {v:?}")));
+                        }
+                    }
+                }
                 "pack" => s.pack = Some(PathBuf::from(v)),
                 "audio" => s.audio = flag(key, v)?,
                 "sound_volume" => s.sound_volume = volume(key, v)?,
@@ -1209,7 +1232,14 @@ impl Drop for TempFile {
 }
 
 /// Writes `bytes` to a new temporary file next to `path` and flushes it.
-fn write_temp(path: &Path, bytes: &[u8], hooks: &WriteHooks<'_>) -> Result<TempFile> {
+/// With `permissions`, the file gets them before any byte is written, so a
+/// private file is never readable by others, not even as a copy.
+fn write_temp(
+    path: &Path,
+    bytes: &[u8],
+    permissions: Option<&fs::Permissions>,
+    hooks: &WriteHooks<'_>,
+) -> Result<TempFile> {
     hooks.step(WriteStep::Temp)?;
     let tmp = temp_path(path);
     let mut file = OpenOptions::new()
@@ -1221,6 +1251,10 @@ fn write_temp(path: &Path, bytes: &[u8], hooks: &WriteHooks<'_>) -> Result<TempF
         path: tmp,
         armed: true,
     };
+    if let Some(p) = permissions {
+        file.set_permissions(p.clone())
+            .with_context(|| format!("setting the permissions of {}", guard.path.display()))?;
+    }
     hooks.step(WriteStep::Data)?;
     file.write_all(bytes)
         .with_context(|| format!("writing {}", guard.path.display()))?;
@@ -1230,17 +1264,26 @@ fn write_temp(path: &Path, bytes: &[u8], hooks: &WriteHooks<'_>) -> Result<TempF
     Ok(guard)
 }
 
-/// Renames the temporary file over `path` and flushes the folder.
+/// Renames the temporary file over `path` and flushes the folder. Once the
+/// rename succeeded the new contents are in place, so a failure to flush
+/// the folder afterwards is only reported as a warning.
 fn rename_into_place(mut tmp: TempFile, path: &Path, hooks: &WriteHooks<'_>) -> Result<()> {
     hooks.step(WriteStep::Rename)?;
     fs::rename(&tmp.path, path)
         .with_context(|| format!("replacing {} with {}", path.display(), tmp.path.display()))?;
     tmp.armed = false;
-    hooks.step(WriteStep::SyncDir)?;
     let dir = parent_dir(path);
-    File::open(dir)
-        .and_then(|d| d.sync_all())
-        .with_context(|| format!("flushing the folder {}", dir.display()))?;
+    let synced = hooks
+        .step(WriteStep::SyncDir)
+        .and_then(|()| File::open(dir))
+        .and_then(|d| d.sync_all());
+    if let Err(e) = synced {
+        eprintln!(
+            "rusty-claw: {} was written, but its folder {} could not be flushed to disk: {e}",
+            path.display(),
+            dir.display()
+        );
+    }
     Ok(())
 }
 
@@ -1263,10 +1306,10 @@ fn commit_file(
 ) -> Result<Commit> {
     let dir = parent_dir(path);
     fs::create_dir_all(dir).with_context(|| format!("creating the folder {}", dir.display()))?;
-    let tmp = write_temp(path, bytes, hooks)?;
-    if let Ok(meta) = fs::metadata(path) {
-        let _ = fs::set_permissions(&tmp.path, meta.permissions());
-    }
+    // The new file and the backup keep the permissions of the file they
+    // replace.
+    let permissions = fs::metadata(path).ok().map(|m| m.permissions());
+    let tmp = write_temp(path, bytes, permissions.as_ref(), hooks)?;
     if let Some(f) = hooks.before_commit.as_mut() {
         f(path);
     }
@@ -1280,7 +1323,7 @@ fn commit_file(
     hooks.step(WriteStep::Backup)?;
     if let Some(old) = &current {
         let bak = backup_path(path);
-        let mut bak_tmp = write_temp(&bak, old, &WriteHooks::default())?;
+        let mut bak_tmp = write_temp(&bak, old, permissions.as_ref(), &WriteHooks::default())?;
         fs::rename(&bak_tmp.path, &bak).with_context(|| format!("writing {}", bak.display()))?;
         bak_tmp.armed = false;
     }

@@ -28,11 +28,15 @@
 //! treasure_level = 10, 2, 0, 0, 0, 0, 0, 0, 0
 //! ```
 //!
-//! Writes are atomic and keep the previous file as `<name>.bak`. Files are
-//! read up to [`MAX_SAVE_BYTES`]. A save that cannot be read, or one from a
-//! newer version of the game, is renamed aside with a timestamp
+//! Writes are atomic and keep the previous file as `<name>.bak`, with the
+//! permissions of the file they replace. Files are read up to
+//! [`MAX_SAVE_BYTES`]. A save whose contents are not usable (too large, not
+//! text, damaged, holding another level or slot, or from a newer version of
+//! the game) is renamed aside with a timestamp
 //! (`LEVEL1-1.save.unreadable-<seconds>` or `.newer-<seconds>`) and
-//! reported; saves are never deleted. A second copy of the game running at
+//! reported. A save that cannot be read at all (no permission, a disk
+//! error, not a regular file) is reported and left where it is, so it
+//! still counts once it can be read again. Saves are never deleted. A second copy of the game running at
 //! the same time sees the saves but cannot write them. The store only ever
 //! touches its own folder.
 
@@ -449,16 +453,18 @@ impl SaveStore {
             .with_context(|| format!("saving the game to {}", path.display()))
     }
 
-    /// Reads `level`'s `slot`: `None` when there is no save. A file that
-    /// cannot be read, or one from a newer version, is moved aside,
-    /// reported and read as no save.
+    /// Reads `level`'s `slot`: `None` when there is no save. A file whose
+    /// contents are not usable, or one from a newer version, is moved
+    /// aside, reported and read as no save; a file that cannot be read is
+    /// reported, left where it is and read as no save.
     pub fn read(&mut self, level: &str, slot: u8) -> Result<Option<SaveRecord>> {
         let path = self.path(level, slot)?;
         Ok(self.load(&path, level, slot))
     }
 
-    /// Every readable save, by level name and slot. Unreadable files are
-    /// moved aside and reported.
+    /// Every readable save, by level name and slot. Files whose contents
+    /// are not usable are moved aside and reported (see
+    /// [`SaveStore::read`]).
     pub fn list(&mut self) -> Result<Vec<SaveRecord>> {
         let mut out = Vec::new();
         let entries =
@@ -489,10 +495,22 @@ impl SaveStore {
         Ok(out)
     }
 
-    /// Reads one save file; moves it aside when it is not usable.
+    /// Reads one save file; moves it aside when its contents are not
+    /// usable, and only reports it when it cannot be read.
     fn load(&mut self, path: &Path, level: &str, slot: u8) -> Option<SaveRecord> {
         let result = match read_bounded(path, MAX_SAVE_BYTES) {
             Ok(None) => return None,
+            // Too large: a content problem, read_bounded's only InvalidData.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                Err(SaveError::Unreadable(e.to_string()))
+            }
+            Err(e) => {
+                self.report(format!(
+                    "the save {} cannot be read ({e}); it is left as it is",
+                    path.display()
+                ));
+                return None;
+            }
             Ok(Some(bytes)) => match String::from_utf8(bytes) {
                 Ok(text) => SaveRecord::parse(&text).and_then(|r| {
                     if r.level == level && r.slot == slot {
@@ -506,7 +524,6 @@ impl SaveStore {
                 }),
                 Err(_) => Err(SaveError::Unreadable("not text".into())),
             },
-            Err(e) => Err(SaveError::Unreadable(e.to_string())),
         };
         match result {
             Ok(r) => Some(r),

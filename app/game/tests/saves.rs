@@ -185,6 +185,36 @@ fn damaged_and_newer_saves_are_moved_aside_never_deleted() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_save_that_cannot_be_read_is_left_where_it_is() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SaveStore::open(dir.path()).unwrap();
+    let saved = record("LEVEL1", 1, 5);
+    store.write(&saved).unwrap();
+    let path = store.path("LEVEL1", 1).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::File::open(&path).is_ok() {
+        // Permissions do not stop this user (for example root).
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        eprintln!("skipped: unreadable files can be read here");
+        return;
+    }
+    let _ = store.take_reports();
+    assert_eq!(store.read("LEVEL1", 1).unwrap(), None);
+    assert!(path.exists(), "not moved aside");
+    assert!(named(dir.path(), "LEVEL1-1.save.unreadable-").is_empty());
+    let reports = store.take_reports();
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    assert!(reports[0].contains("cannot be read"), "{reports:?}");
+    // Writing to the slot fails rather than replacing it unseen.
+    assert!(store.write(&record("LEVEL1", 1, 9)).is_err());
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    // Readable again: the save counts.
+    assert_eq!(store.read("LEVEL1", 1).unwrap(), Some(saved));
+}
+
 #[test]
 fn parse_errors_name_the_problem() {
     let good = record("LEVEL1", 1, 5).to_text();

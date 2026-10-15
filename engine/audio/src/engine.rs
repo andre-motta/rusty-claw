@@ -287,15 +287,21 @@ impl AudioEngine {
         self.send(Command::StopAll);
     }
 
-    /// Pauses the game's sounds: one-shot game sounds stop, loops and the
-    /// music hold where they are, interface sounds keep playing (see
+    /// Pauses the game's sounds: every game sound stops (loops included),
+    /// the music holds where it is, interface sounds keep playing (see
     /// [`Mixer::pause_game`]).
     pub fn pause_game(&mut self) {
         self.game_paused = true;
         self.send(Command::PauseGame);
     }
 
-    /// Resumes the loops and the music where they stopped.
+    /// True while the game's sounds are paused.
+    pub fn game_paused(&self) -> bool {
+        self.game_paused
+    }
+
+    /// Resumes the music where it stopped. The sounds the pause stopped stay
+    /// stopped; the caller starts the ambient loops again.
     pub fn resume_game(&mut self) {
         self.game_paused = false;
         self.send(Command::ResumeGame);
