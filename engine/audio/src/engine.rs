@@ -72,6 +72,9 @@ pub struct AudioStats {
     pub active_voices: u32,
     /// Requests dropped because the queue stayed full.
     pub dropped: u64,
+    /// Buffer underruns or overruns the device reported; the stream recovers
+    /// from these by itself and keeps playing.
+    pub xruns: u64,
 }
 
 enum Ctl {
@@ -224,6 +227,7 @@ impl AudioEngine {
             voices_started: s.voices_started.load(Ordering::Relaxed),
             active_voices: s.active_voices.load(Ordering::Relaxed),
             dropped: self.dropped,
+            xruns: s.xruns.load(Ordering::Relaxed),
         }
     }
 

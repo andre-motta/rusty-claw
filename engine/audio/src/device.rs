@@ -102,10 +102,11 @@ where
         }
     };
     let error = move |e: cpal::Error| {
-        if !matches!(
-            e.kind(),
-            ErrorKind::DeviceChanged | ErrorKind::RealtimeDenied
-        ) {
+        let kind = e.kind();
+        if kind == ErrorKind::Xrun {
+            shared.xruns.fetch_add(1, Ordering::Relaxed);
+        }
+        if ends_stream(kind) {
             shared.lost.store(true, Ordering::Release);
         }
     };
@@ -128,8 +129,54 @@ where
     Ok(Opened { stream, back })
 }
 
+/// Whether a stream error means the device or stream is gone. Underruns,
+/// reroutes to a new default device and refused real-time priority are
+/// glitches the stream recovers from by itself, so they keep the stream; so
+/// does any kind not listed here.
+pub(crate) fn ends_stream(kind: ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::DeviceNotAvailable
+            | ErrorKind::StreamInvalidated
+            | ErrorKind::HostUnavailable
+            | ErrorKind::BackendError
+            | ErrorKind::Other
+    )
+}
+
 /// Collects the state after a failed open. The callback was dropped with the
 /// failed stream, so the state is already waiting.
 fn take_back(back: &Receiver<AudioState>, reason: String) -> Failed {
     (back.recv_timeout(RETURN_TIMEOUT).ok().map(Box::new), reason)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_loss_ends_the_stream() {
+        for kind in [
+            ErrorKind::DeviceNotAvailable,
+            ErrorKind::StreamInvalidated,
+            ErrorKind::HostUnavailable,
+            ErrorKind::BackendError,
+            ErrorKind::Other,
+        ] {
+            assert!(ends_stream(kind), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn recoverable_glitches_keep_the_stream() {
+        for kind in [
+            ErrorKind::Xrun,
+            ErrorKind::DeviceChanged,
+            ErrorKind::RealtimeDenied,
+            ErrorKind::DeviceBusy,
+            ErrorKind::ResourceExhausted,
+        ] {
+            assert!(!ends_stream(kind), "{kind:?}");
+        }
+    }
 }

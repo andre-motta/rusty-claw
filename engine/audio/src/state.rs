@@ -67,6 +67,8 @@ pub(crate) struct Shared {
     pub commands: AtomicU64,
     pub voices_started: AtomicU64,
     pub active_voices: AtomicU32,
+    /// Buffer underruns or overruns the device reported and recovered from.
+    pub xruns: AtomicU64,
 }
 
 /// The output side's state: the mixer, the queue ends and the current bank.
