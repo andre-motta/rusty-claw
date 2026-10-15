@@ -2,12 +2,10 @@
 
 use std::path::PathBuf;
 
-/// Replay gap used until the game's own value is settled: a sound that was
-/// accepted less than this many milliseconds ago is not restarted.
-///
-/// Provisional. The final value comes with the music and audio rules work, or
-/// from a later calibration session.
-pub const PROVISIONAL_MIN_REPLAY_GAP_MS: u32 = 50;
+/// Default per-sound replay gap: 0 ms. The game keeps a replay throttle for
+/// every sound but sets its gap to 0, so in practice it never refuses a play;
+/// the mixer keeps the throttle with the same default.
+pub const DEFAULT_MIN_REPLAY_GAP_MS: u32 = 0;
 
 /// Default number of simultaneous voices (a product policy; see
 /// [`AudioSettings::voice_cap`]).
@@ -82,12 +80,14 @@ pub struct AudioSettings {
     pub sound_volume: u8,
     /// Music volume 0..=100. Default 50.
     pub music_volume: u8,
+    /// Music switch: music plays only when on.
+    pub music: bool,
     /// Voice switch: speech plays only when on.
     pub voice: bool,
     /// Ambient switch: ambient sounds play only when on.
     pub ambient: bool,
     /// Per-sound replay throttle in ms (see
-    /// [`PROVISIONAL_MIN_REPLAY_GAP_MS`]).
+    /// [`DEFAULT_MIN_REPLAY_GAP_MS`]).
     pub min_replay_gap_ms: u32,
     /// Most simultaneous voices, 1..=[`MAX_VOICES`]. Default 64.
     ///
@@ -105,9 +105,10 @@ impl Default for AudioSettings {
             enabled: true,
             sound_volume: 80,
             music_volume: 50,
+            music: true,
             voice: true,
             ambient: true,
-            min_replay_gap_ms: PROVISIONAL_MIN_REPLAY_GAP_MS,
+            min_replay_gap_ms: DEFAULT_MIN_REPLAY_GAP_MS,
             voice_cap: DEFAULT_VOICE_CAP,
             soundfont: None,
         }
@@ -121,6 +122,7 @@ pub(crate) struct MixSettings {
     pub enabled: bool,
     pub sound_volume: u8,
     pub music_volume: u8,
+    pub music: bool,
     pub voice: bool,
     pub ambient: bool,
     pub min_replay_gap_ms: u32,
@@ -133,6 +135,7 @@ impl From<&AudioSettings> for MixSettings {
             enabled: s.enabled,
             sound_volume: s.sound_volume.min(100),
             music_volume: s.music_volume.min(100),
+            music: s.music,
             voice: s.voice,
             ambient: s.ambient,
             min_replay_gap_ms: s.min_replay_gap_ms,
@@ -151,6 +154,26 @@ impl MixSettings {
                 Channel::Effect | Channel::Interface => true,
             }
     }
+
+    /// The configured volume a channel plays at, from the sound volume `S`:
+    /// Effect and Interface `S`; Voice `min(S + 20, 100)` (speech is a little
+    /// louder than effects); Ambient `S - 15` (at least 0) when `S > 5`,
+    /// otherwise `S` (ambient loops sit below the effects).
+    pub fn channel_volume(&self, channel: Channel) -> u8 {
+        channel_volume(self.sound_volume, channel)
+    }
+}
+
+/// The configured volume of `channel` at sound volume `s` (see
+/// [`MixSettings::channel_volume`]).
+pub fn channel_volume(s: u8, channel: Channel) -> u8 {
+    let s = s.min(100);
+    match channel {
+        Channel::Effect | Channel::Interface => s,
+        Channel::Voice => (s + 20).min(100),
+        Channel::Ambient if s > 5 => s.saturating_sub(15),
+        Channel::Ambient => s,
+    }
 }
 
 #[cfg(test)]
@@ -165,7 +188,8 @@ mod tests {
         assert_eq!(s.music_volume, 50);
         assert!(s.voice && s.ambient);
         assert_eq!(s.voice_cap, 64);
-        assert_eq!(s.min_replay_gap_ms, PROVISIONAL_MIN_REPLAY_GAP_MS);
+        assert_eq!(s.min_replay_gap_ms, 0);
+        assert!(s.music);
     }
 
     #[test]
@@ -186,5 +210,25 @@ mod tests {
             ..AudioSettings::default()
         });
         assert!(!off.channel_on(Channel::Interface));
+    }
+
+    #[test]
+    fn channel_volumes() {
+        for (s, effect, voice, ambient) in [
+            (80, 80, 100, 65),
+            (50, 50, 70, 35),
+            (100, 100, 100, 85),
+            (15, 15, 35, 0),
+            (10, 10, 30, 0),
+            (6, 6, 26, 0),
+            (5, 5, 25, 5),
+            (0, 0, 20, 0),
+            (200, 100, 100, 85),
+        ] {
+            assert_eq!(channel_volume(s, Channel::Effect), effect, "S = {s}");
+            assert_eq!(channel_volume(s, Channel::Interface), effect, "S = {s}");
+            assert_eq!(channel_volume(s, Channel::Voice), voice, "S = {s}");
+            assert_eq!(channel_volume(s, Channel::Ambient), ambient, "S = {s}");
+        }
     }
 }
