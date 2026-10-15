@@ -21,8 +21,10 @@
 //!
 //! One tick runs, in order: the activation enter pass, the object update
 //! pass (every live object's logic in depth order; Claw before the camera,
-//! so the view never lags him by a tick), pair collision, and the
-//! activation leave pass.
+//! so the view never lags him by a tick), pair collision (with the hit and
+//! attack handlers called as the pairs are tested), and the activation
+//! leave pass. Objects spawned during a pass join the live list at its
+//! end, in spawn order.
 //!
 //! What is here:
 //!
@@ -32,8 +34,13 @@
 //!   activation windows.
 //! - [`tiles`] and [`physics`]: per-pixel tile attributes and the movers
 //!   that walk objects toward their requested positions.
+//! - [`logic`]: the level logic families (enemies, projectiles, effects,
+//!   checkpoints, platforms, decoration, crates, kegs, pickups and sound
+//!   objects), the dispatcher and [`logic::World`], the context their
+//!   calls run in.
 //! - [`kinematics`], [`player`] and [`camera`]: Claw's floating-point
-//!   motion, his state machine on the full state table, and the camera.
+//!   motion, his state machine on the full state table with his stats,
+//!   and the camera.
 //! - [`tuning`]: every movement constant as data. Walking, running,
 //!   climbing and jumping are tuned to cover the same distances in the same
 //!   times as the original played at 60 frames per second; jump heights are
@@ -42,9 +49,14 @@
 //!   ticks, and recorded input scripts; [`trace`]: per-tick traces.
 //! - [`rng`]: the seeded random stream.
 //!
-//! Attacks, damage, pickups and enemies arrive in a later milestone; their
-//! states are declared in the state table as fallback rows and their
-//! objects run as inert placeholders.
+//! Each tick's snapshot carries the status bar values, the sound cues and
+//! the game events of that tick. With [`SimConfig::level_logics`] off,
+//! every level object stays an inert placeholder and collisions run no
+//! handler, as in the first playable version.
+//!
+//! The level logic families are stubs to be filled in: they bind to their
+//! objects and do nothing yet. Claw's attacks, deaths and special states
+//! fall back to standing.
 
 #![forbid(unsafe_code)]
 
@@ -55,6 +67,7 @@ pub mod container;
 pub mod input;
 pub mod kinematics;
 pub mod level;
+pub mod logic;
 pub mod object;
 pub mod physics;
 pub mod player;
@@ -72,6 +85,8 @@ pub use claw_frame::{Buttons, SimSnapshot, TickInput, ViewConfig};
 pub use activation::{ActivationConfig, ActivationMode};
 pub use input::{InputLatch, InputScript};
 pub use level::SimLevel;
+pub use logic::{GameLogic, ObjectData, World};
+pub use player::stats::{Carry, PlayerStats, SavePos, StartState};
 pub use sim::{Sim, SimConfig};
 pub use tiles::TileMap;
 pub use trace::TraceRow;

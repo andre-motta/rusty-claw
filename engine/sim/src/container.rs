@@ -224,30 +224,62 @@ impl Container {
         }
     }
 
+    /// Exchanges the object stored under `id` with `other`, leaving the
+    /// list links with the slot, so the list stays intact while the object
+    /// is held outside the container. Calling it again with the same
+    /// `other` puts the object back. Returns false when `id` is empty.
+    pub(crate) fn swap_payload(&mut self, id: ObjectId, other: &mut Object) -> bool {
+        let Some(slot) = self.get_mut(id) else {
+            return false;
+        };
+        std::mem::swap(slot, other);
+        std::mem::swap(&mut slot.prev, &mut other.prev);
+        std::mem::swap(&mut slot.next, &mut other.next);
+        std::mem::swap(&mut slot.listed, &mut other.listed);
+        true
+    }
+
     /// The pair-collision pass: every unordered pair of listed objects, the
-    /// earlier one first, both directions.
+    /// earlier one first, both directions. Returns the events in the order
+    /// they happened.
     pub fn pair_collision(&mut self) -> Vec<CollisionEvent> {
-        let ids = self.listed();
         let mut events = Vec::new();
+        self.pair_collision_with(&mut |_, e| events.push(e));
+        events
+    }
+
+    /// The pair-collision pass, calling `handler` with each event at the
+    /// moment it happens: an attack before the hit of the same direction,
+    /// and every handler before the pairs tested after it. A handler may
+    /// change any object; the change is seen by the pairs tested later in
+    /// the same pass. Destruction and re-sorting wait for the next update
+    /// pass, so the order of the pairs is fixed when the pass starts.
+    pub fn pair_collision_with(&mut self, handler: &mut dyn FnMut(&mut Container, CollisionEvent)) {
+        let ids = self.listed();
         for (i, &a) in ids.iter().enumerate() {
-            if self.obj(a).flags & flags::NO_COLLIDE != 0 {
+            if self.get(a).is_none_or(|o| o.flags & flags::NO_COLLIDE != 0) {
                 continue;
             }
             for &b in &ids[i + 1..] {
-                let (fa, fb) = (self.obj(a).flags, self.obj(b).flags);
+                let (Some(oa), Some(ob)) = (self.get(a), self.get(b)) else {
+                    continue;
+                };
+                let (fa, fb) = (oa.flags, ob.flags);
                 if fb & flags::NO_COLLIDE != 0 || (fa & flags::WORLD) != (fb & flags::WORLD) {
                     continue;
                 }
                 if fa & flags::SAFE == 0 && fb & flags::HARMLESS == 0 {
-                    self.direction(b, a, &mut events);
+                    self.direction(b, a, handler);
                 }
-                let (fa, fb) = (self.obj(a).flags, self.obj(b).flags);
+                let (Some(oa), Some(ob)) = (self.get(a), self.get(b)) else {
+                    continue;
+                };
+                let (fa, fb) = (oa.flags, ob.flags);
                 if fb & flags::SAFE == 0 && fa & flags::HARMLESS == 0 {
-                    self.direction(a, b, &mut events);
+                    self.direction(a, b, handler);
                 }
             }
         }
-        events
     }
 
     /// `attacker` acts on `victim`.
@@ -255,7 +287,7 @@ impl Container {
         &mut self,
         attacker: ObjectId,
         victim: ObjectId,
-        events: &mut Vec<CollisionEvent>,
+        handler: &mut dyn FnMut(&mut Container, CollisionEvent),
     ) {
         let (at, v) = (self.obj(attacker), self.obj(victim));
         let hit = at.type_flags & v.hit_type_flags;
@@ -273,20 +305,24 @@ impl Container {
         }
         if attack != 0 && at.attack_handler {
             self.obj_mut(attacker).att_ref = Some(victim);
-            events.push(CollisionEvent::Attack { attacker, victim });
+            handler(self, CollisionEvent::Attack { attacker, victim });
         }
         if hit != 0 {
-            let damage = self.obj(attacker).damage;
-            let v = self.obj_mut(victim);
+            let Some(damage) = self.get(attacker).map(|o| o.damage) else {
+                return;
+            };
+            let Some(v) = self.get_mut(victim) else {
+                return;
+            };
             if v.flags & flags::AUTO_HIT_DAMAGE != 0 {
                 v.health -= damage;
                 if v.health <= 0 {
                     v.state = engine_state::KILLED;
                 }
-                events.push(CollisionEvent::Damage { attacker, victim });
+                handler(self, CollisionEvent::Damage { attacker, victim });
             } else if v.hit_handler {
                 v.hit_ref = Some(attacker);
-                events.push(CollisionEvent::Hit { attacker, victim });
+                handler(self, CollisionEvent::Hit { attacker, victim });
             }
         }
     }

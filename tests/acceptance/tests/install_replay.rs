@@ -15,6 +15,9 @@
 //! Every scenario is also played at simulated 60, 144 and 240 Hz displays
 //! (steady and with jitter), both as a replayed script and as key events
 //! seen by the game while frames run; all traces must be identical.
+//!
+//! The scenarios run with the level objects' logics off, so the movement
+//! targets measure Claw alone, as they were calibrated.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -167,7 +170,9 @@ struct Run {
 fn run(bundle: &LevelBundle, sc: &Scenario, hz: f64, jitter: Option<u64>, feed: Feed) -> Run {
     let mut settings = Settings::new(PathBuf::new(), LevelChoice::Retail(1));
     settings.start = sc.start;
-    let sim = new_sim(bundle, settings.sim_config(settings.res), settings.start);
+    let mut cfg = settings.sim_config(settings.res);
+    cfg.level_logics = false;
+    let sim = new_sim(bundle, cfg, settings.start);
     let first = row_of(&sim, 0, 0);
     let s = script(&sc.segments);
     let n = s.ticks.len();

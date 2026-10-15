@@ -5,14 +5,18 @@
 //! claw-replay --install PATH (--level N | --custom FILE.WWD)
 //!             --script INPUT.csv --trace OUT.csv
 //!             [--res WxH] [--aspect pillarbox|frozen|widened] [--seed N]
-//!             [--start X,Y]
+//!             [--start X,Y] [--logics on|off]
 //! ```
 //!
 //! The script has the columns `tick,held_mask,pressed_mask`, one row per
 //! 18 ms tick. The trace has one row per tick with Claw's position, the
 //! fractions carried to the next tick, his state and physics type, the
-//! camera point, the input and the activation mode. Two runs with the same
-//! arguments write identical traces.
+//! camera point, the input, the activation mode, his health, score, lives,
+//! selected weapon and ammunition, and the tick's game events. Two runs
+//! with the same arguments write identical traces.
+//!
+//! `--logics off` leaves every level object inert, as in the first playable
+//! version, for comparing movement with earlier traces.
 //!
 //! `--start X,Y` moves Claw to (X, Y) before the script and lets him and the
 //! camera settle; the script's first tick is the first traced tick.
@@ -27,7 +31,7 @@ use claw_sim::{InputScript, Sim, SimConfig, SimLevel};
 
 const USAGE: &str = "usage: claw-replay --install PATH (--level N | --custom FILE.WWD) \
 --script INPUT.csv --trace OUT.csv [--res WxH] [--aspect pillarbox|frozen|widened] [--seed N] \
-[--start X,Y]";
+[--start X,Y] [--logics on|off]";
 
 #[derive(Debug, Default)]
 struct Args {
@@ -40,6 +44,7 @@ struct Args {
     aspect: Option<AspectPolicy>,
     seed: Option<u32>,
     start: Option<(i32, i32)>,
+    logics: Option<bool>,
 }
 
 fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -82,6 +87,14 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                     .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
                     .ok_or_else(|| format!("bad start {v:?}, expected X,Y"))?;
                 a.start = Some(p);
+            }
+            "--logics" => {
+                let v = value()?;
+                a.logics = Some(match v.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err(format!("bad logics {v:?}, expected on or off")),
+                });
             }
             "--seed" => {
                 let v = value()?;
@@ -133,6 +146,9 @@ fn run(args: Args) -> Result<(), String> {
     if let Some(seed) = args.seed {
         cfg.seed = seed;
     }
+    if let Some(on) = args.logics {
+        cfg.level_logics = on;
+    }
     let mut sim = Sim::new(sim_level, cfg);
     if let Some((x, y)) = args.start {
         settle_at(&mut sim, x, y);
@@ -146,15 +162,36 @@ fn run(args: Args) -> Result<(), String> {
         .map_err(|e| format!("writing {}: {e}", trace_path.display()))?;
     let d = sim.diagnostics();
     let unknown: usize = d.unknown_logics.values().sum();
+    let inert: usize = d.inert_logics.values().sum();
     eprintln!(
-        "claw-replay: {} ticks, activation {}, {} objects ({} with unknown logics, {} records dropped), trace {}",
+        "claw-replay: {} ticks, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped), trace {}",
         rows.len(),
         sim.config().activation.mode.name(),
+        if sim.config().level_logics {
+            "on"
+        } else {
+            "off"
+        },
         sim.objects().len(),
         unknown,
+        inert,
         d.dropped_records,
         trace_path.display()
     );
+    if let Some(last) = rows.last() {
+        let events = rows.iter().filter(|r| !r.events.is_empty()).count();
+        eprintln!(
+            "claw-replay: at the end health {}, score {}, lives {}, weapon {}, ammunition {}/{}/{}; {} ticks with game events",
+            last.health,
+            last.score,
+            last.lives,
+            last.weapon,
+            last.pistol,
+            last.magic,
+            last.dynamite,
+            events
+        );
+    }
     Ok(())
 }
 
@@ -198,7 +235,9 @@ mod tests {
 
     #[test]
     fn parses_the_documented_arguments() {
-        let a = args("--install /i --level 1 --script s.csv --trace t.csv --res 3440x1440 --aspect widened --seed 7 --start 6272,3150").unwrap();
+        let a = args("--install /i --level 1 --script s.csv --trace t.csv --res 3440x1440 --aspect widened --seed 7 --start 6272,3150 --logics off").unwrap();
+        assert_eq!(a.logics, Some(false));
+        assert!(args("--logics maybe").is_err());
         assert_eq!(a.start, Some((6272, 3150)));
         assert_eq!(a.level, Some(1));
         assert_eq!(a.res, Some((3440, 1440)));

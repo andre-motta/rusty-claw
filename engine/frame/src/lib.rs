@@ -19,12 +19,16 @@
 //! - [`pace`]: a frame-rate cap for drawing that does not wait for the
 //!   display's refresh;
 //! - [`driver`]: the three combined into one per-frame call.
+//!
+//! [`output`] holds what a tick hands over besides sprites: the status bar
+//! values, sound and music cues, game events and screen transitions.
 
 #![forbid(unsafe_code)]
 
 pub mod driver;
 pub mod input;
 pub mod interp;
+pub mod output;
 pub mod pace;
 pub mod refresh;
 pub mod step;
@@ -32,6 +36,10 @@ pub mod step;
 pub use driver::{FrameDriver, FrameReport};
 pub use input::InputLatch;
 pub use interp::{InterpolatedFrame, InterpolatedRenderable, interpolate};
+pub use output::{
+    AudioCue, GameEvent, HudState, MusicTrack, PowerupHud, ScreenTransition, SoundChannel,
+    SoundCue, TransitionKind, Weapon,
+};
 pub use pace::{DEFAULT_FPS_CAP, FramePacer};
 pub use refresh::SimulatedRefresh;
 pub use step::{Advance, FixedStep, FrameClock};
@@ -209,7 +217,13 @@ pub struct PaletteFade {
     pub duration_ms: u32,
 }
 
-/// Everything the renderer needs from one simulation tick.
+/// Everything the presentation needs from one simulation tick.
+///
+/// `audio` and `events` hold only what happened in the tick that produced
+/// the snapshot. A frame can run several ticks and the frame driver keeps
+/// only the last two snapshots, so they must be collected from every tick
+/// as it runs, not from the snapshot being drawn; interpolation ignores
+/// them. Every other field describes the state after the tick.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SimSnapshot {
     /// Number of the tick that produced this snapshot.
@@ -224,6 +238,14 @@ pub struct SimSnapshot {
     /// level start); the frame is drawn at the current camera instead of
     /// interpolating from the previous one, whatever the distance.
     pub camera_teleported: bool,
+    /// Status bar values after the tick.
+    pub hud: HudState,
+    /// Sound and music cues of this tick only.
+    pub audio: Vec<AudioCue>,
+    /// Game events of this tick only.
+    pub events: Vec<GameEvent>,
+    /// Screen transition in progress, if any.
+    pub transition: Option<ScreenTransition>,
 }
 
 /// How the presentation fills a display whose shape differs from the logic

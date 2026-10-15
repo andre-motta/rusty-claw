@@ -13,11 +13,17 @@
 //!
 //! Because each key event lands in the tick whose span contains it, the
 //! same events give the same ticks at any display rate.
+//!
+//! Sound cues and game events belong to the tick that made them, and a
+//! frame can run several ticks, so the session gathers them from every
+//! tick it runs; [`Session::drain_outputs`] hands them over. Replays and
+//! benchmarks never drain them; the queues are bounded, and what does not
+//! fit is counted and dropped.
 
 use std::time::{Duration, Instant};
 
 use claw_frame::step::{MAX_FRAME_US, TICK_US};
-use claw_frame::{Buttons, FrameDriver, InterpolatedFrame, TickInput};
+use claw_frame::{AudioCue, Buttons, FrameDriver, GameEvent, InterpolatedFrame, TickInput};
 use claw_sim::trace::TraceRow;
 use claw_sim::{InputLatch, InputScript, Sim};
 
@@ -43,6 +49,29 @@ pub struct TickSample {
 /// Called before each tick with the index of the tick about to run.
 pub type BeforeTick = Box<dyn FnMut(u64, &mut Sim)>;
 
+/// Most sound cues, and separately most game events, kept between two
+/// calls of [`Session::drain_outputs`].
+pub const OUTPUT_LIMIT: usize = 4096;
+
+/// Sound cues and game events of the ticks run since the last drain.
+#[derive(Debug, Default)]
+struct Outputs {
+    audio: Vec<AudioCue>,
+    events: Vec<GameEvent>,
+    dropped: u64,
+}
+
+impl Outputs {
+    fn add(&mut self, audio: &[AudioCue], events: &[GameEvent]) {
+        let room = OUTPUT_LIMIT - self.audio.len();
+        self.audio.extend(audio.iter().take(room).cloned());
+        self.dropped += audio.len().saturating_sub(room) as u64;
+        let room = OUTPUT_LIMIT - self.events.len();
+        self.events.extend(events.iter().take(room).copied());
+        self.dropped += events.len().saturating_sub(room) as u64;
+    }
+}
+
 /// A level in play.
 pub struct Session {
     sim: Sim,
@@ -57,6 +86,7 @@ pub struct Session {
     trace: Option<Vec<TraceRow>>,
     samples: Option<Vec<TickSample>>,
     before_tick: Option<BeforeTick>,
+    outputs: Outputs,
 }
 
 impl std::fmt::Debug for Session {
@@ -86,6 +116,7 @@ impl Session {
             trace: None,
             samples: None,
             before_tick: None,
+            outputs: Outputs::default(),
         }
     }
 
@@ -139,6 +170,21 @@ impl Session {
     /// The simulation.
     pub fn sim(&self) -> &Sim {
         &self.sim
+    }
+
+    /// The sound cues and game events of every tick run since the last
+    /// call, in order.
+    pub fn drain_outputs(&mut self) -> (Vec<AudioCue>, Vec<GameEvent>) {
+        (
+            std::mem::take(&mut self.outputs.audio),
+            std::mem::take(&mut self.outputs.events),
+        )
+    }
+
+    /// Cues and events dropped so far because more than
+    /// [`OUTPUT_LIMIT`] waited to be drained.
+    pub fn dropped_outputs(&self) -> u64 {
+        self.outputs.dropped
     }
 
     /// Ticks run by this session.
@@ -208,6 +254,7 @@ impl Session {
             trace,
             samples,
             before_tick,
+            outputs,
             ..
         } = self;
         let report = driver.frame(dt, || {
@@ -237,6 +284,7 @@ impl Session {
             } else {
                 sim.step(input)
             };
+            outputs.add(&snapshot.audio, &snapshot.events);
             if let Some(rows) = trace {
                 let source = if scripted.is_some() {
                     "script"
@@ -461,6 +509,37 @@ mod tests {
         let s = session.tick_samples();
         assert_eq!(s.len(), 4);
         assert!(s.iter().all(|t| t.live == 2 && t.ms >= 0.0));
+    }
+
+    /// A level whose standing animation plays a sound on every tick.
+    fn noisy_level() -> SimLevel {
+        let mut l = level();
+        let mut stand = claw_sim::anim::Animation::looping("CLAW_STAND", &[(11, 1)]);
+        stand.frame_sounds = vec![vec![Some("TICK".into())]];
+        l.animations
+            .insert(stand.key.clone(), std::sync::Arc::new(stand));
+        l
+    }
+
+    #[test]
+    fn frames_of_several_ticks_lose_no_cues() {
+        let mut session = Session::new(Sim::new(noisy_level(), SimConfig::default()));
+        // The level start's own cue goes out with the first tick.
+        let first = session.frame(Duration::from_millis(40)).ticks as usize;
+        assert!(first >= 1);
+        assert_eq!(session.drain_outputs().0.len(), first + 1);
+        let ticks = session.frame(Duration::from_millis(90)).ticks as usize;
+        assert!(ticks >= 4, "{ticks}");
+        let (audio, events) = session.drain_outputs();
+        assert_eq!(audio.len(), ticks);
+        assert!(events.is_empty());
+        assert!(session.drain_outputs().0.is_empty());
+        // Undrained cues are bounded.
+        for _ in 0..(OUTPUT_LIMIT + 100) {
+            session.frame(Duration::from_millis(18));
+        }
+        assert_eq!(session.drain_outputs().0.len(), OUTPUT_LIMIT);
+        assert_eq!(session.dropped_outputs(), 100);
     }
 
     #[test]

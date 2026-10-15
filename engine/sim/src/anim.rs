@@ -38,6 +38,11 @@ pub struct AnimFrame {
 
 /// Element flag: the duration counts calls.
 pub const FRAME_COUNTS_CALLS: u16 = 0x1;
+/// Element flag: the element's sound is placed at its owner's position.
+pub const FRAME_SOUND_POSITIONAL: u16 = 0x4;
+/// Element flag: the element's sound plays only while its owner is in
+/// view.
+pub const FRAME_SOUND_IN_VIEW: u16 = 0x8;
 
 /// An animation.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -48,6 +53,11 @@ pub struct Animation {
     pub image_set: String,
     /// Elements in order.
     pub frames: Vec<AnimFrame>,
+    /// Sounds of each element, by index (missing entries have none). When
+    /// an element has several, one is chosen at random each time it is
+    /// applied. `None` stands for a name no sound is registered under: it
+    /// can be chosen and then plays nothing.
+    pub frame_sounds: Vec<Vec<Option<String>>>,
 }
 
 impl Animation {
@@ -71,7 +81,17 @@ impl Animation {
                     operand_y: i32::from(f.field8),
                 })
                 .collect(),
+            frame_sounds: ani
+                .frames
+                .iter()
+                .map(|f| f.sounds.iter().cloned().map(Some).collect())
+                .collect(),
         }
+    }
+
+    /// The sounds of element `index`.
+    pub fn sounds_of(&self, index: usize) -> &[Option<String>] {
+        self.frame_sounds.get(index).map_or(&[], Vec::as_slice)
     }
 
     /// A simple looping animation of the given (frame, duration) pairs.
@@ -88,6 +108,7 @@ impl Animation {
                     ..AnimFrame::default()
                 })
                 .collect(),
+            frame_sounds: Vec::new(),
         }
     }
 
@@ -112,6 +133,9 @@ pub struct AnimEffect {
     pub moved_to: Option<(i32, i32)>,
     /// Event value reported by this call (-1 without an animation).
     pub event: i32,
+    /// Index of the element applied by this call, if one was; its sounds
+    /// play now.
+    pub applied: Option<usize>,
 }
 
 /// Plays one animation for one object.
@@ -198,6 +222,7 @@ impl AnimPlayer {
         }
         let idx = self.pending.min(anim.frames.len() - 1);
         let el = anim.frames[idx];
+        out.applied = Some(idx);
         let new_frame = match el.image_op {
             1 => Some(frame + 1),
             2 => Some(frame - 1),
