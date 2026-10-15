@@ -642,7 +642,7 @@ fn the_officer_dies_drops_its_loot_and_flies_off() {
         .objects()
         .all()
         .filter_map(|(_, o)| match &o.data {
-            ObjectData::Pickup(PickupData { drop_code }) => *drop_code,
+            ObjectData::Pickup(PickupData { drop_code, .. }) => *drop_code,
             _ => None,
         })
         .collect();
