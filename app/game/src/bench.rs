@@ -26,9 +26,10 @@
 //! the route ran out, as an unpaced run on a fast machine can. Every frame
 //! is drawn as in play, with the status bar, messages and screen
 //! transitions, and their cost is part of the measured work. The headless
-//! run also plays the game's sounds and music through a silent output (the
-//! mixer and the synthesizer run as with a device), and that work is part
-//! of each frame too.
+//! run also plays the game's sounds and music through a silent output on
+//! the audio thread (the mixer and the synthesizer run as with a device),
+//! so their CPU load is present during the run; the handling of each
+//! frame's sound and music cues is part of that frame's measured work.
 //!
 //! The report is one JSON object. Times are milliseconds, each with `p50`,
 //! `p99` and `max`:

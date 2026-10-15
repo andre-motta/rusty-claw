@@ -13,7 +13,7 @@ use claw_sim::anim::Animation;
 use claw_sim::logic::keg::{self, Phase};
 use claw_sim::logic::projectile::{ProjectileData, ProjectileSpec};
 use claw_sim::logic::{self, World};
-use claw_sim::object::{LogicKind, ObjectId, Rect, draw_flags, flags, types};
+use claw_sim::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags, types};
 use claw_sim::physics::ptype;
 use claw_sim::player::attack::{self, kind};
 use claw_sim::player::special;
@@ -463,6 +463,53 @@ fn a_jumping_swipe_carries_on_into_the_fall() {
     }
 }
 
+#[test]
+fn the_fall_animation_comes_back_after_an_air_attack_carried_over_the_top() {
+    let mut sim = new_sim(3);
+    jump(&mut sim);
+    sim.step(press(ATTACK | JUMP));
+    assert_eq!(sim.claw().attack.kind, kind::JUMP_SWIPE);
+    for _ in 0..40 {
+        sim.step(TickInput::default());
+        if claw(&sim).state == state::FALL {
+            break;
+        }
+    }
+    assert_eq!(claw(&sim).state, state::FALL);
+    assert!(sim.claw().attacking, "the swipe carries on into the fall");
+    assert_eq!(sim.claw().attack.restore_anim.as_deref(), Some("CLAW_FALL"));
+}
+
+#[test]
+fn a_hit_at_the_top_of_a_jump_ends_the_air_attack() {
+    let mut sim = new_sim(3);
+    jump(&mut sim);
+    sim.step(press(ATTACK | JUMP));
+    assert_eq!(sim.claw().attack.kind, kind::JUMP_SWIPE);
+    assert_eq!(claw(&sim).state, state::JUMP);
+    // Claw stays at the top of his jump for one tick (his own update is
+    // skipped, so it cannot hand over to the fall first) and an enemy shot
+    // hits him there.
+    let id = claw_id(&sim);
+    let (x, y) = (claw(&sim).x, claw(&sim).y);
+    set(&mut sim, |w| {
+        w.objects.get_mut(id).unwrap().frame_delay = 1;
+        w.claw.jump_peak_y = y;
+    });
+    let mut shot = Object::new(0, x, y, 10, Arc::from("Shot"), LogicKind::Inert);
+    shot.flags = flags::WORLD;
+    shot.type_flags = types::ENEMY_SHOT;
+    shot.attack_rect = Rect::new(-20, -20, 20, 20);
+    shot.damage = 5;
+    sim.spawn(shot);
+    let health = sim.stats().health;
+    sim.step(TickInput::default());
+    assert_eq!(sim.stats().health, health - 5, "the shot hit");
+    assert!(!sim.claw().attacking, "the hit ends the swipe");
+    assert_eq!(sim.claw().attack.kind, kind::NONE);
+    assert!(claw(&sim).flags & flags::HARMLESS != 0);
+}
+
 // ------------------------------------------------------------ shots
 
 #[test]
@@ -648,6 +695,37 @@ fn ammunition_runs_down_and_the_toggle_cycles_with_a_click() {
     assert_eq!(sim.stats().dynamite, 0);
     assert_eq!(log.len(), 4);
     assert_eq!(log.spec(3).logic, "Dynamite");
+}
+
+fn clicks(sim: &Sim) -> usize {
+    sim.last_audio()
+        .iter()
+        .filter(|c| matches!(c, AudioCue::Play(s) if s.key == attack::TOGGLE_SOUND))
+        .count()
+}
+
+#[test]
+fn the_toggle_clicks_once_in_every_state() {
+    // Standing: one click.
+    let mut sim = new_sim(3);
+    sim.step(press(TOGGLE));
+    assert_eq!(sim.stats().weapon, Weapon::Magic);
+    assert_eq!(clicks(&sim), 1);
+    // Climbing a ladder: the weapon changes with the same click.
+    let mut sim = Sim::new(ladder_level(), SimConfig::default());
+    idle(&mut sim, 30);
+    for &input in &script(&[(UP | JUMP, 108), (UP, 300)]).ticks {
+        sim.step(input);
+    }
+    assert_eq!(claw(&sim).state, state::CLIMB);
+    assert_eq!(sim.stats().weapon, Weapon::Pistol);
+    sim.step(TickInput {
+        held: Buttons(UP | TOGGLE),
+        pressed: Buttons(TOGGLE),
+    });
+    assert_eq!(claw(&sim).state, state::CLIMB);
+    assert_eq!(sim.stats().weapon, Weapon::Magic);
+    assert_eq!(clicks(&sim), 1);
 }
 
 /// Throws dynamite after holding the fire key for `hold_ticks` ticks
@@ -934,6 +1012,35 @@ fn a_hit_while_carrying_drops_the_keg() {
     assert_eq!(claw(&sim).state, state::HIT);
     assert_eq!(sim.claw().special.lifted, None);
     assert_eq!(keg_phase(&sim, id), Phase::Dropped);
+}
+
+#[test]
+fn starting_a_throw_winds_up_a_carried_officer() {
+    let mut sim = new_sim(3);
+    let (x, y) = (claw(&sim).x, claw(&sim).y);
+    // The officer's touch does not hurt Claw during the test.
+    let cid = claw_id(&sim);
+    set(&mut sim, |w| {
+        w.claw.stats.invulnerable_ms = 1_000_000;
+        w.objects.get_mut(cid).unwrap().hit_type_flags &= !types::ENEMY;
+    });
+    let id = sim.spawn(logic::new_object("Officer", x + 40, y, 4000));
+    idle(&mut sim, 3);
+    let o = sim.objects().get(id).expect("officer");
+    assert!(o.special_flags & claw_sim::object::special::LIFTABLE != 0);
+    sim.step(press(LIFT));
+    assert_eq!(sim.claw().special.lifted, Some(id));
+    let winding = |sim: &Sim| {
+        claw_sim::logic::enemy::data_of(sim.objects().get(id).unwrap())
+            .expect("enemy data")
+            .winding_up
+    };
+    idle(&mut sim, 20);
+    assert!(sim.claw().special.carrying);
+    assert!(!winding(&sim));
+    sim.step(press(LIFT));
+    assert_eq!(claw(&sim).state, state::THROW);
+    assert!(winding(&sim), "the officer is told Claw winds up");
 }
 
 #[test]

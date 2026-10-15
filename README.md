@@ -280,7 +280,9 @@ bursts and pickups fly while frames are measured. The route is planned on a
 copy of the game before the run and played once; it lasts a run paced at
 the display rate, and the verdict says when an unpaced run outran it. The
 offscreen benchmark also plays the sounds and music through a silent
-output, so their work is measured too.
+output on the audio thread, so their CPU load is present during the run,
+and the handling of the sound and music cues is part of each frame's
+measured work.
 
 The report is one line of JSON on standard output: the CPU work per frame,
 the cost of each game tick and the number of live objects, frames that
@@ -360,9 +362,10 @@ unless `--uncapped` is given.
 - A few details still follow a reasonable guess rather than a measurement
   of the original: carrying an object walks at 30 px/s, a hit near a ledge
   can briefly show a landing before the fall, rats that reach a wall turn
-  back at walking speed, enemies treat goo like spikes, a magic hit on an
-  enemy shows no lingering flame or frost, and the switch-weapon click is
-  missing while climbing. The play-test list asks about each.
+  back at walking speed, enemies treat goo like spikes, and a magic hit on
+  an enemy shows no lingering flame or frost. The play-test list
+  (`tests/acceptance/PLAYTEST.md`) asks about each one a player can see on
+  the first level and names the rest, such as goo, as untested there.
 - The in-game menu's end-life entry, the front layer and detail settings
   and the play area size are shown but have no effect yet.
 - One profile, without profile screens.

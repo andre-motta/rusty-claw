@@ -27,7 +27,8 @@
 //! drops it when he stood still) and he falls. After
 //! [`LIFT_HOLD_MS`] of carrying the object is put down and he stands.
 //!
-//! Attack or Lift starts the throw. Holding the key charges it, up to
+//! Attack or Lift starts the throw, and the object's family is told that
+//! Claw winds up ([`logic::wind_up`]). Holding the key charges it, up to
 //! [`THROW_CHARGE_MS`]; the animation waits meanwhile. On the throw
 //! animation's event 1 the object leaves with a power `p` from 0 to 100
 //! that grows with the charge, at `200 + 3p` px/s forwards and
@@ -198,7 +199,6 @@ fn begin_hit(c: &mut Ctx, attacker_x: i32) {
 
 /// The hit reaction (state 31).
 pub fn hit_tick(c: &mut Ctx) {
-    attack::toggle_click(c);
     if let Some(x) = c.p.special.hit_from.take() {
         begin_hit(c, x);
     } else if !c.p.special.in_hit {
@@ -284,7 +284,6 @@ fn let_go(c: &mut Ctx, vx: i32) {
 
 /// Lifting and carrying an object (state 5000).
 pub fn lift_tick(c: &mut Ctx) {
-    attack::toggle_click(c);
     if c.p.special.lifted.is_none() {
         fallback_tick(c);
         return;
@@ -340,6 +339,9 @@ pub fn lift_tick(c: &mut Ctx) {
         c.p.special.carry_still = true;
     }
     if c.p.special.carrying && (c.pressed(Buttons::ATTACK) || c.pressed(Buttons::LIFT)) {
+        if let Some(id) = c.p.special.lifted {
+            c.with_world(|w| logic::wind_up(w, id));
+        }
         restore_move_rect(c);
         begin_throw(c);
         return;
@@ -381,7 +383,6 @@ pub fn throw_velocity(charge_ms: i32, facing_right: bool) -> (i32, i32) {
 
 /// Throwing the lifted object (state 5001).
 pub fn throw_tick(c: &mut Ctx) {
-    attack::toggle_click(c);
     if !c.p.special.throwing {
         fallback_tick(c);
         return;
@@ -448,7 +449,6 @@ fn freeze_now(c: &mut Ctx, ms: i32) {
 /// Frozen (state 5009): the animation plays and nothing else happens until
 /// the freeze is released or its time runs out; then Claw stands.
 pub fn freeze_tick(c: &mut Ctx) {
-    attack::toggle_click(c);
     if c.p.special.freeze_pending {
         let ms = c.p.special.freeze_ms;
         freeze_now(c, ms);

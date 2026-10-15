@@ -7,7 +7,8 @@
 //! requested whole-pixel position, and switches state from the resulting
 //! physics type: 4 means nothing is under the feet, 6 means a ladder was
 //! grabbed, 1 means Claw stands. After every handler a shared post-tick
-//! step runs (timers, the position clamp, death-tile marks).
+//! step runs (the weapon toggle and its click, timers, the position
+//! clamp, death-tile marks).
 //!
 //! Every state id of the game is declared in the table. Ids without
 //! behaviour in the game run only the post-tick step. States whose
@@ -1065,7 +1066,11 @@ fn jump_integrate(c: &mut Ctx, vx: f64) {
         _ => {
             animate(c);
             if c.o.y <= c.p.jump_peak_y {
-                begin_fall(c, true);
+                if attack::carry_over_jump_top(c) {
+                    fall_from_rest(c, true);
+                } else {
+                    begin_fall(c, true);
+                }
             }
         }
     }
@@ -1648,10 +1653,12 @@ pub fn tick(c: &mut Ctx) {
     post_tick(c);
 }
 
-/// Shared bookkeeping after every handler.
+/// Shared bookkeeping after every handler: the weapon toggle (with its
+/// click), timers, the position clamp and death-tile marks.
 pub fn post_tick(c: &mut Ctx) {
     if c.pressed(Buttons::TOGGLE) && !c.p.attacking {
         c.p.stats.weapon = stats::next_weapon(c.p.stats.weapon);
+        c.play(attack::TOGGLE_SOUND, claw_frame::SoundChannel::Effect);
     }
     if c.p.stats.invulnerable_ms > 0 {
         c.p.stats.invulnerable_ms = (c.p.stats.invulnerable_ms - DT).max(0);
