@@ -5,10 +5,12 @@
 //! window benchmark. Every key goes through the input router, which the
 //! window also polls once per frame for other input devices. Normal play
 //! opens an audio device (unless sound is off) and plays the sound cues of
-//! every tick it runs; watching a script and the benchmark are silent. The
-//! window title shows Claw's health, score and lives. The output size, the aspect policy, the scaling and
-//! fullscreen change at run time; the 640x480 game view and the simulation
-//! stay as they are.
+//! every tick it runs; watching a script and the benchmark are silent.
+//! Every frame shows the status bar, the in-game message on screen and the
+//! screen transition in progress ([`StatusLayer`]); the window title also
+//! shows Claw's health, score and lives. The output size, the aspect
+//! policy, the scaling and fullscreen change at run time; the 640x480 game
+//! view and the simulation stay as they are.
 //!
 //! With vsync on, waiting for the display paces the frames. Otherwise each
 //! frame first waits for the frame-rate cap (300 frames per second unless
@@ -18,10 +20,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use claw_frame::{FrameClock, FramePacer};
+use claw_frame::{AudioCue, FrameClock, FramePacer, GameEvent, ScreenTransition, TICK_MS};
 use claw_render::gpu::COLOR_FORMAT;
 use claw_render::{FrameInput, Gpu, LevelGraphics, Offscreen, Renderer, SceneBuilder, wgpu};
-use claw_sim::InputScript;
+use claw_sim::{InputScript, Sim};
+use claw_ui::hud::{Hud, HudArt};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, WindowEvent};
@@ -36,6 +39,74 @@ use crate::keymap::{Command, Keymap};
 use crate::load::{LevelBundle, new_sim, preload};
 use crate::session::Session;
 use crate::settings::{Aspect, Scale, Settings, WINDOW_SIZES, view_for};
+
+/// The screen layer of a game in progress: the status bar, the message on
+/// screen and the screen transition, for each frame drawn.
+///
+/// Messages age with game time only: by the ticks that run, and not while a
+/// transition runs (or while paused, when no tick runs). They are hidden
+/// while a transition runs.
+#[derive(Debug, Clone)]
+pub struct StatusLayer {
+    hud: Hud,
+    transition: Option<ScreenTransition>,
+    fresh: bool,
+}
+
+impl StatusLayer {
+    /// Measures the status bar art of `bundle`'s level, preloading its image
+    /// sets into `graphics`.
+    pub fn new(graphics: &mut LevelGraphics, bundle: &LevelBundle) -> StatusLayer {
+        let art = HudArt::from_store(graphics, &bundle.store, &bundle.level.registries);
+        if !art.missing.is_empty() {
+            eprintln!(
+                "rusty-claw: status bar art not found: {}",
+                art.missing.join(", ")
+            );
+        }
+        StatusLayer {
+            hud: Hud::new(art),
+            transition: None,
+            fresh: true,
+        }
+    }
+
+    /// Takes the game events of the ticks just run (the messages among
+    /// them).
+    pub fn events(&mut self, events: &[GameEvent]) {
+        for e in events {
+            self.hud.messages.event(e);
+        }
+    }
+
+    /// Follows the simulation after a frame that ran `ticks` ticks.
+    pub fn update(&mut self, sim: &Sim, ticks: u32) {
+        if ticks > 0 || self.fresh {
+            self.fresh = false;
+            self.transition = sim.snapshot().transition;
+        }
+        if ticks > 0 && self.transition.is_none() {
+            self.hud
+                .messages
+                .advance(f64::from(ticks) * f64::from(TICK_MS));
+        }
+    }
+
+    /// The screen transition in progress.
+    pub fn transition(&self) -> Option<ScreenTransition> {
+        self.transition
+    }
+
+    /// Fills the screen layer and the transition of `input`, a frame of
+    /// `sim` in a presentation of `presentation` game pixels.
+    pub fn apply(&mut self, input: &mut FrameInput<'_>, sim: &Sim, presentation: (u32, u32)) {
+        input.screen = self.hud.layout(&sim.hud(), presentation, input.time_ms);
+        if self.transition.is_none() {
+            input.screen.extend(self.hud.message_layout());
+        }
+        input.transition = self.transition;
+    }
+}
 
 /// What the window does.
 #[derive(Debug, Clone)]
@@ -88,6 +159,9 @@ struct App {
     /// The numbers the title shows: health, score, lives, paused.
     shown: Option<(i32, u32, i32, bool)>,
     session: Option<Session>,
+    status: Option<StatusLayer>,
+    /// Sound cues of the ticks of the current frame, played after it.
+    cues: Vec<AudioCue>,
     live: Option<Live>,
     clock: FrameClock,
     pacer: FramePacer,
@@ -245,6 +319,7 @@ impl App {
             );
         }
         self.preloaded = preload(&mut self.graphics, &self.bundle.level, &sim.snapshot());
+        self.status = Some(StatusLayer::new(&mut self.graphics, &self.bundle));
         let mut session = Session::new(sim);
         if matches!(self.mode, WindowMode::Play) && self.settings.audio {
             let mut audio = AudioBridge::new(self.settings.audio_settings());
@@ -488,13 +563,12 @@ impl App {
         }
     }
 
-    /// Plays the sound cues of the ticks just run; drops their game events,
-    /// which nothing uses yet.
+    /// Plays the sound cues of the ticks just run.
     fn play_outputs(&mut self) {
         let Some(session) = &mut self.session else {
             return;
         };
-        let (cues, _events) = session.drain_outputs();
+        let cues = std::mem::take(&mut self.cues);
         if let Some(audio) = &mut self.audio {
             let r = session.sim().view().rect;
             let view = ViewInfo {
@@ -518,7 +592,9 @@ impl App {
     }
 
     fn frame_inner(&mut self, event_loop: &ActiveEventLoop) {
-        let (Some(live), Some(session)) = (&mut self.live, &mut self.session) else {
+        let (Some(live), Some(session), Some(status)) =
+            (&mut self.live, &mut self.session, &mut self.status)
+        else {
             return;
         };
         // The cap's wait comes before the frame's clock and work timer.
@@ -529,6 +605,11 @@ impl App {
         let sets_before = self.graphics.loaded_while_drawing();
         let images_before = self.graphics.images.records.len();
         let f = session.frame(dt);
+        // Sound cues are played after the frame; messages show in it.
+        let (cues, game_events) = session.drain_outputs();
+        self.cues.extend(cues);
+        status.events(&game_events);
+        status.update(session.sim(), f.ticks);
         if !self.announced_end && matches!(self.mode, WindowMode::Watch(_)) && !session.replaying()
         {
             self.announced_end = true;
@@ -539,11 +620,15 @@ impl App {
         }
         let view = *live.builder.view();
         let frame = session.interpolated(self.interp);
-        let input = FrameInput::from_frame(&frame, &view);
+        let mut input = FrameInput::from_frame(&frame, &view);
+        let presentation = live.builder.composition().presentation;
+        status.apply(&mut input, session.sim(), presentation);
         let scene = live.builder.build(&mut self.graphics, &input);
         if let Some(copy) = &mut live.offscreen {
             let view = *copy.builder.view();
-            let input = FrameInput::from_frame(&frame, &view);
+            let mut input = FrameInput::from_frame(&frame, &view);
+            let presentation = copy.builder.composition().presentation;
+            status.apply(&mut input, session.sim(), presentation);
             let scene = copy.builder.build(&mut self.graphics, &input);
             copy.renderer
                 .render(&self.graphics, &scene, &copy.output.view, COLOR_FORMAT);
@@ -727,6 +812,8 @@ pub fn run(
         recorder: None,
         shown: None,
         session: None,
+        status: None,
+        cues: Vec::new(),
         live: None,
         clock: FrameClock::new(),
         pacer: FramePacer::uncapped(),
