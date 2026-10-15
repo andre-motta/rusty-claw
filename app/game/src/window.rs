@@ -1,7 +1,12 @@
-//! The game window: keyboard in, frames out at the display's refresh.
+//! The game window: keyboard in, frames and sound out at the display's
+//! refresh.
 //!
 //! The same window runs normal play, watching a replayed script and the
-//! window benchmark. The output size, the aspect policy, the scaling and
+//! window benchmark. Every key goes through the input router, which the
+//! window also polls once per frame for other input devices. Normal play
+//! opens an audio device (unless sound is off) and plays the sound cues of
+//! every tick it runs; watching a script and the benchmark are silent. The
+//! window title shows Claw's health, score and lives. The output size, the aspect policy, the scaling and
 //! fullscreen change at run time; the 640x480 game view and the simulation
 //! stay as they are.
 //!
@@ -24,8 +29,10 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::{Fullscreen, Window, WindowId};
 
+use crate::audio::{AudioBridge, ViewInfo};
 use crate::bench::{PresentDetail, Report, Samples, Summary, WARMUP_S, route};
-use crate::keymap::{Action, Command, Keymap};
+use crate::input::{InputRouter, Recorder, Routed};
+use crate::keymap::{Command, Keymap};
 use crate::load::{LevelBundle, new_sim, preload};
 use crate::session::Session;
 use crate::settings::{Aspect, Scale, Settings, WINDOW_SIZES, view_for};
@@ -75,7 +82,11 @@ struct App {
     mode: WindowMode,
     bundle: LevelBundle,
     graphics: LevelGraphics,
-    keymap: Keymap,
+    router: InputRouter,
+    audio: Option<AudioBridge>,
+    recorder: Option<Recorder>,
+    /// The numbers the title shows: health, score, lives, paused.
+    shown: Option<(i32, u32, i32, bool)>,
     session: Option<Session>,
     live: Option<Live>,
     clock: FrameClock,
@@ -125,10 +136,31 @@ fn present_mode(modes: &[wgpu::PresentMode], vsync: bool) -> wgpu::PresentMode {
 impl App {
     fn title(&self) -> String {
         let mut t = format!("rusty-claw: {}", self.bundle.name);
+        if let Some(session) = &self.session {
+            let s = session.sim().stats();
+            t.push_str(&format!(
+                " | health {} | score {} | lives {}",
+                s.health, s.score, s.lives
+            ));
+        }
         if self.user_paused {
             t.push_str(" (paused)");
         }
         t
+    }
+
+    /// Sets the window title when the numbers it shows changed.
+    fn update_title(&mut self) {
+        let Some(session) = &self.session else { return };
+        let s = session.sim().stats();
+        let now = Some((s.health, s.score, s.lives, self.user_paused));
+        if now != self.shown {
+            self.shown = now;
+            let title = self.title();
+            if let Some(live) = &self.live {
+                live.window.set_title(&title);
+            }
+        }
     }
 
     fn open(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
@@ -214,6 +246,26 @@ impl App {
         }
         self.preloaded = preload(&mut self.graphics, &self.bundle.level, &sim.snapshot());
         let mut session = Session::new(sim);
+        if matches!(self.mode, WindowMode::Play) && self.settings.audio {
+            let mut audio = AudioBridge::new(self.settings.audio_settings());
+            let r = audio.load_level(&self.bundle.store, &self.bundle.level.registries);
+            eprintln!(
+                "rusty-claw: {} of {} sounds ready in {:.0} ms ({:.1} MB)",
+                r.decoded,
+                r.registered,
+                r.ms,
+                r.bytes as f64 / 1_048_576.0
+            );
+            for (key, why) in r.failed.iter().take(5) {
+                eprintln!("rusty-claw: sound {key} left out: {why}");
+            }
+            self.audio = Some(audio);
+        }
+        if self.settings.record.is_some() && !matches!(self.mode, WindowMode::Bench(_)) {
+            let recorder = Recorder::new();
+            session.set_before_tick(recorder.hook());
+            self.recorder = Some(recorder);
+        }
         match &self.mode {
             WindowMode::Play => {}
             WindowMode::Watch(script) => session = session.with_replay(script.clone()),
@@ -288,7 +340,7 @@ impl App {
             self.load_ms,
         );
         if matches!(self.mode, WindowMode::Play | WindowMode::Watch(_)) {
-            eprintln!("rusty-claw: {}", self.keymap.help());
+            eprintln!("rusty-claw: {}", self.router.help());
         }
         self.session = Some(session);
         self.live = Some(Live {
@@ -376,9 +428,7 @@ impl App {
             Command::Pause => {
                 self.user_paused = !self.user_paused;
                 self.update_pause();
-                if let Some(live) = &self.live {
-                    live.window.set_title(&self.title());
-                }
+                self.update_title();
             }
         }
     }
@@ -392,8 +442,14 @@ impl App {
             let at = session.stamp(self.last_frame.elapsed());
             session.release_all(at);
             session.pause();
+            if let Some(audio) = &mut self.audio {
+                audio.pause();
+            }
         } else if !paused && session.is_paused() {
             session.resume();
+            if let Some(audio) = &mut self.audio {
+                audio.resume();
+            }
             self.clock.reset();
             self.pacer.reset();
             if let Some(b) = &mut self.bench {
@@ -403,8 +459,15 @@ impl App {
     }
 
     fn key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode, down: bool) {
-        match self.keymap.action(code) {
-            Some(Action::Button(b)) => {
+        if let Some(r) = self.router.key(code, down) {
+            self.route(event_loop, r);
+        }
+    }
+
+    /// Acts on one routed input.
+    fn route(&mut self, event_loop: &ActiveEventLoop, r: Routed) {
+        match r {
+            Routed::Button(b, down) => {
                 if self.bench.is_some() {
                     return;
                 }
@@ -413,12 +476,48 @@ impl App {
                     session.key(at, b, down);
                 }
             }
-            Some(Action::Command(cmd)) if down => self.command(event_loop, cmd),
-            _ => {}
+            Routed::Command(cmd) => self.command(event_loop, cmd),
+            Routed::Menu(_) => {}
+        }
+    }
+
+    /// Polls the input devices other than the keyboard.
+    fn poll_inputs(&mut self, event_loop: &ActiveEventLoop) {
+        for r in self.router.poll(Instant::now()) {
+            self.route(event_loop, r);
+        }
+    }
+
+    /// Plays the sound cues of the ticks just run; drops their game events,
+    /// which nothing uses yet.
+    fn play_outputs(&mut self) {
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        let (cues, _events) = session.drain_outputs();
+        if let Some(audio) = &mut self.audio {
+            let r = session.sim().view().rect;
+            let view = ViewInfo {
+                left: r.left,
+                top: r.top,
+                width: (r.right - r.left + 1).max(0) as u32,
+                height: (r.bottom - r.top + 1).max(0) as u32,
+            };
+            audio.apply(&cues, &view);
         }
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        if self.live.is_none() {
+            return;
+        }
+        self.poll_inputs(event_loop);
+        self.frame_inner(event_loop);
+        self.play_outputs();
+        self.update_title();
+    }
+
+    fn frame_inner(&mut self, event_loop: &ActiveEventLoop) {
         let (Some(live), Some(session)) = (&mut self.live, &mut self.session) else {
             return;
         };
@@ -623,7 +722,10 @@ pub fn run(
         mode,
         bundle,
         graphics,
-        keymap: Keymap::default(),
+        router: InputRouter::new(Keymap::default()),
+        audio: None,
+        recorder: None,
+        shown: None,
         session: None,
         live: None,
         clock: FrameClock::new(),
@@ -644,6 +746,12 @@ pub fn run(
         announced_end: false,
     };
     event_loop.run_app(&mut app).context("running the window")?;
+    if let (Some(recorder), Some(session), Some(path)) =
+        (&app.recorder, &app.session, &app.settings.record)
+    {
+        let n = recorder.save(session, path)?;
+        eprintln!("rusty-claw: recorded {n} ticks to {}", path.display());
+    }
     if let Some(e) = app.error {
         return Err(e);
     }

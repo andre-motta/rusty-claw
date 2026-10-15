@@ -17,6 +17,7 @@
 //! vsync = true
 //! fps_cap = 300             # with vsync off, 1 to 10000
 //! interpolation = true
+//! audio = on                # on or off
 //! ```
 //!
 //! With vsync on, the display's refresh paces drawing. With vsync off,
@@ -30,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{ArgGroup, Parser, ValueEnum};
+use claw_audio::AudioSettings;
 use claw_frame::{
     AspectPolicy, DEFAULT_FPS_CAP, DEFAULT_LOGIC_HEIGHT, DEFAULT_LOGIC_WIDTH, ScaleMode, ViewConfig,
 };
@@ -182,6 +184,13 @@ pub struct Args {
     /// Image pack folder with higher-resolution replacements.
     #[arg(long, value_name = "DIR")]
     pub pack: Option<PathBuf>,
+    /// No sound: open no audio device.
+    #[arg(long)]
+    pub no_audio: bool,
+    /// Write the input of every game tick played in the window to this
+    /// file, as an input script `--replay` plays back.
+    #[arg(long, value_name = "FILE.csv", conflicts_with_all = ["bench", "trace"])]
+    pub record: Option<PathBuf>,
     /// Put Claw at X,Y (level pixels) and let him settle before play or a
     /// replay starts.
     #[arg(long, value_name = "X,Y", value_parser = parse_point)]
@@ -311,6 +320,10 @@ pub struct Settings {
     pub pack: Option<PathBuf>,
     /// Claw's start point override.
     pub start: Option<(i32, i32)>,
+    /// Sound on. Off, no audio device is opened.
+    pub audio: bool,
+    /// Where to write the input played in the window, as an input script.
+    pub record: Option<PathBuf>,
     /// What the run does.
     pub mode: Mode,
 }
@@ -332,6 +345,8 @@ impl Settings {
             interpolation: true,
             pack: None,
             start: None,
+            audio: true,
+            record: None,
             mode: Mode::Play,
         }
     }
@@ -401,6 +416,10 @@ impl Settings {
             s.pack.clone_from(&args.pack);
         }
         s.start = args.start;
+        if args.no_audio {
+            s.audio = false;
+        }
+        s.record.clone_from(&args.record);
         let hz = |default: f64| -> Result<f64> {
             let hz = args.render_hz.unwrap_or(default);
             if !(hz.is_finite() && (1.0..=10_000.0).contains(&hz)) {
@@ -436,6 +455,14 @@ impl Settings {
     /// view presented by the aspect and scaling settings.
     pub fn view(&self, size: (u32, u32)) -> ViewConfig {
         view_for(self.aspect, self.scale, self.widen_activation, size)
+    }
+
+    /// The audio settings: the defaults, with sound on or off.
+    pub fn audio_settings(&self) -> AudioSettings {
+        AudioSettings {
+            enabled: self.audio,
+            ..AudioSettings::default()
+        }
     }
 
     /// True when the active area follows the first output's shape.
@@ -511,7 +538,7 @@ pub struct ConfigFile {
 }
 
 /// Keys a config file may hold.
-pub const CONFIG_KEYS: [&str; 12] = [
+pub const CONFIG_KEYS: [&str; 13] = [
     "install",
     "level",
     "custom",
@@ -524,6 +551,7 @@ pub const CONFIG_KEYS: [&str; 12] = [
     "fps_cap",
     "interpolation",
     "pack",
+    "audio",
 ];
 
 impl ConfigFile {
@@ -600,6 +628,7 @@ impl ConfigFile {
                 }
                 "interpolation" => s.interpolation = flag(key, v)?,
                 "pack" => s.pack = Some(PathBuf::from(v)),
+                "audio" => s.audio = flag(key, v)?,
                 _ => {}
             }
         }
@@ -829,6 +858,48 @@ mod tests {
         let cfg = s.sim_config((7680, 1080));
         assert_eq!(cfg.activation.view, (3414, 480));
         assert_eq!(claw_sim::sim::presentation_width(&cfg.view), 3414);
+    }
+
+    #[test]
+    fn audio_and_recording() {
+        let s = Settings::resolve(&args("--install /i"), None).unwrap();
+        assert!(s.audio && s.audio_settings().enabled);
+        assert_eq!(s.record, None);
+        let s = Settings::resolve(&args("--install /i --no-audio --record r.csv"), None).unwrap();
+        assert!(!s.audio && !s.audio_settings().enabled);
+        assert_eq!(s.record, Some(PathBuf::from("r.csv")));
+        let file = ConfigFile::parse("install = /i\naudio = off\n", "cfg").unwrap();
+        assert!(
+            !Settings::resolve(&Args::default(), Some(&file))
+                .unwrap()
+                .audio
+        );
+        let file = ConfigFile::parse("install = /i\naudio = on\n", "cfg").unwrap();
+        assert!(
+            Settings::resolve(&Args::default(), Some(&file))
+                .unwrap()
+                .audio
+        );
+        assert!(
+            Settings::resolve(&args("--no-audio"), Some(&file))
+                .map(|s| !s.audio)
+                .unwrap()
+        );
+        let file = ConfigFile::parse("install = /i\naudio = loud\n", "cfg").unwrap();
+        assert!(Settings::resolve(&Args::default(), Some(&file)).is_err());
+        assert!(Args::try_parse_from(["rusty-claw", "--record", "r.csv", "--bench", "5"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "rusty-claw",
+                "--record",
+                "r",
+                "--replay",
+                "s",
+                "--trace",
+                "t"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

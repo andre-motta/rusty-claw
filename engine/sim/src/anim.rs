@@ -5,6 +5,13 @@
 //! The player applies at most one element per call and drops any time left
 //! over when a wait expires, so every element is shown for at least one
 //! tick and a very short element still fires its event at the 18 ms step.
+//!
+//! Some operations depend on the owner's image set: "next image" and
+//! "previous image" wrap around the set, "first" and "last" image jump to
+//! its ends, and some next-element operations wait for one of its ends.
+//! [`AnimPlayer::advance_in`] plays them with the set's frame range; without
+//! it, "next" and "previous" step without wrapping, "first" and "last"
+//! leave the image and those next-element operations advance at once.
 
 use std::sync::Arc;
 
@@ -16,10 +23,15 @@ pub struct AnimFrame {
     /// Element flags; bit 0x1 makes the duration count calls instead of
     /// milliseconds.
     pub flags: u16,
-    /// Image operation (3 sets the frame to `image_index`).
+    /// Image operation: 1 next image, 2 previous image (both wrapping
+    /// around the image set), 3 the frame `image_index`, 4 the set's first
+    /// image, 5 its last image.
     pub image_op: i32,
-    /// Next-element operation (0 next, 9 finished, 8 restart, 7 restart at
-    /// the second element, 6 stay).
+    /// Next-element operation: 0 next, 9 finished, 8 restart, 7 restart at
+    /// the second element, 6 stay; 1 to 5 go to the next element only once
+    /// the frame is `image_index` (1), the set's first image (2), its last
+    /// (3), the first plus one (4) or the last minus one (5), and stay
+    /// otherwise.
     pub next_op: i32,
     /// Move operation (2 adds the operands to the owner's position, 3 sets
     /// it).
@@ -192,7 +204,23 @@ impl AnimPlayer {
 
     /// Advances by `ms`. `frame` is the owner's current frame number and
     /// `mirrored` whether the owner faces left (mirroring move operation 2).
+    /// The image set's frame range is not known: see [`AnimPlayer::advance_in`].
     pub fn advance(&mut self, ms: u32, frame: i32, mirrored: bool) -> AnimEffect {
+        self.advance_in(ms, frame, mirrored, None)
+    }
+
+    /// Advances by `ms` like [`AnimPlayer::advance`], with `frames`, the
+    /// first and last frame numbers of the owner's image set when known:
+    /// "next image" past the last frame wraps to the first, "previous
+    /// image" before the first wraps to the last, and the operations that
+    /// name the set's ends use them.
+    pub fn advance_in(
+        &mut self,
+        ms: u32,
+        frame: i32,
+        mirrored: bool,
+        frames: Option<(i32, i32)>,
+    ) -> AnimEffect {
         let mut out = AnimEffect {
             event: -1,
             ..AnimEffect::default()
@@ -223,12 +251,17 @@ impl AnimPlayer {
         let idx = self.pending.min(anim.frames.len() - 1);
         let el = anim.frames[idx];
         out.applied = Some(idx);
-        let new_frame = match el.image_op {
-            1 => Some(frame + 1),
-            2 => Some(frame - 1),
-            3 => Some(el.image_index),
+        let new_frame = match (el.image_op, frames) {
+            (1, Some((first, last))) => Some(if frame >= last { first } else { frame + 1 }),
+            (1, None) => Some(frame + 1),
+            (2, Some((first, last))) => Some(if frame <= first { last } else { frame - 1 }),
+            (2, None) => Some(frame - 1),
+            (3, _) => Some(el.image_index),
+            (4, Some((first, _))) => Some(first),
+            (5, Some((_, last))) => Some(last),
             _ => None,
         };
+        let shown = new_frame.unwrap_or(frame);
         out.frame = new_frame;
         match el.move_op {
             2 => {
@@ -267,11 +300,18 @@ impl AnimPlayer {
                 if n > 1 { 1 } else { 0 }
             }
             6 => idx,
-            1 => {
-                if new_frame.unwrap_or(frame) == el.image_index {
-                    (idx + 1) % n
-                } else {
-                    idx
+            op @ 1..=5 => {
+                let wanted = match (op, frames) {
+                    (1, _) => Some(el.image_index),
+                    (2, Some((first, _))) => Some(first),
+                    (3, Some((_, last))) => Some(last),
+                    (4, Some((first, _))) => Some(first + 1),
+                    (5, Some((_, last))) => Some(last - 1),
+                    _ => None,
+                };
+                match wanted {
+                    Some(f) if shown != f => idx,
+                    _ => (idx + 1) % n,
                 }
             }
             _ => (idx + 1) % n,
@@ -324,6 +364,89 @@ mod tests {
         // 100 ms: applied + 5 waits, then 300 ms: applied + 16 waits, then
         // one call that ends the wait.
         assert_eq!(ticks, 1 + 6 + 17);
+    }
+
+    fn frames_seen(anim: Animation, start: i32, frames: Option<(i32, i32)>, n: usize) -> Vec<i32> {
+        let mut p = AnimPlayer::default();
+        p.set(Arc::new(anim));
+        let mut frame = start;
+        (0..n)
+            .map(|_| {
+                if let Some(f) = p.advance_in(18, frame, false, frames).frame {
+                    frame = f;
+                }
+                frame
+            })
+            .collect()
+    }
+
+    fn element(image_op: i32, next_op: i32, duration: i32) -> AnimFrame {
+        AnimFrame {
+            image_op,
+            next_op,
+            duration,
+            ..AnimFrame::default()
+        }
+    }
+
+    #[test]
+    fn next_and_previous_wrap_around_the_image_set() {
+        let cycle = Animation {
+            key: "CYCLE".into(),
+            frames: vec![element(1, 0, 1)],
+            ..Animation::default()
+        };
+        assert_eq!(
+            frames_seen(cycle.clone(), 3, Some((2, 4)), 5),
+            vec![4, 2, 3, 4, 2]
+        );
+        // Without the range the frame keeps counting.
+        assert_eq!(frames_seen(cycle, 3, None, 3), vec![4, 5, 6]);
+        let back = Animation {
+            key: "BACK".into(),
+            frames: vec![element(2, 0, 1)],
+            ..Animation::default()
+        };
+        assert_eq!(
+            frames_seen(back.clone(), 3, Some((2, 4)), 4),
+            vec![2, 4, 3, 2]
+        );
+        assert_eq!(frames_seen(back, 3, None, 2), vec![2, 1]);
+    }
+
+    #[test]
+    fn set_ends_and_waiting_for_them() {
+        // Jump to the last image, step back until the first, then finish:
+        // the shape of a backward slide.
+        let backward = Animation {
+            key: "BACKWARD".into(),
+            frames: vec![element(5, 0, 1), element(2, 2, 1), element(0, 9, 1)],
+            ..Animation::default()
+        };
+        let mut p = AnimPlayer::default();
+        p.set(Arc::new(backward.clone()));
+        let mut frame = 1;
+        let mut seen = Vec::new();
+        while !p.is_done() {
+            if let Some(f) = p.advance_in(18, frame, false, Some((1, 4))).frame {
+                frame = f;
+            }
+            seen.push(frame);
+            assert!(seen.len() < 20);
+        }
+        assert_eq!(seen, vec![4, 3, 2, 1, 1, 1]);
+        // Without the range "last" leaves the image and the wait for the
+        // first image does not wait.
+        assert_eq!(frames_seen(backward, 7, None, 3), vec![7, 6, 6]);
+        let forward = Animation {
+            key: "FORWARD".into(),
+            frames: vec![element(4, 0, 1), element(1, 5, 1), element(0, 9, 1)],
+            ..Animation::default()
+        };
+        assert_eq!(
+            frames_seen(forward, 9, Some((10, 14)), 5),
+            vec![10, 11, 12, 13, 13]
+        );
     }
 
     #[test]

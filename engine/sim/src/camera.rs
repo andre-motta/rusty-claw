@@ -8,7 +8,10 @@
 //! toward the target at a speed that depends on what Claw is doing (500
 //! px/s on the ground, 4000 px/s while he jumps or falls), in whole pixels
 //! per tick, never overshooting. A shake adds small random jolts to the
-//! current point. The current point is what the view centres on.
+//! current point; level logics and Claw's code ask for one through the
+//! tick's outbox ([`crate::logic::World::shake`]), and the simulation
+//! starts it from the tick of the request. The current point is what the
+//! view centres on.
 
 use crate::physics::ptype;
 use crate::player::state as claw_state;

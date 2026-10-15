@@ -7,20 +7,26 @@
 //! - [`load`]: reading a retail or community custom level from the install;
 //! - [`session`]: the simulation, the fixed-step frame driver and input;
 //! - [`keymap`]: the keyboard map;
+//! - [`input`]: the input router every key goes through, and recording
+//!   the input of a game;
+//! - [`audio`]: playing the game's sounds;
 //! - [`window`]: the game window;
 //! - [`bench`]: benchmarks in a window or offscreen;
 //! - [`replay_headless`]: replaying an input script without a window.
 //!
-//! In this first playable version Claw stands, walks, runs, jumps, falls,
-//! lands, crouches, looks up and climbs, with tile collision and a
-//! following camera. Enemies, pickups, attacks, sound, menus and the status
-//! bar come later.
+//! Claw stands, walks, runs, jumps, falls, lands, crouches, looks up and
+//! climbs, with tile collision and a following camera, and fights with his
+//! sword, fists and feet. Officers fight back, and the game plays its
+//! sounds. Other enemies, shots, pickups, music, menus and the status bar
+//! come later.
 
 use claw_frame::SimulatedRefresh;
 use claw_sim::InputScript;
 use claw_sim::trace::TraceRow;
 
+pub mod audio;
 pub mod bench;
+pub mod input;
 pub mod keymap;
 pub mod load;
 pub mod session;
