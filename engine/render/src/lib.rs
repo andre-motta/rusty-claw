@@ -10,6 +10,9 @@
 //! - [`view`]: which part of each plane is visible for a camera position;
 //! - [`scene`]: one frame as an ordered list of plane and sprite draws, with
 //!   the composition and output geometry for a [`ViewConfig`];
+//! - [`screen`]: the screen layer (sprites pinned to the picture's edges,
+//!   such as the status bar), standalone 640x480 screens and screen
+//!   transitions;
 //! - [`effects`] and [`palette`]: draw modes, lookup tables and fades;
 //! - [`gpu`]: the Vulkan renderer;
 //! - [`cpu`]: a pixel-exact reference of everything the shaders do;
@@ -26,11 +29,13 @@ pub mod images;
 pub mod pack;
 pub mod palette;
 pub mod scene;
+pub mod screen;
 pub mod view;
 
 pub use gpu::{Gpu, GpuError, Offscreen, Renderer};
-pub use images::{ImageSource, LevelGraphics, MemoryImages, StoreImages};
+pub use images::{FrameInfo, ImageSource, LevelGraphics, MemoryImages, StoreImages};
 pub use pack::HdPack;
 pub use scene::{Composition, FrameInput, Scene, SceneBuilder, SpriteInput};
+pub use screen::{Anchor, ImageId, ScreenBuilder, ScreenScene, ScreenSprite};
 pub use view::{PlaneView, WorldView};
 pub use wgpu;

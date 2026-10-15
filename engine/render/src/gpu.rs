@@ -9,7 +9,9 @@
 //!    blend) first copy the area under the sprite to a scratch texture and
 //!    read it there, because fixed-function blending cannot do a table
 //!    lookup; each such sprite gets its own copy, so overlapping ones stay
-//!    exact.
+//!    exact. The screen layer is drawn last, as sprites, and a transition
+//!    mask, when there is one, is a final full-target pass that writes
+//!    index 0 outside its circle.
 //! 2. The final pass turns indices into colours through the 256-entry
 //!    palette texture (or takes the replacement colour) and scales the image
 //!    to the output: whole-factor scaling is already done by the composition
@@ -26,6 +28,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::cpu::Composed;
 use crate::images::{ImageRecord, LevelGraphics};
 use crate::scene::{Item, PlaneParams, Scene, SpriteParams};
+use crate::screen::Mask;
 
 const COMPOSE: &str = include_str!("shaders/compose.wgsl");
 const PRESENT: &str = include_str!("shaders/present.wgsl");
@@ -177,6 +180,7 @@ pub fn check_output_size(
 struct FrameU {
     target_size: [f32; 2],
     pad: [f32; 2],
+    mask: [i32; 4],
 }
 
 #[repr(C)]
@@ -277,6 +281,7 @@ pub struct Renderer {
     present_bgl: wgpu::BindGroupLayout,
     plane_pipeline: wgpu::RenderPipeline,
     sprite_pipeline: wgpu::RenderPipeline,
+    mask_pipeline: wgpu::RenderPipeline,
     present_module: wgpu::ShaderModule,
     present_layout: wgpu::PipelineLayout,
     present_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
@@ -518,6 +523,14 @@ impl Renderer {
             ("vs_sprite", "fs_sprite"),
             &targets,
         );
+        let mask_pipeline = pipeline(
+            &device,
+            "mask",
+            &compose_layout,
+            &compose,
+            ("vs_plane", "fs_mask"),
+            &targets,
+        );
         let ubuf = |label, size: usize| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -548,6 +561,7 @@ impl Renderer {
             present_bgl,
             plane_pipeline,
             sprite_pipeline,
+            mask_pipeline,
             present_module,
             present_layout,
             present_pipelines: HashMap::new(),
@@ -718,6 +732,7 @@ impl Renderer {
             bytemuck::bytes_of(&FrameU {
                 target_size: [tw as f32, th as f32],
                 pad: [0.0; 2],
+                mask: Mask::uniform(scene.mask.as_ref()),
             }),
         );
         self.bind_groups();
@@ -799,6 +814,33 @@ impl Renderer {
                     }
                 }
             }
+        }
+        if scene.mask.is_some() {
+            let keep = wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("mask"),
+                color_attachments: &[
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &t.index_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: keep,
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &t.hd_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: keep,
+                    }),
+                ],
+                ..Default::default()
+            });
+            pass.set_bind_group(0, bg, &[]);
+            pass.set_pipeline(&self.mask_pipeline);
+            pass.draw(0..3, 0..1);
         }
     }
 

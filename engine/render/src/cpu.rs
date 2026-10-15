@@ -9,6 +9,7 @@
 use crate::effects::{Effect, apply};
 use crate::images::{LevelGraphics, SLOT_EMPTY, SLOT_FILL};
 use crate::scene::{Item, PlaneParams, SPRITE_INVERT, SPRITE_MIRROR, Scene, SpriteParams};
+use crate::screen::Mask;
 use crate::view::{PLANE_X_WRAP, PLANE_Y_WRAP};
 
 /// A composed frame: palette indices plus the replacement layer.
@@ -176,7 +177,24 @@ pub fn compose(g: &LevelGraphics, scene: &Scene) -> Composed {
             }
         }
     }
+    if let Some(mask) = &scene.mask {
+        apply_mask(&mut out, mask);
+    }
     out
+}
+
+/// Turns every pixel the transition mask hides into palette index 0 with no
+/// replacement colour.
+pub fn apply_mask(c: &mut Composed, mask: &Mask) {
+    for y in 0..c.height {
+        for x in 0..c.width {
+            if !mask.shows(i64::from(x), i64::from(y)) {
+                let o = (y * c.width + x) as usize;
+                c.index[o] = 0;
+                c.hd[o] = 0;
+            }
+        }
+    }
 }
 
 fn texel_color(scene: &Scene, c: &Composed, x: u32, y: u32) -> [f32; 3] {

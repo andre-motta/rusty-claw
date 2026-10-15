@@ -438,6 +438,7 @@ dependencies = [
  "claw-frame",
  "claw-render",
  "claw-sim",
+ "claw-ui",
  "gilrs",
  "tempfile",
  "winit",
@@ -481,6 +482,15 @@ version = "0.1.0"
 dependencies = [
  "claw-assets",
  "claw-frame",
+]
+
+[[package]]
+name = "claw-ui"
+version = "0.1.0"
+dependencies = [
+ "claw-assets",
+ "claw-frame",
+ "claw-render",
 ]
 
 [[package]]

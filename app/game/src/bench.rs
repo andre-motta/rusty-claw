@@ -15,7 +15,9 @@
 //!   the work of a frame is timed around the frame alone, never the wait.
 //!
 //! The route loops for as long as the run lasts; the report records its
-//! length and that no tick ran past it (`route.ticks_past_route`).
+//! length and that no tick ran past it (`route.ticks_past_route`). Every
+//! frame is drawn as in play, with the status bar, messages and screen
+//! transitions, and their cost is part of the measured work.
 //!
 //! The report is one JSON object. Times are milliseconds, each with `p50`,
 //! `p99` and `max`:
@@ -57,6 +59,7 @@ use claw_sim::InputScript;
 use crate::load::{load_graphics, load_level, new_sim, preload};
 use crate::session::{Session, TickSample};
 use crate::settings::Settings;
+use crate::window::StatusLayer;
 
 /// Per-frame CPU time on a handheld-class CPU relative to the machine the
 /// benchmark runs on (a planning factor, not a measurement).
@@ -648,6 +651,7 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
     let sim = new_sim(&bundle, settings.sim_config(size), settings.start);
     let activation = sim.config().activation.mode.name();
     let preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
+    let mut status = StatusLayer::new(&mut graphics, &bundle);
     let gpu = Gpu::headless().context("opening the GPU")?;
     let max = gpu.max_target();
     if size.0 > max || size.1 > max {
@@ -660,6 +664,7 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
     let mut renderer = Renderer::new(&gpu);
     renderer.set_level(&graphics);
     let mut builder = SceneBuilder::new(&graphics, view, max);
+    let presentation = builder.composition().presentation;
     let output = Offscreen::new(&gpu, size);
     // The route loops, so an unpaced run whose simulated clock runs ahead
     // of the wall clock never runs out of it.
@@ -667,8 +672,11 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
     let route_ticks = script.ticks.len();
     let mut session = Session::new(sim).with_looped_replay(script);
     {
+        status.update(session.sim(), 0);
         let frame = session.interpolated(false);
-        let scene = builder.build(&mut graphics, &FrameInput::from_frame(&frame, &view));
+        let mut input = FrameInput::from_frame(&frame, &view);
+        status.apply(&mut input, session.sim(), presentation);
+        let scene = builder.build(&mut graphics, &input);
         renderer.render(&graphics, &scene, &output.view, COLOR_FORMAT);
         renderer.wait_idle();
     }
@@ -694,8 +702,13 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
         let t0 = Instant::now();
         let dt = refresh.next().unwrap_or_default();
         let f = session.frame(dt);
+        let (_, events) = session.drain_outputs();
+        status.events(&events);
+        status.update(session.sim(), f.ticks);
         let frame = session.interpolated(settings.interpolation);
-        let scene = builder.build(&mut graphics, &FrameInput::from_frame(&frame, &view));
+        let mut input = FrameInput::from_frame(&frame, &view);
+        status.apply(&mut input, session.sim(), presentation);
+        let scene = builder.build(&mut graphics, &input);
         renderer.render(&graphics, &scene, &output.view, COLOR_FORMAT);
         let work = t0.elapsed().as_secs_f64() * 1000.0;
         renderer.wait_idle();
