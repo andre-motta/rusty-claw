@@ -1138,6 +1138,335 @@ fn a_rat_cannot_be_lifted() {
 }
 
 // ----------------------------------------------------------------------
+// Lifting a defeated enemy
+
+/// Claw's id.
+fn claw_of(sim: &Sim) -> ObjectId {
+    sim.objects()
+        .all()
+        .find(|(_, o)| o.kind == LogicKind::Player)
+        .map(|(id, _)| id)
+        .unwrap()
+}
+
+/// The loot dropped and still lying about.
+fn loot_ids(sim: &Sim) -> BTreeSet<ObjectId> {
+    sim.objects()
+        .all()
+        .filter(|(_, o)| matches!(&o.data, ObjectData::Pickup(p) if p.drop_code.is_some()))
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// A lone officer with `health` and one loot slot, killed where it stands
+/// as on spikes (its loot dropped once), with Claw beside it.
+fn body(health: i32) -> (Sim, ObjectId) {
+    let (mut sim, id) = lone("Officer", Some(health));
+    sim.teleport_player(3060, 899);
+    idle(&mut sim, 2);
+    sim.with_world(|w| enemy::die(w, id, DeathKind::Spikes, None));
+    assert_eq!(loot_ids(&sim).len(), 1, "the loot of the death");
+    sim.step(TickInput::default());
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Dead));
+    (sim, id)
+}
+
+/// Lifts `id` and raises it over Claw's head on his lift frames, checking
+/// the lifted animations.
+fn lift_overhead(sim: &mut Sim, id: ObjectId) {
+    let claw = claw_of(sim);
+    sim.with_world(|w| lift::lifted(w, id, claw));
+    assert_eq!(state_of(sim, id), Some(EnemyState::Lifted));
+    sim.with_world(|w| {
+        w.objects.get_mut(claw).unwrap().frame = lift::CLAW_LIFT_FRAME;
+        claw_sim::logic::tick(w, id);
+    });
+    assert_eq!(obj(sim, id).anim.key(), Some("LEVEL_OFFICER_LIFTED"));
+    sim.with_world(|w| {
+        w.objects.get_mut(claw).unwrap().frame = lift::CLAW_OVERHEAD_FRAME;
+        claw_sim::logic::tick(w, id);
+    });
+    assert_eq!(state_of(sim, id), Some(EnemyState::Flailing));
+    assert_eq!(obj(sim, id).anim.key(), Some("LEVEL_OFFICER_LIFTED2"));
+    sim.step(TickInput::default());
+}
+
+/// What happened over the next `n` ticks or until `id` is removed.
+struct Followed {
+    /// Every sound played.
+    sounds: Vec<String>,
+    /// The states `id` went through.
+    seen: Vec<EnemyState>,
+    /// Ticks `id` spent dead.
+    dead_ticks: usize,
+    /// Loot that appeared.
+    new_loot: usize,
+}
+
+fn follow(sim: &mut Sim, id: ObjectId, n: usize) -> Followed {
+    let (mut sounds, mut seen, mut dead_ticks) = (Vec::new(), Vec::new(), 0);
+    let mut loot = loot_ids(sim);
+    let mut new_loot = 0;
+    for _ in 0..n {
+        sim.step(TickInput::default());
+        sounds.extend(cues(sim));
+        for l in loot_ids(sim) {
+            new_loot += usize::from(loot.insert(l));
+        }
+        let Some(s) = state_of(sim, id) else { break };
+        if seen.last() != Some(&s) {
+            seen.push(s);
+        }
+        if s == EnemyState::Dead {
+            dead_ticks += 1;
+        }
+    }
+    Followed {
+        sounds,
+        seen,
+        dead_ticks,
+        new_loot,
+    }
+}
+
+#[test]
+fn a_body_killed_on_spikes_stays_liftable() {
+    let (sim, id) = body(3);
+    let o = obj(&sim, id);
+    assert!(o.special_flags & claw_sim::object::special::LIFTABLE != 0);
+    assert_eq!(o.type_flags, types::ENEMY, "still an enemy for Claw");
+}
+
+#[test]
+fn a_lifted_body_draws_for_its_lifted_line_as_a_live_one_does() {
+    let (mut sim, id) = body(3);
+    let claw = claw_of(&sim);
+    let before = sim.rng().state();
+    sim.with_world(|w| lift::lifted(w, id, claw));
+    // The officer's line choice, then whether it speaks.
+    assert_eq!(draws_between(before, sim.rng().state()), 2);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Lifted));
+    let o = obj(&sim, id);
+    assert!(o.flags & flags::SAFE != 0);
+    assert!(data(&sim, id).frozen, "carried, not moving by itself");
+}
+
+#[test]
+fn a_thrown_body_bounces_and_dies_again_without_loot_or_sound() {
+    // Health well above the landing's cost: a body dies again whatever
+    // its health.
+    let (mut sim, id) = body(50);
+    lift_overhead(&mut sim, id);
+    sim.with_world(|w| lift::thrown(w, id, 300, -650));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Thrown));
+    let o = obj(&sim, id);
+    assert_eq!(o.type_flags, types::THROWN);
+    assert!(o.flags & flags::HARMLESS != 0, "a body hurts nobody");
+    let Followed {
+        sounds,
+        seen,
+        dead_ticks,
+        new_loot,
+    } = follow(&mut sim, id, 300);
+    assert_eq!(
+        seen,
+        vec![
+            EnemyState::Thrown,
+            EnemyState::Bounce,
+            EnemyState::Pause,
+            EnemyState::Bounce,
+            EnemyState::Dead
+        ],
+        "{seen:?}"
+    );
+    assert!(sim.objects().get(id).is_none(), "removed");
+    // Removed 1000 ms after its second death (18 ms ticks).
+    assert!((55..=57).contains(&dead_ticks), "{dead_ticks} ticks dead");
+    assert_eq!(new_loot, 0, "no second loot");
+    let quiet = [
+        enemy::DROP_SOUND,
+        enemy::DEATH_TILE_SOUND,
+        enemy::SPLASH_SOUND,
+        officer::DEATH_SOUNDS[0],
+        officer::DEATH_SOUNDS[1],
+    ];
+    assert!(
+        !sounds.iter().any(|s| quiet.contains(&s.as_str())),
+        "{sounds:?}"
+    );
+    assert!(sounds.iter().any(|s| s == enemy::LAND_SOUND), "the thud");
+}
+
+#[test]
+fn a_thrown_body_dies_again_where_it_lies_as_a_thrown_object() {
+    let (mut sim, id) = body(3);
+    lift_overhead(&mut sim, id);
+    sim.with_world(|w| lift::thrown(w, id, 300, -650));
+    for _ in 0..300 {
+        sim.step(TickInput::default());
+        if state_of(&sim, id) == Some(EnemyState::Dead) {
+            break;
+        }
+    }
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Dead));
+    assert_eq!(data(&sim, id).death, DeathKind::Landing);
+    let o = obj(&sim, id);
+    assert_eq!(o.type_flags, types::THROWN, "never an enemy again");
+    // The enemy side refuses it too.
+    let claw = claw_of(&sim);
+    sim.with_world(|w| lift::lifted(w, id, claw));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Dead));
+}
+
+#[test]
+fn a_thrown_body_out_of_time_drops_no_second_loot() {
+    let (mut sim, id) = body(3);
+    lift_overhead(&mut sim, id);
+    sim.with_world(|w| lift::thrown(w, id, 300, -650));
+    sim.step(TickInput::default());
+    // Its time in the air runs out before it lands.
+    sim.with_world(|w| {
+        let now = w.now_ms;
+        enemy::data_mut(w, id).unwrap().thrown_timer = enemy::Timer::new(now, 0);
+    });
+    let death = data(&sim, id).death_sound;
+    let loot = loot_ids(&sim);
+    sim.step(TickInput::default());
+    let sounds = cues(&sim);
+    assert!(sim.objects().get(id).is_none(), "gone");
+    assert!(loot_ids(&sim).is_subset(&loot), "no second loot");
+    assert!(!sounds.iter().any(|s| s == enemy::DROP_SOUND), "{sounds:?}");
+    // Its death sound and a splash, as for a live enemy out of time.
+    assert!(
+        sounds.iter().any(|s| s == enemy::SPLASH_SOUND),
+        "{sounds:?}"
+    );
+    assert!(sounds.iter().any(|s| s == death), "{sounds:?}");
+}
+
+#[test]
+fn a_thrown_body_hurts_no_enemy_and_a_thrown_live_one_does() {
+    for dead in [true, false] {
+        let mut sim = sim_with(
+            arena(vec![
+                record("Officer", 3000, 900),
+                record("Officer", 3400, 900),
+            ]),
+            12,
+        );
+        sim.teleport_player(3060, 899);
+        idle(&mut sim, 2);
+        let ids = enemies(&sim, GameLogic::Officer);
+        let (thrown, other) = if obj(&sim, ids[0]).x == 3000 {
+            (ids[0], ids[1])
+        } else {
+            (ids[1], ids[0])
+        };
+        if dead {
+            sim.with_world(|w| enemy::die(w, thrown, DeathKind::Spikes, None));
+            sim.step(TickInput::default());
+        }
+        lift_overhead(&mut sim, thrown);
+        sim.with_world(|w| lift::thrown(w, thrown, 300, -650));
+        let health = obj(&sim, other).health;
+        let mut struck = false;
+        for _ in 0..5 {
+            // Flying through the other officer.
+            let Some((x, y)) = sim.objects().get(other).map(|o| (o.x, o.y)) else {
+                break;
+            };
+            sim.with_world(|w| {
+                let o = w.objects.get_mut(thrown).unwrap();
+                o.x = x;
+                o.y = y;
+            });
+            sim.step(TickInput::default());
+            struck |= sim.collision_events().iter().any(|e| {
+                matches!(*e, claw_sim::container::CollisionEvent::Hit { attacker, victim }
+                    if attacker == thrown && victim == other)
+            });
+        }
+        if dead {
+            assert!(!struck, "the body strikes nobody");
+            assert_eq!(obj(&sim, other).health, health);
+            assert!(!matches!(
+                state_of(&sim, other),
+                Some(EnemyState::HitLow | EnemyState::HitHigh | EnemyState::Dead)
+            ));
+        } else {
+            assert!(struck, "a thrown live officer strikes the other");
+            assert!(sim.objects().get(other).is_none_or(|o| o.health < health));
+        }
+    }
+}
+
+#[test]
+fn a_dropped_body_stays_dead() {
+    let (mut sim, id) = body(50);
+    lift_overhead(&mut sim, id);
+    sim.with_world(|w| lift::dropped(w, id));
+    let Followed {
+        sounds,
+        seen,
+        dead_ticks,
+        new_loot,
+    } = follow(&mut sim, id, 300);
+    assert_eq!(
+        seen,
+        vec![EnemyState::Dropped, EnemyState::Dead],
+        "it never gets up: {seen:?}"
+    );
+    assert!(sim.objects().get(id).is_none(), "removed");
+    assert!((55..=57).contains(&dead_ticks), "{dead_ticks} ticks dead");
+    assert_eq!(new_loot, 0, "no second loot");
+    let quiet = [
+        enemy::DROP_SOUND,
+        enemy::DEATH_TILE_SOUND,
+        officer::DEATH_SOUNDS[0],
+        officer::DEATH_SOUNDS[1],
+    ];
+    assert!(
+        !sounds.iter().any(|s| quiet.contains(&s.as_str())),
+        "{sounds:?}"
+    );
+}
+
+#[test]
+fn a_dropped_body_lies_on_the_floor_in_its_own_box() {
+    let (mut sim, id) = body(50);
+    lift_overhead(&mut sim, id);
+    sim.with_world(|w| lift::dropped(w, id));
+    for _ in 0..200 {
+        sim.step(TickInput::default());
+        if state_of(&sim, id) == Some(EnemyState::Dead) {
+            break;
+        }
+    }
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Dead));
+    let d = data(&sim, id);
+    assert!(d.dead && d.busy && d.frozen);
+    assert_eq!(d.death, DeathKind::Landing);
+    let o = obj(&sim, id);
+    assert_eq!(o.move_rect, officer::MOVE_RECT, "its own box again");
+    assert_eq!(feet_of(o), 959, "on the floor");
+    assert!(o.flags & (flags::SAFE | flags::NO_COLLIDE | flags::ALWAYS_ACTIVE) == 0);
+    assert!(o.flags & flags::HARMLESS != 0, "still harmless");
+    assert_eq!(o.type_flags, types::ENEMY);
+}
+
+#[test]
+fn a_goo_death_is_gone_at_once_and_cannot_be_lifted() {
+    let (mut sim, id) = lone("Officer", None);
+    sim.with_world(|w| enemy::die(w, id, DeathKind::Goo, None));
+    assert!(obj(&sim, id).flags & flags::DESTROY != 0);
+    let claw = claw_of(&sim);
+    sim.with_world(|w| lift::lifted(w, id, claw));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Dead));
+    sim.step(TickInput::default());
+    assert!(sim.objects().get(id).is_none(), "removed");
+}
+
+// ----------------------------------------------------------------------
 // Random draws per class
 
 /// Steps once and checks the stream moved by exactly the draws `expect`
