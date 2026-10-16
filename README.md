@@ -188,6 +188,7 @@ fullscreen = false
 aspect = "fill"            # fill, centered or 4:3
 scale = "fit"              # fit or integer
 widen_activation = false
+mid_air_hit_fix = off      # on: no second jump after a hit in mid-air
 vsync = true
 fps_cap = 300              # with vsync off; 0 for no cap
 interpolation = true
@@ -207,6 +208,14 @@ pad_jump = "South"         # pad_<action>: pad button names
 The bindable actions are `left`, `right`, `up`, `down`, `jump`, `attack`,
 `projectile`, `toggle`, `lift`, `pistol`, `magic`, `dynamite`, `quit`,
 `fullscreen`, `window_size`, `aspect`, `scale`, `interpolation` and `pause`.
+
+By default a hit that ends while Claw is in the air leaves him able to jump
+again before he lands, as in the original; speedruns rely on it, and any
+hit works, an enemy's shot or your own dynamite. The mid-air hit jump fix
+turns that off: Claw falls after such a hit. Turn it on with
+`mid_air_hit_fix = on`, `--mid-air-hit-fix on` or the gameplay options
+(Options, then Gameplay); it applies to the games started after the
+change.
 
 Saved games are kept in `~/.local/share/rusty-claw/saves/default/` (or
 under `$XDG_DATA_HOME`). Touching one of a level's two save points saves
@@ -257,7 +266,12 @@ weapon 0x8, Lift 0x20, Pistol 0x40, Magic 0x80, Dynamite 0x100, Left
 
 `--record FILE.csv` writes the input of every tick you play in the window
 to such a script when the game ends; replaying it with the same level and
-start gives the same game.
+start gives the same game. The recording's first line, a `#` comment, notes
+whether the mid-air hit jump fix was on, and the replay follows it. Replays
+and benchmarks never take that option from the config file: without such a
+line, or for a benchmark, it is off unless `--mid-air-hit-fix on` is given.
+Recordings made before this option existed were played with the fix on and
+have no such line, so replay them with `--mid-air-hit-fix on`.
 
 ```sh
 # play and record, then watch the recording
@@ -360,10 +374,9 @@ unless `--uncapped` is given.
 - No movies or cut scenes, and no multiplayer (curses only act in
   multiplayer games, so they vanish in single player as in the original).
 - A few details still follow a reasonable guess rather than a measurement
-  of the original: carrying an object walks at 30 px/s, a hit near a ledge
-  can briefly show a landing before the fall, rats that reach a wall turn
-  back at walking speed, enemies treat goo like spikes, and a magic hit on
-  an enemy shows no lingering flame or frost. The play-test list
+  of the original: carrying an object walks at 30 px/s, rats that reach a
+  wall turn back at walking speed, enemies treat goo like spikes, and a
+  magic hit on an enemy shows no lingering flame or frost. The play-test list
   (`tests/acceptance/PLAYTEST.md`) asks about each one a player can see on
   the first level and names the rest, such as goo, as untested there.
 - The in-game menu's end-life entry, the front layer and detail settings

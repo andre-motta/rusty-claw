@@ -15,6 +15,7 @@
 //! aspect = "fill"           # fill, centered or 4:3
 //! scale = "fit"             # fit or integer
 //! widen_activation = false
+//! mid_air_hit_fix = off     # on: no second jump after a hit in mid-air
 //! vsync = true
 //! fps_cap = 300             # with vsync off, 1 to 10000
 //! interpolation = true
@@ -52,6 +53,15 @@
 //! never written, and a change made to the file while the game runs is
 //! merged rather than overwritten. Values given on the command line are
 //! never written back.
+//!
+//! The mid-air hit jump fix (`mid_air_hit_fix`, `--mid-air-hit-fix`) is off
+//! by default: a hit that ends while Claw is in the air leaves him able to
+//! jump again, as in the original. It applies to games started after it
+//! changes. Replays and benchmarks do not follow the config file for it:
+//! they play with it off unless the command line turns it on, and a replay
+//! follows the line its recording carries (see
+//! [`crate::session::script_behaviour`]), so a recorded route plays the
+//! same on every machine.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -201,6 +211,12 @@ pub struct Args {
     /// and traps at the sides of a wide view move as they come into sight).
     #[arg(long)]
     pub widen_activation: bool,
+    /// The mid-air hit jump fix, on or off (default off). On, a hit that
+    /// ends while Claw is in the air leaves him falling; off, he can jump
+    /// again before landing, as in the original. Replays and benchmarks
+    /// use off unless this is given.
+    #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
+    pub mid_air_hit_fix: Option<bool>,
     /// Wait for the display's refresh: on or off.
     #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
     pub vsync: Option<bool>,
@@ -343,6 +359,9 @@ pub struct Settings {
     pub scale: Scale,
     /// Keep every visible object active on wide displays.
     pub widen_activation: bool,
+    /// The mid-air hit jump fix: no second jump after a hit that ends in
+    /// mid-air. Off by default, as in the original.
+    pub mid_air_hit_fix: bool,
     /// Wait for the display refresh.
     pub vsync: bool,
     /// Frame-rate cap when the display refresh does not pace drawing, and
@@ -426,6 +445,7 @@ impl Settings {
             aspect: Aspect::default(),
             scale: Scale::default(),
             widen_activation: false,
+            mid_air_hit_fix: false,
             vsync: true,
             fps_cap: Some(DEFAULT_FPS_CAP),
             interpolation: true,
@@ -566,7 +586,28 @@ impl Settings {
             }
             Mode::Play
         };
+        // Replays and benchmarks play the same whatever the config file
+        // says: the fix is off unless the command line turns it on.
+        match args.mid_air_hit_fix {
+            Some(on) => {
+                s.mid_air_hit_fix = on;
+                s.from_command_line.insert("mid_air_hit_fix");
+            }
+            None if s.mode != Mode::Play => s.mid_air_hit_fix = false,
+            None => {}
+        }
         Ok(s)
+    }
+
+    /// Takes the mid-air hit jump fix a replayed script was recorded with
+    /// (see [`crate::session::script_behaviour`]), unless the command line
+    /// set it.
+    pub fn follow_script(&mut self, recorded: Option<bool>) {
+        if let Some(on) = recorded
+            && !self.from_command_line.contains("mid_air_hit_fix")
+        {
+            self.mid_air_hit_fix = on;
+        }
     }
 
     /// The view for an output of `size` pixels: the original 640x480 game
@@ -607,6 +648,7 @@ impl Settings {
             }
             .to_string(),
             "widen_activation" => self.widen_activation.to_string(),
+            "mid_air_hit_fix" => on_off(self.mid_air_hit_fix),
             "vsync" => self.vsync.to_string(),
             "fps_cap" => self.fps_cap?.to_string(),
             "interpolation" => self.interpolation.to_string(),
@@ -683,7 +725,16 @@ impl Settings {
     /// so until the level is loaded again; objects outside it are drawn
     /// still across the same reach as without widening, so a wider shape
     /// chosen at run time still shows them.
+    ///
+    /// The mid-air hit jump fix follows [`Settings::mid_air_hit_fix`].
     pub fn sim_config(&self, size: (u32, u32)) -> SimConfig {
+        let mut cfg = self.view_sim_config(size);
+        cfg.tuning.behaviour.fix_double_jump = self.mid_air_hit_fix;
+        cfg
+    }
+
+    /// [`Settings::sim_config`] before the behaviour switches.
+    fn view_sim_config(&self, size: (u32, u32)) -> SimConfig {
         let frozen = ViewConfig {
             aspect_policy: AspectPolicy::FrozenEdgeClamped,
             ..ViewConfig::default()
@@ -794,7 +845,7 @@ pub struct ConfigFile {
 
 /// Keys a config file may hold, besides the `key_<action>` and
 /// `pad_<action>` bindings.
-pub const CONFIG_KEYS: [&str; 21] = [
+pub const CONFIG_KEYS: [&str; 22] = [
     "install",
     "level",
     "custom",
@@ -803,6 +854,7 @@ pub const CONFIG_KEYS: [&str; 21] = [
     "aspect",
     "scale",
     "widen_activation",
+    "mid_air_hit_fix",
     "vsync",
     "fps_cap",
     "interpolation",
@@ -904,6 +956,7 @@ impl ConfigFile {
                 "aspect" => s.aspect = Aspect::from_str(v, true).map_err(|e| err(key, e))?,
                 "scale" => s.scale = Scale::from_str(v, true).map_err(|e| err(key, e))?,
                 "widen_activation" => s.widen_activation = flag(key, v)?,
+                "mid_air_hit_fix" => s.mid_air_hit_fix = flag(key, v)?,
                 "vsync" => s.vsync = flag(key, v)?,
                 "fps_cap" => {
                     let n = v

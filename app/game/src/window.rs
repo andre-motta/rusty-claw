@@ -770,6 +770,10 @@ impl App {
             }
         };
         let at = start_override(&self.settings, self.levels_started == 0, choice, &start);
+        // Gameplay options changed in the menus apply from this level on.
+        if let Some(f) = &self.flow {
+            self.settings.mid_air_hit_fix = f.settings().mid_air_hit_fix;
+        }
         let mut sim = Sim::with_start(
             bundle.sim_level.clone(),
             self.settings.sim_config(self.first_output),
@@ -863,7 +867,7 @@ impl App {
         if let (Some(recorder), Some(level), Some(path)) =
             (self.recorder.take(), &self.level, &self.settings.record)
         {
-            match recorder.save(&level.session, path) {
+            match crate::session::save_recording(&recorder, &level.session, path) {
                 Ok(n) => eprintln!("rusty-claw: recorded {n} ticks to {}", path.display()),
                 Err(e) => eprintln!("rusty-claw: {e:#}"),
             }

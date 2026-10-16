@@ -37,6 +37,11 @@
 //! aspect, scaling and smooth motion) change it for this run: the Video
 //! page shows the change, and choosing an entry there saves it.
 //!
+//! The Gameplay page under Options holds the mid-air hit jump fix (off by
+//! default, as in the original). A change there is saved at once and
+//! applies to the next game or level started; the level in play keeps the
+//! behaviour it started with.
+//!
 //! Screens fade out over [`FADE_MS`] before the next one, which fades in
 //! over the same time (with the menu's roll-up and unroll sounds).
 
@@ -45,7 +50,9 @@ use std::collections::{BTreeSet, VecDeque};
 use claw_frame::{AudioCue, GameEvent, SoundChannel, SoundCue};
 use claw_sim::logic::checkpoint::MESSAGE_SAVED;
 use claw_sim::{Sim, StartState};
-use claw_ui::menu::command::{MenuCommand, MenuKind, Page, Slider, Toggle, VideoSetting};
+use claw_ui::menu::command::{
+    GameplaySetting, MenuCommand, MenuKind, Page, Slider, Toggle, VideoSetting,
+};
 use claw_ui::menu::draw::{self, FontArt, MenuState};
 use claw_ui::menu::{MenuAction, MenuInput, MenuTree, Navigator};
 use claw_ui::screens::{BootyScreen, BootyStats, GameOverScreen, TitleScreen};
@@ -108,6 +115,9 @@ pub const VIDEO_SETTINGS: [VideoSetting; 8] = [
     VideoSetting::Interpolation,
     VideoSetting::StatusBar,
 ];
+
+/// The Gameplay page's settings in order.
+pub const GAMEPLAY_SETTINGS: [GameplaySetting; 1] = [GameplaySetting::MidAirHitFix];
 
 /// What shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +368,17 @@ pub fn video_text(v: VideoSetting, settings: &Settings) -> String {
     }
 }
 
+/// The Gameplay page's text of `g` for `settings`. The menu font has no
+/// hyphen, so "mid-air" is written as two words.
+pub fn gameplay_text(g: GameplaySetting, settings: &Settings) -> String {
+    let on = |b: bool| if b { "ON" } else { "OFF" };
+    match g {
+        GameplaySetting::MidAirHitFix => {
+            format!("MID AIR HIT JUMP FIX {}", on(settings.mid_air_hit_fix))
+        }
+    }
+}
+
 /// The game flow.
 pub struct Flow {
     settings: Settings,
@@ -477,21 +498,32 @@ impl Flow {
         flow
     }
 
-    /// Adds this game's own pages to a menu: the controls list and the
-    /// Video page under Display.
+    /// Adds this game's own pages to a menu: the controls list, the Video
+    /// page under Display and the Gameplay page under Options.
     fn prepare(&mut self, mut tree: MenuTree) -> Navigator {
+        // Puts the last entry of `page` before the page's own back entry.
+        let before_back = |tree: &mut MenuTree, page: usize| {
+            let kids = tree.items[page].children.clone();
+            let n = kids.len();
+            if n >= 2 && tree.items[kids[n - 2]].command == MenuCommand::Back {
+                tree.items[page].children.swap(n - 1, n - 2);
+            }
+        };
         if let Some(display) = tree.find_page(Page::Display) {
             let video = tree.add_text(display, "VIDEO", MenuCommand::Open(Page::Video));
             for v in VIDEO_SETTINGS {
                 tree.add_text(video, "", MenuCommand::Video(v));
             }
             tree.add_text(video, "BACK", MenuCommand::Back);
-            // Before the display page's own back entry.
-            let kids = tree.items[display].children.clone();
-            let n = kids.len();
-            if n >= 2 && tree.items[kids[n - 2]].command == MenuCommand::Back {
-                tree.items[display].children.swap(n - 1, n - 2);
+            before_back(&mut tree, display);
+        }
+        if let Some(options) = tree.find_page(Page::Options) {
+            let gameplay = tree.add_text(options, "GAMEPLAY", MenuCommand::Open(Page::Gameplay));
+            for g in GAMEPLAY_SETTINGS {
+                tree.add_text(gameplay, "", MenuCommand::Gameplay(g));
             }
+            tree.add_text(gameplay, "BACK", MenuCommand::Back);
+            before_back(&mut tree, options);
         }
         if let Some(ctl) = tree.find(MenuCommand::Controls) {
             for i in 0..CONTROL_ACTIONS.len() {
@@ -510,6 +542,7 @@ impl Flow {
         for i in 0..nav.tree.items.len() {
             let text = match nav.tree.items[i].command {
                 MenuCommand::Video(v) => Some(video_text(v, &self.settings)),
+                MenuCommand::Gameplay(g) => Some(gameplay_text(g, &self.settings)),
                 MenuCommand::PadDeadZone => Some(dead_zone_text(&self.settings)),
                 MenuCommand::Bind(n) => {
                     let n = usize::from(n);
@@ -1082,6 +1115,7 @@ impl Flow {
             }
             MenuCommand::Toggle(t) => self.toggle(t),
             MenuCommand::Video(v) => self.video(v),
+            MenuCommand::Gameplay(g) => self.gameplay(g),
             MenuCommand::Bind(i) => {
                 let i = usize::from(i);
                 if let Some(action) = CONTROL_ACTIONS.get(i).and_then(|n| Action::from_name(n)) {
@@ -1243,6 +1277,20 @@ impl Flow {
         self.effects.push(Effect::Video(v));
         if let Some(k) = key {
             self.persist(&[k]);
+        }
+        self.refresh_texts();
+    }
+
+    fn gameplay(&mut self, g: GameplaySetting) {
+        let key = match g {
+            GameplaySetting::MidAirHitFix => {
+                self.settings.mid_air_hit_fix = !self.settings.mid_air_hit_fix;
+                "mid_air_hit_fix"
+            }
+        };
+        self.persist(&[key]);
+        if self.play.is_some() {
+            self.push_notice("gameplay options apply from the next level started".into());
         }
         self.refresh_texts();
     }

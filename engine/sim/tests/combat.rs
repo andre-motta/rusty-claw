@@ -1181,7 +1181,7 @@ fn hit_in_the_air(fix: bool) -> Sim {
 }
 
 #[test]
-fn a_hit_ending_in_mid_air_lands_then_falls() {
+fn a_hit_ending_in_mid_air_lands_then_falls_with_the_fix() {
     let mut sim = hit_in_the_air(true);
     assert_eq!(claw(&sim).state, state::LAND);
     let y = claw(&sim).y;

@@ -13,8 +13,8 @@
 //!   counts the fractional part of each step twice; the nominal speeds below
 //!   are chosen for it, so the effective speeds are higher than the nominal
 //!   ones (see [`PlayerTuning::double_count_fraction`]).
-//! - Behaviour fixes are switches in [`Behaviour`], each with the original
-//!   behaviour still available.
+//! - Behaviour fixes are switches in [`Behaviour`]: the original behaviour
+//!   stays available, and is the default where players rely on it.
 
 use crate::object::Rect;
 
@@ -212,23 +212,20 @@ impl Default for PhysicsTuning {
     }
 }
 
-/// Behaviour switches where the rebuild differs from the original by
-/// default. Each keeps the original behaviour available.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Behaviour switches: fixes of the original's quirks that a player can
+/// choose. Each keeps the original behaviour available.
+///
+/// Every switch is off by default: the game plays as the original.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Behaviour {
-    /// When a hit reaction ends in mid-air, Claw goes to the Land state
-    /// (which drops into a fall on its next tick) instead of the standing
-    /// state, where the original lets him jump a second time. On the ground
-    /// he stands either way. `false` restores the original double jump.
+    /// The mid-air hit jump fix. Off (the default), a hit reaction that
+    /// ends in mid-air leaves Claw standing there, as in the original, so a
+    /// jump press starts a second jump: any hit works, an enemy's shot or
+    /// his own dynamite, and speedruns rely on it. On, Claw goes to the
+    /// Land state instead (which drops into a fall on its next tick), so he
+    /// cannot jump again before he lands. On the ground he stands either
+    /// way.
     pub fix_double_jump: bool,
-}
-
-impl Default for Behaviour {
-    fn default() -> Self {
-        Behaviour {
-            fix_double_jump: true,
-        }
-    }
 }
 
 /// All tuning data of a simulation.

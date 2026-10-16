@@ -1,5 +1,5 @@
 //! The player state table: spawning, crouching, looking up, teetering,
-//! fallback rows, the double-jump switch and respawning.
+//! fallback rows, the mid-air hit jump fix and respawning.
 
 mod common;
 
@@ -163,8 +163,8 @@ fn later_milestone_states_fall_back_to_stand() {
     }
 }
 
-fn hit_in_mid_air(fix: bool) -> Sim {
-    let cfg = SimConfig {
+fn fix_config(fix: bool) -> SimConfig {
+    SimConfig {
         tuning: Tuning {
             behaviour: Behaviour {
                 fix_double_jump: fix,
@@ -172,7 +172,10 @@ fn hit_in_mid_air(fix: bool) -> Sim {
             ..Tuning::default()
         },
         ..SimConfig::default()
-    };
+    }
+}
+
+fn hit_in_mid_air(cfg: SimConfig) -> Sim {
     let mut sim = Sim::new(flat_level(), cfg);
     sim.step(press(JUMP));
     for _ in 0..3 {
@@ -185,8 +188,8 @@ fn hit_in_mid_air(fix: bool) -> Sim {
 }
 
 #[test]
-fn hit_ending_in_mid_air_lands_by_default() {
-    let mut sim = hit_in_mid_air(true);
+fn hit_ending_in_mid_air_lands_with_the_fix() {
+    let mut sim = hit_in_mid_air(fix_config(true));
     let o = sim.player().unwrap();
     assert_eq!(o.state, state::LAND, "Land, not Stand, in mid-air");
     let y = o.y;
@@ -196,25 +199,29 @@ fn hit_ending_in_mid_air_lands_by_default() {
 }
 
 #[test]
-fn hit_ending_on_the_ground_stands_with_the_fix() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
-    sim.step(TickInput::default());
-    let before = sim.player().unwrap().clone();
-    sim.set_player_state(state::HIT);
-    sim.step(TickInput::default());
-    let o = sim.player().unwrap();
-    assert_eq!(o.state, state::STAND);
-    assert_eq!((o.x, o.y), (before.x, before.y));
+fn hit_ending_on_the_ground_stands_either_way() {
+    for cfg in [SimConfig::default(), fix_config(true)] {
+        let mut sim = Sim::new(flat_level(), cfg);
+        sim.step(TickInput::default());
+        let before = sim.player().unwrap().clone();
+        sim.set_player_state(state::HIT);
+        sim.step(TickInput::default());
+        let o = sim.player().unwrap();
+        assert_eq!(o.state, state::STAND);
+        assert_eq!((o.x, o.y), (before.x, before.y));
+    }
 }
 
 #[test]
-fn original_behaviour_keeps_the_double_jump() {
-    let mut sim = hit_in_mid_air(false);
-    assert_eq!(sim.player().unwrap().state, state::STAND);
-    let y = sim.player().unwrap().y;
-    sim.step(press(JUMP));
-    assert_eq!(sim.player().unwrap().state, state::JUMP);
-    assert!(sim.player().unwrap().y < y, "jumps again in mid-air");
+fn the_original_mid_air_hit_jump_is_the_default() {
+    for cfg in [SimConfig::default(), fix_config(false)] {
+        let mut sim = hit_in_mid_air(cfg);
+        assert_eq!(sim.player().unwrap().state, state::STAND);
+        let y = sim.player().unwrap().y;
+        sim.step(press(JUMP));
+        assert_eq!(sim.player().unwrap().state, state::JUMP);
+        assert!(sim.player().unwrap().y < y, "jumps again in mid-air");
+    }
 }
 
 #[test]

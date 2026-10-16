@@ -45,6 +45,8 @@ pub enum Page {
     Display,
     /// Window and picture settings of this game.
     Video,
+    /// Gameplay settings of this game.
+    Gameplay,
     /// Key and gamepad bindings.
     Controls,
     /// Are you sure you want to quit?
@@ -150,6 +152,14 @@ pub enum VideoSetting {
     StatusBar,
 }
 
+/// Settings of this game's own Gameplay page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GameplaySetting {
+    /// The mid-air hit jump fix: no second jump after a hit that ends in
+    /// mid-air.
+    MidAirHitFix,
+}
+
 /// A feature this game does not have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Unavailable {
@@ -202,6 +212,8 @@ pub enum MenuCommand {
     Adjust(Slider),
     /// Changes a Video setting.
     Video(VideoSetting),
+    /// Changes a Gameplay setting.
+    Gameplay(GameplaySetting),
     /// Shows the key and gamepad bindings.
     Controls,
     /// Rebinds the action in this position of the controls list.

@@ -23,7 +23,7 @@ use claw_game::saves::{SaveRecord, SaveStore, retail_level_name};
 use claw_game::settings::{LevelChoice, Settings};
 use claw_sim::logic::checkpoint::{MESSAGE_NOT_SAVED, MESSAGE_SAVED};
 use claw_sim::{Carry, SavePos, Sim, SimConfig, SimLevel, StartState, TileMap};
-use claw_ui::menu::command::{CommandCatalogue, MenuCommand, MenuKind, Page};
+use claw_ui::menu::command::{CommandCatalogue, GameplaySetting, MenuCommand, MenuKind, Page};
 use claw_ui::menu::draw::FontArt;
 use claw_ui::menu::nav::PRESS_MS;
 use claw_ui::menu::{MenuInput, MenuTree};
@@ -1120,4 +1120,138 @@ fn every_way_out_of_the_in_game_menu_leaves_the_sounds_running() {
     }
     assert_eq!(p.left, 3);
     assert!(p.session.is_none());
+}
+
+/// The commands of the entries the main menu shows.
+fn main_entries(r: &Rig) -> Vec<MenuCommand> {
+    let nav = r.flow.main_menu().unwrap();
+    nav.entries()
+        .iter()
+        .map(|&k| nav.tree.items[k].command)
+        .collect()
+}
+
+fn selected_text(nav: &claw_ui::menu::Navigator) -> Option<String> {
+    nav.tree.items[nav.selected().unwrap()].text.clone()
+}
+
+#[test]
+fn the_gameplay_page_switches_the_mid_air_hit_fix_and_persists_it() {
+    let mut r = Rig::new(Start::Title, |_| {});
+    r.reach_main_menu();
+    assert!(!r.flow.settings().mid_air_hit_fix, "off by default");
+    r.input(MenuInput::Down);
+    r.choose(); // options
+    assert_eq!(r.page(), Page::Options);
+    // The Gameplay entry sits before the options page's back entry.
+    let entries = main_entries(&r);
+    assert_eq!(
+        entries[entries.len() - 2..],
+        [MenuCommand::Open(Page::Gameplay), MenuCommand::Back]
+    );
+    for _ in 0..entries.len() - 2 {
+        r.input(MenuInput::Down);
+    }
+    assert_eq!(
+        selected_text(r.flow.main_menu().unwrap()).as_deref(),
+        Some("GAMEPLAY")
+    );
+    r.choose();
+    assert_eq!(r.page(), Page::Gameplay);
+    assert_eq!(
+        main_entries(&r),
+        [
+            MenuCommand::Gameplay(GameplaySetting::MidAirHitFix),
+            MenuCommand::Back
+        ]
+    );
+    assert_eq!(
+        selected_text(r.flow.main_menu().unwrap()).as_deref(),
+        Some("MID AIR HIT JUMP FIX OFF")
+    );
+    r.choose(); // off -> on
+    assert!(r.flow.settings().mid_air_hit_fix);
+    assert_eq!(
+        selected_text(r.flow.main_menu().unwrap()).as_deref(),
+        Some("MID AIR HIT JUMP FIX ON")
+    );
+    assert!(
+        r.flow
+            .settings()
+            .sim_config((640, 480))
+            .tuning
+            .behaviour
+            .fix_double_jump,
+        "new games play with it"
+    );
+    assert_eq!(r.flow.notice(), None, "no game in play to tell");
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(text.lines().any(|l| l == "mid_air_hit_fix = on"), "{text}");
+    // The next run starts with it.
+    let args = |extra: &[&str]| {
+        let mut v = vec![
+            "rusty-claw",
+            "--config",
+            r.config.to_str().unwrap(),
+            "--install",
+            "/i",
+        ];
+        v.extend_from_slice(extra);
+        <claw_game::settings::Args as clap::Parser>::try_parse_from(v).unwrap()
+    };
+    let reread = Settings::from_args(&args(&[])).unwrap();
+    assert!(reread.mid_air_hit_fix);
+    let f = Flow::new(reread, None, None, FontArt::uniform(8, 10), Start::Title);
+    assert!(f.settings().mid_air_hit_fix);
+    // The command line wins over the file.
+    assert!(
+        !Settings::from_args(&args(&["--mid-air-hit-fix", "off"]))
+            .unwrap()
+            .mid_air_hit_fix
+    );
+    // Choosing it again turns it off and saves that.
+    r.choose();
+    assert!(!r.flow.settings().mid_air_hit_fix);
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(text.lines().any(|l| l == "mid_air_hit_fix = off"), "{text}");
+}
+
+#[test]
+fn the_in_game_options_switch_the_fix_for_the_next_level() {
+    let mut r = Rig::new(Start::Play, |_| {});
+    r.update(100.0);
+    assert!(r.flow.pause_key());
+    r.effects();
+    r.input(MenuInput::Down);
+    r.input(MenuInput::Down);
+    r.choose(); // options
+    let nav = r.flow.in_game_menu().unwrap();
+    assert_eq!(nav.page(), Page::Options);
+    let entries: Vec<MenuCommand> = nav
+        .entries()
+        .iter()
+        .map(|&k| nav.tree.items[k].command)
+        .collect();
+    assert_eq!(
+        entries[entries.len() - 2..],
+        [MenuCommand::Open(Page::Gameplay), MenuCommand::Back]
+    );
+    for _ in 0..entries.len() - 2 {
+        r.input(MenuInput::Down);
+    }
+    r.choose();
+    assert_eq!(r.flow.in_game_menu().unwrap().page(), Page::Gameplay);
+    r.choose();
+    assert!(r.flow.settings().mid_air_hit_fix);
+    assert_eq!(
+        selected_text(r.flow.in_game_menu().unwrap()).as_deref(),
+        Some("MID AIR HIT JUMP FIX ON")
+    );
+    assert!(
+        r.flow.notice().is_some_and(|n| n.contains("next level")),
+        "{:?}",
+        r.flow.notice()
+    );
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(text.lines().any(|l| l == "mid_air_hit_fix = on"), "{text}");
 }
