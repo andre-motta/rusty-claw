@@ -499,7 +499,9 @@ impl Flow {
     }
 
     /// Adds this game's own pages to a menu: the controls list, the Video
-    /// page under Display and the Gameplay page under Options.
+    /// page under Display and the Gameplay page under Options. The added
+    /// entries are text; the layout gives each a row of its own beside the
+    /// art entries, in large letters (see `claw_ui::menu::layout`).
     fn prepare(&mut self, mut tree: MenuTree) -> Navigator {
         // Puts the last entry of `page` before the page's own back entry.
         let before_back = |tree: &mut MenuTree, page: usize| {

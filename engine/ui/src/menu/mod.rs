@@ -31,6 +31,6 @@ pub use command::{
     CatalogueEntry, CommandCatalogue, GameplaySetting, MenuCommand, MenuKind, Page, Slider, Toggle,
     Unavailable, VideoSetting,
 };
-pub use draw::{Art, FontArt, MenuState, Switches};
+pub use draw::{Art, Face, FontArt, MenuSprite, MenuState, Switches};
 pub use nav::{Look, MenuAction, MenuInput, Navigator};
 pub use tree::{Cell, ItemId, ItemImage, MenuItem, MenuTree};

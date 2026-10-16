@@ -21,16 +21,24 @@
 //! - The in-game confirmations show their question at (320, 202): the
 //!   lose-a-life question (frame 6 instead of 5 with fewer than 2 lives)
 //!   or the end-the-game question.
-//! - Text entries use the game's bitmap font.
+//! - Text entries use the game's bitmap font, magnified by their zoom (see
+//!   [`super::layout`]) and centred in their cell; the coins beside one sit
+//!   at the middle of its cell. A magnified sprite is a [`MenuSprite`] with
+//!   a zoom above 1: it keeps the top-left corner of its box and grows right
+//!   and down, a whole number of pixels per font pixel.
+//! - An entry shows images ([`Face::Image`]) or its text ([`Face::Text`]);
+//!   this game's own entries show their text unless they name images the
+//!   art has.
 
 use std::collections::BTreeMap;
 
-use claw_render::{Anchor, FrameInfo, LevelGraphics, ScreenSprite};
+use claw_render::scene::Item;
+use claw_render::{Anchor, FrameInfo, LevelGraphics, Scene, ScreenSprite};
 
 use super::command::{MenuCommand, MenuKind, Page, Slider, Toggle};
 use super::layout::is_level_list;
 use super::nav::Navigator;
-use super::tree::{ItemId, ItemImage, MenuItem, image_set_of};
+use super::tree::{Cell, ItemId, ItemImage, MenuItem, image_set_of};
 use crate::hud::{FONT, FONT_GLYPHS, glyph};
 
 /// Where menu art comes from: sizes and frame lists of image sets.
@@ -195,6 +203,49 @@ pub fn shown_image(
     Some(img)
 }
 
+/// What an entry shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Face {
+    /// An image of its own.
+    Image(ItemImage),
+    /// Its text in the menu font, `zoom` times larger.
+    Text {
+        /// The text.
+        text: String,
+        /// Whole magnification.
+        zoom: u32,
+    },
+}
+
+/// What `item` shows in `slot`: its text when it shows text (see
+/// [`MenuItem::shows_text`]), its image for the slot otherwise.
+pub fn face(kind: MenuKind, item: &MenuItem, slot: usize, switches: &Switches) -> Option<Face> {
+    if item.shows_text {
+        return item.text.as_ref().map(|t| Face::Text {
+            text: t.clone(),
+            zoom: item.zoom.max(1),
+        });
+    }
+    shown_image(kind, item, slot, switches).map(Face::Image)
+}
+
+/// A screen sprite drawn `zoom` times larger in each direction, growing
+/// right and down from the top-left corner of its box.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuSprite {
+    /// The sprite, placed for its unmagnified box.
+    pub sprite: ScreenSprite,
+    /// Whole magnification, 1 for none.
+    pub zoom: u32,
+}
+
+impl MenuSprite {
+    /// `sprite` unmagnified.
+    pub fn plain(sprite: ScreenSprite) -> MenuSprite {
+        MenuSprite { sprite, zoom: 1 }
+    }
+}
+
 /// Width and height of `text` in the bitmap font.
 pub fn text_size(art: &mut dyn Art, text: &str) -> (i32, i32) {
     let mut w = 0;
@@ -217,6 +268,24 @@ pub fn text_sprites(
     left: i32,
     top: i32,
 ) -> Vec<ScreenSprite> {
+    text_picture(art, text, anchor, left, top, 1)
+        .into_iter()
+        .map(|m| m.sprite)
+        .collect()
+}
+
+/// `text` in the bitmap font `zoom` times larger, with its box's top-left
+/// corner at (left, top) from `anchor`; the box is [`text_size`] times
+/// `zoom`.
+pub fn text_picture(
+    art: &mut dyn Art,
+    text: &str,
+    anchor: Anchor,
+    left: i32,
+    top: i32,
+    zoom: u32,
+) -> Vec<MenuSprite> {
+    let z = zoom.max(1) as i32;
     let glyphs: Vec<(i32, FrameInfo)> = text
         .chars()
         .map(|c| {
@@ -230,12 +299,19 @@ pub fn text_sprites(
         .map(|(_, f)| (f.height >> 1) as i32 - f.offset_y)
         .max()
         .unwrap_or(0);
-    let mut pen = left;
+    let mut pen = 0;
     let mut out = Vec::new();
     for (n, f) in glyphs {
         if f.width > 0 && n != 0 {
-            let x = pen + (f.width >> 1) as i32 - f.offset_x;
-            out.push(ScreenSprite::new(FONT, n, anchor, x, top + rise));
+            // The glyph's box, unmagnified, from the text's top-left corner.
+            let (half_w, half_h) = ((f.width >> 1) as i32, (f.height >> 1) as i32);
+            let box_top = rise - half_h + f.offset_y;
+            let x = left + pen * z + half_w - f.offset_x;
+            let y = top + box_top * z + half_h - f.offset_y;
+            out.push(MenuSprite {
+                sprite: ScreenSprite::new(FONT, n, anchor, x, y),
+                zoom: z as u32,
+            });
         }
         pen += f.width as i32;
     }
@@ -243,39 +319,41 @@ pub fn text_sprites(
 }
 
 /// Measures every entry of `nav`'s menu (the largest of its images, or
-/// its text) and lays the submenu out again.
+/// its unmagnified text when it has text and none of its images is found)
+/// and lays the submenu out again.
 pub fn measure(nav: &mut Navigator, art: &mut dyn Art) {
     let kind = nav.tree.kind;
     for i in 0..nav.tree.items.len() {
         let item = &nav.tree.items[i];
-        let size = match &item.text {
-            Some(t) => {
-                let t = t.clone();
-                text_size(art, &t)
+        let mut size = (0, 0);
+        let mut found = false;
+        for slot in &item.slots {
+            if let Some(img) = image_set_of(kind, slot)
+                && let Some(f) = art.info(&img.set, img.frame)
+            {
+                size.0 = size.0.max(f.width as i32);
+                size.1 = size.1.max(f.height as i32);
+                found = true;
             }
-            None => {
-                let mut size = (0, 0);
-                for slot in &item.slots {
-                    if let Some(img) = image_set_of(kind, slot)
-                        && let Some(f) = art.info(&img.set, img.frame)
-                    {
-                        size.0 = size.0.max(f.width as i32);
-                        size.1 = size.1.max(f.height as i32);
-                    }
-                }
-                size
-            }
-        };
-        nav.tree.items[i].size = size;
+        }
+        let shows_text = item.text.is_some() && !found;
+        if shows_text && let Some(t) = item.text.clone() {
+            size = text_size(art, &t);
+        }
+        let item = &mut nav.tree.items[i];
+        item.size = size;
+        item.shows_text = shows_text;
     }
     nav.relayout();
 }
 
-/// Measures the text entries of `nav`'s menu again (after their text
-/// changed) and lays the submenu out again.
+/// Measures the entries that show text again (after their text changed)
+/// and lays the submenu out again.
 pub fn remeasure_text(nav: &mut Navigator, art: &mut dyn Art) {
     for i in 0..nav.tree.items.len() {
-        if let Some(t) = nav.tree.items[i].text.clone() {
+        if nav.tree.items[i].shows_text
+            && let Some(t) = nav.tree.items[i].text.clone()
+        {
             nav.tree.items[i].size = text_size(art, &t);
         }
     }
@@ -464,20 +542,100 @@ fn place(
     ))
 }
 
-/// Everything `nav`'s menu shows at `time_ms`, on the 640x480 canvas.
+/// One entry as drawn: its sprites and the box they cover.
+struct Drawn {
+    sprites: Vec<MenuSprite>,
+    bounds: Cell,
+}
+
+/// `face` drawn centred in `cell`.
+fn draw_face(art: &mut dyn Art, face: &Face, cell: Cell) -> Option<Drawn> {
+    match face {
+        Face::Image(img) => {
+            let (s, p) = place(art, img, cell)?;
+            let h = art.info(&img.set, img.frame).map_or(0, |f| f.height as i32);
+            Some(Drawn {
+                sprites: vec![MenuSprite::plain(s)],
+                bounds: Cell {
+                    x: p.left,
+                    y: p.top,
+                    w: p.right - p.left,
+                    h,
+                },
+            })
+        }
+        Face::Text { text, zoom } => {
+            let z = (*zoom).max(1) as i32;
+            let (w, h) = text_size(art, text);
+            let (w, h) = (w * z, h * z);
+            let left = cell.x + (cell.w - w) / 2;
+            let top = cell.y + (cell.h - h) / 2;
+            Some(Drawn {
+                sprites: text_picture(art, text, Anchor::TopLeft, left, top, *zoom),
+                bounds: Cell {
+                    x: left,
+                    y: top,
+                    w,
+                    h,
+                },
+            })
+        }
+    }
+}
+
+/// The box each entry of `nav`'s submenu covers as drawn now, in entry
+/// order (entries that draw nothing are left out).
+pub fn entry_boxes(nav: &Navigator, art: &mut dyn Art, state: &MenuState) -> Vec<(ItemId, Cell)> {
+    let kind = nav.kind();
+    let mut out = Vec::new();
+    for &k in nav.entries() {
+        let item = &nav.tree.items[k];
+        let Some(face) = face(kind, item, nav.look(k).slot(), &state.switches) else {
+            continue;
+        };
+        if let Some(d) = draw_face(art, &face, item.cell) {
+            out.push((k, d.bounds));
+        }
+    }
+    out
+}
+
+/// Everything `nav`'s menu shows at `time_ms` that is drawn unmagnified,
+/// on the 640x480 canvas: [`picture`] without the magnified text.
 pub fn sprites(
     nav: &Navigator,
     art: &mut dyn Art,
     state: &MenuState,
     time_ms: f64,
 ) -> Vec<ScreenSprite> {
+    picture(nav, art, state, time_ms)
+        .into_iter()
+        .filter(|m| m.zoom <= 1)
+        .map(|m| m.sprite)
+        .collect()
+}
+
+/// Everything `nav`'s menu shows at `time_ms`, on the 640x480 canvas, in
+/// drawing order.
+pub fn picture(
+    nav: &Navigator,
+    art: &mut dyn Art,
+    state: &MenuState,
+    time_ms: f64,
+) -> Vec<MenuSprite> {
     let kind = nav.kind();
     let page = nav.page();
     let mut out = Vec::new();
     if kind == MenuKind::Main
         && let Some((set, frame, (x, y))) = heading(page)
     {
-        out.push(ScreenSprite::new(set, frame, Anchor::TopLeft, x, y));
+        out.push(MenuSprite::plain(ScreenSprite::new(
+            set,
+            frame,
+            Anchor::TopLeft,
+            x,
+            y,
+        )));
     }
     if kind == MenuKind::InGame {
         let prompt = match page {
@@ -489,39 +647,36 @@ pub fn sprites(
             _ => None,
         };
         if let Some((set, frame)) = prompt {
-            out.push(ScreenSprite::new(set, frame, Anchor::TopLeft, 320, 202));
+            out.push(MenuSprite::plain(ScreenSprite::new(
+                set,
+                frame,
+                Anchor::TopLeft,
+                320,
+                202,
+            )));
         }
     }
     let mut extent: Option<(i32, i32)> = None;
     let mut placed: Vec<(ItemId, Placed)> = Vec::new();
     for &k in nav.entries() {
         let item = &nav.tree.items[k];
-        let look = nav.look(k);
-        if let Some(text) = &item.text {
-            let (w, h) = text_size(art, text);
-            let left = item.cell.x + (item.cell.w - w) / 2;
-            let top = item.cell.y + (item.cell.h - h) / 2;
-            out.extend(text_sprites(art, text, Anchor::TopLeft, left, top));
-            extent = Some(extent.map_or((left, left + w), |(a, b)| (a.min(left), b.max(left + w))));
-            placed.push((
-                k,
-                Placed {
-                    left,
-                    top,
-                    right: left + w,
-                },
-            ));
-            continue;
-        }
-        let Some(img) = shown_image(kind, item, look.slot(), &state.switches) else {
+        let Some(face) = face(kind, item, nav.look(k).slot(), &state.switches) else {
             continue;
         };
-        if let Some((s, p)) = place(art, &img, item.cell) {
-            extent =
-                Some(extent.map_or((p.left, p.right), |(a, b)| (a.min(p.left), b.max(p.right))));
-            out.push(s);
-            placed.push((k, p));
-        }
+        let Some(d) = draw_face(art, &face, item.cell) else {
+            continue;
+        };
+        let b = d.bounds;
+        extent = Some(extent.map_or((b.x, b.x + b.w), |(a, r)| (a.min(b.x), r.max(b.x + b.w))));
+        out.extend(d.sprites);
+        placed.push((
+            k,
+            Placed {
+                left: b.x,
+                top: b.y,
+                right: b.x + b.w,
+            },
+        ));
     }
     // Slider knobs.
     for (k, p) in &placed {
@@ -530,13 +685,13 @@ pub fn sprites(
             && item.enabled
         {
             let (set, frame) = knob(kind, s);
-            out.push(ScreenSprite::new(
+            out.push(MenuSprite::plain(ScreenSprite::new(
                 set,
                 frame,
                 Anchor::TopLeft,
                 knob_x(s, state.value(s), p.left),
                 p.top + 14,
-            ));
+            )));
         }
     }
     // Coin markers.
@@ -551,23 +706,51 @@ pub fn sprites(
             let i = (time_ms.max(0.0) / 100.0).floor() as usize % frames.len();
             frames[i]
         };
-        let cell = nav.tree.items[sel].cell;
+        let item = &nav.tree.items[sel];
+        let cell = item.cell;
         let (l, r, dy) = if kind == MenuKind::Main && is_list(page) {
             (p.left - 18, p.right + 18, 14)
+        } else if item.shows_text {
+            (ext_l - 30, ext_r + 30, cell.h / 2)
         } else {
             (ext_l - 30, ext_r + 30, 17)
         };
         for x in [l, r] {
-            out.push(ScreenSprite::new(
+            out.push(MenuSprite::plain(ScreenSprite::new(
                 set,
                 frame,
                 Anchor::TopLeft,
                 x,
                 cell.y + dy,
-            ));
+            )));
         }
     }
     out
+}
+
+/// Adds `sprites` to the end of `scene` (built from `graphics`), each
+/// magnified by its zoom on top of the scene's own scale; sprites that fall
+/// outside the target are left out.
+pub fn add_to_scene(scene: &mut Scene, graphics: &mut LevelGraphics, sprites: &[MenuSprite]) {
+    let k = scene.comp.scale.max(1);
+    let (tw, th) = (
+        i64::from(scene.comp.target.0),
+        i64::from(scene.comp.target.1),
+    );
+    for m in sprites {
+        let Some(mut p) =
+            claw_render::screen::sprite_params(graphics, &m.sprite, scene.comp.presentation, k)
+        else {
+            continue;
+        };
+        p.scale = k * m.zoom.max(1);
+        let (x0, y0, x1, y1) = p.quad();
+        if x1 <= 0 || y1 <= 0 || x0 >= tw || y0 >= th {
+            continue;
+        }
+        scene.items.push(Item::Sprite(scene.sprites.len() as u32));
+        scene.sprites.push(p);
+    }
 }
 
 fn is_list(page: Page) -> bool {
@@ -578,15 +761,25 @@ fn is_list(page: Page) -> bool {
 /// canvas) onto the centre of a picture of any width, for menus drawn over
 /// a level.
 pub fn centred(sprites: Vec<ScreenSprite>) -> Vec<ScreenSprite> {
+    sprites.into_iter().map(centre).collect()
+}
+
+/// [`centred`] for a [`picture`].
+pub fn centred_picture(sprites: Vec<MenuSprite>) -> Vec<MenuSprite> {
     sprites
         .into_iter()
-        .map(|mut s| {
-            s.anchor = Anchor::Center;
-            s.x -= CANVAS_CENTER.0;
-            s.y -= CANVAS_CENTER.1;
-            s
+        .map(|m| MenuSprite {
+            sprite: centre(m.sprite),
+            zoom: m.zoom,
         })
         .collect()
+}
+
+fn centre(mut s: ScreenSprite) -> ScreenSprite {
+    s.anchor = Anchor::Center;
+    s.x -= CANVAS_CENTER.0;
+    s.y -= CANVAS_CENTER.1;
+    s
 }
 
 /// The centre pixel of the 640x480 canvas, as [`Anchor::Center`] places it.
@@ -599,4 +792,74 @@ pub fn waits_for_select(command: MenuCommand) -> bool {
         command,
         MenuCommand::NewGame { .. } | MenuCommand::Load { .. } | MenuCommand::Quit
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use claw_assets::{Frame, Palette};
+    use claw_frame::ViewConfig;
+    use claw_render::scene::DEFAULT_MAX_TARGET;
+    use claw_render::{MemoryImages, ScreenBuilder, ScreenScene};
+
+    use super::*;
+
+    #[test]
+    fn magnified_text_keeps_its_top_left_corner_and_grows() {
+        let mut font = FontArt::uniform(8, 7);
+        let one = text_picture(&mut font, "AB", Anchor::TopLeft, 100, 50, 1);
+        let three = text_picture(&mut font, "AB", Anchor::TopLeft, 100, 50, 3);
+        assert_eq!(one.len(), 2);
+        assert!(three.iter().all(|m| m.zoom == 3));
+        // Unmagnified, the glyph boxes start at (100, 50) and (108, 50);
+        // three times larger, the second starts one magnified width on.
+        let corner = |m: &MenuSprite| (m.sprite.x - 4, m.sprite.y - 3);
+        assert_eq!(corner(&one[0]), (100, 50));
+        assert_eq!(corner(&one[1]), (108, 50));
+        assert_eq!(corner(&three[0]), (100, 50));
+        assert_eq!(corner(&three[1]), (124, 50));
+        assert_eq!(
+            text_sprites(&mut font, "AB", Anchor::TopLeft, 100, 50),
+            one.into_iter().map(|m| m.sprite).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn magnified_sprites_draw_larger_on_the_scene() {
+        let mut images = MemoryImages::default();
+        images.insert(
+            FONT,
+            glyph('A'),
+            Frame {
+                width: 8,
+                height: 7,
+                offset_x: 0,
+                offset_y: 0,
+                flags: 0,
+                indices: vec![1; 56],
+                opaque: None,
+            },
+        );
+        let mut g = LevelGraphics::for_screens(Palette::default(), Box::new(images));
+        let view = ViewConfig::default().with_render_size(1280, 960);
+        let b = ScreenBuilder::new(&view, DEFAULT_MAX_TARGET);
+        let blank = ScreenScene {
+            background: None,
+            palette: Palette::default(),
+            sprites: Vec::new(),
+            fade: None,
+        };
+        let mut scene = b.build(&mut g, &blank, 0.0);
+        let k = scene.comp.scale;
+        let mut font = FontArt::uniform(8, 7);
+        let mut sprites = text_picture(&mut font, "A", Anchor::TopLeft, 100, 50, 3);
+        // One sprite far outside the picture is left out.
+        sprites.extend(text_picture(&mut font, "A", Anchor::TopLeft, 9000, 50, 1));
+        add_to_scene(&mut scene, &mut g, &sprites);
+        assert_eq!(scene.sprites.len(), 1);
+        assert_eq!(scene.items, vec![Item::Sprite(0)]);
+        let p = scene.sprites[0];
+        assert_eq!(p.scale, 3 * k);
+        let k = i64::from(k);
+        assert_eq!(p.quad(), (100 * k, 50 * k, 124 * k, 71 * k));
+    }
 }
