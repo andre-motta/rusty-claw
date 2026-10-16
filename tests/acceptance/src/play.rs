@@ -236,7 +236,9 @@ impl Player {
         input(self).is_none()
     }
 
-    /// The logic name of whatever hit Claw in the last tick.
+    /// The logic name of whatever hit Claw in the last tick. An object
+    /// spawned during that tick (a rat's bomb dropped at point-blank range)
+    /// is not noted yet and is named from the game itself.
     fn attacker_of_claw(&self) -> String {
         let claw = claw_id(&self.sim);
         self.sim
@@ -252,7 +254,12 @@ impl Player {
                 }
                 _ => None,
             })
-            .filter_map(|id| self.names.get(&id).map(|n| n.to_string()))
+            .filter_map(|id| {
+                self.names
+                    .get(&id)
+                    .or_else(|| self.sim.objects().get(id).map(|o| &o.logic))
+                    .map(|n| n.to_string())
+            })
             .next()
             .unwrap_or_else(|| "level".to_string())
     }

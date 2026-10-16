@@ -8,9 +8,15 @@
 //! the side he faces. [`thrown`] sends it flying under gravity and
 //! [`dropped`] lets it fall; either way it explodes when it lands, and a
 //! thrown keg also explodes on the first enemy it strikes that can be hit
-//! by thrown objects (it flies past the others, other kegs among them). A
-//! kill of kind [`KILL_EXPLODE`] (see [`World::kill`]) also sets it off;
-//! any other kill removes it without a blast.
+//! by thrown objects (it flies past the others, other kegs among them). The
+//! strike itself lands as a thrown object's hit, with the keg's damage, and
+//! the keg explodes right where it struck at the start of its next logic
+//! call. Exploding at once would clear the keg's kind before the enemy's
+//! hit handler reads it: the enemy would take the strike as a hit of no
+//! known kind, doing no damage, and its rule of one hit per attack of
+//! Claw's would then turn the blast away too. A kill of kind
+//! [`KILL_EXPLODE`] (see [`World::kill`]) also sets it off; any other kill
+//! removes it without a blast.
 //!
 //! Exploding plays the blast sound and the keg's explosion animation; when
 //! the animation reaches its blast frame the keg requests one explosion
@@ -118,6 +124,8 @@ pub struct KegData {
     pub blast: Option<ObjectId>,
     /// It has requested its explosion.
     pub blasted: bool,
+    /// It struck an enemy in flight and explodes at its next logic call.
+    pub struck: bool,
 }
 
 fn data_mut(o: &mut Object) -> &mut KegData {
@@ -172,9 +180,11 @@ pub fn tick(w: &mut World, id: ObjectId) {
     if o.state != state::READY {
         return;
     }
-    match data_mut(o).phase {
+    let d = data_mut(o);
+    match d.phase {
         Phase::Idle => {}
         Phase::Lifted | Phase::Overhead => carry(w, id),
+        Phase::Thrown if d.struck => explode(w, id),
         Phase::Thrown | Phase::Dropped => fly(w, id),
         Phase::Exploding => exploding(w, id),
     }
@@ -216,7 +226,10 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
 }
 
 /// `id` attacked `victim`: a thrown keg explodes on the first enemy it
-/// strikes that can be hit by thrown objects.
+/// strikes that can be hit by thrown objects. The strike's hit on the
+/// enemy follows this call and needs the keg as it is (a thrown object
+/// with its damage), so the keg only stops attacking here, stops where it
+/// is, and explodes at its next logic call.
 pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     let accepts = w
         .objects
@@ -226,7 +239,9 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
         return;
     };
     if accepts && data_mut(o).phase == Phase::Thrown {
-        explode(w, id);
+        o.attack_type_flags = 0;
+        o.attack_handler = false;
+        data_mut(o).struck = true;
     }
 }
 
@@ -276,6 +291,7 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
     d.vx = f64::from(vx);
     d.vy = f64::from(vy);
     d.rest = (0.0, 0.0);
+    d.struck = false;
     w.set_anim(id, ANIM_THROWN);
 }
 

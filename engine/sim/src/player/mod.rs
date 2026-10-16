@@ -116,6 +116,40 @@ pub const LANDING_SOUND: &str = "CLAW_LEFTFOOT1";
 /// Sound of the flag when Claw comes back at a checkpoint.
 pub const CHECKPOINT_RESPAWN_SOUND: &str = "GAME_FLAGWAVE";
 
+/// Catnip's walking speed against the plain walk: 300 px/s where Claw
+/// walks at 225 px/s in the original's own numbers. It scales the tuned
+/// walking speed, so [`Tuning::original_speeds`] walks at exactly 300.
+pub const CATNIP_WALK_FACTOR: f64 = 300.0 / 225.0;
+/// Catnip's climbing speed against the plain climb: 250 px/s where Claw
+/// climbs at 200 px/s in the original's own numbers. It scales both tuned
+/// climbing speeds.
+pub const CATNIP_CLIMB_FACTOR: f64 = 250.0 / 200.0;
+/// Animation speed of a plain walk.
+pub const WALK_ANIM_SPEED: f32 = 1.0;
+/// Animation speed of a run.
+pub const RUN_ANIM_SPEED: f32 = 0.9;
+/// Animation speed of a walk with catnip.
+pub const CATNIP_ANIM_SPEED: f32 = 0.8;
+/// Vertical speed Claw records while Jump is held in a plain jump, px/s.
+/// The rise itself is aimed at the jump's target height and does not use
+/// it.
+pub const JUMP_HOLD_SPEED: i32 = -425;
+/// Vertical speed recorded while Jump is held in a running jump or with
+/// catnip, px/s.
+pub const JUMP_HOLD_SPEED_FAST: i32 = -500;
+/// Vertical speed recorded while Jump is held with the super jump switch,
+/// px/s.
+pub const JUMP_HOLD_SPEED_SUPER: i32 = -750;
+
+/// Game-wide switches that change Claw's movement. All are off in normal
+/// play; the cheat codes that turn them on are not wired yet.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MovementOverrides {
+    /// Jumps rise as high as with catnip (a full hold reaches 195 px),
+    /// catnip or not.
+    pub super_jump: bool,
+}
+
 /// How far a state table row is implemented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RowKind {
@@ -213,6 +247,8 @@ pub struct Claw {
     pub death_tile_hits: u32,
     /// Times a fallback row was entered.
     pub fallback_entries: u32,
+    /// Game-wide movement switches.
+    pub movement: MovementOverrides,
 }
 
 impl Default for Claw {
@@ -244,6 +280,7 @@ impl Default for Claw {
             mover: Mover::default(),
             death_tile_hits: 0,
             fallback_entries: 0,
+            movement: MovementOverrides::default(),
         }
     }
 }
@@ -357,6 +394,11 @@ impl Ctx<'_> {
             channel,
             ..SoundCue::default()
         }));
+    }
+
+    /// Catnip is running: Claw walks, climbs and jumps faster and higher.
+    pub fn has_catnip(&self) -> bool {
+        self.p.stats.powerup_kind == death::powerup::CATNIP && self.p.stats.powerup_ms > 0
     }
 
     fn held(&self, b: Buttons) -> bool {
@@ -925,10 +967,12 @@ fn stand_update(c: &mut Ctx) {
 fn walk_tick(c: &mut Ctx, right: bool) {
     let tp = &c.t.player;
     c.p.running_time = (c.p.running_time - DT).max(0);
-    let (speed, anim_speed) = if c.p.running_time == 0 {
-        (tp.run_speed, 0.9)
+    let (speed, anim_speed) = if c.has_catnip() {
+        (tp.walk_speed * CATNIP_WALK_FACTOR, CATNIP_ANIM_SPEED)
+    } else if c.p.running_time == 0 {
+        (tp.run_speed, RUN_ANIM_SPEED)
     } else {
-        (tp.walk_speed, 1.0)
+        (tp.walk_speed, WALK_ANIM_SPEED)
     };
     c.o.anim.set_speed(anim_speed);
     let v = if right { speed } else { -speed } + c.p.conveyor_force;
@@ -1021,11 +1065,16 @@ fn jump_hold_update(c: &mut Ctx) {
     }
     let tp = &c.t.player;
     c.p.jump_press_time = (c.p.jump_press_time - tp.jump_hold_per_tick_ms).max(0.0);
-    let k = if c.p.running_time == 0 {
-        tp.jump_hold_factor_running
+    let (speed_y, k) = if c.p.movement.super_jump {
+        (JUMP_HOLD_SPEED_SUPER, tp.jump_hold_factor_powered)
+    } else if c.has_catnip() {
+        (JUMP_HOLD_SPEED_FAST, tp.jump_hold_factor_powered)
+    } else if c.p.running_time == 0 {
+        (JUMP_HOLD_SPEED_FAST, tp.jump_hold_factor_running)
     } else {
-        tp.jump_hold_factor
+        (JUMP_HOLD_SPEED, tp.jump_hold_factor)
     };
+    c.o.speed_y = speed_y;
     let target = (f64::from(c.p.jump_start_y) - (tp.jump_hold_window_ms - c.p.jump_press_time) * k)
         .trunc() as i32;
     c.p.jump_peak_y = c.p.jump_peak_y.min(target);
@@ -1256,18 +1305,23 @@ pub fn climb_tick(c: &mut Ctx) {
             .find(|&y| c.level.map.attr(c.o.x, y) == CLIMB)
             .unwrap_or(0);
     }
+    let climb = if c.has_catnip() {
+        CATNIP_CLIMB_FACTOR
+    } else {
+        1.0
+    };
     let vy = if c.held(Buttons::UP) {
         if c.p.climb_dir != 8 {
             c.p.climb_dir = 8;
             c.set_anim("CLAW_CLIMB", false);
         }
-        -tp.climb_up_speed
+        -tp.climb_up_speed * climb
     } else if c.held(Buttons::DOWN) {
         if c.p.climb_dir != 2 {
             c.p.climb_dir = 2;
             c.set_anim("CLAW_CLIMBDOWN", false);
         }
-        tp.climb_down_speed
+        tp.climb_down_speed * climb
     } else {
         if c.p.climb_dir != 5 {
             c.p.climb_dir = 5;
