@@ -999,6 +999,57 @@ fn lifting_then_throwing_a_keg_calls_its_hooks() {
 }
 
 #[test]
+fn a_thrown_keg_kills_the_officer_it_strikes_and_explodes_there() {
+    let mut sim = new_sim(3);
+    let (x, y) = (claw(&sim).x, claw(&sim).y);
+    let cid = claw_id(&sim);
+    set(&mut sim, |w| {
+        w.objects.get_mut(cid).unwrap().hit_type_flags = 0;
+    });
+    let officer = sim.spawn(logic::new_object("Officer", x + 300, y, 4000));
+    let id = keg_beside(&mut sim, 200);
+    idle(&mut sim, 2);
+    let health = sim.objects().get(officer).unwrap().health;
+    assert!(health > 0 && health < keg::BLAST_DAMAGE, "{health}");
+    // Flying level at the officer's chest, from his left.
+    let o = sim.objects().get(officer).unwrap();
+    let (ox, oy) = (o.x, o.y);
+    set(&mut sim, |w| {
+        let k = w.objects.get_mut(id).unwrap();
+        k.x = ox - 90;
+        k.y = oy - 60;
+        logic::thrown(w, id, 400, 0);
+    });
+    // The synthetic level has no explosion animation: the keg blasts and
+    // is removed at once when it explodes.
+    let mut last = None;
+    let mut struck = None;
+    for _ in 0..40 {
+        let k = sim.objects().get(id).expect("the keg flies");
+        last = Some((k.x, k.y));
+        sim.step(TickInput::default());
+        if struck.is_none()
+            && sim.collision_events().iter().any(|e| {
+                matches!(*e, claw_sim::container::CollisionEvent::Hit { attacker, victim }
+                    if attacker == id && victim == officer)
+            })
+        {
+            struck = sim.objects().get(id).map(|k| (k.x, k.y));
+        }
+        if sim.objects().get(id).is_none() {
+            break;
+        }
+    }
+    let (kx, ky) = struck.expect("the keg struck the officer");
+    assert!(sim.objects().get(id).is_none(), "the keg exploded");
+    assert_eq!(last, Some((kx, ky)), "it exploded where it struck");
+    let o = sim.objects().get(officer).unwrap();
+    let d = claw_sim::logic::enemy::data_of(o).unwrap();
+    assert!(d.dead, "the officer is killed by the strike");
+    assert_eq!(d.death, claw_sim::logic::enemy::DeathKind::Hit);
+}
+
+#[test]
 fn a_hit_while_carrying_drops_the_keg() {
     let mut sim = new_sim(3);
     let id = keg_beside(&mut sim, 40);

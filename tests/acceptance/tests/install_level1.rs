@@ -286,9 +286,10 @@ fn keg_stop(
                 q.hold(ATTACK, 1 + charge);
                 q.until(150, |q| (!killed(q, enemy)).then_some(0));
                 q.settle(60);
+                // Killed by the keg striking him or by its blast.
                 q.kills
                     .iter()
-                    .any(|k| k.placed == enemy && k.by == "Explosion")
+                    .any(|k| k.placed == enemy && matches!(&*k.by, "PowderKeg" | "Explosion"))
             });
             if ok {
                 n.keg_kill = Some(enemy);

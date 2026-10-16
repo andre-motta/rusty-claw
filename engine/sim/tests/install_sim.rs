@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use claw_assets::level::RETAIL_LEVELS;
 use claw_assets::{AssetStore, Install, LevelData, LevelSource};
 use claw_sim::activation::BREAKABLE_LOGICS;
+use claw_sim::player::death::powerup;
 use claw_sim::player::state;
 use claw_sim::tiles::{CLIMB, GROUND, SOLID};
 use claw_sim::trace::{self, TraceRow};
@@ -174,6 +175,27 @@ fn install_level1_jumps() {
     }
     let refs: Vec<(&str, f64)> = measured.iter().map(|(k, v)| (k.as_str(), *v)).collect();
     check(&refs);
+}
+
+#[test]
+fn install_level1_catnip_full_hold_jump_peaks_at_195() {
+    let Some(store) = store() else { return };
+    let jump = |catnip: bool, ms: u64| {
+        let mut sim = at(&store, FLAT.0, FLAT.1);
+        if catnip {
+            // As long as the larger catnip pickup lasts.
+            sim.with_world(|w| {
+                w.claw.stats.powerup_kind = powerup::CATNIP;
+                w.claw.stats.powerup_ms = 30_000;
+            });
+        }
+        let rows = run(&mut sim, &script(&[(JUMP, ms), (0, 1500)]));
+        assert_eq!(rows.last().unwrap().y, rows[0].y, "lands where it started");
+        jump_metrics(&rows).0
+    };
+    assert_eq!(jump(false, 800), 145);
+    assert_eq!(jump(true, 800), 195);
+    assert_eq!(jump(true, 18), 45);
 }
 
 #[test]
