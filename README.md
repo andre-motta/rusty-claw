@@ -270,6 +270,8 @@ start gives the same game. The recording's first line, a `#` comment, notes
 whether the mid-air hit jump fix was on, and the replay follows it. Replays
 and benchmarks never take that option from the config file: without such a
 line, or for a benchmark, it is off unless `--mid-air-hit-fix on` is given.
+Recordings made before this option existed were played with the fix on and
+have no such line, so replay them with `--mid-air-hit-fix on`.
 
 ```sh
 # play and record, then watch the recording
