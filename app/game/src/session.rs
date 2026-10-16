@@ -19,13 +19,22 @@
 //! tick it runs; [`Session::drain_outputs`] hands them over. Replays and
 //! benchmarks never drain them; the queues are bounded, and what does not
 //! fit is counted and dropped.
+//!
+//! A recorded input script starts with a comment line naming the mid-air
+//! hit jump fix the game was played with ([`behaviour_comment`]); a replay
+//! reads it back ([`script_behaviour`]) so the recording plays the same.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result};
 
 use claw_frame::step::{MAX_FRAME_US, TICK_US};
 use claw_frame::{AudioCue, Buttons, FrameDriver, GameEvent, InterpolatedFrame, TickInput};
 use claw_sim::trace::TraceRow;
 use claw_sim::{InputLatch, InputScript, Sim};
+
+use crate::input::Recorder;
 
 /// What one frame did.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -328,6 +337,46 @@ impl Session {
     pub fn is_paused(&self) -> bool {
         self.paused
     }
+}
+
+/// The key of the mid-air hit jump fix in an input script's comment line,
+/// as in the config file.
+pub const BEHAVIOUR_KEY: &str = "mid_air_hit_fix";
+
+/// The comment line of an input script that records the mid-air hit jump
+/// fix it was played with: `# mid_air_hit_fix = on` (or `off`).
+pub fn behaviour_comment(fix: bool) -> String {
+    format!("# {BEHAVIOUR_KEY} = {}", if fix { "on" } else { "off" })
+}
+
+/// The mid-air hit jump fix that script `text` says it was played with,
+/// from its `# mid_air_hit_fix = on|off` comment line (the last one counts);
+/// `None` when it has none.
+pub fn script_behaviour(text: &str) -> Option<bool> {
+    text.lines().rev().find_map(|l| {
+        let (k, v) = l.trim().strip_prefix('#')?.split_once('=')?;
+        if k.trim() != BEHAVIOUR_KEY {
+            return None;
+        }
+        crate::settings::parse_on_off(v).ok()
+    })
+}
+
+/// `script` as CSV, led by the comment line of the mid-air hit jump fix
+/// `fix`.
+pub fn recording_csv(script: &InputScript, fix: bool) -> String {
+    format!("{}\n{}", behaviour_comment(fix), script.to_csv())
+}
+
+/// Writes what `recorder` kept of `session` to `path` as an input script,
+/// led by the comment line of the mid-air hit jump fix the session plays
+/// with; returns the ticks written.
+pub fn save_recording(recorder: &Recorder, session: &Session, path: &Path) -> Result<usize> {
+    let script = recorder.script(session);
+    let fix = session.sim().config().tuning.behaviour.fix_double_jump;
+    std::fs::write(path, recording_csv(&script, fix))
+        .with_context(|| format!("writing the recording {}", path.display()))?;
+    Ok(script.ticks.len())
 }
 
 #[cfg(test)]

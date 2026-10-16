@@ -156,9 +156,9 @@ pub enum RowKind {
     /// Implemented in this milestone.
     Implemented,
     /// Belongs to a later milestone: the handler returns Claw to standing
-    /// (or, for a hit ending in mid-air, landing, see
-    /// [`crate::tuning::Behaviour::fix_double_jump`]) and the entry is
-    /// counted.
+    /// (or, for a hit ending in mid-air with the mid-air hit jump fix on,
+    /// landing, see [`crate::tuning::Behaviour::fix_double_jump`]) and the
+    /// entry is counted.
     Fallback,
     /// The game has no behaviour for this id: only the post-tick step runs.
     Unused,
@@ -1408,12 +1408,12 @@ fn on_edge_update(c: &mut Ctx) {
 
 /// Fallback for states not filled in yet: back to standing.
 ///
-/// A hit reaction ends with the stand reset. With the double-jump fix on
-/// (the default), a hit that ends in mid-air then sets the state to Land
-/// instead of Stand, keeping the stand animation; Land accepts no jump
-/// press and turns into a fall on its next tick when there is no floor.
-/// Without the fix Claw is left standing in mid-air, where a jump press
-/// starts a second jump, as in the original.
+/// A hit reaction ends with the stand reset. By default Claw is left
+/// standing even in mid-air, where a jump press starts a second jump, as
+/// in the original. With the mid-air hit jump fix on, a hit that ends in
+/// mid-air sets the state to Land instead of Stand, keeping the stand
+/// animation; Land accepts no jump press and turns into a fall on its next
+/// tick when there is no floor.
 pub fn fallback_tick(c: &mut Ctx) {
     c.p.fallback_entries += 1;
     let land = c.o.state == state::HIT && c.t.behaviour.fix_double_jump && hit_ends_airborne(c);

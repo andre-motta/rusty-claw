@@ -28,8 +28,8 @@ pub mod nav;
 pub mod tree;
 
 pub use command::{
-    CatalogueEntry, CommandCatalogue, MenuCommand, MenuKind, Page, Slider, Toggle, Unavailable,
-    VideoSetting,
+    CatalogueEntry, CommandCatalogue, GameplaySetting, MenuCommand, MenuKind, Page, Slider, Toggle,
+    Unavailable, VideoSetting,
 };
 pub use draw::{Art, FontArt, MenuState, Switches};
 pub use nav::{Look, MenuAction, MenuInput, Navigator};

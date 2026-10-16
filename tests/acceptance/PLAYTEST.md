@@ -28,7 +28,7 @@ Where a line says "as in the original", compare with the original game.
 22. On a Steam Deck: the d-pad and left stick move Claw, the stick does not drift him when centred, A jumps, B strikes, X fires, Start opens the menu, and the menus follow the d-pad.
 23. Suspend the window (switch away): play pauses and resumes where it was, with no stuck keys or pad buttons.
 24. Lift a defeated officer's body, or an officer still standing: decide whether this should be possible (today Claw lifts only live officers and soldiers).
-25. Get hit next to a ledge: Claw may show a short landing before he falls; decide whether that looks right.
+25. Get hit in mid-air (a soldier's shot or your own dynamite), then press jump before landing: Claw jumps again, as in the original; with the mid-air hit jump fix on in the options, he cannot.
 26. Hit an officer with magic: compare the burst with the original (today no lingering flame or frost shows on the enemy).
 27. Charge a keg throw on a crumbling peg until it gives way: the keg drops from Claw's hands as he falls; after any throw the keg never stays in his hands.
 28. Get hit with speech switched off in the options: the hit sound still plays and Claw's pain line is silent.

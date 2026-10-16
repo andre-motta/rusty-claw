@@ -362,3 +362,129 @@ fn the_controls_page_fits_the_canvas_with_the_real_font() {
         );
     }
 }
+
+/// The entries `nav` shows, with their cells, in order.
+fn cells(nav: &claw_ui::menu::Navigator) -> Vec<(MenuCommand, claw_ui::menu::Cell)> {
+    nav.entries()
+        .iter()
+        .map(|&k| (nav.tree.items[k].command, nav.tree.items[k].cell))
+        .collect()
+}
+
+/// Every entry inside the canvas, each below the one before.
+fn assert_fits(cells: &[(MenuCommand, claw_ui::menu::Cell)]) {
+    for (c, cell) in cells {
+        assert!(
+            cell.x >= 0
+                && cell.y >= 0
+                && cell.x + cell.w <= CANVAS.0
+                && cell.y + cell.h <= CANVAS.1,
+            "{c:?} at {cell:?} leaves the canvas"
+        );
+    }
+    for pair in cells.windows(2) {
+        let ((a, ca), (b, cb)) = (pair[0], pair[1]);
+        assert!(
+            ca.y + ca.h <= cb.y,
+            "{a:?} at {ca:?} overlaps {b:?} at {cb:?}"
+        );
+    }
+}
+
+#[test]
+fn the_gameplay_page_fits_both_menus_and_applies_to_the_next_game() {
+    let Some(install) = std::env::var_os("CLAW_INSTALL").map(PathBuf::from) else {
+        eprintln!("skipped: CLAW_INSTALL is not set");
+        return;
+    };
+    let tmp = TempDir::new().unwrap();
+    let mut game = Game::new(&install, tmp.path());
+    game.reach_main_menu();
+    // Main menu: options, then gameplay.
+    let gameplay = MenuCommand::Open(Page::Gameplay);
+    for (command, page) in [
+        (MenuCommand::Open(Page::Options), Page::Options),
+        (gameplay, Page::Gameplay),
+    ] {
+        let nav = game.flow.main_menu().unwrap();
+        let at = nav
+            .entries()
+            .iter()
+            .position(|&k| nav.tree.items[k].command == command)
+            .unwrap_or_else(|| panic!("{:?} lists {command:?}", nav.page()));
+        if page == Page::Gameplay {
+            assert_fits(&cells(nav));
+        }
+        game.down(at);
+        game.choose();
+        assert_eq!(game.flow.main_menu().unwrap().page(), page);
+    }
+    let nav = game.flow.main_menu().unwrap();
+    assert_fits(&cells(nav));
+    assert_eq!(
+        nav.tree.items[nav.selected().unwrap()].text.as_deref(),
+        Some("MID AIR HIT JUMP FIX OFF")
+    );
+    game.choose();
+    assert!(game.flow.settings().mid_air_hit_fix);
+    let config = game.flow.settings().config_path.clone().unwrap();
+    let text = std::fs::read_to_string(config).unwrap();
+    assert!(text.lines().any(|l| l == "mid_air_hit_fix = on"), "{text}");
+    // A new game plays with it, as the window starts it.
+    game.settings.mid_air_hit_fix = game.flow.settings().mid_air_hit_fix;
+    game.input(MenuInput::Back);
+    game.input(MenuInput::Back);
+    game.run(PRESS_MS + 20.0);
+    assert_eq!(game.flow.main_menu().unwrap().page(), Page::Root);
+    for command in [
+        MenuCommand::Open(Page::SinglePlayer),
+        MenuCommand::Open(Page::NewGameLevels),
+        MenuCommand::NewGame { level: 1 },
+    ] {
+        let nav = game.flow.main_menu().unwrap();
+        let entries = nav.entries().to_vec();
+        let at = entries
+            .iter()
+            .position(|&k| nav.tree.items[k].command == command)
+            .unwrap_or_else(|| panic!("{:?} lists {command:?}", nav.page()));
+        let from = entries
+            .iter()
+            .position(|&k| Some(k) == nav.selected())
+            .unwrap_or(0);
+        for _ in at..from {
+            game.input(MenuInput::Up);
+        }
+        game.down(at.saturating_sub(from));
+        game.choose();
+    }
+    game.run(FADE_MS + 50.0);
+    assert_eq!(game.flow.screen(), Screen::Play);
+    assert!(game.sim().config().tuning.behaviour.fix_double_jump);
+    // The in-game options list it too, measured with the level's art.
+    let (bundle, _) = game.level.as_ref().unwrap();
+    let mut graphics = claw_game::load_graphics(bundle, None).unwrap();
+    game.flow.measure(MenuKind::InGame, &mut graphics);
+    assert!(game.flow.pause_key());
+    game.effects();
+    let nav = game.flow.in_game_menu().unwrap();
+    let at = nav
+        .entries()
+        .iter()
+        .position(|&k| nav.tree.items[k].command == MenuCommand::Open(Page::Options))
+        .unwrap();
+    game.down(at);
+    game.choose();
+    let nav = game.flow.in_game_menu().unwrap();
+    assert_eq!(nav.page(), Page::Options);
+    assert_fits(&cells(nav));
+    let at = nav
+        .entries()
+        .iter()
+        .position(|&k| nav.tree.items[k].command == gameplay)
+        .expect("the in-game options list the gameplay page");
+    game.down(at);
+    game.choose();
+    let nav = game.flow.in_game_menu().unwrap();
+    assert_eq!(nav.page(), Page::Gameplay);
+    assert_fits(&cells(nav));
+}

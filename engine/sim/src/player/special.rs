@@ -9,10 +9,12 @@
 //! the attacker. In the air he stays falling. Each tick the animation
 //! advances; while its frame has event 1 the push moves him, after that he
 //! stays put (the reaction itself never moves him up or down). When the
-//! animation ends he stands again. With the double-jump fix (the default,
-//! see [`crate::tuning::Behaviour::fix_double_jump`]) a reaction that ends
-//! in mid-air hands over to landing instead, which turns into a fall on
-//! the next tick, so Claw cannot jump again in mid-air.
+//! animation ends he stands again, even in mid-air: a jump press there
+//! starts a second jump, as in the original (the default). With the
+//! mid-air hit jump fix on (see
+//! [`crate::tuning::Behaviour::fix_double_jump`]) a reaction that ends in
+//! mid-air hands over to landing instead, which turns into a fall on the
+//! next tick, so Claw cannot jump again before he lands.
 //!
 //! # Lifting (5000) and throwing (5001)
 //!

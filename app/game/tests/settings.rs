@@ -567,3 +567,93 @@ fn the_status_bar_placement_is_a_setting() {
     s.status_bar_centred = true;
     assert_eq!(s.config_value("status_bar").as_deref(), Some("centred"));
 }
+
+#[test]
+fn the_mid_air_hit_fix_is_a_setting_pinned_for_replays_and_benchmarks() {
+    let resolve = |text: &str, args: &[&str]| {
+        let file = ConfigFile::parse(text, "test").unwrap();
+        file.check().unwrap();
+        let mut argv = vec!["x", "--install", "/i"];
+        argv.extend_from_slice(args);
+        Settings::resolve(&Args::try_parse_from(argv).unwrap(), Some(&file)).unwrap()
+    };
+    let fix = |s: &Settings| s.sim_config((1280, 960)).tuning.behaviour.fix_double_jump;
+    // Play: off by default, from the file, the command line winning.
+    let s = resolve("", &[]);
+    assert!(!s.mid_air_hit_fix && !fix(&s), "the original by default");
+    assert_eq!(s.config_value("mid_air_hit_fix").as_deref(), Some("off"));
+    let s = resolve("mid_air_hit_fix = on\n", &[]);
+    assert!(s.mid_air_hit_fix && fix(&s));
+    assert_eq!(s.config_value("mid_air_hit_fix").as_deref(), Some("on"));
+    assert!(!resolve("mid_air_hit_fix = on\n", &["--mid-air-hit-fix", "off"]).mid_air_hit_fix);
+    let s = resolve("", &["--mid-air-hit-fix", "on"]);
+    assert!(s.mid_air_hit_fix);
+    assert!(s.from_command_line.contains("mid_air_hit_fix"));
+    assert!(
+        ConfigFile::parse("mid_air_hit_fix = maybe\n", "test")
+            .unwrap()
+            .check()
+            .is_err()
+    );
+    // The widened view keeps it too.
+    let s = resolve("mid_air_hit_fix = on\n", &["--widen-activation"]);
+    assert!(fix(&s));
+    // Replays and benchmarks ignore the file; the command line still counts.
+    for mode in [
+        &["--replay", "r.csv"][..],
+        &["--replay", "r.csv", "--trace", "t.csv"],
+        &["--bench", "5"],
+        &["--bench", "5", "--headless"],
+    ] {
+        let s = resolve("mid_air_hit_fix = on\n", mode);
+        assert!(!s.mid_air_hit_fix && !fix(&s), "{mode:?}");
+        let mut on: Vec<&str> = mode.to_vec();
+        on.extend(["--mid-air-hit-fix", "on"]);
+        assert!(resolve("", &on).mid_air_hit_fix, "{mode:?}");
+    }
+    // A replay follows its recording unless the command line says.
+    let mut s = resolve("mid_air_hit_fix = on\n", &["--replay", "r.csv"]);
+    s.follow_script(None);
+    assert!(!s.mid_air_hit_fix);
+    s.follow_script(Some(true));
+    assert!(s.mid_air_hit_fix && fix(&s));
+    let mut s = resolve("", &["--replay", "r.csv", "--mid-air-hit-fix", "off"]);
+    s.follow_script(Some(true));
+    assert!(!s.mid_air_hit_fix);
+}
+
+#[test]
+fn recordings_carry_the_mid_air_hit_fix() {
+    use claw_game::session::{behaviour_comment, recording_csv, script_behaviour};
+    use claw_sim::{InputScript, TickInput};
+    let script = InputScript {
+        ticks: vec![
+            TickInput {
+                held: Buttons(1),
+                pressed: Buttons(1),
+            },
+            TickInput::default(),
+        ],
+    };
+    for fix in [false, true] {
+        let csv = recording_csv(&script, fix);
+        assert!(csv.starts_with(&behaviour_comment(fix)), "{csv}");
+        assert_eq!(script_behaviour(&csv), Some(fix));
+        assert_eq!(
+            InputScript::parse(&csv).unwrap(),
+            script,
+            "still a plain script"
+        );
+    }
+    assert_eq!(behaviour_comment(true), "# mid_air_hit_fix = on");
+    assert_eq!(script_behaviour(&script.to_csv()), None);
+    assert_eq!(
+        script_behaviour(
+            "#mid_air_hit_fix=off\n# mid_air_hit_fix = on\ntick,held_mask,pressed_mask\n"
+        ),
+        Some(true),
+        "the last line counts"
+    );
+    assert_eq!(script_behaviour("# mid_air_hit_fix = sometimes\n"), None);
+    assert_eq!(script_behaviour("# a note = on\n"), None);
+}
