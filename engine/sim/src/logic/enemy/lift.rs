@@ -21,6 +21,21 @@
 //!   for 1.5 s.
 //! - Dropped: it falls, stops on landing, and after 1 s gets up and goes
 //!   Home.
+//!
+//! A defeated officer or soldier can be lifted too, as long as it is
+//! still an enemy (killed by a blow or on spikes; one killed by the
+//! landing of a throw is a thrown object, and one killed in goo is gone at
+//! once). The body goes through the same Lifted, Flailing, Thrown and
+//! Bounce steps (it may say its lifted line), but:
+//!
+//! - thrown, it hurts nobody (a dead enemy stays harmless to others);
+//! - after its rest it dies again whatever its health, where it lies,
+//!   with no loot and no sound, and is removed a second later;
+//! - out of time in the air it is gone with its death sound and a splash,
+//!   but drops no loot a second time;
+//! - dropped, it stays dead: once its second is up and it is on the
+//!   ground, it lies still with no loot and no sound and is removed a
+//!   second later.
 
 use crate::logic::World;
 use crate::object::{ObjectId, Rect, flags, types};
@@ -63,12 +78,18 @@ pub const DROPPED_MS: u64 = 1000;
 /// Shift of a held enemy while Claw winds up a throw: back, down, px.
 pub const WIND_UP_SHIFT: (i32, i32) = (4, 5);
 
-/// `carrier` (Claw) picked up `id`. Draws: the class's line choice (the
-/// officer's), then one of 0..100 (below 33 it speaks, when on screen).
+/// `carrier` (Claw) picked up `id`, alive or dead. A body is taken only
+/// while it is still an enemy; nothing being removed is taken. Draws: the
+/// class's line choice (the officer's), then one of 0..100 (below 33 it
+/// speaks, when on screen).
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     let Some(class) = class_of(w, id) else { return };
     let Some(carry) = class.carry else { return };
-    if data(w, id).is_none_or(|d| d.dead) {
+    let Some(dead) = data(w, id).map(|d| d.dead) else {
+        return;
+    };
+    let o = obj(w, id);
+    if o.flags & flags::DESTROY != 0 || (dead && o.type_flags != types::ENEMY) {
         return;
     }
     let z = w.objects.get(carrier).map(|c| c.z.saturating_add(1));
@@ -220,16 +241,25 @@ pub fn let_go(w: &mut World, id: ObjectId) {
     }
 }
 
-/// Dropped: stops on landing; gets up after its time.
+/// Dropped: stops on landing; gets up after its time, or, for a body,
+/// lies still once it is also on the ground (see [`lie_still`]).
 pub fn dropped_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     let now = w.now_ms;
-    if obj(w, id).physics_type == ptype::STAND
-        && let Some(d) = data_mut(w, id)
-    {
+    let standing = obj(w, id).physics_type == ptype::STAND;
+    if standing && let Some(d) = data_mut(w, id) {
         d.vx = 0.0;
     }
-    if data(w, id).is_some_and(|d| d.dropped_timer.done(now)) {
+    let Some((up, dead)) = data(w, id).map(|d| (d.dropped_timer.done(now), d.dead)) else {
+        return;
+    };
+    if up && dead {
+        // Like any body, it may leave the active area from now on.
+        obj_mut(w, id).flags &= !flags::ALWAYS_ACTIVE;
+        if standing {
+            lie_still(w, id);
+        }
+    } else if up {
         restore_move_rect(w, id);
         let o = obj_mut(w, id);
         o.flags &= !(flags::ALWAYS_ACTIVE | flags::SAFE | flags::NO_COLLIDE);
@@ -269,8 +299,17 @@ pub fn bounce_tick(w: &mut World, id: ObjectId) {
     }
 }
 
-/// A thrown enemy out of time: its death sound, a splash and its loot,
-/// and it is gone.
+/// A dropped body on the ground: its own movement box, touchable again,
+/// and dead where it lies (no loot, no sound), removed a second later.
+fn lie_still(w: &mut World, id: ObjectId) {
+    restore_move_rect(w, id);
+    let o = obj_mut(w, id);
+    o.flags &= !(flags::ALWAYS_ACTIVE | flags::SAFE | flags::NO_COLLIDE);
+    die(w, id, DeathKind::Landing, None);
+}
+
+/// A thrown enemy out of time: its death sound, a splash and its loot
+/// (none for a body, which dropped its loot when it died), and it is gone.
 fn vanish(w: &mut World, id: ObjectId) {
     let s = data(w, id).map_or("", |d| d.death_sound);
     play(w, s);
@@ -319,7 +358,8 @@ fn landing(w: &mut World, id: ObjectId) {
         }
         _ => {
             obj_mut(w, id).health -= LANDING_DAMAGE;
-            if obj(w, id).health <= 0 {
+            let dead = data(w, id).is_some_and(|d| d.dead);
+            if dead || obj(w, id).health <= 0 {
                 die(w, id, DeathKind::Landing, None);
             } else {
                 recover(w, id);

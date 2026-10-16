@@ -16,6 +16,8 @@
 //!   level implemented, the preload complete, and a stretch with widened
 //!   activation;
 //! - `install_combat`: each weapon against each enemy of the first level;
+//! - `install_lift`: a defeated officer of the first level lifted, carried
+//!   and thrown, then removed without a second loot drop;
 //! - `install_flow`: a saved game round trip and the end-of-level tally
 //!   through the game flow, in a temporary data folder;
 //! - `install_smoke`: every retail level survives a minute of random input;

@@ -1,0 +1,140 @@
+//! Lifting a defeated officer on the first level of your own install
+//! (skipped without `CLAW_INSTALL`): an officer placed from the level's own
+//! records, carrying loot, is killed where it stands as on spikes; Claw
+//! lifts the body with the lift key, carries it and throws it. The body
+//! hurts nobody, dies again as a thrown object that Claw can no longer
+//! lift, and is removed without dropping its loot a second time.
+
+use std::collections::BTreeSet;
+
+use claw_acceptance::install;
+use claw_acceptance::play::*;
+use claw_game::load_level;
+use claw_game::settings::LevelChoice;
+use claw_sim::container::CollisionEvent;
+use claw_sim::logic::enemy::{self, DeathKind, EnemyState};
+use claw_sim::object::{ObjectId, types};
+use claw_sim::player::state;
+use claw_sim::{ObjectData, Sim, SimConfig};
+
+/// Where Claw stands from the officer's record, nearest first.
+const NEAR: [i32; 8] = [-50, 50, -60, 60, -40, 40, -70, 70];
+
+/// The loot lying about.
+fn loot(p: &Player) -> BTreeSet<ObjectId> {
+    p.sim
+        .objects()
+        .all()
+        .filter(|(_, o)| matches!(&o.data, ObjectData::Pickup(d) if d.drop_code.is_some()))
+        .map(|(id, _)| id)
+        .collect()
+}
+
+fn enemy_state(p: &Player, id: ObjectId) -> Option<EnemyState> {
+    p.obj(id).and_then(|o| EnemyState::from_id(o.state))
+}
+
+/// Kills the officer placed at `placed` beside Claw, lifts, carries and
+/// throws its body, and checks what follows. `false` when Claw cannot be
+/// put beside it, it carries no loot, or Claw cannot lift it from there.
+fn lift_and_throw(base: &Player, placed: (i32, i32, i32)) -> bool {
+    let mut p = base.clone();
+    let Some(id) = place_beside(&mut p, "Officer", placed, &NEAR, false) else {
+        return false;
+    };
+    let carries_loot = p
+        .obj(id)
+        .and_then(enemy::data_of)
+        .is_some_and(|d| d.loot.iter().any(|&c| c != 0));
+    if !carries_loot {
+        return false;
+    }
+
+    // Killed where it stands, as on spikes: its loot drops once.
+    let before = loot(&p);
+    p.sim
+        .with_world(|w| enemy::die(w, id, DeathKind::Spikes, None));
+    let mut known = loot(&p);
+    assert!(
+        known.len() > before.len(),
+        "{placed:?}: the loot of the death"
+    );
+    let face = p.obj(id).expect("the body").x > p.at().0;
+    if p.sim.claw().facing_right != face {
+        p.step(if face { RIGHT } else { LEFT });
+    }
+    p.idle(2);
+    assert_eq!(enemy_state(&p, id), Some(EnemyState::Dead), "{placed:?}");
+
+    p.step(LIFT);
+    if p.sim.claw().special.lifted != Some(id) {
+        return false;
+    }
+    assert_eq!(enemy_state(&p, id), Some(EnemyState::Lifted), "{placed:?}");
+    let carrying = p.until(60, |p| (!p.sim.claw().special.carrying).then_some(0));
+    assert!(carrying, "{placed:?}: Claw carries the body");
+    assert_eq!(
+        enemy_state(&p, id),
+        Some(EnemyState::Flailing),
+        "{placed:?}"
+    );
+    p.step(0);
+    p.step(LIFT);
+    assert_eq!(p.state(), state::THROW, "{placed:?}: Claw throws");
+
+    let mut seen = Vec::new();
+    let mut new_loot = 0;
+    let mut struck = Vec::new();
+    let mut thrown_type = false;
+    for _ in 0..400 {
+        p.step(0);
+        for l in loot(&p) {
+            new_loot += usize::from(known.insert(l));
+        }
+        struck.extend(p.sim.collision_events().iter().filter_map(|e| match *e {
+            CollisionEvent::Hit { attacker, victim } if attacker == id => Some(victim),
+            _ => None,
+        }));
+        let Some(s) = enemy_state(&p, id) else { break };
+        if seen.last() != Some(&s) {
+            seen.push(s);
+        }
+        thrown_type |= p.obj(id).is_some_and(|o| o.type_flags == types::THROWN);
+        if s == EnemyState::Dead {
+            let o = p.obj(id).unwrap();
+            assert_eq!(o.type_flags, types::THROWN, "{placed:?}: not a target");
+            assert_eq!(
+                enemy::data_of(o).map(|d| d.death),
+                Some(DeathKind::Landing),
+                "{placed:?}"
+            );
+        }
+    }
+    println!("officer body at {placed:?}: {seen:?}");
+    assert!(seen.contains(&EnemyState::Thrown), "{placed:?}: {seen:?}");
+    assert!(thrown_type, "{placed:?}: flew as a thrown object");
+    assert!(p.obj(id).is_none(), "{placed:?}: the body is removed");
+    assert!(struck.is_empty(), "{placed:?}: the body struck {struck:?}");
+    assert_eq!(new_loot, 0, "{placed:?}: no second loot");
+    true
+}
+
+#[test]
+fn install_a_defeated_officer_is_lifted_thrown_and_removed_without_loot() {
+    let Some(root) = install() else { return };
+    let bundle = load_level(&root, &LevelChoice::Retail(1)).expect("level 1");
+    let level = bundle.sim_level.clone();
+    let mut sim = Sim::new(level.clone(), SimConfig::default());
+    // Nothing hurts Claw here: a hit would make him drop the body.
+    sim.with_world(|w| {
+        let id = w.claw_id.expect("Claw");
+        w.objects.get_mut(id).expect("Claw").hit_type_flags = 0;
+    });
+    let base = Player::new(sim);
+    assert!(
+        records(&level, "Officer")
+            .into_iter()
+            .any(|placed| lift_and_throw(&base, placed)),
+        "no officer of the level could be lifted after its death"
+    );
+}

@@ -1094,6 +1094,83 @@ fn starting_a_throw_winds_up_a_carried_officer() {
     assert!(winding(&sim), "the officer is told Claw winds up");
 }
 
+/// An officer spawned 40 px in front of Claw and killed where it stands as
+/// on spikes; Claw cannot be hurt during the test.
+fn officer_body(sim: &mut Sim) -> ObjectId {
+    use claw_sim::logic::enemy::{self, DeathKind};
+    let (x, y) = (claw(sim).x, claw(sim).y);
+    let cid = claw_id(sim);
+    set(sim, |w| {
+        w.claw.stats.invulnerable_ms = 1_000_000;
+        w.objects.get_mut(cid).unwrap().hit_type_flags &= !types::ENEMY;
+    });
+    let id = sim.spawn(logic::new_object("Officer", x + 40, y, 4000));
+    idle(sim, 3);
+    set(sim, |w| enemy::die(w, id, DeathKind::Spikes, None));
+    idle(sim, 1);
+    id
+}
+
+fn enemy_state(sim: &Sim, id: ObjectId) -> Option<claw_sim::logic::enemy::EnemyState> {
+    sim.objects()
+        .get(id)
+        .and_then(|o| claw_sim::logic::enemy::EnemyState::from_id(o.state))
+}
+
+#[test]
+fn claw_lifts_carries_and_throws_an_officers_body() {
+    use claw_sim::logic::enemy::{DeathKind, EnemyState, data_of};
+    let mut sim = new_sim(3);
+    let id = officer_body(&mut sim);
+    assert_eq!(enemy_state(&sim, id), Some(EnemyState::Dead));
+    sim.step(press(LIFT));
+    assert_eq!(sim.claw().special.lifted, Some(id));
+    assert_eq!(enemy_state(&sim, id), Some(EnemyState::Lifted));
+    idle(&mut sim, 20);
+    assert!(sim.claw().special.carrying);
+    assert_eq!(enemy_state(&sim, id), Some(EnemyState::Flailing));
+    let (c, o) = (claw(&sim), sim.objects().get(id).unwrap());
+    assert!(o.y < c.y, "held over Claw's head");
+    sim.step(press(LIFT));
+    assert_eq!(claw(&sim).state, state::THROW);
+    let mut seen = Vec::new();
+    for _ in 0..300 {
+        sim.step(TickInput::default());
+        let Some(s) = enemy_state(&sim, id) else {
+            break;
+        };
+        if seen.last() != Some(&s) {
+            seen.push(s);
+        }
+        if s == EnemyState::Dead {
+            let o = sim.objects().get(id).unwrap();
+            assert_eq!(data_of(o).unwrap().death, DeathKind::Landing);
+            assert_eq!(o.type_flags, types::THROWN);
+        }
+    }
+    assert!(seen.contains(&EnemyState::Thrown), "{seen:?}");
+    assert_eq!(seen.last(), Some(&EnemyState::Dead), "{seen:?}");
+    assert!(sim.objects().get(id).is_none(), "removed");
+}
+
+#[test]
+fn claw_never_lifts_a_body_killed_by_the_landing_of_a_throw() {
+    use claw_sim::logic::enemy::{self, DeathKind};
+    let mut sim = new_sim(3);
+    let id = officer_body(&mut sim);
+    // As after a throw: a thrown object that died of its landing.
+    set(&mut sim, |w| {
+        w.objects.get_mut(id).unwrap().type_flags = types::THROWN;
+        enemy::die(w, id, DeathKind::Landing, None);
+    });
+    idle(&mut sim, 1);
+    let o = sim.objects().get(id).unwrap();
+    assert!(o.special_flags & claw_sim::object::special::LIFTABLE != 0);
+    sim.step(press(LIFT));
+    assert_eq!(sim.claw().special.lifted, None);
+    assert_ne!(claw(&sim).state, state::LIFT);
+}
+
 #[test]
 fn up_and_attack_lifts_too_and_nothing_out_of_reach_is_lifted() {
     let mut sim = new_sim(3);
