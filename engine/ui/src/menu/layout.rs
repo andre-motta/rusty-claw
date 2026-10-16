@@ -10,6 +10,22 @@
 //! columns of seven, cell left edges at x 37 and 308, rows 28 pixels apart
 //! from y 213; their back entry keeps its band position. Divisions round
 //! toward zero.
+//!
+//! This game's own text entries are drawn with the menu font magnified by a
+//! whole factor (their zoom), so they stay sharp:
+//!
+//! - on a page of art entries (Options and Display) the zoom is the largest
+//!   that keeps the letters within two thirds of the art rows' height (the
+//!   height of the art's capitals), and each text entry gets a row as tall
+//!   as the art rows with its text centred in it. The art entries keep the
+//!   places they have without the text entries; each text row is inserted
+//!   with the same gap as between the art rows, so the entries after it
+//!   move down (the band grows by those rows, never past the canvas);
+//! - on a page of text entries only, the zoom is 2 ([`TEXT_PAGE_ZOOM`]),
+//!   or 1 on the controls list, whose rows sit on its panel;
+//! - either zoom drops while the widest text would leave less than
+//!   [`MARKER_ROOM`] at each side of the canvas for the markers, or while
+//!   the text rows of a text page would not fit its band.
 
 use super::command::{MenuCommand, MenuKind, Page};
 use super::tree::{Cell, ItemId, MenuTree};
@@ -28,6 +44,12 @@ pub const GRID_TOP: i32 = 213;
 pub const GRID_PITCH: i32 = 28;
 /// Levels in a level list.
 pub const GRID_LEVELS: i32 = 14;
+/// Zoom of the text on this game's own text pages.
+pub const TEXT_PAGE_ZOOM: u32 = 2;
+/// Room kept at each side of a text entry for the markers beside it.
+pub const MARKER_ROOM: i32 = 48;
+/// Share of an art row's height the magnified letters may take.
+pub const ART_LETTER_SHARE: (i32, i32) = (2, 3);
 
 /// Stacks entries of `sizes` centred on the canvas.
 pub fn stacked(sizes: &[(i32, i32)]) -> Vec<Cell> {
@@ -114,18 +136,95 @@ pub fn is_level_list(page: Page) -> bool {
     matches!(page, Page::NewGameLevels | Page::LoadGameLevels)
 }
 
+/// The zoom of text entries `text` wide and high (unmagnified, the widest
+/// and the tallest) on `page`, beside art rows `art_h` high (0 for a page
+/// of text entries only, `rows` of them in `band`).
+pub fn text_zoom(
+    page: Page,
+    art_h: i32,
+    text: (i32, i32),
+    rows: i32,
+    band: Option<(i32, i32)>,
+) -> u32 {
+    let (w, h) = text;
+    if h <= 0 {
+        return 1;
+    }
+    let mut zoom = if art_h > 0 {
+        (art_h * ART_LETTER_SHARE.0 / ART_LETTER_SHARE.1 / h).max(1) as u32
+    } else if page == Page::Controls {
+        1
+    } else {
+        TEXT_PAGE_ZOOM
+    };
+    let fits = |z: i32| {
+        let wide = w * z <= CANVAS.0 - 2 * MARKER_ROOM;
+        let tall = art_h > 0 || band.is_none_or(|(top, bottom)| rows * h * z <= bottom - top);
+        wide && tall
+    };
+    while zoom > 1 && !fits(zoom as i32) {
+        zoom -= 1;
+    }
+    zoom
+}
+
 /// Lays out the entries of `page_item`'s submenu in `tree`.
 pub fn layout(tree: &mut MenuTree, page_item: ItemId) {
     let kids = tree.items[page_item].children.clone();
-    let sizes: Vec<(i32, i32)> = kids.iter().map(|&k| tree.items[k].size).collect();
-    let mut cells = stacked(&sizes);
     let page = tree.items[page_item].page();
     let band = match tree.kind {
         MenuKind::Main => main_band(page),
         MenuKind::InGame => in_game_band(page),
         MenuKind::GameOver => None,
     };
-    if let Some((top, bottom)) = band {
+    let items = &tree.items;
+    let art: Vec<(i32, i32)> = kids
+        .iter()
+        .filter(|&&k| !items[k].shows_text)
+        .map(|&k| items[k].size)
+        .collect();
+    let texts: Vec<(i32, i32)> = kids
+        .iter()
+        .filter(|&&k| items[k].shows_text)
+        .map(|&k| items[k].size)
+        .collect();
+    let art_h = art.iter().map(|s| s.1).max().unwrap_or(0);
+    let widest = (
+        texts.iter().map(|s| s.0).max().unwrap_or(0),
+        texts.iter().map(|s| s.1).max().unwrap_or(0),
+    );
+    let zoom = text_zoom(page, art_h, widest, texts.len() as i32, band);
+    let mut sizes = Vec::with_capacity(kids.len());
+    for &k in &kids {
+        let item = &mut tree.items[k];
+        if item.shows_text {
+            item.zoom = zoom;
+            let z = zoom as i32;
+            sizes.push((item.size.0 * z, (item.size.1 * z).max(art_h)));
+        } else {
+            item.zoom = 1;
+            sizes.push(item.size);
+        }
+    }
+    let mut cells = stacked(&sizes);
+    if let Some((top, mut bottom)) = band {
+        if !art.is_empty() && !texts.is_empty() {
+            // Room for the text rows at the art rows' own gap.
+            let n = art.len() as i32;
+            let sum: i32 = art.iter().map(|s| s.1).sum();
+            let gap = if n > 1 {
+                ((bottom - top - sum) / (n - 1)).max(0)
+            } else {
+                GAP
+            };
+            let rows: i32 = kids
+                .iter()
+                .zip(&sizes)
+                .filter(|&(&k, _)| tree.items[k].shows_text)
+                .map(|(_, s)| s.1 + gap)
+                .sum();
+            bottom = (bottom + rows).min(CANVAS.1);
+        }
         spread(&mut cells, top, bottom);
     }
     if tree.kind == MenuKind::Main && is_level_list(page) {
@@ -144,5 +243,98 @@ pub fn layout(tree: &mut MenuTree, page_item: ItemId) {
     }
     for (cell, k) in cells.into_iter().zip(kids) {
         tree.items[k].cell = cell;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use claw_assets::ifc::IfcNode;
+
+    use super::*;
+    use crate::menu::command::CommandCatalogue;
+
+    /// A menu whose `page` holds entries of `art` sizes (images) and, when
+    /// given, a text entry of `text` size before the last one.
+    fn page_of(
+        kind: MenuKind,
+        page: Page,
+        art: &[(i32, i32)],
+        text: Option<(i32, i32)>,
+    ) -> (MenuTree, ItemId) {
+        let root = IfcNode {
+            command: 10000,
+            ..IfcNode::default()
+        };
+        let mut tree = MenuTree::from_ifc(root, &CommandCatalogue::new(kind));
+        let p = tree.add_text(0, "PAGE", MenuCommand::Open(page));
+        for &size in art {
+            let k = tree.add_text(p, "", MenuCommand::Back);
+            tree.items[k].text = None;
+            tree.items[k].shows_text = false;
+            tree.items[k].size = size;
+        }
+        if let Some(size) = text {
+            let k = tree.add_text(p, "ADDED", MenuCommand::Back);
+            tree.items[k].size = size;
+            let n = tree.items[p].children.len();
+            tree.items[p].children.swap(n - 1, n - 2);
+        }
+        layout(&mut tree, p);
+        (tree, p)
+    }
+
+    fn cells(tree: &MenuTree, page: ItemId) -> Vec<Cell> {
+        tree.items[page]
+            .children
+            .iter()
+            .map(|&k| tree.items[k].cell)
+            .collect()
+    }
+
+    #[test]
+    fn an_added_row_keeps_the_art_rows_and_their_gap() {
+        let art = [(200, 35), (160, 35), (120, 35), (108, 35)];
+        let (plain, p) = page_of(MenuKind::InGame, Page::Options, &art, None);
+        let (tree, q) = page_of(MenuKind::InGame, Page::Options, &art, Some((64, 7)));
+        let before = cells(&plain, p);
+        let after = cells(&tree, q);
+        assert_eq!(&after[..3], &before[..3], "the art rows stay");
+        let gap = before[1].y - (before[0].y + before[0].h);
+        assert_eq!(gap, 4);
+        let added = tree.items[tree.items[q].children[3]].clone();
+        assert_eq!(added.zoom, 3, "letters within two thirds of the rows");
+        assert_eq!(
+            added.cell,
+            Cell {
+                x: 320 - 96,
+                y: before[2].y + 35 + gap,
+                w: 192,
+                h: 35
+            }
+        );
+        assert_eq!(after[4].y, added.cell.y + 35 + gap, "back moves down");
+    }
+
+    #[test]
+    fn an_added_row_never_pushes_entries_off_the_canvas() {
+        let art = [(100, 35); 8];
+        let (tree, q) = page_of(MenuKind::Main, Page::Options, &art, Some((64, 7)));
+        let last = *cells(&tree, q).last().unwrap();
+        assert!(last.y + last.h <= CANVAS.1);
+    }
+
+    #[test]
+    fn text_pages_magnify_twice_unless_they_cannot_fit() {
+        let band = Some((100, 300));
+        assert_eq!(text_zoom(Page::Video, 0, (144, 7), 9, band), 2);
+        assert_eq!(text_zoom(Page::Controls, 0, (144, 7), 9, band), 1);
+        // Too wide for the markers at twice the size.
+        assert_eq!(text_zoom(Page::Video, 0, (300, 7), 9, band), 1);
+        // Too many rows for the band at twice the size.
+        assert_eq!(text_zoom(Page::Video, 0, (100, 7), 15, band), 1);
+        // Beside art rows: as large as fits two thirds of a row.
+        assert_eq!(text_zoom(Page::Options, 35, (64, 7), 1, band), 3);
+        assert_eq!(text_zoom(Page::Options, 35, (200, 7), 1, band), 2);
+        assert_eq!(text_zoom(Page::Options, 35, (64, 0), 1, band), 1);
     }
 }

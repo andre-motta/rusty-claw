@@ -35,4 +35,5 @@ Where a line says "as in the original", compare with the original game.
 29. Take catnip and let it run out: every sparkle around Claw disappears at once when it ends.
 30. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
 31. Watch a rat walk into a wall: it turns back and walks away at its usual pace, as in the original.
-32. Not on level 1, so not checked here: enemies stepping into goo (they take it like spikes), springboards (Claw's jump height, and enemies on them do not launch), loot carried through a warp, and enemies on moving elevators (they stay put).
+32. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
+33. Not on level 1, so not checked here: enemies stepping into goo (they take it like spikes), springboards (Claw's jump height, and enemies on them do not launch), loot carried through a warp, and enemies on moving elevators (they stay put).

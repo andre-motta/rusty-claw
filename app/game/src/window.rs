@@ -45,7 +45,7 @@ use claw_sim::{InputScript, Sim};
 use claw_ui::hud::{Hud, HudArt};
 use claw_ui::menu::command::{MenuKind, Page, VideoSetting};
 use claw_ui::menu::decor::{SPARKLE, Sparkles};
-use claw_ui::menu::draw::{self, FontArt};
+use claw_ui::menu::draw::{self, FontArt, MenuSprite};
 use claw_ui::menu::{CommandCatalogue, MenuTree};
 use claw_ui::screens::assets::{
     BOOTY_SCREENS, MENU_PICTURE, MENU_SCREENS, ScreenAssets, TITLE_PICTURE, TITLE_SCREENS,
@@ -1304,11 +1304,13 @@ impl App {
         self.draw_flow();
     }
 
-    /// The standalone screen the flow shows, if any.
-    fn screen_scene(&mut self) -> Option<ScreenScene> {
+    /// The standalone screen the flow shows, if any, and what is drawn over
+    /// it after it is built (the menu and the notice).
+    fn screen_scene(&mut self) -> Option<(ScreenScene, Vec<MenuSprite>)> {
         let flow = self.flow.as_ref()?;
         let screens = self.screens.as_mut()?;
         let fade = steady_fade(flow.brightness());
+        let mut over = Vec::new();
         let mut scene = match flow.screen() {
             Screen::Title => flow.title()?.scene(),
             Screen::Booty => flow.booty()?.scene(),
@@ -1322,7 +1324,7 @@ impl App {
                     if nav.page() == Page::Controls {
                         sprites.extend(controls_panel("DIALOGS_CONFIGCONTROLS"));
                     }
-                    sprites.extend(draw::sprites(
+                    over.extend(draw::picture(
                         nav,
                         &mut screens.graphics,
                         &flow.menu_state(),
@@ -1339,24 +1341,30 @@ impl App {
             _ => return None,
         };
         if let Some(text) = flow.notice() {
-            scene
-                .sprites
-                .extend(notice_sprites(&mut screens.graphics, text));
+            over.extend(
+                notice_sprites(&mut screens.graphics, text)
+                    .into_iter()
+                    .map(MenuSprite::plain),
+            );
         }
         scene.fade = fade;
-        Some(scene)
+        Some((scene, over))
     }
 
     /// The in-game menu's sprites over the level, and the notice.
-    fn overlay(flow: &Flow, graphics: &mut LevelGraphics) -> Vec<ScreenSprite> {
+    fn overlay(flow: &Flow, graphics: &mut LevelGraphics) -> Vec<MenuSprite> {
         let mut sprites = Vec::new();
         if flow.screen() == Screen::Pause
             && let Some(nav) = flow.in_game_menu()
         {
             if nav.page() == Page::Controls {
-                sprites.extend(controls_panel("GAME_CONFIGCONTROLS"));
+                sprites.extend(
+                    controls_panel("GAME_CONFIGCONTROLS")
+                        .into_iter()
+                        .map(MenuSprite::plain),
+                );
             }
-            sprites.extend(draw::sprites(
+            sprites.extend(draw::picture(
                 nav,
                 graphics,
                 &flow.menu_state(),
@@ -1364,9 +1372,13 @@ impl App {
             ));
         }
         if let Some(text) = flow.notice() {
-            sprites.extend(notice_sprites(graphics, text));
+            sprites.extend(
+                notice_sprites(graphics, text)
+                    .into_iter()
+                    .map(MenuSprite::plain),
+            );
         }
-        draw::centred(sprites)
+        draw::centred_picture(sprites)
     }
 
     fn draw_flow(&mut self) {
@@ -1374,11 +1386,13 @@ impl App {
         let Some(live) = &mut self.live else { return };
         let scene;
         let use_screens;
-        if let Some(sc) = screen {
+        if let Some((sc, over)) = screen {
             let Some(s) = self.screens.as_mut() else {
                 return;
             };
-            scene = live.screen_builder.build(&mut s.graphics, &sc, 0.0);
+            let mut built = live.screen_builder.build(&mut s.graphics, &sc, 0.0);
+            draw::add_to_scene(&mut built, &mut s.graphics, &over);
+            scene = built;
             use_screens = true;
         } else if let (Some(level), Some(builder)) = (&mut self.level, live.builder.as_mut()) {
             let view = *builder.view();
@@ -1388,13 +1402,15 @@ impl App {
             level
                 .status
                 .apply(&mut input, level.session.sim(), presentation);
+            let mut over = Vec::new();
             if let Some(f) = &self.flow {
                 if f.screen() == Screen::Pause {
                     input.screen.extend(shade_sprites(presentation));
                 }
-                input.screen.extend(App::overlay(f, &mut level.graphics));
+                over = App::overlay(f, &mut level.graphics);
             }
             let mut built = builder.build(&mut level.graphics, &input);
+            draw::add_to_scene(&mut built, &mut level.graphics, &over);
             if let Some(g) = self.flow.as_ref().and_then(Flow::game_over) {
                 dim(&mut built, g.brightness());
             }

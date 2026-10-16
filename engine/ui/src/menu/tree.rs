@@ -21,8 +21,10 @@
 //! 2, 4 and 7 empty, so the highlight is a steady swap from slot 0 to slot
 //! 3; community menus may fill the others.
 //!
-//! An entry's label is not drawn. This game's own pages (Video and the
-//! controls list) are entries with text instead of images.
+//! An entry's label is not drawn. This game's own pages (Video, Gameplay
+//! and the controls list) are entries with text instead of images. Such an
+//! entry may also name images in its slots; it then shows them when the art
+//! has them and its text otherwise.
 
 use claw_assets::ifc::{IfcNode, SLOTS};
 
@@ -81,6 +83,12 @@ pub struct MenuItem {
     pub size: (i32, i32),
     /// Where it is drawn when its submenu shows.
     pub cell: Cell,
+    /// True when the entry shows its text: it has text and none of its
+    /// images was found (set when the entry is measured).
+    pub shows_text: bool,
+    /// How many times larger than the menu font its text is drawn, in each
+    /// direction (set by the layout; 1 for entries that show images).
+    pub zoom: u32,
 }
 
 impl MenuItem {
@@ -232,6 +240,8 @@ impl MenuTree {
                 enabled: true,
                 size: (0, 0),
                 cell: Cell::default(),
+                shows_text: false,
+                zoom: 1,
             });
             if let Some(p) = parent {
                 tree.items[p].children.push(id);
@@ -277,6 +287,8 @@ impl MenuTree {
             enabled: true,
             size: (0, 0),
             cell: Cell::default(),
+            shows_text: true,
+            zoom: 1,
         });
         self.items[parent].children.push(id);
         id
