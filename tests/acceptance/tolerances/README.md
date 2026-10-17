@@ -166,35 +166,38 @@ route in `references.toml` at its clock's preset):
 
 ## What the first level's bot routes show
 
-The stores `level1/bot-original-v3` (`c18`) and `level1/bot-v3` (`c60`)
+The stores `level1/bot-original-v4` (`c18`) and `level1/bot-v4` (`c60`)
 hold the original's runs, twice at their clock with identical traces both
 times and from the original's random state at time zero, of the routes
-that were in `tests/acceptance/routes/` before the ten rules listed in
-"What is fixed and what remains" (the goodies, the save points, the
-enemy built beside its limits, the kegs' depth, the walk start and the
-respawn).
+that were in `tests/acceptance/routes/` before the last three rules
+listed in "What is fixed and what remains" (walkers held on walls, the
+goodie's bounce and the respawn's two passes).
 
-- **`c18`.** The game equals the original on all 6691 compared steps
-  (120.4 s): Claw's position, state and physics type, the camera, health,
-  score, lives, ammunition and the random stream. The route loses a life
-  on the death tiles at 97002 ms in both games: it was planned with the
-  walk start the game had before (Claw walked from standing while a
-  direction was held; the original walks on its press), and it does not
-  finish the level. The only difference is the events column's format: in
-  the tick of a save the game also reports the save point and its
-  message.
-- **`c60`.** As for `level1/bot-v2`, whose route starts the same way:
-  within the feel tolerance until Claw is 20 px lower in the jump off the
-  ladder at 3217 ms, then the two runs go different ways.
+- **`c18`.** The game equals the original on all 6452 compared steps
+  (116.1 s) in every column: Claw's position, state and physics type, the
+  camera, health, score, lives, ammunition, the events and the random
+  stream. The random stream first differed at 79542 ms: a rat that ran
+  into a wall at x 12381 stays there in the original, walking on the
+  spot, and rolls again when it comes back into reach, where the game's
+  had turned away. With the rat held there, Claw is hit at 106182 ms and
+  loses a life at 113418 ms in both games, and the route does not finish
+  the level: it was planned while the game's rat walked away.
+- **`c60`.** As for `level1/bot-v2` and `level1/bot-v3`, whose routes
+  start the same way: within the feel tolerance until Claw is 20 px lower
+  in the jump off the ladder at 3217 ms, then the two runs go different
+  ways.
 
 Since that route loses in the original, the bot found the routes in
 `tests/acceptance/routes/` again with these rules (same seed, same
 margin rules); the original has not played the new routes yet.
 
-The earlier stores stay listed as further checks: `level1/bot-original-v2`
-and `level1/bot-v2` hold the routes from before the draws took the
-original's schedule (the `c18` one is now equal on every step too, in
-every column), and
+The earlier stores stay listed as further checks: `level1/bot-original-v3`
+and `level1/bot-v3` hold the routes from before the goodies, save points,
+kegs, walk start and respawn rules (the `c18` one is equal on all 6691
+steps in every column, its life lost at 97002 ms and the respawn
+included), `level1/bot-original-v2` and `level1/bot-v2` the routes from
+before the draws took the original's schedule (the `c18` one is equal on
+every step too, in every column), and
 `level1/bot-original`, `level1/bot`, the `-delay1` stores and
 `level1/bot-original-seg3410` hold earlier routes, whose keys were
 already down on their first row.
@@ -246,11 +249,29 @@ Fixed in the game, and so no longer listed as differences:
   direction still held count as pressed in the next tick: a direction
   pressed during a standing attack walks after the attack's end.
 - **The respawn.** A lost life with lives left ends its tick with Claw
-  dead, and he is back at the checkpoint before the next tick, with the
-  camera and the objects around him set up and one update pass run. The
+  dead, and he is back at the checkpoint before the next tick. The camera
+  moves onto him, the objects out of its reach go to sleep and an update
+  pass runs; then the objects around him wake and a second update pass
+  runs, all at the time of the death. An enemy near both places runs
+  twice (an officer by the checkpoint goes Home in the first pass and
+  strikes from the second); one the respawn wakes runs once. The
   closing and opening circles are drawn by the game's window between the
   two ticks, outside game time, so recordings and traces have no ticks
   for them.
+- **Walkers held on walls.** A walker turns at a limit with its speed
+  reversed and truncated. A wall it runs into halves and reverses its
+  speed and makes where it stood its limit, so the turn on the next tick
+  points it back into the wall: it stays there for good, in the other
+  walking state, walking on the spot (a rat walking right at 60 px/s
+  stands at the wall walking left with 30 px/s to the right).
+- **The goodie's bounce.** A landing goodie hops up from 1 px above where
+  it landed by its exact height: the height is lifted by 1.0 and keeps
+  its fraction (1764.74 becomes 1763.74, not 1763).
+- **Steps of no time in a reference.** The original's step of a save
+  takes no game time, so its row has `dt_ms` 0. The comparison takes such
+  a row as the instant at its time, as if it lasted 1 ms, so the save's
+  checkpoint is found in both traces. The other entries the game reports
+  in that tick (the save point and its message) are not compared.
 
 Known differences that remain, each listed in `references.toml` for the
 routes it touches:
@@ -267,13 +288,9 @@ routes it touches:
     draws nothing there, the game draws one number. Claw's columns stay
     equal until 19620 ms.
 
-  Neither step is traced to its cause yet. The other five `c18` stores
-  are equal on every step in every game column, random stream included;
-  `level1/bot-original-v3` keeps only the events' format difference
-  below.
-- **The events' format.** In the tick of a save the game also reports
-  the save point and its message, which the original's traces do not
-  list (`level1/bot-original-v3`, 36450 ms).
+  Neither step is traced to its cause yet. The other six `c18` stores
+  are equal on every step in every column, random stream and events
+  included.
 - **Open-loop routes at `c60`.** Frames of 16 and 17 ms against the
   game's 18 ms ticks move a landing or a ladder grab by a frame or two,
   and a route played without looking at the game goes another way from
