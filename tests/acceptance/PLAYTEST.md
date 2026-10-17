@@ -37,10 +37,11 @@ an aid on says nothing about how hard the level is.
 27. Charge a keg throw on a crumbling peg until it gives way: the keg drops from Claw's hands as he falls; after any throw the keg never stays in his hands.
 28. Get hit with speech switched off in the options: the hit sound still plays and Claw's pain line is silent.
 29. Take catnip and let it run out: every sparkle around Claw disappears at once when it ends.
-30. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
-31. Watch a rat walk into a wall: it stays against the wall for good, its walk playing on the spot, until it throws a bomb at Claw, as in the original.
-32. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
-33. On level 2, knock an officer or a soldier into a goo pool: it is gone at once, as on spikes (line 4 of the LEVEL2 section). Not checked before the fourth level: springboards (Claw's jump height, and enemies on them do not launch); not checked yet: loot carried through a warp, and enemies on moving elevators (they stay put).
+30. Take an invisibility power-up (on the second or third level): Claw is drawn see-through, the scenery showing through him, until the power-up timer runs out, then solid again. Take the invulnerability power-up (third level): Claw is a dark silhouette whose shade flickers about ten times a second, until its timer runs out. Losing a life ends either look at once; `--invincible` never changes how Claw looks.
+31. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
+32. Watch a rat walk into a wall: it stays against the wall for good, its walk playing on the spot, until it throws a bomb at Claw, as in the original.
+33. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
+34. On level 2, knock an officer or a soldier into a goo pool: it is gone at once, as on spikes (line 4 of the LEVEL2 section). Not checked before the fourth level: springboards (Claw's jump height, and enemies on them do not launch); not checked yet: loot carried through a warp, and enemies on moving elevators (they stay put).
 
 ## Milestone 3, slice 0 (LEVEL1)
 

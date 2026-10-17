@@ -56,6 +56,7 @@ use crate::tuning::{PlayAids, Tuning};
 pub mod attack;
 pub mod death;
 pub mod hit;
+pub mod look;
 pub mod progress;
 pub mod special;
 pub mod stats;
@@ -265,6 +266,8 @@ pub struct Claw {
     pub rope: Option<ObjectId>,
     /// Time left before Claw can grab the rope he let go of again, ms.
     pub rope_regrab_ms: i32,
+    /// How he is drawn while a powerup runs (see [`look`]).
+    pub look: look::Look,
 }
 
 impl Default for Claw {
@@ -301,6 +304,7 @@ impl Default for Claw {
             respawn_pending: false,
             rope: None,
             rope_regrab_ms: 0,
+            look: look::Look::default(),
         }
     }
 }

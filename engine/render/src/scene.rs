@@ -254,7 +254,7 @@ impl<'a> FrameInput<'a> {
                     invert: r.source.invert,
                     flash: r.source.flash,
                     mode: r.source.draw_mode,
-                    color: None,
+                    color: r.source.draw_color,
                     table: None,
                 })
                 .collect(),
