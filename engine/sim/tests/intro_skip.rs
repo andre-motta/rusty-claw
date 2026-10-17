@@ -526,8 +526,12 @@ fn jump_in(level: SimLevel, tuning: ScriptTuning, ticks: u64) -> JumpIn {
             pressed: Buttons(pressed),
         });
         let c = sim.player().unwrap().clone();
-        if arena.is_none() && c.x > START.0 + 3000 {
+        // The door moves Claw between ticks: a warp pending after tick t
+        // puts him in the room for tick t + 1.
+        if arena.is_none() && sim.claw().special.warp_to.is_some() {
             arena = Some(t + 1);
+        }
+        if raux.is_none() && arena.is_some_and(|a| t >= a) {
             raux = sim.boss().current();
         }
         if let (Some(a), Some(r)) = (arena, raux) {
