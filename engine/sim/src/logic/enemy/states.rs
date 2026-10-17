@@ -12,13 +12,15 @@
 //! movement step clamps a walker onto a limit it would cross, so it stands
 //! exactly on it on the tick it arrives.
 //!
-//! A walker turns at a limit with the speed it had, reversed. A wall the
-//! movement step runs into also reverses its speed (at half) and moves the
-//! limit to where it stood; turning that already reversed speed again
-//! would point it back into the wall and hold it on the limit for good.
-//! So a walker whose speed no longer leads away from the limit turns at
-//! the walking speed instead: it walks back and forth between walls as it
-//! does between ledges.
+//! A walker turns at a limit with the speed it had, reversed and
+//! truncated. A wall the movement step runs into also reverses its speed
+//! (at half) and moves the limit to where it stood; the turn on the next
+//! tick reverses that speed once more, so the walker is left pushing into
+//! the wall at half speed in the opposite walking state. The movement step
+//! holds it on the limit, and it stays there, walking on the spot, until
+//! something else changes its state (a rat walking right into a wall at
+//! 60 px/s stands at the wall in MoveLeft with a speed of 30 px/s to the
+//! right).
 
 use crate::logic::World;
 use crate::object::{ObjectId, Rect};
@@ -35,8 +37,7 @@ use crate::object::flags;
 pub const ADVANCE_SPEED: f64 = 60.0;
 /// Running speed toward Claw, px/s.
 pub const FAST_ADVANCE_SPEED: f64 = 120.0;
-/// Walking speed of a walker turning away from a wall, px/s (the rat's
-/// walking speed).
+/// The rat's walking speed, px/s.
 pub const WALK_SPEED: f64 = 60.0;
 /// Pacing speed, px/s.
 pub const PACE_SPEED: f64 = 120.0;
@@ -348,8 +349,9 @@ pub fn move_right(w: &mut World, id: ObjectId, speed: f64) {
     set_anim(w, id, anim);
 }
 
-/// MoveLeft: at the left limit it walks right at its current speed, or
-/// at [`WALK_SPEED`] when a wall already turned that speed around.
+/// MoveLeft: at the left limit it walks right with its current speed
+/// reversed and truncated ([`turn_speed`]); after a wall on its left that
+/// speed leads back into the wall, which holds it there.
 pub fn walk_left_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     if obj(w, id).x == bounds(w, id).0 {
@@ -358,8 +360,9 @@ pub fn walk_left_tick(w: &mut World, id: ObjectId) {
     }
 }
 
-/// MoveRight: at the right limit it walks left at its current speed, or
-/// at [`WALK_SPEED`] when a wall already turned that speed around.
+/// MoveRight: at the right limit it walks left with its current speed
+/// reversed and truncated ([`turn_speed`]); after a wall on its right
+/// that speed leads back into the wall, which holds it there.
 pub fn walk_right_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     if obj(w, id).x == bounds(w, id).1 {
@@ -369,12 +372,11 @@ pub fn walk_right_tick(w: &mut World, id: ObjectId) {
 }
 
 /// The speed a walker turns at, given its current speed reversed (so a
-/// positive value leads away from the limit): that speed, truncated, or
-/// [`WALK_SPEED`] when it does not lead away (see the module
-/// documentation).
+/// positive value leads away from the limit): that speed truncated, as it
+/// is. After a wall it is negative, and the walker keeps pushing into the
+/// wall (see the module documentation).
 pub fn turn_speed(reversed: f64) -> f64 {
-    let speed = reversed.trunc();
-    if speed > 0.0 { speed } else { WALK_SPEED }
+    reversed.trunc()
 }
 
 // ----------------------------------------------------------------------

@@ -41,22 +41,31 @@
 # Left, and an attack's end or cancel makes a direction still held count
 # as pressed on the next tick; (17) a lost life with lives left ends the
 # tick with Claw dead and he respawns before the next tick, the circles
-# drawn outside game time. The rule numbers below refer to this list.
+# drawn outside game time. Three more hold whole routes to the end: (18)
+# a walker that a wall turned turns again with that speed truncated, which
+# leads back into the wall, so it stays on the wall's limit walking the
+# other way; (19) a goodie's bounce lifts its exact height by 1.0 and
+# keeps the fraction; (20) the respawn runs an update pass, wakes the
+# objects around Claw and runs a second pass, all at the time of the
+# death. The comparison itself takes a reference step of no game time
+# (the original's step of a save, `dt_ms` 0) as the instant at its time,
+# so the save's checkpoint is found in both traces. The rule numbers below
+# refer to this list.
 #
-# The last two entries (`level1/bot-original-v3` and `level1/bot-v3`) are
+# The last two entries (`level1/bot-original-v4` and `level1/bot-v4`) are
 # the original's runs of the routes that were in tests/acceptance/routes/
-# before rules 8 to 17, and are the ones to read first: at one 18 ms step
-# per frame the game now equals the original on every compared row of
-# `level1/bot-original-v3` but for the events' format. That route loses a
-# life in the original, as it now does in the game (it relied on the
-# walk start before rule 16), so the routes were found again by the bot.
-# The entries before them hold runs of earlier routes and stay as further
-# checks; they are never replaced, only tightened. With rules 8 to 17,
-# five of the seven `c18` stores (`level1/opening`, `level1/bot-original`,
-# `level1/video`, `level1/bot-original-v2` and `level1/bot-original-v3`)
-# are equal to the original in every game column of every compared row,
-# random stream included; `level1/bot-original-v3` still differs in the
-# events' format in the tick of a save. The other two
+# before rules 18 to 20, and are the ones to read first: at one 18 ms step
+# per frame the game equals the original on every compared row of
+# `level1/bot-original-v4`, events included. That route loses a life in
+# the original, as it now does in the game (it was planned while the rat
+# by x 12381 turned away from its wall, before rule 18), so the routes
+# were found again by the bot. The entries before them hold runs of
+# earlier routes and stay as further checks; they are never replaced, only
+# tightened. With rules 8 to 20, six of the eight `c18` stores
+# (`level1/opening`, `level1/bot-original`, `level1/video`,
+# `level1/bot-original-v2`, `level1/bot-original-v3` and
+# `level1/bot-original-v4`) are equal to the original in every column of
+# every compared row, random stream and events included. The other two
 # (`level1/bot-original-delay1` and `level1/bot-original-seg3410`) keep
 # the steps listed in their entries.
 
@@ -275,16 +284,17 @@ known.lives = 30750
 # tests/acceptance/routes/level1-original.csv, original speeds), one 18 ms
 # step per frame from the original's random state at time zero. Equal on
 # every compared row (6691 steps, 120.4 s): Claw's position, state,
-# physics type, health, score, lives, ammunition, the camera and the random
-# stream, the life lost on the death tiles at 97002 ms and the respawn
-# included. Only the events column differs, in format: in the tick of a
-# save (36450 ms) the game also reports the save point and its message,
-# which the original's trace does not list.
+# physics type, health, score, lives, ammunition, the camera, the random
+# stream and the events, the life lost on the death tiles at 97002 ms and
+# the respawn included. The events first differed at 36450 ms, the save's
+# step of no game time in the original's trace (now compared as the
+# instant at its time). The respawn wakes the officer and the soldier by
+# the checkpoint between its two passes (rule 20): they run once in it,
+# and the random stream holds.
 [[compare]]
 reference = "level1/bot-original-v3"
 clock = "c18"
 tolerance = "exact"
-known.events = 36450
 
 # The bot's route of the first level before rules 8 to 17 (an earlier
 # tests/acceptance/routes/level1.csv, default tuning) at 60 frames per
@@ -307,3 +317,41 @@ known.score = 4300
 known.events = 7560
 known.health = 22084
 known.lives = 30817
+
+# The bot's route of the first level before rules 18 to 20 (an earlier
+# tests/acceptance/routes/level1-original.csv, original speeds), one 18 ms
+# step per frame from the original's random state at time zero. Equal on
+# every compared row (6452 steps, 116.1 s), the random stream and the
+# events included. The random stream first differed at 79542 ms before
+# rule 18: the rat that ran into a wall at x 12381 at 77346 ms stays there
+# in the original, walking left with its speed pointing right, and rolls
+# again when it comes back into reach; in the game it had turned away.
+# With the rat held there Claw is hit at 106182 ms and loses a life at
+# 113418 ms in both games, and the route does not finish the level. The
+# goodie's bounce (rule 19, 83826 ms) and the respawn's second pass (rule
+# 20, 114282 ms) each first differed in the random stream for a step; the
+# events first differed at 36144 ms, the save's step of no game time.
+[[compare]]
+reference = "level1/bot-original-v4"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's route of the first level before rules 18 to 20 (an earlier
+# tests/acceptance/routes/level1.csv, default tuning) at 60 frames per
+# second. It starts as the routes of `level1/bot-v2` and `level1/bot-v3`
+# do, and first differs at 3217 ms the same way, 20 px lower in the jump
+# off the ladder; the runs go different ways from there, and Claw's
+# health first differs at 39584 ms.
+[[compare]]
+reference = "level1/bot-v4"
+clock = "c60"
+tolerance = "feel"
+known.y = 3217
+known.cam_y = 3217
+known.state_id = 3784
+known.physics_type = 3784
+known.x = 3867
+known.cam_x = 3867
+known.score = 4300
+known.events = 7560
+known.health = 39584

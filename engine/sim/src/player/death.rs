@@ -311,8 +311,9 @@ fn lives_step(c: &mut Ctx) {
 /// The respawn after the lives step, between two ticks: Claw is back at
 /// the checkpoint (or the level start) with full health, standing, and
 /// the opening circle is reported for the presentation (see the [module
-/// documentation](self)). [`crate::Sim`] then centres the camera and the
-/// activation on him and runs one update pass.
+/// documentation](self)). [`crate::Sim`] then centres the camera on him,
+/// puts the objects out of its reach to sleep, runs an update pass, wakes
+/// the objects around him and runs a second update pass.
 pub fn respawn_between_ticks(c: &mut Ctx) {
     c.p.respawn_pending = false;
     let at_level_start = c.p.checkpoint.is_none();

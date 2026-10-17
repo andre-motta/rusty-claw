@@ -185,6 +185,53 @@ fn a_goodie_moves_on_an_exact_position() {
     assert_eq!(obj(&sim, id).y, y.trunc() as i32);
 }
 
+/// A falling coin at whole pixel `y` whose exact height is `y + frac`,
+/// found landed by its next call, falling at 300 px/s; one tick is
+/// stepped. Returns its whole y and its exact position after the tick.
+fn bounce_from(frac: f64) -> (i32, Goodie) {
+    let mut sim = Sim::new(coin_level(None), SimConfig::default());
+    let id = drop_coin(&mut sim, (1300, 700), (0.0, 300.0));
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(id).unwrap();
+        o.physics_type = ptype::STAND;
+        if let claw_sim::ObjectData::Pickup(d) = &mut o.data {
+            d.goodie.as_mut().unwrap().pos.1 = 700.0 + frac;
+        }
+    });
+    sim.step(TickInput::default());
+    let o = obj(&sim, id);
+    assert_eq!(o.state, pstate::GOODIE_BOUNCING, "it bounced");
+    (o.y, goodie(&sim, id))
+}
+
+#[test]
+fn a_goodie_bounce_lifts_its_exact_height_by_one_and_keeps_the_fraction() {
+    // A landing the floor did not stop short keeps the fraction of its
+    // last move (1764.7374 was seen on the first level): the bounce lifts
+    // the exact height by 1.0 and the hop starts from there, not from the
+    // whole pixel above.
+    let (y0, whole) = bounce_from(0.0);
+    let (y1, part) = bounce_from(0.7374);
+    assert_eq!(whole.vy, part.vy, "the same hop");
+    assert!(whole.vy < 0.0, "going up");
+    let lifted = part.pos.1 - whole.pos.1;
+    assert!(
+        (lifted - 0.7374).abs() < 1e-9,
+        "the fraction is kept: {lifted}"
+    );
+    // The whole bounce starts from 699.0, 1 px above where it landed, and
+    // rises 2.55 px in its first tick: the two are a pixel apart.
+    let dt = 0.018;
+    let v0 = whole.vy - pickup::GOODIE_GRAVITY * dt;
+    let hop = v0 * dt + 0.5 * pickup::GOODIE_GRAVITY * dt * dt;
+    assert!(
+        (whole.pos.1 - (699.0 + hop)).abs() < 1e-9,
+        "{}",
+        whole.pos.1
+    );
+    assert_eq!((y0, y1), (696, 697));
+}
+
 #[test]
 fn a_wall_turns_a_goodie_around_at_half_speed() {
     // A wall from x 1408 on: the coin's move box reaches 23 px to its
@@ -558,6 +605,93 @@ fn claw_respawns_between_two_ticks() {
         played(&snap.audio, "GAME_FLAGWAVE"),
         "back at the level start"
     );
+}
+
+/// A flying coin at (x, y) that sleeps out of reach like a small object
+/// (a goodie is otherwise always awake).
+fn sleeping_coin(sim: &mut Sim, x: i32, y: i32) -> ObjectId {
+    sim.with_world(|w| {
+        let id = pickup::spawn_drop(w, x, y, pickup::COIN_CODE).unwrap();
+        w.objects.get_mut(id).unwrap().flags &= !flags::ALWAYS_ACTIVE;
+        id
+    })
+}
+
+#[test]
+fn the_respawn_runs_an_update_pass_before_and_after_the_objects_around_claw_wake() {
+    // Death tiles far from the level start, and a rat walking near them.
+    let mut rows = vec![".".repeat(200); 15];
+    let mut floor = "#".repeat(200);
+    floor.replace_range(150..153, "xxx");
+    rows.push(floor);
+    rows.push("#".repeat(200));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600));
+    let mut rat = ObjectSpec::at("Rat", 9200, 926, 0);
+    rat.image_set = "LEVEL_RAT".to_string();
+    level.objects.push(rat);
+    let mut sim = pressing_sim(level, SimConfig::default());
+    idle(&mut sim, 3);
+    let start = (sim.player().unwrap().x, sim.player().unwrap().y);
+    sim.teleport_player(9300, 899);
+    idle(&mut sim, 3);
+    sim.step(press(RIGHT));
+    // A coin by the start while Claw dies far from it: it goes to sleep.
+    let mut asleep = None;
+    let mut died = false;
+    for _ in 0..400 {
+        let dying = sim.player().unwrap().state == state::DEATH;
+        if dying && asleep.is_none() {
+            asleep = Some(sleeping_coin(&mut sim, 1100, 300));
+        }
+        let snap = sim.step(if dying {
+            TickInput::default()
+        } else {
+            hold(RIGHT)
+        });
+        if snap.events.contains(&GameEvent::ClawDied { lives_left: 6 }) {
+            died = true;
+            break;
+        }
+    }
+    assert!(died, "Claw died on the death tiles");
+    let asleep = asleep.expect("the coin dropped while Claw died");
+    assert!(
+        !sim.objects().listed().contains(&asleep),
+        "the coin by the start sleeps"
+    );
+    let slept_age = goodie(&sim, asleep).age_ms;
+    let rat = find(&sim, "Rat")[0];
+    let walking = obj(&sim, rat).clone();
+    assert!(
+        matches!(
+            enemy::EnemyState::from_id(walking.state),
+            Some(enemy::EnemyState::MoveLeft | enemy::EnemyState::MoveRight)
+        ),
+        "the rat is awake and walking when Claw dies"
+    );
+    // Two coins awake in the air by the start when the life is lost.
+    let awake = sim.with_world(|w| pickup::spawn_drop(w, 1100, 300, pickup::COIN_CODE).unwrap());
+    let near = sleeping_coin(&mut sim, 1150, 300);
+    let age = goodie(&sim, awake).age_ms;
+    assert!(sim.respawn_now());
+    assert_eq!((sim.player().unwrap().x, sim.player().unwrap().y), start);
+    // Two update passes: the coins awake by the start ran twice, whether
+    // they are always awake or within the camera's reach.
+    assert_eq!(goodie(&sim, awake).age_ms, age + 2 * 18, "two calls");
+    assert_eq!(goodie(&sim, near).age_ms, age + 2 * 18, "two calls");
+    // The camera moved to the start first: the rat by the death tiles was
+    // put to sleep before the first pass and did not run.
+    let o = obj(&sim, rat);
+    assert_eq!((o.x, o.y, o.state), (walking.x, walking.y, walking.state));
+    assert_eq!(
+        enemy::data_of(o).map(|d| (d.vx, d.last_move_ms)),
+        enemy::data_of(&walking).map(|d| (d.vx, d.last_move_ms)),
+        "not run in the respawn"
+    );
+    // The sleeping coin by the start woke between the passes: it ran once.
+    assert!(sim.objects().listed().contains(&asleep), "woken");
+    assert_eq!(goodie(&sim, asleep).age_ms, slept_age + 18, "one call");
 }
 
 #[test]

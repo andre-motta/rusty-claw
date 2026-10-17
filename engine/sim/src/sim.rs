@@ -727,13 +727,13 @@ impl Sim {
 
     /// Runs the respawn [`Sim::respawn_pending`] waits for now, between two
     /// ticks, as the next [`Sim::step`] would before its tick: Claw is back
-    /// at the checkpoint, the camera and the activation are centred on him
-    /// and one update pass runs, all without game time. The sound cues and
-    /// events it makes become [`Sim::last_audio`] and [`Sim::last_events`]
-    /// (and so the snapshot's), and the screen transition is the opening
-    /// circle until the next tick. A presentation calls it when its
-    /// closing circle is over, to draw the opening circle on the respawned
-    /// Claw. False when no respawn was pending.
+    /// at the checkpoint, the camera is centred on him, and two update
+    /// passes run around the activation's update, all without game time.
+    /// The sound cues and events it makes become [`Sim::last_audio`] and
+    /// [`Sim::last_events`] (and so the snapshot's), and the screen
+    /// transition is the opening circle until the next tick. A presentation
+    /// calls it when its closing circle is over, to draw the opening circle
+    /// on the respawned Claw. False when no respawn was pending.
     pub fn respawn_now(&mut self) -> bool {
         if !self.claw.respawn_pending {
             return false;
@@ -746,8 +746,13 @@ impl Sim {
     }
 
     /// The respawn between ticks (see [`player::death`]): Claw at the
-    /// checkpoint, the camera on him at once, the objects around him
-    /// woken, and one update pass with the held keys and nothing pressed.
+    /// checkpoint and the camera on him at once; the objects now out of
+    /// the camera's reach go to sleep and an update pass runs; then the
+    /// objects around Claw wake and a second update pass runs. Both passes
+    /// run at the time of the death, with the held keys and nothing
+    /// pressed. An object near both places runs twice (an enemy the first
+    /// pass sends Home makes Home's draws in the second and can start its
+    /// strike there); one the respawn wakes runs once.
     fn respawn_between_ticks(&mut self) {
         let Some(id) = self.player else {
             self.claw.respawn_pending = false;
@@ -776,12 +781,13 @@ impl Sim {
             let (mut runner, objects, activation) = self.parts();
             activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
         }
-        self.activation.enter(&mut self.objects, c);
-        // Inferred: the pass runs with the keys of the tick that took the
+        // Inferred: the passes run with the keys of the tick that took the
         // life still held but nothing newly pressed, so a press made in
         // that tick neither makes the respawned Claw jump nor starts a
         // walk before the next tick's input arrives.
         self.claw_input.pressed = Buttons::NONE;
+        self.update_pass();
+        self.activation.enter(&mut self.objects, c);
         self.update_pass();
         self.respawned = true;
     }

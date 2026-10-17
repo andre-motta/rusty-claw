@@ -982,11 +982,19 @@ fn compared_events(r: &TraceRow) -> Vec<&str> {
         .collect()
 }
 
-/// Rows of `rows` whose span `(t_ms - dt_ms, t_ms]` meets the closed
-/// window `[lo, hi]` (times in ms, possibly negative).
+/// The length of a row's span in ms: its `dt_ms`, or 1 ms for a row with
+/// `dt_ms` 0. A step that took no game time (the original's step of a
+/// save, which restarts its frame clock) is the instant at its `t_ms`, so
+/// a game event in it is found in the other trace at that time.
+fn span_ms(r: &TraceRow) -> i64 {
+    i64::from(r.dt_ms.max(1))
+}
+
+/// Rows of `rows` whose span `(t_ms - span, t_ms]` meets the closed window
+/// `[lo, hi]` (times in ms, possibly negative; see [`span_ms`]).
 fn rows_meeting(rows: &[TraceRow], lo: i64, hi: i64) -> impl Iterator<Item = usize> + '_ {
     let start = rows.partition_point(|r| (r.t_ms as i64) < lo);
-    (start..rows.len()).take_while(move |&k| (rows[k].t_ms as i64 - i64::from(rows[k].dt_ms)) < hi)
+    (start..rows.len()).take_while(move |&k| (rows[k].t_ms as i64 - span_ms(&rows[k])) < hi)
 }
 
 /// The index of the row whose span `(t_ms - dt_ms, t_ms]` contains `t`:
@@ -1006,7 +1014,8 @@ fn row_at(rows: &[TraceRow], t: u64) -> Option<usize> {
 /// column's slack either way (a step function shifted by at most the
 /// slack). Game events of the kinds in [`COMPARED_EVENTS`] must appear in
 /// the other trace within the event slack, in both directions (the kinds in
-/// [`NAME_ONLY_EVENTS`] by name alone). Reference rows past the end of the
+/// [`NAME_ONLY_EVENTS`] by name alone); a row with `dt_ms` 0 is the instant
+/// at its `t_ms`, as if it lasted 1 ms. Reference rows past the end of the
 /// rebuild trace are counted, not compared, except that a game event in
 /// them is a divergence: the rebuild trace ended before reaching it (a
 /// level end the rebuild never shows, for example).
@@ -1072,7 +1081,7 @@ pub fn compare(rebuild: &[TraceRow], reference: &[TraceRow], tol: &Tolerances) -
             let summary = &mut per_column[slot];
             if c.group == Group::Events {
                 let slack = i64::from(ct.slack_ms);
-                let start = t - i64::from(r.dt_ms);
+                let start = t - span_ms(r);
                 for e in compared_events(r) {
                     summary.compared += 1;
                     let found = rows_meeting(rebuild, start - slack + 1, t + slack).any(|k| {
@@ -1141,7 +1150,7 @@ pub fn compare(rebuild: &[TraceRow], reference: &[TraceRow], tol: &Tolerances) -
                 break;
             }
             let t = b.t_ms as i64;
-            let start = t - i64::from(b.dt_ms);
+            let start = t - span_ms(b);
             for e in compared_events(b) {
                 per_column[slot].compared += 1;
                 let found = rows_meeting(reference, start - slack + 1, t + slack).any(|i| {
@@ -1319,6 +1328,30 @@ mod tests {
         assert!(same_event("level_complete", "level_complete:0"));
         assert!(!same_event("level_complete", "game_over"));
         assert!(!same_event("claw_died:5", "claw_died:4"));
+    }
+
+    #[test]
+    fn an_event_in_a_reference_step_of_no_time_is_found_at_its_instant() {
+        // The original's save step takes no game time: its row repeats the
+        // previous row's time plus its own 18 ms with dt_ms 0, and the
+        // rebuild's tick ending at that time has the same checkpoint.
+        let mut rebuild = rows(10, "script");
+        let mut reference = rows(10, "reference");
+        rebuild[5].events = "checkpoint:6873:4938|save_point:1".into();
+        reference[5].dt_ms = 0;
+        reference[5].events = "checkpoint:6873:4938".into();
+        let c = compare(&rebuild, &reference, &Tolerances::exact());
+        assert!(c.passed(), "{:?}", c.first_divergence);
+        let events = c.per_column.iter().find(|s| s.column == "events").unwrap();
+        assert_eq!((events.compared, events.diverged), (2, 0));
+        // At another time it is still a divergence, both ways.
+        reference[5].events.clear();
+        reference[6].dt_ms = 0;
+        reference[6].events = "checkpoint:6873:4938".into();
+        let c = compare(&rebuild, &reference, &Tolerances::exact());
+        let events = c.per_column.iter().find(|s| s.column == "events").unwrap();
+        assert_eq!(events.diverged, 2);
+        assert_eq!(c.first_divergence.unwrap().t_ms, 6 * 18);
     }
 
     #[test]

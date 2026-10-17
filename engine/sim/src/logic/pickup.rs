@@ -1282,7 +1282,9 @@ fn goodie_tick(w: &mut World, id: ObjectId) {
 }
 
 /// A landing goodie hops back up at half speed (at most 500 px/s), from
-/// 1 px above where it landed.
+/// 1 px above where it landed: the exact position is lifted by 1.0 and
+/// keeps its fraction (a landing the floor did not stop short keeps the
+/// fraction of its last move, 1764.74 lifting to 1763.74).
 fn bounce(o: &mut Object, g: &mut Goodie) {
     g.bounces += 1;
     o.state = state::GOODIE_BOUNCING;
@@ -1290,7 +1292,7 @@ fn bounce(o: &mut Object, g: &mut Goodie) {
     o.y -= 1;
     let v = (g.vy * g.vy - 2.0 * g.gravity).max(0.0).sqrt();
     g.vy = (-0.5 * v).max(-GOODIE_MAX_BOUNCE);
-    g.pos.1 = f64::from(o.y);
+    g.pos.1 -= 1.0;
 }
 
 // ------------------------------------------------------------ the boss's gem

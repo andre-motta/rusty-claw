@@ -11,7 +11,7 @@ an aid on says nothing about how hard the level is.
 1. Strike an officer standing, crouching and in the air: each blow lands when the sword or fist reaches him, he flinches and slides back, and he dies as quickly as in the original.
 2. Let an officer strike you: one hit sound and pain line, a short push back, then a moment in which he cannot hurt you again.
 3. Stand at range from a soldier: he aims and fires a musket ball (10 health), and clubs you up close; the pistol and the sword kill him.
-4. Stand near a rat: it throws a bomb that explodes on you; a crouching swipe kills it, and a rat walking into a wall turns back.
+4. Stand near a rat: it throws a bomb that explodes on you; a crouching swipe kills it, and a rat walking into a wall stays against it.
 5. Fire the pistol, magic and dynamite (hold the fire key to throw dynamite farther): each uses one shot, the status bar counts it down, and with none left nothing leaves.
 6. Lift a powder keg (Z), carry it, throw it at an enemy: it explodes and kills him; carrying feels as slow as in the original.
 7. Break crates with the sword: their contents bounce out and can be picked up; stacked crates above drop down.
@@ -38,7 +38,7 @@ an aid on says nothing about how hard the level is.
 28. Get hit with speech switched off in the options: the hit sound still plays and Claw's pain line is silent.
 29. Take catnip and let it run out: every sparkle around Claw disappears at once when it ends.
 30. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
-31. Watch a rat walk into a wall: it turns back and walks away at its usual pace, as in the original.
+31. Watch a rat walk into a wall: it stays against the wall for good, its walk playing on the spot, until it throws a bomb at Claw, as in the original.
 32. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
 33. Not on level 1, so not checked here: enemies stepping into goo (they take it like spikes), springboards (Claw's jump height, and enemies on them do not launch), loot carried through a warp, and enemies on moving elevators (they stay put).
 

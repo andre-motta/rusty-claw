@@ -427,20 +427,37 @@ fn install_two_idle_minutes_with_every_enemy_awake() {
         outside.is_empty(),
         "enemies outside the level: {outside:#?}"
     );
-    // A walking rat turns at a wall as at a ledge: it is never held
-    // against a limit walking into it, and keeps walking back and forth.
+    // A walking rat walks back and forth between its limits and ledges
+    // until it runs into a wall; the wall then holds it for good, walking
+    // the other way with half its speed pointing into the wall.
     let rats: Vec<String> = held
         .iter()
-        .map(|(id, (_, longest, turns, _))| format!("{id}: held {longest}, turns {turns}"))
+        .map(|(id, (now, longest, turns, _))| {
+            format!("{id}: held {longest} ({now} to the end), turns {turns}")
+        })
         .collect();
     eprintln!("walking rats: {rats:?}");
-    let stuck: Vec<&String> = held
+    let odd: Vec<&String> = held
         .iter()
         .zip(&rats)
-        .filter(|((_, (_, longest, turns, _)), _)| *longest > 2 || *turns < 10)
+        .filter(|((id, (now, longest, turns, vx)), _)| {
+            let walks = *longest == 0 && *turns >= 10;
+            let on_limit = sim.objects().get(**id).is_some_and(|o| {
+                enemy::data_of(o).is_some_and(|d| o.x == d.bounds.0 || o.x == d.bounds.1)
+            });
+            let at_wall = *longest > 0 && now == longest && vx.abs() == 30.0 && on_limit;
+            !(walks || at_wall)
+        })
         .map(|(_, r)| r)
         .collect();
-    assert!(stuck.is_empty(), "walking rats held on a limit: {stuck:#?}");
+    assert!(
+        odd.is_empty(),
+        "walking rats neither walking nor held by a wall: {odd:#?}"
+    );
+    assert!(
+        held.values().any(|e| e.1 == 0),
+        "some rat walks the whole time"
+    );
     // The enemies' own share: every enemy's logic call, once per round.
     let ids: Vec<ObjectId> = sim
         .objects()
