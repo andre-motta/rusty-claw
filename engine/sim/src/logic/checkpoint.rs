@@ -14,6 +14,14 @@
 //! saved and the not-saved message ([`MESSAGE_NOT_SAVED`]) shows instead.
 //! Every message shows for [`MESSAGE_MS`].
 //!
+//! Saving the game uses the shared random stream: the saved data is
+//! scrambled three times, each time from a stream started at
+//! [`SAVE_KEY`] and drawn once, so after every save the stream is in the
+//! same state ([`after_save`]), whatever happened before. The save also
+//! restarts the frame clock, so what runs after the tick's logic in that
+//! tick (the ambient sounds' timers) counts no time
+//! ([`World::reset_frame_time`]).
+//!
 //! A level started from a save point has that save point's flag removed
 //! (see [`crate::player::progress`]).
 
@@ -22,6 +30,7 @@ use claw_frame::GameEvent;
 use super::World;
 use crate::logic::ObjectData;
 use crate::object::{ObjectId, Rect, engine_state, flags, types};
+use crate::rng::Rng;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &[
@@ -50,6 +59,21 @@ pub const SAVE_POINT_REACH: i32 = 64;
 pub const FLAG_BOX: Rect = Rect::new(-30, -49, -3, 62);
 /// Touch box of a save point's flag before its extra reach.
 pub const SAVE_POINT_BOX: Rect = Rect::new(-30, -59, -3, 62);
+
+/// The state the save starts the shared random stream from each of the
+/// three times it scrambles the saved data.
+pub const SAVE_KEY: u32 = 1_297_109_589;
+/// Times the save starts the stream from [`SAVE_KEY`] and draws once.
+pub const SAVE_DRAWS: usize = 3;
+
+/// What saving the game leaves in the shared random stream: [`SAVE_DRAWS`]
+/// times, the stream starts from [`SAVE_KEY`] and gives one number.
+pub fn after_save(rng: &mut Rng) {
+    for _ in 0..SAVE_DRAWS {
+        *rng = Rng::new(SAVE_KEY);
+        rng.next_u15();
+    }
+}
 
 /// Message id of "Your game has been saved".
 pub const MESSAGE_SAVED: u32 = 1;
@@ -162,6 +186,8 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
         });
     } else {
         w.event(GameEvent::SavePoint { slot });
+        after_save(w.rng);
+        w.reset_frame_time();
         w.event(GameEvent::Message {
             id: MESSAGE_SAVED,
             ms: MESSAGE_MS,

@@ -37,6 +37,11 @@
 //!
 //! The circle test is done per composition-target pixel at the centre of
 //! the pixel, which at scale 1 is exactly the game's pixel rule.
+//!
+//! A transition shown while no game time passes (the circles of a death,
+//! drawn between two ticks) is timed by the presentation instead:
+//! [`transition_at`] places it so that a frame at a given simulation time
+//! shows it a given time in.
 
 use claw_assets::Palette;
 use claw_frame::{AspectPolicy, DEFAULT_LOGIC_HEIGHT, DEFAULT_LOGIC_WIDTH};
@@ -243,6 +248,29 @@ pub fn elapsed_ms(t: &ScreenTransition, time_ms: f64) -> f64 {
     let start = t.start_tick as f64 * f64::from(TICK_MS);
     let e = time_ms - start;
     if e.is_finite() { e } else { 0.0 }
+}
+
+/// `t` restarted for a frame drawn at simulation time `frame_ms` with no
+/// game time passing, and the time to draw that frame at so that it shows
+/// `t` `elapsed_ms` in (negative: before it starts): the transition starts
+/// at the tick of `frame_ms` (rounded down), and the frame's time is that
+/// tick's time plus `elapsed_ms`.
+pub fn transition_at(
+    t: &ScreenTransition,
+    frame_ms: f64,
+    elapsed_ms: f64,
+) -> (ScreenTransition, f64) {
+    let tick = if frame_ms.is_finite() && frame_ms > 0.0 {
+        (frame_ms / f64::from(TICK_MS)).floor() as u64
+    } else {
+        0
+    };
+    let restarted = ScreenTransition {
+        start_tick: tick,
+        ..*t
+    };
+    let time = tick as f64 * f64::from(TICK_MS) + elapsed_ms;
+    (restarted, time)
 }
 
 /// The step count of a circle centred on art pixel (cx, cy) in a

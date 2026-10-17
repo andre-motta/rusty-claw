@@ -297,7 +297,7 @@ fn freeze_claw_now_takes_effect_in_the_same_tick_until_the_fight_starts() {
     let mut sim = pressing_sim(flat_level(), SimConfig::default());
     idle(&mut sim, 30);
     // Walking left with an attack running.
-    sim.step(hold(LEFT));
+    sim.step(press(LEFT));
     sim.step(hold(LEFT));
     // An attack running, as a blow leaves it.
     sim.with_world(|w| w.claw.attacking = true);

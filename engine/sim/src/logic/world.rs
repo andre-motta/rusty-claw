@@ -49,6 +49,7 @@ pub struct Outbox {
     spawned: Vec<ObjectId>,
     shake_ms: Option<u32>,
     voice: Vec<VoiceRequest>,
+    frame_time_reset: bool,
     pub(crate) boss: BossState,
 }
 
@@ -66,6 +67,13 @@ impl Outbox {
     /// Adds a game event.
     pub fn event(&mut self, event: GameEvent) {
         self.events.push(event);
+    }
+
+    /// Restarts the frame clock, as saving the game does: the rest of the
+    /// tick's work after its logic (the ambient sounds' timers) counts no
+    /// time.
+    pub fn reset_frame_time(&mut self) {
+        self.frame_time_reset = true;
     }
 
     /// Starts or ends a palette fade.
@@ -134,8 +142,23 @@ impl Outbox {
         &self.boss
     }
 
-    /// Takes the tick's cues and events, leaving the fade and transition.
+    /// The frame clock was restarted in this tick (a save, see
+    /// [`World::reset_frame_time`]): what runs after the tick's logic counts
+    /// no time.
+    pub fn frame_time_reset(&self) -> bool {
+        self.frame_time_reset
+    }
+
+    /// The time the work after the tick's logic counts for this tick, ms:
+    /// one tick, or none after [`World::reset_frame_time`].
+    pub fn frame_ms(&self) -> u32 {
+        if self.frame_time_reset { 0 } else { TICK_MS }
+    }
+
+    /// Takes the tick's cues and events, leaving the fade and transition;
+    /// the frame clock counts again from the next tick.
     pub(crate) fn take_tick(&mut self) -> (Vec<AudioCue>, Vec<GameEvent>) {
+        self.frame_time_reset = false;
         (
             std::mem::take(&mut self.audio),
             std::mem::take(&mut self.events),
@@ -229,6 +252,11 @@ impl World<'_> {
     /// Adds a game event to the tick.
     pub fn event(&mut self, event: GameEvent) {
         self.out.event(event);
+    }
+
+    /// Restarts the frame clock (see [`Outbox::reset_frame_time`]).
+    pub fn reset_frame_time(&mut self) {
+        self.out.reset_frame_time();
     }
 
     /// Starts the animation registered under `key` on `id`; false when the
