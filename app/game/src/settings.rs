@@ -20,6 +20,7 @@
 //! fps_cap = 300             # with vsync off, 1 to 10000
 //! interpolation = true
 //! status_bar = "edges"      # edges, or centred in the 4:3 area
+//! front_layer = on          # off: the level's front plane is not drawn
 //! audio = on                # on or off
 //! sound_volume = 80         # 0 to 100
 //! music_volume = 50         # 0 to 100
@@ -61,7 +62,12 @@
 //! they play with it off unless the command line turns it on, and a replay
 //! follows the line its recording carries (see
 //! [`crate::session::script_behaviour`]), so a recorded route plays the
-//! same on every machine.
+//! same on every machine. A replay also plays with the movement tuning and
+//! the random seed its script's header names (`# tuning default|original`,
+//! `# seed N`; see [`Settings::follow_header`]).
+//!
+//! The front layer switch (`front_layer`, also in the Display menu) only
+//! changes what is drawn: off, the level's front plane is left out.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -77,7 +83,8 @@ use claw_audio::AudioSettings;
 use claw_frame::{
     AspectPolicy, DEFAULT_FPS_CAP, DEFAULT_LOGIC_HEIGHT, DEFAULT_LOGIC_WIDTH, ScaleMode, ViewConfig,
 };
-use claw_sim::SimConfig;
+use claw_sim::input::ScriptTuning;
+use claw_sim::{ScriptHeader, SimConfig};
 
 use crate::keymap::{Action, Keymap, PadMap};
 
@@ -372,6 +379,14 @@ pub struct Settings {
     /// Keep the status bar inside the centred 4:3 area rather than at the
     /// picture's edges.
     pub status_bar_centred: bool,
+    /// Draw the level's front plane.
+    pub front_layer: bool,
+    /// The movement tuning, when a replayed script names one (otherwise
+    /// the default tuning).
+    pub tuning: Option<ScriptTuning>,
+    /// The seed of the game's random stream, when a replayed script names
+    /// one (otherwise the default seed).
+    pub seed: Option<u32>,
     /// Image pack folder.
     pub pack: Option<PathBuf>,
     /// Claw's start point override.
@@ -450,6 +465,9 @@ impl Settings {
             fps_cap: Some(DEFAULT_FPS_CAP),
             interpolation: true,
             status_bar_centred: false,
+            front_layer: true,
+            tuning: None,
+            seed: None,
             pack: None,
             start: None,
             audio: true,
@@ -610,6 +628,17 @@ impl Settings {
         }
     }
 
+    /// Takes the movement tuning and the seed a replayed script's header
+    /// names; keys the header does not have leave the settings as they are.
+    pub fn follow_header(&mut self, header: &ScriptHeader) {
+        if header.tuning.is_some() {
+            self.tuning = header.tuning;
+        }
+        if header.seed.is_some() {
+            self.seed = header.seed;
+        }
+    }
+
     /// The view for an output of `size` pixels: the original 640x480 game
     /// view presented by the aspect and scaling settings.
     pub fn view(&self, size: (u32, u32)) -> ViewConfig {
@@ -658,6 +687,7 @@ impl Settings {
                 "edges"
             }
             .to_string(),
+            "front_layer" => on_off(self.front_layer),
             "pack" => path(&self.pack)?,
             "audio" => on_off(self.audio),
             "sound_volume" => self.sound_volume.to_string(),
@@ -726,9 +756,17 @@ impl Settings {
     /// still across the same reach as without widening, so a wider shape
     /// chosen at run time still shows them.
     ///
-    /// The mid-air hit jump fix follows [`Settings::mid_air_hit_fix`].
+    /// The movement tuning and the seed follow [`Settings::tuning`] and
+    /// [`Settings::seed`], and the mid-air hit jump fix follows
+    /// [`Settings::mid_air_hit_fix`].
     pub fn sim_config(&self, size: (u32, u32)) -> SimConfig {
         let mut cfg = self.view_sim_config(size);
+        if let Some(t) = self.tuning {
+            cfg.tuning = t.tuning();
+        }
+        if let Some(seed) = self.seed {
+            cfg.seed = seed;
+        }
         cfg.tuning.behaviour.fix_double_jump = self.mid_air_hit_fix;
         cfg
     }
@@ -845,7 +883,7 @@ pub struct ConfigFile {
 
 /// Keys a config file may hold, besides the `key_<action>` and
 /// `pad_<action>` bindings.
-pub const CONFIG_KEYS: [&str; 22] = [
+pub const CONFIG_KEYS: [&str; 23] = [
     "install",
     "level",
     "custom",
@@ -859,6 +897,7 @@ pub const CONFIG_KEYS: [&str; 22] = [
     "fps_cap",
     "interpolation",
     "status_bar",
+    "front_layer",
     "pack",
     "audio",
     "sound_volume",
@@ -980,6 +1019,7 @@ impl ConfigFile {
                         }
                     }
                 }
+                "front_layer" => s.front_layer = flag(key, v)?,
                 "pack" => s.pack = Some(PathBuf::from(v)),
                 "audio" => s.audio = flag(key, v)?,
                 "sound_volume" => s.sound_volume = volume(key, v)?,

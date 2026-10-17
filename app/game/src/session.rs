@@ -23,6 +23,28 @@
 //! A recorded input script starts with a comment line naming the mid-air
 //! hit jump fix the game was played with ([`behaviour_comment`]); a replay
 //! reads it back ([`script_behaviour`]) so the recording plays the same.
+//!
+//! # Pauses, menus and commands
+//!
+//! Besides the input of each tick, a game holds what happened between two
+//! ticks: a pause, a menu screen over play and the in-game menu's end of a
+//! life. The session keeps them as the directives of an input script (see
+//! [`claw_sim::input`]), each at the boundary before the tick it precedes:
+//!
+//! - played live, [`Session::open_span`] and [`Session::close_span`] mark a
+//!   pause or a menu (the wall time it lasted is counted from the frames
+//!   that ran meanwhile, and [`Session::menu_key`] notes the menu inputs),
+//!   and [`Session::end_life`] gives up Claw's life at the next tick;
+//! - replayed ([`Session::with_replay`], or [`Session::with_directives`]
+//!   with live input), a pause or menu directive holds play at its tick
+//!   boundary for its wall time, as the pause did when it was recorded, and
+//!   a command takes effect before its tick. Holding takes frame time only:
+//!   the ticks and their input are the same at any display rate.
+//!
+//! [`Session::directives`] lists every directive given or played so far;
+//! the recorder writes them into the recording. A pause or menu changes
+//! nothing in the game itself: play stops and goes on where it stopped,
+//! with the input the ticks after it were recorded with.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -31,8 +53,9 @@ use anyhow::{Context, Result};
 
 use claw_frame::step::{MAX_FRAME_US, TICK_US};
 use claw_frame::{AudioCue, Buttons, FrameDriver, GameEvent, InterpolatedFrame, TickInput};
+use claw_sim::input::{MenuScreen, ScriptCommand};
 use claw_sim::trace::TraceRow;
-use claw_sim::{InputLatch, InputScript, Sim};
+use claw_sim::{Directive, DirectiveKind, InputLatch, InputScript, ScriptHeader, Sim};
 
 use crate::input::Recorder;
 
@@ -81,6 +104,87 @@ impl Outputs {
     }
 }
 
+/// A stop of play between two ticks that a recording keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Span {
+    /// The pause key.
+    Pause,
+    /// A menu screen over play.
+    Menu(MenuScreen),
+}
+
+/// A pause or menu being played live: where its directive sits in the log,
+/// and what it gathered so far.
+#[derive(Debug, Clone)]
+struct LiveSpan {
+    index: usize,
+    span: Span,
+    wall_us: u64,
+    keys: Vec<String>,
+}
+
+impl LiveSpan {
+    fn kind(&self) -> DirectiveKind {
+        let wall_ms = u32::try_from(self.wall_us.div_ceil(1000)).unwrap_or(u32::MAX);
+        match self.span {
+            Span::Pause => DirectiveKind::Pause {
+                wall_ms,
+                held: None,
+            },
+            Span::Menu(screen) => DirectiveKind::Menu {
+                screen,
+                wall_ms,
+                keys: self.keys.clone(),
+            },
+        }
+    }
+}
+
+/// The directives a session plays and the ones it has played or been
+/// given.
+#[derive(Debug, Default)]
+struct Directives {
+    /// To play, in tick order.
+    plan: Vec<Directive>,
+    /// The next one of `plan`.
+    next: usize,
+    /// Played or given so far, in order.
+    log: Vec<Directive>,
+}
+
+impl Directives {
+    /// Gives the commands of `plan` due before tick `tick` (all of them up
+    /// to the next pause or menu, which [`Session::frame`] holds at its
+    /// boundary before the tick can run).
+    fn commands_before(&mut self, tick: u64, sim: &mut Sim) {
+        while let Some(d) = self.plan.get(self.next)
+            && d.tick as u64 <= tick
+        {
+            let d = d.clone();
+            self.next += 1;
+            if let DirectiveKind::Command(c) = d.kind {
+                apply_command(sim, c);
+            }
+            self.log.push(d);
+        }
+    }
+
+    /// The tick before which the next pause or menu of `plan` holds play.
+    fn next_hold(&self) -> Option<u64> {
+        self.plan[self.next.min(self.plan.len())..]
+            .iter()
+            .find(|d| !matches!(d.kind, DirectiveKind::Command(_)))
+            .map(|d| d.tick as u64)
+    }
+}
+
+/// Carries out a command directive.
+fn apply_command(sim: &mut Sim, c: ScriptCommand) {
+    match c {
+        ScriptCommand::EndLife => sim.end_life(),
+    }
+}
+
 /// A level in play.
 pub struct Session {
     sim: Sim,
@@ -96,6 +200,11 @@ pub struct Session {
     samples: Option<Vec<TickSample>>,
     before_tick: Option<BeforeTick>,
     outputs: Outputs,
+    header: ScriptHeader,
+    directives: Directives,
+    live_span: Option<LiveSpan>,
+    /// A replayed pause or menu in progress: the wall time left, µs.
+    hold_us: Option<u64>,
 }
 
 impl std::fmt::Debug for Session {
@@ -126,23 +235,120 @@ impl Session {
             samples: None,
             before_tick: None,
             outputs: Outputs::default(),
+            header: ScriptHeader::default(),
+            directives: Directives::default(),
+            live_span: None,
+            hold_us: None,
         }
     }
 
     /// Plays `script` from the next tick: one row per tick, then the
-    /// keyboard again.
+    /// keyboard again, with its pauses, menus and commands at their tick
+    /// boundaries (see the [module documentation](self)).
     pub fn with_replay(mut self, script: InputScript) -> Session {
+        self.header = script.header;
+        self.directives.plan = script.directives.clone();
+        self.directives.next = 0;
         self.script = Some(script);
         self.looped = false;
         self
     }
 
+    /// Plays the pauses, menus and commands of `directives` (in tick
+    /// order) at their tick boundaries, with the input of each tick taken
+    /// live: the same game as [`Session::with_replay`] when the live input
+    /// is the script's.
+    pub fn with_directives(mut self, directives: Vec<Directive>) -> Session {
+        self.directives.plan = directives;
+        self.directives.next = 0;
+        self
+    }
+
     /// Plays `script` from the next tick over and over, for benchmarks
-    /// that run for a time rather than a number of ticks.
+    /// that run for a time rather than a number of ticks. Its directives
+    /// are not played.
     pub fn with_looped_replay(mut self, script: InputScript) -> Session {
         self.script = Some(script);
         self.looped = true;
         self
+    }
+
+    /// The header keys of the replayed script (empty without one).
+    pub fn header(&self) -> ScriptHeader {
+        self.header
+    }
+
+    /// Every pause, menu and command played or given so far, in order,
+    /// each at the tick it took effect before; a pause or menu still open
+    /// counts with the wall time it has lasted so far.
+    pub fn directives(&self) -> Vec<Directive> {
+        let mut out = self.directives.log.clone();
+        if let Some(s) = &self.live_span
+            && let Some(d) = out.get_mut(s.index)
+        {
+            d.kind = s.kind();
+        }
+        out
+    }
+
+    /// Gives up Claw's life at the start of the next tick (the in-game
+    /// menu's end life; see [`Sim::end_life`]), noted as a command.
+    pub fn end_life(&mut self) {
+        self.sim.end_life();
+        self.directives.log.push(Directive {
+            tick: self.ticks as usize,
+            kind: DirectiveKind::Command(ScriptCommand::EndLife),
+        });
+    }
+
+    /// A pause or a menu screen stops play from now on, until
+    /// [`Session::close_span`]: noted at the boundary before the next tick,
+    /// with the wall time of the frames that run until it closes. It only
+    /// notes the stop; the caller stops the clock ([`Session::pause`]). A
+    /// span still open is closed first.
+    pub fn open_span(&mut self, span: Span) {
+        self.close_span();
+        let index = self.directives.log.len();
+        let live = LiveSpan {
+            index,
+            span,
+            wall_us: 0,
+            keys: Vec::new(),
+        };
+        self.directives.log.push(Directive {
+            tick: self.ticks as usize,
+            kind: live.kind(),
+        });
+        self.live_span = Some(live);
+    }
+
+    /// A menu input while a menu span is open, noted by name: lowercase
+    /// letters, digits and underscores (anything else is left out).
+    pub fn menu_key(&mut self, name: &str) {
+        let Some(s) = self.live_span.as_mut() else {
+            return;
+        };
+        let ok = !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if ok && matches!(s.span, Span::Menu(_)) {
+            s.keys.push(name.to_string());
+        }
+    }
+
+    /// The pause or menu opened by [`Session::open_span`] ends.
+    pub fn close_span(&mut self) {
+        if let Some(s) = self.live_span.take()
+            && let Some(d) = self.directives.log.get_mut(s.index)
+        {
+            d.kind = s.kind();
+        }
+    }
+
+    /// True while a replayed pause or menu holds play.
+    pub fn holding(&self) -> bool {
+        self.hold_us.is_some()
     }
 
     /// Ticks that took keyboard input because a replayed script had no row
@@ -220,18 +426,43 @@ impl Session {
 
     /// The simulation time of an event that happened `since_frame` after the
     /// last frame (no later than the longest frame the accumulator takes;
-    /// no time passes while paused). Stamps never go backwards.
+    /// no time passes while paused, nor while a replayed pause or menu
+    /// holds play). Stamps never go backwards.
     pub fn stamp(&mut self, since_frame: Duration) -> u64 {
-        let extra = if self.is_paused() {
-            0
+        let since = u64::try_from(since_frame.as_micros()).unwrap_or(u64::MAX);
+        let at = if self.is_paused() {
+            self.now_us()
         } else {
-            u64::try_from(since_frame.as_micros())
-                .unwrap_or(u64::MAX)
-                .min(MAX_FRAME_US)
+            self.sim_time_after(since.min(MAX_FRAME_US))
         };
-        let at = (self.now_us() + extra).max(self.last_stamp);
+        let at = at.max(self.last_stamp);
         self.last_stamp = at;
         at
+    }
+
+    /// The simulation time `wall_us` of frame time after the last frame:
+    /// the time a replayed pause or menu holds play (the one in progress
+    /// and those due on the way) does not count.
+    fn sim_time_after(&self, wall_us: u64) -> u64 {
+        let mut now = self.now_us();
+        let mut left = wall_us.saturating_sub(self.hold_us.unwrap_or(0));
+        let d = &self.directives;
+        for next in &d.plan[d.next.min(d.plan.len())..] {
+            let wall = match next.kind {
+                DirectiveKind::Pause { wall_ms, .. } | DirectiveKind::Menu { wall_ms, .. } => {
+                    u64::from(wall_ms) * 1000
+                }
+                DirectiveKind::Command(_) => continue,
+            };
+            let gap = (next.tick as u64 * TICK_US).saturating_sub(now);
+            if left <= gap {
+                break;
+            }
+            now += gap;
+            left -= gap;
+            left = left.saturating_sub(wall);
+        }
+        now + left
     }
 
     /// A key event at simulation time `at_us`: `buttons` went down or up.
@@ -250,8 +481,81 @@ impl Session {
         }
     }
 
-    /// Adds one frame of `dt` and runs the ticks that fit.
+    /// Adds one frame of `dt` and runs the ticks that fit, holding play at
+    /// the boundary of a replayed pause or menu for its wall time.
     pub fn frame(&mut self, dt: Duration) -> Frame {
+        let mut left = u64::try_from(dt.as_micros()).unwrap_or(u64::MAX);
+        if let Some(s) = self.live_span.as_mut() {
+            s.wall_us = s.wall_us.saturating_add(left);
+        }
+        if self.paused {
+            return self.run(left);
+        }
+        let mut ticks = 0;
+        loop {
+            if let Some(hold) = self.hold_us.as_mut() {
+                let take = left.min(*hold);
+                *hold -= take;
+                left -= take;
+                if *hold > 0 {
+                    break;
+                }
+                self.hold_us = None;
+            }
+            if self.start_due() {
+                continue;
+            }
+            // Run no further than the next pause or menu's boundary.
+            let feed = match self.directives.next_hold() {
+                Some(at) => {
+                    let room = at.saturating_sub(self.ticks) * TICK_US;
+                    let room = room.saturating_sub(self.driver.step_mut().accumulator_us());
+                    left.min(room.max(1))
+                }
+                None => left,
+            };
+            ticks += self.run(feed).ticks;
+            left -= feed;
+            if left == 0 {
+                break;
+            }
+        }
+        Frame {
+            ticks,
+            alpha: self.driver.alpha(),
+        }
+    }
+
+    /// Plays the directives due at the boundary before the next tick:
+    /// commands take effect, and a pause or menu starts holding play (true).
+    fn start_due(&mut self) -> bool {
+        let d = &mut self.directives;
+        while let Some(next) = d.plan.get(d.next)
+            && next.tick as u64 <= self.ticks
+        {
+            let next = next.clone();
+            d.next += 1;
+            let hold = match next.kind {
+                DirectiveKind::Command(c) => {
+                    apply_command(&mut self.sim, c);
+                    None
+                }
+                DirectiveKind::Pause { wall_ms, .. } | DirectiveKind::Menu { wall_ms, .. } => {
+                    Some(u64::from(wall_ms) * 1000)
+                }
+            };
+            d.log.push(next);
+            if let Some(us) = hold {
+                self.hold_us = Some(us);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Adds `us` microseconds to the frame driver and runs the ticks that
+    /// fit.
+    fn run(&mut self, us: u64) -> Frame {
         let Session {
             sim,
             driver,
@@ -264,10 +568,12 @@ impl Session {
             samples,
             before_tick,
             outputs,
+            directives,
             ..
         } = self;
-        let report = driver.frame(dt, || {
+        let report = driver.frame(Duration::from_micros(us), || {
             let n = *ticks;
+            directives.commands_before(n, sim);
             let live = latch.take(n);
             let scripted = script.as_ref().and_then(|s| {
                 let row = match s.ticks.len() {

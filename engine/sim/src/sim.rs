@@ -124,6 +124,9 @@ pub struct Sim {
     out: Outbox,
     last_audio: Vec<AudioCue>,
     last_events: Vec<GameEvent>,
+    /// [`Sim::end_life`] was called: Claw dies at the start of the next
+    /// tick.
+    end_life: bool,
 }
 
 /// What runs an object's logic: everything but the object container and
@@ -393,6 +396,7 @@ impl Sim {
             out: Outbox::new(),
             last_audio: Vec::new(),
             last_events: Vec::new(),
+            end_life: false,
             level,
         };
         let level = sim.level.clone();
@@ -539,6 +543,9 @@ impl Sim {
     /// Advances one tick with `input` and returns the snapshot.
     pub fn step(&mut self, input: TickInput) -> SimSnapshot {
         self.input = input;
+        if std::mem::take(&mut self.end_life) {
+            self.apply_end_life();
+        }
         let c = self.centres();
         self.activation.enter(&mut self.objects, c);
         self.update_pass();
@@ -568,6 +575,15 @@ impl Sim {
             }
         }
         snapshot
+    }
+
+    /// Gives up Claw's life now, before any logic of the tick (see
+    /// [`Sim::end_life`]).
+    fn apply_end_life(&mut self) {
+        let Some(id) = self.player else { return };
+        let (mut runner, objects, _) = self.parts();
+        runner.with_claw(objects, id, player::death::end_life);
+        runner.list_spawned(objects);
     }
 
     fn update_pass(&mut self) {
@@ -864,6 +880,24 @@ impl Sim {
             o.state = player::state::RESPAWN;
         }
         self.run_logic(id);
+    }
+
+    /// Ends Claw's current life, as the in-game menu's end life entry does.
+    ///
+    /// The death happens at the start of the next tick, before any logic
+    /// of that tick runs: when Claw's health is above 0 he dies the timer
+    /// death from whatever he is doing (standing, climbing, carrying
+    /// something, which he lets go of), falls off the screen and loses a
+    /// life as for any other death, so the game ends after the last life.
+    /// While he is already dying it does nothing. Calling it again before
+    /// the next tick changes nothing.
+    pub fn end_life(&mut self) {
+        self.end_life = true;
+    }
+
+    /// True when [`Sim::end_life`] waits for the next tick.
+    pub fn end_life_pending(&self) -> bool {
+        self.end_life
     }
 
     /// Moves Claw to (x, y) at once (tools and tests); the move is drawn

@@ -658,3 +658,79 @@ fn recordings_carry_the_mid_air_hit_fix() {
     assert_eq!(script_behaviour("# mid_air_hit_fix = sometimes\n"), None);
     assert_eq!(script_behaviour("# a note = on\n"), None);
 }
+
+#[test]
+fn the_front_layer_is_a_setting_that_survives_a_reload() {
+    let parse = |text: &str| ConfigFile::parse(text, "test").and_then(|f| f.check().map(|_| f));
+    let resolve = |text: &str| {
+        let file = parse(text).unwrap();
+        Settings::resolve(
+            &Args::try_parse_from(["x", "--install", "/i"]).unwrap(),
+            Some(&file),
+        )
+        .unwrap()
+    };
+    assert!(resolve("").front_layer, "on by default");
+    assert!(!resolve("front_layer = off\n").front_layer);
+    assert!(resolve("front_layer = on\n").front_layer);
+    assert!(parse("front_layer = sometimes\n").is_err());
+    let mut s = resolve("");
+    assert_eq!(s.config_value("front_layer").as_deref(), Some("on"));
+    s.front_layer = false;
+    assert_eq!(s.config_value("front_layer").as_deref(), Some("off"));
+    // Written back into a hand-edited file, keeping its other lines, and
+    // read back on the next run.
+    let root = tempfile::tempdir().unwrap();
+    let path = config_in(root.path(), REALISTIC);
+    let file = ConfigFile::load(&path).unwrap();
+    let mut s = Settings::resolve(
+        &Args::try_parse_from(["x", "--install", "/i"]).unwrap(),
+        Some(&file),
+    )
+    .unwrap();
+    s.config_path = Some(path.clone());
+    s.front_layer = false;
+    assert_eq!(s.write_back(&["front_layer"]).unwrap(), vec!["front_layer"]);
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with(REALISTIC), "{text}");
+    assert!(text.lines().any(|l| l == "front_layer = off"), "{text}");
+    let again = Settings::resolve(
+        &Args::try_parse_from(["x", "--install", "/i"]).unwrap(),
+        Some(&ConfigFile::load(&path).unwrap()),
+    )
+    .unwrap();
+    assert!(!again.front_layer);
+    // The front layer changes drawing only.
+    assert_eq!(
+        again.sim_config((1280, 960)),
+        resolve("").sim_config((1280, 960))
+    );
+}
+
+#[test]
+fn a_replay_follows_the_tuning_and_seed_of_its_script() {
+    use claw_sim::input::ScriptTuning;
+    use claw_sim::{InputScript, Tuning};
+    let args = Args::try_parse_from(["x", "--install", "/i", "--replay", "r.csv"]).unwrap();
+    let mut s = Settings::resolve(&args, None).unwrap();
+    let plain = s.sim_config((1280, 960));
+    assert_eq!(plain.tuning, Tuning::default());
+    let script =
+        InputScript::parse("# tuning original\n# seed 1234\ntick,held_mask,pressed_mask\n0,0,0\n")
+            .unwrap();
+    s.follow_header(&script.header);
+    s.follow_script(Some(true));
+    let cfg = s.sim_config((1280, 960));
+    let mut want = Tuning::original_speeds();
+    want.behaviour.fix_double_jump = true;
+    assert_eq!(cfg.tuning, want);
+    assert_eq!(cfg.seed, 1234);
+    assert_eq!(s.tuning, Some(ScriptTuning::Original));
+    // A script without the keys leaves them alone.
+    let bare = InputScript::parse("tick,held_mask,pressed_mask\n0,0,0\n").unwrap();
+    s.follow_header(&bare.header);
+    assert_eq!(s.sim_config((1280, 960)).seed, 1234);
+    let mut fresh = Settings::resolve(&args, None).unwrap();
+    fresh.follow_header(&bare.header);
+    assert_eq!(fresh.sim_config((1280, 960)), plain);
+}

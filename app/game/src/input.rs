@@ -32,11 +32,9 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
-use std::path::Path;
 use std::rc::Rc;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
 use claw_frame::{Buttons, TickInput};
 use claw_sim::InputScript;
 use winit::keyboard::KeyCode;
@@ -822,7 +820,8 @@ impl InputRouter {
 /// Attach [`Recorder::hook`] to the session with
 /// [`Session::set_before_tick`]: before each tick it reads the input the
 /// simulation played on the tick before. [`Recorder::script`] adds the last
-/// tick's.
+/// tick's, and the session's pauses, menus and commands as directives.
+/// [`crate::session::save_recording`] writes the script to a file.
 #[derive(Debug, Clone, Default)]
 pub struct Recorder {
     ticks: Rc<RefCell<Vec<TickInput>>>,
@@ -844,24 +843,22 @@ impl Recorder {
         })
     }
 
-    /// The input of every tick `session` has run, as a script.
+    /// The input of every tick `session` has run, with its pauses, menus
+    /// and commands (see [`Session::directives`]) and the header keys of
+    /// the script it replayed, if any, as a script.
     pub fn script(&self, session: &Session) -> InputScript {
         let mut ticks = self.ticks.borrow().clone();
         if (ticks.len() as u64) < session.ticks() {
             ticks.push(session.sim().input());
         }
+        let n = ticks.len();
+        let mut directives = session.directives();
+        directives.retain(|d| d.tick <= n);
         InputScript {
             ticks,
-            ..InputScript::default()
+            header: session.header(),
+            directives,
         }
-    }
-
-    /// Writes the recording to `path` as an input script.
-    pub fn save(&self, session: &Session, path: &Path) -> Result<usize> {
-        let script = self.script(session);
-        std::fs::write(path, script.to_csv())
-            .with_context(|| format!("writing the recording {}", path.display()))?;
-        Ok(script.ticks.len())
     }
 }
 
@@ -979,9 +976,11 @@ mod tests {
         assert_eq!(replayed, played);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rec.csv");
-        let n = recorder.save(&session, &path).unwrap();
+        let n = crate::session::save_recording(&recorder, &session, &path).unwrap();
         assert_eq!(n as u64, session.ticks());
-        let back = InputScript::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(crate::session::script_behaviour(&text), Some(false));
+        let back = InputScript::parse(&text).unwrap();
         assert_eq!(back, recorder.script(&session));
     }
 }

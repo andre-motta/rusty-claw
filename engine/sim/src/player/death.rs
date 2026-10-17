@@ -30,6 +30,9 @@
 //!
 //! A new game starts with 7 lives, so the 7th death ends it.
 //!
+//! Ending a life from the in-game menu ([`end_life`]) is the timer death:
+//! the falling death from wherever Claw is, ladders included.
+//!
 //! # Powerups
 //!
 //! One powerup runs at a time ([`set_powerup`]). Taking the running one
@@ -156,6 +159,19 @@ pub fn kill(c: &mut Ctx, cause: DeathCause) {
         DeathCause::Damage | DeathCause::Timer => kill_falling(c),
         DeathCause::DeathTile => kill_in_place(c),
     }
+}
+
+/// Ends Claw's life on request (the in-game menu's end life, through
+/// [`crate::Sim::end_life`]): the timer death, when his health is above 0
+/// and he is not already dying. He lets go of what he carries and falls
+/// from where he is, whatever his state (a ladder included). Returns true
+/// when he died.
+pub fn end_life(c: &mut Ctx) -> bool {
+    if c.p.stats.health <= 0 || dying(c.o.state) {
+        return false;
+    }
+    kill(c, DeathCause::Timer);
+    true
 }
 
 /// What every death shares: input, carried object and attack let go.

@@ -1,7 +1,9 @@
 //! Playing a level from a test: a [`Player`] steps a simulation with held
 //! buttons chosen tick by tick, may move Claw between scripted segments,
-//! and records both, so that the same game can be replayed through the
-//! game's own frame loop at any display rate ([`replay`]).
+//! pause, open a menu or end a life between two ticks, and records all of
+//! it, so that the same game can be replayed through the game's own frame
+//! loop at any display rate ([`replay`]), with the pauses and menus holding
+//! play for their wall time and the end of a life before its tick.
 //!
 //! Positions always come from the level's own records, found by logic name
 //! at run time; nothing from an install is stored here.
@@ -17,13 +19,14 @@ use std::time::Duration;
 use claw_frame::{AudioCue, Buttons, GameEvent, SimulatedRefresh, TickInput};
 use claw_game::Session;
 use claw_sim::container::CollisionEvent;
+use claw_sim::input::{MenuScreen, ScriptCommand};
 use claw_sim::logic::enemy::{self, DeathKind, EnemyState};
 use claw_sim::logic::pickup;
 use claw_sim::object::{LogicKind, Object, ObjectId, special as sflags, types};
 use claw_sim::player::state;
 use claw_sim::tiles::{DEATH, GROUND, SOLID};
 use claw_sim::trace::{self, TraceRow};
-use claw_sim::{GameLogic, InputScript, Sim, SimLevel};
+use claw_sim::{Directive, DirectiveKind, GameLogic, InputScript, Sim, SimLevel};
 
 /// Jump.
 pub const JUMP: u32 = 0x1;
@@ -87,6 +90,9 @@ pub struct Player {
     pub held: Vec<u32>,
     /// Claw moved to (x, y) before the tick of that index.
     pub teleports: Vec<(u64, i32, i32)>,
+    /// Pauses, menus and commands between ticks, in order, each before the
+    /// tick of its index.
+    pub directives: Vec<Directive>,
     /// Game events, with their tick.
     pub events: Vec<(u64, GameEvent)>,
     /// Enemies seen dying.
@@ -113,6 +119,7 @@ impl Player {
             sim,
             held: Vec::new(),
             teleports: Vec::new(),
+            directives: Vec::new(),
             events: Vec::new(),
             kills: Vec::new(),
             wounds: Vec::new(),
@@ -202,6 +209,41 @@ impl Player {
     pub fn teleport(&mut self, x: i32, y: i32) {
         self.teleports.push((self.tick(), x, y));
         self.sim.teleport_player(x, y);
+    }
+
+    /// Pauses play for `wall_ms` of wall time before the next tick; the
+    /// game itself does not change.
+    pub fn pause(&mut self, wall_ms: u32) {
+        self.directives.push(Directive {
+            tick: self.held.len(),
+            kind: DirectiveKind::Pause {
+                wall_ms,
+                held: None,
+            },
+        });
+    }
+
+    /// Opens `screen` over play for `wall_ms` of wall time before the next
+    /// tick, with the menu inputs `keys` (names); the game itself does not
+    /// change.
+    pub fn menu(&mut self, screen: MenuScreen, wall_ms: u32, keys: &[&str]) {
+        self.directives.push(Directive {
+            tick: self.held.len(),
+            kind: DirectiveKind::Menu {
+                screen,
+                wall_ms,
+                keys: keys.iter().map(|k| k.to_string()).collect(),
+            },
+        });
+    }
+
+    /// Ends Claw's life before the next tick, as the in-game menu does.
+    pub fn end_life(&mut self) {
+        self.directives.push(Directive {
+            tick: self.held.len(),
+            kind: DirectiveKind::Command(ScriptCommand::EndLife),
+        });
+        self.sim.end_life();
     }
 
     /// Idles until Claw has stood still on his feet (standing, not in a
@@ -329,9 +371,12 @@ impl Player {
         }
     }
 
-    /// The recorded input as a script.
+    /// The recorded input as a script, with the pauses, menus and
+    /// commands as directives.
     pub fn script(&self) -> InputScript {
-        InputScript::from_held(&self.held)
+        let mut s = InputScript::from_held(&self.held);
+        s.directives = self.directives.clone();
+        s
     }
 }
 
@@ -464,11 +509,28 @@ pub fn digest(sim: &Sim) -> u64 {
 /// How a replay feeds its input to the game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Feed {
-    /// The recorded script, one row per tick.
+    /// The recorded script, one row per tick, with its directives.
     Script,
-    /// Key events at the script's changes, a millisecond into their tick,
-    /// handled while the frame that contains them runs.
+    /// Key events at the script's changes, a millisecond into their tick
+    /// (later by the wall time of the pauses and menus before them),
+    /// handled while the frame that contains them runs; the session plays
+    /// the script's directives.
     Keys,
+}
+
+/// Wall time of the pauses and menus of `directives` at or before tick
+/// `tick`'s boundary, µs.
+fn held_before(directives: &[Directive], tick: u64) -> u64 {
+    directives
+        .iter()
+        .filter(|d| d.tick as u64 <= tick)
+        .map(|d| match d.kind {
+            DirectiveKind::Pause { wall_ms, .. } | DirectiveKind::Menu { wall_ms, .. } => {
+                u64::from(wall_ms) * 1000
+            }
+            DirectiveKind::Command(_) => 0,
+        })
+        .sum()
 }
 
 /// One replay: the trace rows (with the input source column made the same
@@ -485,13 +547,16 @@ pub struct Replay {
 /// Replays `player`'s recording from `start` (the game as it was before
 /// the first recorded tick) through the game's frame loop at a simulated
 /// `hz` display, with optional jitter, feeding the input as `feed`. The
-/// recorded moves of Claw happen before their ticks.
+/// recorded moves of Claw happen before their ticks, and the recorded
+/// pauses, menus and commands at their tick boundaries.
 pub fn replay(start: &Sim, player: &Player, hz: f64, jitter: Option<u64>, feed: Feed) -> Replay {
     let script = player.script();
     let n = script.ticks.len();
     let mut session = Session::new(start.clone());
     if feed == Feed::Script {
         session = session.with_replay(script.clone());
+    } else {
+        session = session.with_directives(script.directives.clone());
     }
     session.record_trace();
     let digests = Rc::new(RefCell::new(Vec::with_capacity(n + 1)));
@@ -522,7 +587,8 @@ pub fn replay(start: &Sim, player: &Player, hz: f64, jitter: Option<u64>, feed: 
         let end = clock + dt.as_micros() as u64;
         if feed == Feed::Keys {
             while let Some(&(at, b, down)) = events.get(next_event) {
-                let happened = at + 1_000;
+                let tick = at / claw_sim::input::TICK_US;
+                let happened = at + 1_000 + held_before(&script.directives, tick);
                 if happened > end {
                     break;
                 }

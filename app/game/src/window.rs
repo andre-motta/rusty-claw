@@ -41,6 +41,7 @@ use claw_render::{
     Anchor, FrameInput, Gpu, ImageId, LevelGraphics, Offscreen, Renderer, Scene, SceneBuilder,
     ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
 };
+use claw_sim::input::MenuScreen;
 use claw_sim::{InputScript, Sim};
 use claw_ui::hud::{Hud, HudArt};
 use claw_ui::menu::command::{MenuKind, Page, VideoSetting};
@@ -71,7 +72,7 @@ use crate::load::{
 };
 use crate::pause::{Change, Pauses};
 use crate::saves::SaveStore;
-use crate::session::Session;
+use crate::session::{Session, Span};
 use crate::settings::{Aspect, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
 
 /// The screen layer of a game in progress: the status bar, the message on
@@ -434,6 +435,32 @@ fn key_char(code: KeyCode) -> Option<char> {
         .map(|i| char::from(b'0' + i as u8))
 }
 
+/// A scene builder for `graphics` presented as `view`, drawing the front
+/// plane or not.
+fn scene_builder(
+    graphics: &LevelGraphics,
+    view: claw_frame::ViewConfig,
+    max: u32,
+    front_layer: bool,
+) -> SceneBuilder {
+    let mut b = SceneBuilder::new(graphics, view, max);
+    b.set_front_layer(front_layer);
+    b
+}
+
+/// The name a menu input is recorded under.
+fn menu_input_name(m: crate::input::MenuInput) -> &'static str {
+    use crate::input::MenuInput as M;
+    match m {
+        M::Up => "up",
+        M::Down => "down",
+        M::Left => "left",
+        M::Right => "right",
+        M::Confirm => "confirm",
+        M::Back => "back",
+    }
+}
+
 struct App {
     settings: Settings,
     mode: WindowMode,
@@ -694,7 +721,12 @@ impl App {
                 status,
             });
             live.renderer.set_level(&level.graphics);
-            live.builder = Some(SceneBuilder::new(&level.graphics, view, max));
+            live.builder = Some(scene_builder(
+                &level.graphics,
+                view,
+                max,
+                self.settings.front_layer,
+            ));
             let want = self.settings.res;
             if self.bench.is_some() && !self.settings.fullscreen && surface_size != want {
                 // The desktop cannot hold a window of the requested size (a
@@ -723,7 +755,7 @@ impl App {
                 );
                 live.offscreen = Some(OffscreenCopy {
                     renderer,
-                    builder: SceneBuilder::new(&level.graphics, view, max),
+                    builder: scene_builder(&level.graphics, view, max, self.settings.front_layer),
                     output: Offscreen::new(&live.gpu, want),
                 });
             }
@@ -836,7 +868,12 @@ impl App {
                 self.settings.widen_activation,
                 (live.config.width, live.config.height),
             );
-            live.builder = Some(SceneBuilder::new(&graphics, view, live.gpu.max_target()));
+            live.builder = Some(scene_builder(
+                &graphics,
+                view,
+                live.gpu.max_target(),
+                self.settings.front_layer,
+            ));
         }
         eprintln!(
             "rusty-claw: {} ready in {:.0} ms",
@@ -913,13 +950,41 @@ impl App {
             self.pauses
                 .follow(&e, session, self.audio.as_mut(), self.last_frame.elapsed());
         self.pause_changed(change);
+        let in_menu = self
+            .flow
+            .as_ref()
+            .is_some_and(|f| f.screen() == Screen::Pause);
         match e {
-            Effect::StartLevel { .. }
-            | Effect::EndLevel
-            | Effect::PauseGame
-            | Effect::ResumeGame
-            | Effect::Sound(_)
-            | Effect::MenuChord => {}
+            Effect::PauseGame => {
+                // The in-game menu is recorded as a menu span (the game-over
+                // fade is not: play ends there).
+                if in_menu && let Some(level) = &mut self.level {
+                    level.session.open_span(Span::Menu(MenuScreen::InGame));
+                }
+            }
+            Effect::ResumeGame => {
+                if let Some(level) = &mut self.level {
+                    level.session.close_span();
+                }
+            }
+            Effect::EndLife => {
+                if let Some(level) = &mut self.level {
+                    level.session.end_life();
+                }
+            }
+            Effect::FrontLayer(on) => {
+                self.settings.front_layer = on;
+                if let Some(live) = &mut self.live {
+                    if let Some(b) = live.builder.as_mut() {
+                        b.set_front_layer(on);
+                    }
+                    if let Some(o) = live.offscreen.as_mut() {
+                        o.builder.set_front_layer(on);
+                    }
+                }
+            }
+            Effect::StartLevel { .. } | Effect::EndLevel | Effect::Sound(_) | Effect::MenuChord => {
+            }
             Effect::ScreenSounds => {
                 if let (Some(audio), Some(s)) = (&mut self.audio, &self.screens) {
                     audio.load_level(&s.assets.store, &s.assets.registries);
@@ -1028,10 +1093,11 @@ impl App {
             (live.config.width, live.config.height),
         );
         if let Some(level) = &self.level {
-            live.builder = Some(SceneBuilder::new(
+            live.builder = Some(scene_builder(
                 &level.graphics,
                 view,
                 live.gpu.max_target(),
+                self.settings.front_layer,
             ));
         }
         live.screen_builder = ScreenBuilder::new(&view, live.gpu.max_target());
@@ -1061,6 +1127,11 @@ impl App {
         if let Some(f) = self.flow.as_mut()
             && matches!(cmd, Command::Quit | Command::Pause)
         {
+            if f.screen() == Screen::Pause
+                && let Some(level) = &mut self.level
+            {
+                level.session.menu_key("back");
+            }
             if f.pause_key() {
                 self.run_effects(event_loop);
             }
@@ -1125,6 +1196,15 @@ impl App {
                 self.pauses.user = !self.pauses.user;
                 self.update_pause();
                 self.update_title();
+                // Watching a script or the benchmark: the pause is recorded
+                // as a pause span.
+                if let Some(level) = &mut self.level {
+                    if self.pauses.user {
+                        level.session.open_span(Span::Pause);
+                    } else {
+                        level.session.close_span();
+                    }
+                }
             }
         }
     }
@@ -1168,6 +1248,11 @@ impl App {
             && let Some(c) = key_char(code)
             && let Some(f) = self.flow.as_mut()
         {
+            if menu == Some(Screen::Pause)
+                && let Some(level) = &mut self.level
+            {
+                level.session.menu_key(&c.to_ascii_lowercase().to_string());
+            }
             f.hotkey(c);
             self.run_effects(event_loop);
             return;
@@ -1192,6 +1277,11 @@ impl App {
             Routed::Command(cmd) => self.command(event_loop, cmd),
             Routed::Menu(m) => {
                 if let Some(f) = self.flow.as_mut() {
+                    if f.screen() == Screen::Pause
+                        && let Some(level) = &mut self.level
+                    {
+                        level.session.menu_key(menu_input_name(m));
+                    }
                     f.menu_input(flow::menu_input(m), from_pad);
                     self.run_effects(event_loop);
                 }
