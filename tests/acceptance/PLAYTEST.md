@@ -66,7 +66,7 @@ No longer a difference: Claw climbs up at 220 px/s, as in the original.
 Report a climb that feels faster or slower.
 
 1. Watch the bot's run of the first level: `make run-game ARGS="--install PATH --level 1 --replay tests/acceptance/routes/level1.csv"`. Claw goes from the start to the map piece without a death you would not expect, and the level ends.
-2. `CLAW_INSTALL=PATH CLAW_REFERENCE=... make compare REF=level1/bot-original-v2` and `make compare REF=level1/bot-v2` (the original's runs of the current routes, at `c18` and `c60`) each end with "no divergence beyond the known ones"; each divergence printed is one `tests/acceptance/tolerances/references.toml` lists for that route, with its reason.
+2. `CLAW_INSTALL=PATH CLAW_REFERENCE=... make compare REF=level1/bot-original-v2` and `CLAW_INSTALL=PATH CLAW_REFERENCE=... make compare REF=level1/bot-v2` (the original's runs of the current routes, at `c18` and `c60`) each end with "no divergence beyond the known ones"; each divergence printed is one `tests/acceptance/tolerances/references.toml` lists for that route, with its reason.
 3. In LEVEL1, press Pause: the game freezes with the small PAUSE sign and no menu, and the sounds and music stop. Press Pause again: play goes on and the music carries on where it stopped. Escape does nothing while paused.
 4. Tap Pause twice quickly, several times: each resume advances the game by exactly one tick. Holding Pause steps at the keyboard repeat rate.
 5. Pause, press and hold Jump, then resume: Claw jumps on the first tick. Hold Jump before pausing and keep holding it through the resume: no new jump.

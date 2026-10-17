@@ -949,7 +949,7 @@ fn unknown_logics_launch_nothing_and_respawn_purges_projectiles() {
             projectile::spawn(
                 w,
                 ProjectileSpec {
-                    logic: "CannonBall",
+                    logic: "WolvingtonBullet",
                     x: 1200,
                     y: 800,
                     ..ProjectileSpec::default()
