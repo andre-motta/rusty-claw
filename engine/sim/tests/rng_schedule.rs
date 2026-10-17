@@ -76,11 +76,13 @@ fn the_small_objects_window_is_831_by_623_in_the_original_modes() {
         assert_eq!(cfg.half_extents(0, cfg.view), (800, 600));
         assert_eq!(cfg.half_extents(1, cfg.view), (1280, 960));
     }
-    // The widened mode keeps its parameters.
+    // The widened mode keeps its parameters for its small objects, but its
+    // breakable exceptions wake by the measured window.
     let wide = ActivationConfig::widened((640, 480));
     assert_eq!(wide.mode, ActivationMode::Widened);
     assert_eq!(wide.margins[2], WIDENED_SMALL_MARGIN);
     assert_eq!(wide.half_extents(2, wide.original_view), (384, 288));
+    assert_eq!(wide.exception_half_extents(2), (415, 311));
 }
 
 #[test]
@@ -243,6 +245,36 @@ fn the_ambient_timers_first_count_down_in_the_first_tick_after_the_rest_of_it() 
     // third tick); with a decrement while the level loads it would come in
     // tick 1.
     assert_eq!(flips[..5], [(0, 0), (1, 0), (2, 1), (3, 0), (4, 0)]);
+}
+
+#[test]
+fn an_ambient_manager_made_after_the_first_tick_is_updated() {
+    // An ambient loop 1700 px right of the start is asleep at first, so the
+    // first ticks find no manager; it registers when Claw's walk wakes it,
+    // and the manager made then is updated from that tick on.
+    let mut l = flat_level();
+    l.sounds.insert(CRIES.into(), Some(1000));
+    let mut s = ObjectSpec::at("AmbientSound", 2700, 900, 0);
+    s.anim = CRIES.into();
+    l.objects.push(s);
+    let mut sim = pressing_sim(l, SimConfig::default());
+    idle(&mut sim, 3);
+    assert!(sound_object::manager_of(sim.objects()).is_none());
+    let walk = TickInput {
+        held: Buttons(RIGHT),
+        pressed: Buttons(0),
+    };
+    for _ in 0..400 {
+        sim.step(walk);
+        if sound_object::manager_of(sim.objects()).is_some() {
+            break;
+        }
+    }
+    let m = sound_object::manager_of(sim.objects()).expect("the loop woke and made a manager");
+    assert_eq!(m.entries.len(), 1);
+    sim.step(walk);
+    let m = sound_object::manager_of(sim.objects()).expect("the manager");
+    assert!(m.entries[0].playing, "the manager runs once it is made");
 }
 
 // ------------------------------------------------------- rules 5 and 6

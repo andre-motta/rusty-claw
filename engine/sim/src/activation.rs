@@ -18,14 +18,17 @@
 //!   presentation draws dormant objects in the extra width frozen.
 //! - [`ActivationMode::Widened`]: every window grows by the extra half view
 //!   width, so everything on a wide screen is live, except breakable
-//!   objects, which keep a 768x576 window around the centre a 640x480 view
-//!   would have. This changes gameplay and is recorded in traces.
+//!   objects, which keep the original window around the centre a 640x480
+//!   view would have; that keeps every crate and keg waking exactly where it
+//!   would in the original. This changes gameplay and is recorded in
+//!   traces.
 //!
 //! The small objects' window (class 2) is a measured value: the original
 //! game runs it at 831x623 (half extents 415 x 311), and crates, kegs,
 //! pickups and their glitters wake and sleep by that window. The original
-//! and frozen-edge modes use the measured window; the widened mode keeps
-//! its parameters as they were (768x576 for the small objects).
+//! and frozen-edge modes use the measured window, and so do the breakable
+//! exceptions of the widened mode; the widened mode's other small objects
+//! keep its parameters as they were (64 x 48 px beyond the half view).
 
 use crate::container::Container;
 use crate::object::{Object, ObjectId, flags};
@@ -82,8 +85,13 @@ pub const SMALL_MARGIN: (i32, i32) = (95, 71);
 
 /// Off-screen margin of the small objects' window in the widened mode,
 /// px: 768x576 around the 640x480 view. The widened mode keeps it as it
-/// was.
+/// was for every small object but the breakable exceptions.
 pub const WIDENED_SMALL_MARGIN: (i32, i32) = (64, 48);
+
+/// Off-screen margins of the original windows per class, px. The widened
+/// mode's breakable exceptions use them around the original view, so they
+/// wake where the original wakes them.
+pub const ORIGINAL_MARGINS: [(i32, i32); 3] = [(480, 360), (960, 720), SMALL_MARGIN];
 
 /// Activation parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,7 +130,7 @@ impl ActivationConfig {
             mode: ActivationMode::Original,
             view: (640, 480),
             original_view: (640, 480),
-            margins: [(480, 360), (960, 720), SMALL_MARGIN],
+            margins: ORIGINAL_MARGINS,
             far_margin: (320, 220),
             cells: [(500, 250), (1000, 1000), (250, 125)],
             exceptions: BREAKABLE_LOGICS.iter().map(|s| s.to_string()).collect(),
@@ -155,6 +163,16 @@ impl ActivationConfig {
     pub fn half_extents(&self, class: usize, view: (u32, u32)) -> (i32, i32) {
         let m = self.margins[class.min(2)];
         ((view.0 / 2) as i32 + m.0, (view.1 / 2) as i32 + m.1)
+    }
+
+    /// Half extents of a class's window for the widened mode's breakable
+    /// exceptions: the original margins around the original view.
+    pub fn exception_half_extents(&self, class: usize) -> (i32, i32) {
+        let m = ORIGINAL_MARGINS[class.min(2)];
+        (
+            (self.original_view.0 / 2) as i32 + m.0,
+            (self.original_view.1 / 2) as i32 + m.1,
+        )
     }
 
     /// True when `logic` keeps the original window.
@@ -270,12 +288,12 @@ impl Grid {
 }
 
 fn window(cfg: &ActivationConfig, obj: &Object, c: &Centres) -> (i32, i32, i32, i32) {
-    let (centre, view) = if cfg.is_exception(&obj.logic) {
-        (c.original, cfg.original_view)
+    let class = obj.activation_class();
+    let (centre, (hx, hy)) = if cfg.is_exception(&obj.logic) {
+        (c.original, cfg.exception_half_extents(class))
     } else {
-        (c.main, cfg.view)
+        (c.main, cfg.half_extents(class, cfg.view))
     };
-    let (hx, hy) = cfg.half_extents(obj.activation_class(), view);
     (centre.0 - hx, centre.1 - hy, centre.0 + hx, centre.1 + hy)
 }
 
@@ -359,9 +377,9 @@ impl Activation {
         self.last = Some(c);
         let mut woken = Vec::new();
         for class in 0..3 {
-            let mut area = self.area(class, self.cfg.view, c.main);
+            let mut area = Self::area(self.cfg.half_extents(class, self.cfg.view), c.main);
             if self.cfg.mode == ActivationMode::Widened {
-                let o = self.area(class, self.cfg.original_view, c.original);
+                let o = Self::area(self.cfg.exception_half_extents(class), c.original);
                 area = (
                     area.0.min(o.0),
                     area.1.min(o.1),
@@ -383,8 +401,7 @@ impl Activation {
         woken
     }
 
-    fn area(&self, class: usize, view: (u32, u32), centre: (i32, i32)) -> (i32, i32, i32, i32) {
-        let (hx, hy) = self.cfg.half_extents(class, view);
+    fn area((hx, hy): (i32, i32), centre: (i32, i32)) -> (i32, i32, i32, i32) {
         (centre.0 - hx, centre.1 - hy, centre.0 + hx, centre.1 + hy)
     }
 

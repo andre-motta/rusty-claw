@@ -113,10 +113,11 @@ fn widened_windows_with_breakable_exceptions_near_both_edges() {
             // A pickup: widened window around the wide centre.
             object("TreasurePowerup", 2, wide + dir * 917, 1600),
             object("TreasurePowerup", 2, wide + dir * 918, 1600),
-            // A crate: the original window around the original centre.
-            object("Crate", 2, orig + dir * 384, 1600),
-            object("Crate", 2, orig + dir * 385, 1600),
-            object("PowderKeg", 2, orig - dir * 384, 1600),
+            // A crate: the original (measured) window around the original
+            // centre, half extents 415 x 311.
+            object("Crate", 2, orig + dir * 415, 1600),
+            object("Crate", 2, orig + dir * 416, 1600),
+            object("PowderKeg", 2, orig - dir * 415, 1600),
             // An enemy: widened.
             object("Officer", 0, wide + dir * 1333, 1600),
             object("Officer", 0, wide + dir * 1334, 1600),
@@ -129,14 +130,18 @@ fn widened_windows_with_breakable_exceptions_near_both_edges() {
         );
     }
     // Away from the edges both centres are the camera point; a crate keeps
-    // the 384 px window while a pickup gets 917 px.
+    // the measured 415 x 311 px window while a pickup gets 917 x 288 px.
     let objs = [
-        object("BehindCrate", 2, 3000 + 385, 1600),
+        object("BehindCrate", 2, 3000 + 415, 1600),
+        object("BehindCrate", 2, 3000 + 416, 1600),
+        object("FrontStatue", 2, 3000, 1600 + 311),
+        object("FrontStatue", 2, 3000, 1600 + 312),
         object("TreasurePowerup", 2, 3000 + 917, 1600),
+        object("TreasurePowerup", 2, 3000, 1600 + 289),
     ];
     assert_eq!(
         live_after_enter(cfg, &objs, (3000, 1600)),
-        vec![false, true]
+        vec![true, false, true, false, true, false]
     );
 }
 

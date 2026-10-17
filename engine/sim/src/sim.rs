@@ -138,8 +138,12 @@ pub struct Sim {
     set_up_rng: u32,
     events: Vec<CollisionEvent>,
     /// The level's ambient sound manager, once found (see
-    /// [`Sim::ambient_update`]).
+    /// [`Sim::ambient_update`]): recorded when it is spawned.
     ambient: Option<ObjectId>,
+    /// True once the objects were searched for an ambient manager; after
+    /// that only a spawn records one, so a level without ambient sounds
+    /// does not search every tick.
+    ambient_searched: bool,
     diagnostics: Diagnostics,
     out: Outbox,
     last_audio: Vec<AudioCue>,
@@ -166,6 +170,8 @@ struct Runner<'a> {
     now_ms: u64,
     pulse: bool,
     player: Option<ObjectId>,
+    /// The ambient manager, recorded when [`Runner::list_spawned`] lists it.
+    ambient: &'a mut Option<ObjectId>,
 }
 
 impl Runner<'_> {
@@ -359,6 +365,9 @@ impl Runner<'_> {
         self.take_camera_request();
         while self.out.has_spawned() {
             for id in self.out.take_spawned() {
+                if crate::logic::sound_object::manager_at(objects, id).is_some() {
+                    *self.ambient = Some(id);
+                }
                 let Some(o) = objects.get(id) else { continue };
                 if o.flags & flags::DESTROY != 0 {
                     objects.remove(id);
@@ -457,6 +466,7 @@ impl Sim {
             set_up_rng: LEVEL_LOAD_SEED,
             events: Vec::new(),
             ambient: None,
+            ambient_searched: false,
             diagnostics: Diagnostics::default(),
             out: Outbox::new(),
             last_audio: Vec::new(),
@@ -600,6 +610,7 @@ impl Sim {
                 now_ms,
                 pulse: self.pulse_left == 0,
                 player: self.player,
+                ambient: &mut self.ambient,
             },
             &mut self.objects,
             &mut self.activation,
@@ -725,16 +736,25 @@ impl Sim {
     /// update pass does not run it, and it is not run when it is made: a
     /// timed sound registered while the level loads first counts down in
     /// the first tick.
+    ///
+    /// The manager is recorded when it is spawned; the objects are searched
+    /// for one only once, so a level without one costs nothing per tick.
     fn ambient_update(&mut self) {
         let cached = self
             .ambient
             .filter(|&id| logic::sound_object::manager_at(&self.objects, id).is_some());
-        let Some(id) =
-            cached.or_else(|| logic::sound_object::find_manager(&self.objects, self.player))
-        else {
+        let found = match cached {
+            Some(id) => Some(id),
+            None if !self.ambient_searched => {
+                self.ambient_searched = true;
+                logic::sound_object::find_manager(&self.objects, self.player)
+            }
+            None => None,
+        };
+        self.ambient = found;
+        let Some(id) = found else {
             return;
         };
-        self.ambient = Some(id);
         let (mut runner, objects, _) = self.parts();
         runner.run(objects, id);
         runner.list_spawned(objects);

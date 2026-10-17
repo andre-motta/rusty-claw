@@ -44,7 +44,10 @@ pub const STEP_LIMIT: f64 = 24.0;
 /// Longest time one movement step covers, ms: the first step after a gap
 /// covers the time since the previous step up to this. Inferred from the
 /// first moves of woken enemies (after 108 ms asleep a pacing officer
-/// first moves 13 px, after longer sleeps 24 px).
+/// first moves 13 px, after longer sleeps 24 px). The rest of the rule is
+/// inferred with it: the catch-up fires after any gap over one 18 ms tick,
+/// not only after a sleep, and an enemy that has never moved (no time of a
+/// last step yet) covers one 18 ms tick.
 pub const WAKE_STEP_MAX_MS: u64 = 200;
 /// Depth above the base of an enemy drawn in front of Claw.
 pub const DEPTH_IN_FRONT: i32 = 4000;

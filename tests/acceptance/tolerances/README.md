@@ -75,9 +75,8 @@ twice at each clock with identical traces.
   for the whole 32.5 s run and his height until the original's officer
   first hits him at 25938 ms. Claw's own movement and the camera therefore
   follow the original exactly at this clock; no movement fix is needed.
-- The random stream is equal tick for tick from time zero until 7506 ms
-  on the opening (see "What is fixed and what remains" below for every
-  route).
+- The random stream first differs at 7506 ms on the opening (see "What
+  is fixed and what remains" below for every route).
 - Sound choices that the original draws from the shared stream (Claw's hit
   sound and pain line, the officer's line) already come from the shared
   stream in the game. The sound variant of an animation frame comes from a
@@ -177,10 +176,9 @@ game too, as in the original, and those routes no longer win in the game,
 so the bot found the routes in `tests/acceptance/routes/` again (same
 seed, same margin rules); the original has not played the new routes yet.
 
-- **`c18`.** The game draws the same numbers as the original, step for
-  step, until 51498 ms, and Claw's position, state and the camera are
-  equal tick for tick until 51552 ms, the officer's hit at 8586 ms
-  included. At 51516 ms an officer falls in the original (its hit burst,
+- **`c18`.** The random stream first differs at 51516 ms, and Claw's
+  position, state and the camera are equal tick for tick until 51552 ms,
+  the officer's hit at 8586 ms included. At 51516 ms an officer falls in the original (its hit burst,
   its loot and its death draw nine numbers more than the game draws in
   that step), while in the game it stands and its sword hits Claw at
   51552 ms; the route goes another way from there.
@@ -230,24 +228,25 @@ routes it touches:
   stream stays equal much longer, but each `c18` store still has a first
   step where the two games draw a different number of times; every random
   choice after it (an enemy's next move, whether a strike lands, a
-  standing attack's variant) can come out differently. Per store:
-  - `level1/bot-original-v2`: equal until 51498 ms; at 51516 ms the
-    original draws nine numbers more, where an officer falls in the
-    original and stands in the game.
-  - `level1/opening`: equal until 7488 ms; at 7506 ms the game draws one
+  standing attack's variant) can come out differently. Per store (the
+  time is `known.rng` in `references.toml`):
+  - `level1/bot-original-v2`: first differs at 51516 ms, where the
+    original draws nine numbers more: an officer falls in the original and
+    stands in the game.
+  - `level1/opening`: first differs at 7506 ms, where the game draws one
     number fewer. Claw's columns stay equal throughout; only the score
     differs, from 17946 ms.
-  - `level1/video`: equal until 5328 ms; at 5346 ms the game draws one
+  - `level1/video`: first differs at 5346 ms, where the game draws one
     number fewer. Claw's columns stay equal until 54774 ms.
-  - `level1/bot-original`: equal until 24660 ms; at 24678 ms the game
+  - `level1/bot-original`: first differs at 24678 ms, where the game
     draws one number more. Claw's columns stay equal until 27378 ms.
-  - `level1/bot-original-delay1`: the first difference is not in the
-    stream: a standing attack holds Claw longer in the original at
-    24858 ms while the stream is still equal (until 25794 ms).
-  - `level1/bot-original-seg3410`: differs at 18 ms, the segment's first
-    step after Claw is placed and the stream is set: the original draws
-    nothing there, the game draws one number. Claw's columns stay equal
-    until 11970 ms (the score).
+  - `level1/bot-original-delay1`: first differs at 25812 ms. The first
+    difference of the store is not in the stream: a standing attack holds
+    Claw longer in the original at 24858 ms, before it.
+  - `level1/bot-original-seg3410`: first differs at 18 ms, the segment's
+    first step after Claw is placed and the stream is set: the original
+    draws nothing there, the game draws one number. Claw's columns stay
+    equal until 11970 ms (the score).
 
   None of these steps is traced to its cause yet; they are the next
   things to match, and the entries are tightened when they are.
