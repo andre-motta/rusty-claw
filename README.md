@@ -377,7 +377,10 @@ or that comes earlier than listed; that file records, with a reason, where
 each compared route is known to leave its tolerance. A route that starts
 somewhere in the middle of a level names its start point in `meta.toml`
 (`teleport = "X,Y"`): Claw is placed there and left to settle before the
-route starts, as `--start X,Y` does. `make test-install MODULE=acceptance`
+route starts, and once he stands the comparison also sets the random
+stream to the store's `rng_at_t0`, as `claw-replay --start X,Y --seed N`
+does (the game's own `--start` with `--replay` places Claw but does not
+reset the random stream). `make test-install MODULE=acceptance`
 with `CLAW_REFERENCE` set runs every listed route twice: tick by tick
 (`install_reference`), and through the game's own frame loop at 60 Hz at
 the gate's preset, exact at `c18` and feel at `c60` (`install_differential`).

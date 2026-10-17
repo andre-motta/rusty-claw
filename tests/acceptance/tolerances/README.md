@@ -66,29 +66,19 @@ twice at each clock with identical traces.
 ### c18: tick for tick
 
 - Claw's position, state, physics type and the camera point are equal on
-  every tick for the first 16.4 s (911 ticks): standing, both jumps,
-  walking off the step, walking, the climb, the treasure (score equal) and
-  the running jumps.
-- At 16416 ms the officer's sword hits Claw in the game while he jumps
-  down past it; in the original it misses. In the game that officer starts
-  pacing about 4.5 s into the route, while Claw is still far below, and
-  waits where Claw lands. Everything after follows from that hit.
+  every tick for the first 16.7 s: standing, both jumps, walking off the
+  step, walking, the climb, the treasure (score equal) and the running
+  jumps.
+- At 16776 ms the officer's sword hits Claw in the game while he jumps
+  down past it; in the original it misses. The officer's choices follow
+  the random stream, which already differs there (see "What is fixed and
+  what remains" below). Everything after follows from that hit.
 - With the level's objects held inert, Claw's horizontal position is equal
   for the whole 32.5 s run and his height until the original's officer
   first hits him at 25938 ms. Claw's own movement and the camera therefore
   follow the original exactly at this clock; no movement fix is needed.
-- The random stream differs from the first tick. The cause is the order of
-  enemy and object draws, not sound:
-  - the game makes the level's objects on their first tick, so their
-    set-up draws (the officer's choice of line, its first idle draws and
-    the first random wait of each timed ambient sound) come in tick 0 and
-    their first update in tick 1, while the original makes them while the
-    level loads, before time zero, and updates them first in tick 0. Seeded
-    with the random state the level load starts from instead, the game
-    draws the same values as the original, one tick late, for the first
-    six ticks;
-  - an enemy's per-tick roll comes every third logic step in the original
-    and on every tick in the game, which ends that agreement.
+- The random stream is equal tick for tick from time zero until 2268 ms
+  on the opening (until 162 ms on the bot's route).
 - Sound choices that the original draws from the shared stream (Claw's hit
   sound and pain line, the officer's line) already come from the shared
   stream in the game. The sound variant of an animation frame comes from a
@@ -105,29 +95,32 @@ Positions are the game minus the original at the same time.
 | 0 to 3.4 s | stands, tapped and full jumps | equal on the ground; up to 15 px in the air (the full jump peaks about one tick apart), same heights (45 and 134 px) |
 | 3.4 to 9.2 s | walks off the step, walks right to the wall | -2 to +10 px; both stop at the same wall |
 | 9.2 to 10.6 s | walks left to the ladder | within 2 px |
-| 10.6 to 12.9 s | climbs the ladder | grows to 39 px: the game climbs at about 240 px/s, the original at 220 px/s, and reaches the top 250 ms early |
+| 10.6 to 12.9 s | climbs the ladder | within the feel tolerance: both climb at 220 px/s |
 | 12.9 to 16.3 s | stands, jumps for treasure, running jump | equal standing, within 7 px in the air; score equal |
-| from 16.4 s | the officer | the original's officer hits Claw, the game's does not; up to 410 px apart after |
+| from 16.4 s | the officer | the original's officer hits Claw at 16384 ms; the game's strikes a few ticks later and then falls to Claw, while the original's goes on striking |
 
-Within the feel tolerance, the opening holds until the climb (11150 ms) and,
-leaving the climb out, until the officer (16384 ms).
+Within the feel tolerance the opening holds, climb included, until the
+officer (16384 ms).
 
 ## Tolerance values
 
 - `exact.toml` is exact by definition.
 - `feel.toml`: the smallest values that hold Claw's own movement on the
-  first level's routes at 60 frames per second (leaving out the climb, the
-  enemies and a partly held running jump). A fall from standing still runs
-  up to about one tick ahead of the original in the middle of the fall at
-  this frame rate (both land within 4 ms of each other), so the position
-  needs two ticks of timing slack to stay within 8 px; with it, the opening
-  holds until the climb (11400 ms) and the route written down from a fast
-  run holds until its partly held running jump (6050 ms). State changes
-  within two ticks (one tick is not enough: a landing comes two ticks apart
-  once); score changes within two ticks. The event slack is a starting
-  value.
-- The climb difference is not absorbed into the tolerance: the climbing
-  speed of the default tuning is to be set to the original's 220 px/s.
+  first level's routes at 60 frames per second (leaving out the enemies
+  and a partly held running jump). A fall from standing still runs up to
+  about one tick ahead of the original in the middle of the fall at this
+  frame rate (both land within 4 ms of each other), so the position needs
+  two ticks of timing slack to stay within 8 px; with it, the opening
+  holds until the officer (16384 ms) and the route written down from a
+  fast run holds until its partly held running jump (6050 ms). State
+  changes within two ticks (one tick is not enough: a landing comes two
+  ticks apart once); score changes within two ticks. The event slack is a
+  starting value.
+- No difference is absorbed by widening a tolerance. The climb was a
+  tuning difference, not a tolerance one: the default tuning now climbs
+  at the original's 220 px/s. `exact.toml` and `feel.toml` are never
+  widened to make a route pass; a known difference goes into
+  `references.toml` with its reason instead.
 
 ## Full-level routes and segments
 
@@ -162,8 +155,9 @@ route in `references.toml` at its clock's preset):
 
 - **c18 lockstep gates the logic.** It is exact and repeatable, it finds a
   difference at the tick it happens, and it already shows Claw's movement
-  matching. The random stream is compared too, once the enemy draw order
-  is fixed; until then `references.toml` records it as known.
+  matching. The random stream is compared too, once the game draws as
+  many numbers per step as the original; until then `references.toml`
+  records it as known.
 - **c60 feel gates Claw's movement feel**, on Claw's own columns over
   stretches without enemies (or segments), with `feel.toml`. Enemy
   encounters at c60 are reported, not gated, and a full-level route at c60
@@ -174,14 +168,96 @@ route in `references.toml` at its clock's preset):
 
 ## What the first level's bot routes show
 
-The bot's routes press Right and Jump on their first row. The original
-ignores keys already down when play starts until they are released and
-pressed again, so in the original Claw stands still at the start, and the
-rest of each route plays from the wrong place; neither route finishes the
-level there. With the routes delayed by one row, or cut into a segment
-with Claw placed at its start, Claw's own movement is equal tick for tick
-at `c18` (8.6 s and 13.6 s), until a random draw differs: an officer's
-sword that hits in the game and misses in the original, or a standing
-attack whose variant comes from the random stream. `references.toml`
-lists these first divergences per route until the original plays the new
-routes.
+The routes in `tests/acceptance/routes/` were played in the original twice
+at their clock, with identical traces both times: `level1-original.csv`
+at `c18` (store `level1/bot-original-v2`) and `level1.csv` at `c60` (store
+`level1/bot-v2`), both from the original's random state at time zero.
+Neither finishes the first level in the original; both finish it in the
+game.
+
+- **`c18`.** Claw's position, state and the camera are equal tick for
+  tick until 8586 ms. There an officer's sword hits Claw in the original
+  (Claw flinches, health 90) and misses him in the game. The officer's
+  choice follows the random stream, which is equal only until 162 ms (see
+  below). From the hit the route plays from the wrong place, and the
+  original ends at 2774,4730 with the level unfinished.
+- **`c60`.** Claw's first fall off the start step is 26 px apart at
+  684 ms, within the two ticks of timing the feel tolerance allows. Such
+  small differences add up: the game reaches the ladder near 2.8 s about
+  45 ms after the original, jumps off it about 35 ms later, and is 20 px
+  lower in that jump at 3217 ms. From there the route, played without
+  looking at the game, goes another way, and in the original ends
+  against the wall right of the start (1814,4794). This is expected of a
+  route played open loop at 60 frames per second: `c60` is compared for
+  feel stretch by stretch and need not finish the level.
+
+The earlier stores (`level1/bot-original`, `level1/bot`, the `-delay1`
+stores and `level1/bot-original-seg3410`) hold earlier routes, whose keys
+were already down on their first row; they stay listed as further checks.
+
+## What is fixed and what remains
+
+Fixed in the game, and so no longer listed as differences:
+
+- **The level-start latch.** Keys already down when play starts count for
+  Claw only once released and pressed again, as in the original. The
+  routes start with two empty rows, so their first keys are pressed after
+  play starts in both games.
+- **The draw order at time zero.** The level's objects are set up while
+  the level loads, before time zero, and update first in tick 0, as in the
+  original. Their set-up draws (an officer's choice of line, its first
+  idle draws, the first random wait of each timed ambient sound) no longer
+  land in tick 0, and the random stream is equal from time zero.
+- **The climb.** The default tuning climbs up at the original's 220 px/s,
+  so the opening's climb at `c60` holds within the feel tolerance.
+
+Known differences that remain, each listed in `references.toml` for the
+routes it touches:
+
+- **The random draw schedule.** Every third logic step the original draws
+  more numbers from the shared random stream than the game does (three
+  against one at 162 ms on the bot's route). The stream is equal until
+  then, and every random choice after it (an enemy's next move, whether a
+  strike lands, a standing attack's variant) can come out differently.
+  This is the first `c18` difference on every route; it is the next thing
+  to match, and the entries are tightened when it is.
+- **Open-loop routes at `c60`.** Frames of 16 and 17 ms against the
+  game's 18 ms ticks move a landing or a ladder grab by a frame or two,
+  and a route played without looking at the game goes another way from
+  there.
+- **Default-tuning feel at `c60`.** A fall from standing still runs up to
+  about one tick ahead of the original in the middle of the fall, and a
+  running jump with the jump key held part of the way peaks 11 px lower
+  (the route written down from a fast run, 6050 ms).
+- **Directions held across a change of Claw's state.** In the original,
+  each change of Claw's state takes Left and Right off the latch, so a
+  direction held since before play started counts again after Claw's
+  next state change (it shows up as a fresh press). The game keeps such a
+  direction ignored until it is released and pressed again. The listed
+  routes hold no direction when play starts, and no listed first
+  divergence is traced to it so far.
+
+## Adding a reference store
+
+1. Play the route in the original at one clock, at least twice, and write
+   each run as a reference trace in the trace format. Repeats of a route
+   are expected to be identical.
+2. Put the runs in a new folder `$CLAW_REFERENCE/level<N>/<name>/`: the
+   route as `route.csv`, the traces as `trace-<clock>-r<k>.csv`, and a
+   `meta.toml` with `level`, the random state at time zero
+   (`rng_at_t0`), and a `[c18]` or `[c60]` table naming the `tuning`
+   (`original` or `default`) and the `traces`. A route that starts away
+   from the level's start names its start point (`teleport = "X,Y"`). A
+   store is never overwritten: when a route changes, the new runs go into
+   a new folder (for example with a `-v2` suffix) and the old entry stays.
+3. Run `make compare REF=level<N>/<name> CLOCK=<clock>`. It prints the
+   first divergence of each column, and fails while the store has no
+   entry.
+4. Add a `[[compare]]` entry to `references.toml` with the reference, the
+   clock, the tolerance (`exact` for `c18`, `feel` for `c60`) and
+   `known.<column> = <ms>` for each column the comparison printed, with a
+   comment saying in plain words why the route leaves its tolerance
+   there. `make compare` then passes, and `make test-install
+   MODULE=acceptance` checks the store with both drivers.
+5. When a fix in the game moves a listed divergence later or removes it,
+   the tests say so; tighten the entry to the new value.
