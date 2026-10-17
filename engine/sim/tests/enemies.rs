@@ -422,20 +422,9 @@ fn a_walking_rat_turns_at_its_limits_without_turning_its_sprite() {
     ));
 }
 
-/// True when a walker walks one way with a speed the other way, as one
-/// held against a limit is (a wall turns the speed for a tick or two).
-fn pinned(sim: &Sim, id: ObjectId) -> bool {
-    let vx = data(sim, id).vx;
-    match state_of(sim, id) {
-        Some(EnemyState::MoveLeft) => vx > 0.0,
-        Some(EnemyState::MoveRight) => vx < 0.0,
-        _ => false,
-    }
-}
-
-#[test]
-fn an_unbounded_rat_walks_back_and_forth_between_two_walls() {
-    // A corridor six tiles wide between two walls on a flat floor.
+/// A corridor six tiles wide between two walls on a flat floor (the left
+/// wall's right edge at x 2624, the right wall's left edge at x 3008).
+fn corridor(objects: Vec<ObjectSpec>) -> SimLevel {
     let mut rows = vec![".".repeat(200); 15];
     for r in rows.iter_mut().skip(10) {
         r.replace_range(40..41, "#");
@@ -444,67 +433,115 @@ fn an_unbounded_rat_walks_back_and_forth_between_two_walls() {
     rows.push("#".repeat(200));
     rows.push("#".repeat(200));
     let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
-    let mut sim = sim_with(
-        level(&rows, (1000, 600), vec![record("Rat", 44 * 64, 926)]),
-        7,
-    );
-    send_claw_away(&mut sim);
-    let id = first(&sim, GameLogic::Rat);
-    assert_eq!(feet_of(obj(&sim, id)), 959, "on the floor");
-    let mut pinned_ticks = 0;
-    let mut longest = 0;
-    let mut late_turns = 0;
-    let mut last_dir = 0.0f64;
-    let (mut lo, mut hi) = (i32::MAX, i32::MIN);
-    for t in 0..3000 {
+    level(&rows, (1000, 600), objects)
+}
+
+/// Steps until the enemy's walking speed turns from `from` (a wall's
+/// response); returns the tick, its x before that tick and its limits
+/// after it.
+fn until_wall(sim: &mut Sim, id: ObjectId, from: f64, ticks: usize) -> (usize, i32, (i32, i32)) {
+    for t in 0..ticks {
+        let before = obj(sim, id).x;
         sim.step(TickInput::default());
-        if pinned(&sim, id) {
-            pinned_ticks += 1;
-            longest = longest.max(pinned_ticks);
-        } else {
-            pinned_ticks = 0;
+        let d = data(sim, id);
+        if d.vx == -0.5 * from {
+            return (t, before, d.bounds);
         }
-        let x = obj(&sim, id).x;
-        let vx = data(&sim, id).vx;
-        if t >= 1000 {
-            lo = lo.min(x);
-            hi = hi.max(x);
-            if vx != 0.0 && last_dir != 0.0 && vx.signum() != last_dir.signum() {
-                late_turns += 1;
-            }
-        }
-        if vx != 0.0 {
-            last_dir = vx;
-        }
+        assert_eq!(d.vx, from, "walking at {from} until the wall");
     }
-    assert!(longest <= 2, "held on a limit for {longest} ticks");
-    // Both walls became its limits, and it keeps walking between them at
-    // its walking speed.
-    let d = data(&sim, id);
-    assert!(
-        d.bounds.0 > 41 * 64 - 30 && d.bounds.1 < 47 * 64 + 30,
-        "{d:?}"
-    );
-    assert_eq!((lo, hi), d.bounds, "it covers the whole corridor");
-    assert!(late_turns >= 4, "{late_turns} turns");
-    assert!(
-        matches!(
-            state_of(&sim, id),
-            Some(EnemyState::MoveLeft | EnemyState::MoveRight)
-        ),
-        "still walking"
-    );
+    panic!("no wall within {ticks} ticks");
+}
+
+/// Asserts the walker stays on `x` in `state` with speed `vx` for `ticks`
+/// ticks; returns the frames its walk showed.
+fn held_at_wall(
+    sim: &mut Sim,
+    id: ObjectId,
+    x: i32,
+    state: EnemyState,
+    vx: f64,
+    ticks: usize,
+) -> BTreeSet<i32> {
+    let mut frames = BTreeSet::new();
+    for t in 0..ticks {
+        sim.step(TickInput::default());
+        let o = obj(sim, id);
+        assert_eq!(o.x, x, "tick {t}: held on the wall's limit");
+        assert_eq!(state_of(sim, id), Some(state), "tick {t}");
+        assert_eq!(data(sim, id).vx, vx, "tick {t}: pushing into the wall");
+        frames.insert(o.frame);
+    }
+    frames
 }
 
 #[test]
-fn a_walker_turns_at_its_speed_or_at_the_walking_speed_after_a_wall() {
+fn a_rat_walking_into_a_wall_stays_there_in_its_other_walking_state() {
+    // Its left limit 20 px left of where it is placed, none on the right:
+    // it walks left to the limit, turns, and walks right into the wall.
+    let x0 = 44 * 64;
+    let mut sim = sim_with(corridor(vec![bounded("Rat", x0, 926, x0 - 20, 0)]), 7);
+    send_claw_away(&mut sim);
+    let id = first(&sim, GameLogic::Rat);
+    assert_eq!(feet_of(obj(&sim, id)), 959, "on the floor");
+    let mut turned = false;
+    for _ in 0..200 {
+        sim.step(TickInput::default());
+        if state_of(&sim, id) == Some(EnemyState::MoveRight) {
+            turned = true;
+            break;
+        }
+    }
+    assert!(turned, "it turned at its left limit");
+    assert_eq!(data(&sim, id).vx, states::WALK_SPEED);
+    // The wall: its right limit becomes where it stood, its speed is
+    // halved and reversed, and it is still walking right.
+    let (_, before, bounds) = until_wall(&mut sim, id, states::WALK_SPEED, 400);
+    assert!(before > 46 * 64, "at the right wall: {before}");
+    assert_eq!(bounds.1, before, "the limit is where it stood");
+    assert_eq!(state_of(&sim, id), Some(EnemyState::MoveRight));
+    // The next tick turns it with that speed, truncated and reversed
+    // again: it walks left on paper and pushes right, into the wall, for
+    // good.
+    let frames = held_at_wall(&mut sim, id, before, EnemyState::MoveLeft, 30.0, 2000);
+    assert!(frames.len() > 1, "it walks on the spot: {frames:?}");
+}
+
+#[test]
+fn a_rat_walking_left_into_a_wall_stays_there_in_its_other_walking_state() {
+    // No limits: from Home it walks left, into the left wall.
+    let mut sim = sim_with(corridor(vec![record("Rat", 44 * 64, 926)]), 7);
+    send_claw_away(&mut sim);
+    let id = first(&sim, GameLogic::Rat);
+    let (_, before, bounds) = until_wall(&mut sim, id, -states::WALK_SPEED, 400);
+    assert!(before < 42 * 64, "at the left wall: {before}");
+    assert_eq!(bounds.0, before, "the limit is where it stood");
+    assert_eq!(state_of(&sim, id), Some(EnemyState::MoveLeft));
+    let frames = held_at_wall(&mut sim, id, before, EnemyState::MoveRight, -30.0, 2000);
+    assert!(frames.len() > 1, "it walks on the spot: {frames:?}");
+}
+
+#[test]
+fn any_enemy_in_the_shared_walking_states_is_held_by_a_wall() {
+    // The shared walking states are every enemy's: an officer set walking
+    // right in the corridor is held by the wall as the rat is.
+    let mut sim = sim_with(corridor(vec![record("Officer", 44 * 64, 900)]), 7);
+    send_claw_away(&mut sim);
+    let id = first(&sim, GameLogic::Officer);
+    sim.with_world(|w| states::move_right(w, id, 60.0));
+    let (_, before, bounds) = until_wall(&mut sim, id, 60.0, 400);
+    assert_eq!(bounds.1, before);
+    held_at_wall(&mut sim, id, before, EnemyState::MoveLeft, 30.0, 500);
+}
+
+#[test]
+fn a_walker_turns_with_its_speed_reversed_and_truncated() {
     // At a limit or ledge: the speed it had, reversed and truncated.
     assert_eq!(states::turn_speed(60.0), 60.0);
     assert_eq!(states::turn_speed(45.9), 45.0);
-    // After a wall turned it at half speed: away at the walking speed.
-    assert_eq!(states::turn_speed(-30.0), states::WALK_SPEED);
-    assert_eq!(states::turn_speed(0.4), states::WALK_SPEED);
-    assert_eq!(states::turn_speed(0.0), states::WALK_SPEED);
+    // After a wall turned it at half speed: as it is, back into the wall.
+    assert_eq!(states::turn_speed(-30.0), -30.0);
+    assert_eq!(states::turn_speed(-30.7), -30.0);
+    assert_eq!(states::turn_speed(0.4), 0.0);
 }
 
 #[test]
