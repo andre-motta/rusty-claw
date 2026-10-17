@@ -12,7 +12,9 @@
 //! with their own palettes; a level in play is drawn with its status bar,
 //! the in-game message and the screen transition in progress
 //! ([`StatusLayer`]), and the in-game menu is drawn over a dimmed copy of
-//! the frozen level.
+//! the frozen level. The pause key freezes the level with a small PAUSE
+//! sign and no menu, and the help screen (F1) shows the controls picture
+//! (see [`crate::pause`]).
 //! The window loads levels when the flow asks, plays the sound cues of
 //! every tick it runs and applies the options changed in the menus at once
 //! (the output size, the aspect policy, the scaling, fullscreen, vsync,
@@ -48,9 +50,10 @@ use claw_ui::menu::command::{MenuKind, Page, VideoSetting};
 use claw_ui::menu::decor::{SPARKLE, Sparkles};
 use claw_ui::menu::draw::{self, FontArt, MenuSprite};
 use claw_ui::menu::{CommandCatalogue, MenuTree};
+use claw_ui::screens::HelpScreen;
 use claw_ui::screens::assets::{
-    BOOTY_SCREENS, MENU_PICTURE, MENU_SCREENS, ScreenAssets, TITLE_PICTURE, TITLE_SCREENS,
-    picture_frame,
+    BOOTY_SCREENS, HELP_PICTURE, HELP_SCREENS, MENU_PICTURE, MENU_SCREENS, ScreenAssets,
+    TITLE_PICTURE, TITLE_SCREENS, picture_frame,
 };
 use claw_ui::screens::booty::{self, BootyArt, BootyScreen, BootyStats};
 use claw_ui::screens::title::{self, TitleScreen};
@@ -58,22 +61,34 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::audio::{AudioBridge, ViewInfo};
 use crate::bench::{Combat, PresentDetail, Report, Samples, Summary, WARMUP_S, combat_route};
 use crate::flow::{self, Effect, Flow, Screen, Start};
 use crate::input::{InputContext, InputRouter, Recorder, Routed};
-use crate::keymap::Command;
+use crate::keymap::{Action, Command};
 use crate::load::{
     LevelBundle, SHADE_SET, SHADE_SIZE, load_graphics, load_level, new_sim, preload, settle_at,
     start_override,
 };
-use crate::pause::{Change, Pauses};
+use crate::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, game_key};
 use crate::saves::SaveStore;
 use crate::session::{Session, Span};
 use crate::settings::{Aspect, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
+
+/// The image set of the PAUSE sign (its frame [`PAUSE_FRAME`]), preloaded
+/// with every level.
+pub const PAUSE_SET: &str = "GAME_MESSAGES";
+/// The PAUSE sign's frame.
+pub const PAUSE_FRAME: i32 = 2;
+
+/// The PAUSE sign shown while the pause key holds play, in the middle of
+/// the picture.
+pub fn pause_sign() -> ScreenSprite {
+    ScreenSprite::new(PAUSE_SET, PAUSE_FRAME, Anchor::Center, 0, 0)
+}
 
 /// The screen layer of a game in progress: the status bar, the message on
 /// screen and the screen transition, for each frame drawn.
@@ -276,6 +291,11 @@ impl Screens {
                 (None, self.graphics.palette.clone())
             }
         }
+    }
+
+    fn help(&mut self) -> HelpScreen {
+        let (bg, pal) = self.picture(HELP_SCREENS, HELP_PICTURE);
+        HelpScreen::new(bg, pal)
     }
 
     fn title(&self) -> TitleScreen {
@@ -493,6 +513,8 @@ struct App {
     interp: bool,
     pauses: Pauses,
     focused: bool,
+    /// Shift, Ctrl and Alt as last reported.
+    modifiers: ModifiersState,
     size_index: usize,
     started: Instant,
     load_ms: f64,
@@ -691,7 +713,10 @@ impl App {
             self.preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
             let mut status = StatusLayer::new(&mut graphics, &bundle);
             status.set_centred(self.settings.status_bar_centred);
-            let mut session = Session::new(sim);
+            graphics.preload([PAUSE_SET]);
+            let mut session = Session::new(sim).with_pause_input(self.settings.pause_input);
+            self.router
+                .set_keep_held(self.settings.pause_input == PauseInput::Original);
             if self.settings.record.is_some() && !matches!(self.mode, WindowMode::Bench(_)) {
                 let recorder = Recorder::new();
                 session.set_before_tick(recorder.hook());
@@ -804,7 +829,10 @@ impl App {
         let at = start_override(&self.settings, self.levels_started == 0, choice, &start);
         // Gameplay options changed in the menus apply from this level on.
         if let Some(f) = &self.flow {
-            self.settings.mid_air_hit_fix = f.settings().mid_air_hit_fix;
+            let s = f.settings();
+            self.settings.mid_air_hit_fix = s.mid_air_hit_fix;
+            self.settings.pause_input = s.pause_input;
+            self.settings.fuse_clock = s.fuse_clock;
         }
         let mut sim = Sim::with_start(
             bundle.sim_level.clone(),
@@ -818,7 +846,10 @@ impl App {
         announce_widening(&self.settings, self.first_output, &sim);
         self.preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
         let mut status = StatusLayer::new(&mut graphics, &bundle);
-        let mut session = Session::new(sim);
+        graphics.preload([PAUSE_SET]);
+        let mut session = Session::new(sim).with_pause_input(self.settings.pause_input);
+        self.router
+            .set_keep_held(self.settings.pause_input == PauseInput::Original);
         if self.settings.record.is_some() && !self.recorded {
             let recorder = Recorder::new();
             session.set_before_tick(recorder.hook());
@@ -942,6 +973,12 @@ impl App {
                 }
             }
             Effect::EndLevel => self.end_level(),
+            Effect::ResumeGame => {
+                // The keys down as play goes on, menus included.
+                if let Some(level) = &mut self.level {
+                    level.session.sync_keys(self.router.buttons_down());
+                }
+            }
             _ => {}
         }
         self.pauses.background = self.in_background();
@@ -1022,6 +1059,21 @@ impl App {
                 if let (Some(f), Some(s)) = (self.flow.as_mut(), &self.screens) {
                     f.set_title(s.title());
                 }
+            }
+            Effect::ShowHelp => {
+                if let (Some(f), Some(s)) = (self.flow.as_mut(), self.screens.as_mut()) {
+                    f.set_help(s.help());
+                }
+                // Help over a pause leaves the pause key's flag set: play
+                // runs when help closes, until the pause key is pressed.
+                if self.pauses.user {
+                    self.pauses.user = false;
+                    self.pauses.flag = true;
+                }
+                if let Some(level) = &mut self.level {
+                    level.session.open_span(Span::Menu(MenuScreen::Help));
+                }
+                self.update_title();
             }
             Effect::ShowBooty(stats) => {
                 if let (Some(f), Some(s)) = (self.flow.as_mut(), self.screens.as_mut()) {
@@ -1123,22 +1175,11 @@ impl App {
         self.rebuild_view();
     }
 
-    fn command(&mut self, event_loop: &ActiveEventLoop, cmd: Command) {
-        if let Some(f) = self.flow.as_mut()
-            && matches!(cmd, Command::Quit | Command::Pause)
-        {
-            if f.screen() == Screen::Pause
-                && let Some(level) = &mut self.level
-            {
-                level.session.menu_key("back");
-            }
-            if f.pause_key() {
-                self.run_effects(event_loop);
-            }
-            return;
-        }
+    fn command(&mut self, event_loop: &ActiveEventLoop, cmd: Command, from_pad: bool) {
         match cmd {
-            Command::Quit => event_loop.exit(),
+            Command::Quit | Command::Pause | Command::Help => {
+                self.game_key(event_loop, cmd, from_pad);
+            }
             Command::ToggleFullscreen => {
                 if let Some(live) = &self.live {
                     let full = live.window.fullscreen().is_none();
@@ -1192,19 +1233,69 @@ impl App {
                     f.view_changed(|s| s.interpolation = interp);
                 }
             }
-            Command::Pause => {
-                self.pauses.user = !self.pauses.user;
-                self.update_pause();
-                self.update_title();
-                // Watching a script or the benchmark: the pause is recorded
-                // as a pause span.
-                if let Some(level) = &mut self.level {
-                    if self.pauses.user {
-                        level.session.open_span(Span::Pause);
-                    } else {
-                        level.session.close_span();
-                    }
+        }
+    }
+
+    /// Escape, the pause key, F1 or a gamepad's Start (see [`game_key`]).
+    fn game_key(&mut self, event_loop: &ActiveEventLoop, cmd: Command, from_pad: bool) {
+        let ctx = KeyContext {
+            screen: self.flow.as_ref().map(Flow::screen),
+            completing: self.flow.as_ref().is_some_and(Flow::completing),
+            pauses: self.pauses,
+            from_pad,
+            modifiers: self.modifiers.shift_key()
+                || self.modifiers.control_key()
+                || self.modifiers.alt_key(),
+        };
+        match game_key(cmd, ctx) {
+            GameKey::Menu => {
+                let Some(f) = self.flow.as_mut() else { return };
+                if f.screen() == Screen::Pause
+                    && let Some(level) = &mut self.level
+                {
+                    level.session.menu_key("back");
                 }
+                if f.pause_key() {
+                    self.run_effects(event_loop);
+                }
+            }
+            GameKey::Help => {
+                if let Some(f) = self.flow.as_mut()
+                    && f.help_key()
+                {
+                    self.run_effects(event_loop);
+                }
+            }
+            GameKey::Pause => {
+                let on = !self.pauses.user;
+                self.user_pause(on);
+            }
+            GameKey::ClearFlag => {
+                // The pause key's flag left by help: a pause of no time,
+                // which goes on as any resume does.
+                self.pauses.flag = false;
+                self.user_pause(true);
+                self.user_pause(false);
+            }
+            GameKey::Quit => event_loop.exit(),
+            GameKey::Nothing => {}
+        }
+    }
+
+    /// Starts (`on`) or ends the pause key's pause, recorded as a pause
+    /// span; ending it, the keys down now count for the tick that follows.
+    fn user_pause(&mut self, on: bool) {
+        self.pauses.user = on;
+        if !on && let Some(level) = &mut self.level {
+            level.session.sync_keys(self.router.buttons_down());
+        }
+        self.update_pause();
+        self.update_title();
+        if let Some(level) = &mut self.level {
+            if on {
+                level.session.open_span(Span::Pause);
+            } else {
+                level.session.close_span();
             }
         }
     }
@@ -1274,7 +1365,7 @@ impl App {
                     level.session.key(at, b, down);
                 }
             }
-            Routed::Command(cmd) => self.command(event_loop, cmd),
+            Routed::Command(cmd) => self.command(event_loop, cmd, from_pad),
             Routed::Menu(m) => {
                 if let Some(f) = self.flow.as_mut() {
                     if f.screen() == Screen::Pause
@@ -1404,6 +1495,7 @@ impl App {
         let mut scene = match flow.screen() {
             Screen::Title => flow.title()?.scene(),
             Screen::Booty => flow.booty()?.scene(),
+            Screen::Help => flow.help()?.scene(),
             Screen::MainMenu => {
                 let (bg, pal) = match &screens.menu {
                     Some((id, pal)) => (Some(*id), pal.clone()),
@@ -1492,6 +1584,9 @@ impl App {
             level
                 .status
                 .apply(&mut input, level.session.sim(), presentation);
+            if self.pauses.user {
+                input.screen.push(pause_sign());
+            }
             let mut over = Vec::new();
             if let Some(f) = &self.flow {
                 if f.screen() == Screen::Pause {
@@ -1582,6 +1677,9 @@ impl App {
         let mut input = FrameInput::from_frame(&frame, &view);
         let presentation = builder.composition().presentation;
         status.apply(&mut input, session.sim(), presentation);
+        if self.pauses.user {
+            input.screen.push(pause_sign());
+        }
         let scene = builder.build(&mut level.graphics, &input);
         if let Some(copy) = &mut live.offscreen {
             let view = *copy.builder.view();
@@ -1733,13 +1831,19 @@ impl ApplicationHandler for App {
                 }
                 self.update_pause();
             }
+            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.repeat {
+                let PhysicalKey::Code(code) = event.physical_key else {
+                    return;
+                };
+                // The pause key toggles on every key-down, auto-repeat
+                // included, as the original's; other keys ignore repeats.
+                let pause_key =
+                    self.router.keymap().action(code) == Some(Action::Command(Command::Pause));
+                if event.repeat && !pause_key {
                     return;
                 }
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    self.key(event_loop, code, event.state == ElementState::Pressed);
-                }
+                self.key(event_loop, code, event.state == ElementState::Pressed);
             }
             WindowEvent::RedrawRequested => self.frame(event_loop),
             _ => {}
@@ -1871,6 +1975,7 @@ fn run_app(
         last_frame: Instant::now(),
         pauses: Pauses::default(),
         focused: true,
+        modifiers: ModifiersState::empty(),
         size_index,
         started,
         load_ms: 0.0,

@@ -20,9 +20,12 @@
 //! benchmarks never drain them; the queues are bounded, and what does not
 //! fit is counted and dropped.
 //!
-//! A recorded input script starts with a comment line naming the mid-air
-//! hit jump fix the game was played with ([`behaviour_comment`]); a replay
-//! reads it back ([`script_behaviour`]) so the recording plays the same.
+//! A recorded input script starts with comment lines naming the behaviour
+//! switches the game was played with: the mid-air hit jump fix
+//! ([`behaviour_comment`]), then how keys count across a pause and whether
+//! help screen time reaches the dynamite fuse ([`switch_comments`]). A
+//! replay reads them back ([`script_behaviour`], [`script_switches`]) so
+//! the recording plays the same.
 //!
 //! # Pauses, menus and commands
 //!
@@ -44,7 +47,34 @@
 //! [`Session::directives`] lists every directive given or played so far;
 //! the recorder writes them into the recording. A pause or menu changes
 //! nothing in the game itself: play stops and goes on where it stopped,
-//! with the input the ticks after it were recorded with.
+//! with the input the ticks after it were recorded with. The one exception
+//! is the help screen: with the fuse clock at its original default
+//! ([`claw_sim::tuning::FuseClock`]) the time it was up reaches the
+//! dynamite fuse at the boundary after it ([`Sim::pass_menu_time`]), live
+//! and replayed alike.
+//!
+//! # Going on after a pause or a screen
+//!
+//! Played live, play stops at the tick boundary: the ticks run so far stay
+//! and the time waiting in the accumulator is dropped. When it goes on
+//! ([`Session::resume`] with a span open), exactly one tick runs at once,
+//! in the next frame whatever its length, and real time counts from an
+//! empty accumulator after it, so pausing and resuming steps the game one
+//! tick at a time and never depends on how long the pause lasted (the
+//! frame stepper's [`claw_frame::step::FixedStep::step_once`]). The input
+//! of that tick follows the session's [`PauseInput`]:
+//!
+//! - original (the default): nothing is released when play stops, and the
+//!   key events while it is stopped are not taken one by one. After a
+//!   pause, the keys down at the resume are held and those not held on the
+//!   last tick before the pause are pressed; after a screen, the keys down
+//!   are held and none is pressed, so a key held on counts as pressed only
+//!   once released and pressed again. The window tells the session which
+//!   keys are down ([`Session::sync_keys`]), since a screen takes the keys
+//!   while it is up.
+//! - release all: every key is released when play stops (the caller does
+//!   it, see [`crate::pause::Pauses::apply`]) and the key events while it
+//!   is stopped count in the first tick.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -55,9 +85,11 @@ use claw_frame::step::{MAX_FRAME_US, TICK_US};
 use claw_frame::{AudioCue, Buttons, FrameDriver, GameEvent, InterpolatedFrame, TickInput};
 use claw_sim::input::{MenuScreen, ScriptCommand};
 use claw_sim::trace::TraceRow;
+use claw_sim::tuning::FuseClock;
 use claw_sim::{Directive, DirectiveKind, InputLatch, InputScript, ScriptHeader, Sim};
 
 use crate::input::Recorder;
+use crate::pause::PauseInput;
 
 /// What one frame did.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -124,8 +156,12 @@ struct LiveSpan {
 }
 
 impl LiveSpan {
+    fn wall_ms(&self) -> u32 {
+        u32::try_from(self.wall_us.div_ceil(1000)).unwrap_or(u32::MAX)
+    }
+
     fn kind(&self) -> DirectiveKind {
-        let wall_ms = u32::try_from(self.wall_us.div_ceil(1000)).unwrap_or(u32::MAX);
+        let wall_ms = self.wall_ms();
         match self.span {
             Span::Pause => DirectiveKind::Pause {
                 wall_ms,
@@ -153,12 +189,13 @@ struct Directives {
 }
 
 impl Directives {
-    /// Gives the commands of `plan` due before tick `tick` (all of them up
-    /// to the next pause or menu, which [`Session::frame`] holds at its
-    /// boundary before the tick can run).
+    /// Gives the commands of `plan` due before tick `tick`, up to the next
+    /// pause or menu, which it leaves for [`Session::frame`] to hold at its
+    /// boundary before the tick can run.
     fn commands_before(&mut self, tick: u64, sim: &mut Sim) {
         while let Some(d) = self.plan.get(self.next)
             && d.tick as u64 <= tick
+            && matches!(d.kind, DirectiveKind::Command(_))
         {
             let d = d.clone();
             self.next += 1;
@@ -175,6 +212,19 @@ impl Directives {
             .iter()
             .find(|d| !matches!(d.kind, DirectiveKind::Command(_)))
             .map(|d| d.tick as u64)
+    }
+}
+
+/// The help screen time a pause or menu directive passes to the dynamite
+/// fuse when play goes on after it (see [`Sim::pass_menu_time`]).
+fn menu_time(kind: &DirectiveKind) -> Option<u32> {
+    match kind {
+        DirectiveKind::Menu {
+            screen: MenuScreen::Help,
+            wall_ms,
+            ..
+        } => Some(*wall_ms),
+        _ => None,
     }
 }
 
@@ -205,6 +255,18 @@ pub struct Session {
     live_span: Option<LiveSpan>,
     /// A replayed pause or menu in progress: the wall time left, µs.
     hold_us: Option<u64>,
+    /// The help screen time the replayed hold in progress passes to the
+    /// fuse when it ends.
+    hold_menu_ms: Option<u32>,
+    /// How keys count across a pause or a screen.
+    pause_input: PauseInput,
+    /// Buttons down right now, as the key events and
+    /// [`Session::sync_keys`] say.
+    down: Buttons,
+    /// The tick after a resume waits for the next frame.
+    stepping: bool,
+    /// The input of that tick, when the resume decided it.
+    resume_input: Option<TickInput>,
 }
 
 impl std::fmt::Debug for Session {
@@ -239,7 +301,36 @@ impl Session {
             directives: Directives::default(),
             live_span: None,
             hold_us: None,
+            hold_menu_ms: None,
+            pause_input: PauseInput::default(),
+            down: Buttons::NONE,
+            stepping: false,
+            resume_input: None,
         }
+    }
+
+    /// Plays with `rule` for keys across a pause or a screen (the original
+    /// rule by default).
+    pub fn with_pause_input(mut self, rule: PauseInput) -> Session {
+        self.pause_input = rule;
+        self
+    }
+
+    /// How keys count across a pause or a screen.
+    pub fn pause_input(&self) -> PauseInput {
+        self.pause_input
+    }
+
+    /// The buttons the input devices hold down now, for the tick that runs
+    /// when play goes on (see the [module documentation](self)); the key
+    /// events given since say the same unless a screen took the keys.
+    pub fn sync_keys(&mut self, down: Buttons) {
+        self.down = down;
+    }
+
+    /// Buttons down right now, as far as the session knows.
+    pub fn keys_down(&self) -> Buttons {
+        self.down
     }
 
     /// Plays `script` from the next tick: one row per tick, then the
@@ -421,6 +512,11 @@ impl Session {
     /// The simulation clock at the last frame, in microseconds: the ticks
     /// run plus the time waiting in the accumulator.
     pub fn now_us(&self) -> u64 {
+        if self.stepping {
+            // The tick after a resume has its input already and counts as
+            // run: time goes on after it.
+            return (self.ticks + 1) * TICK_US;
+        }
         self.ticks * TICK_US + (self.driver.alpha() * TICK_US as f64).round() as u64
     }
 
@@ -470,6 +566,11 @@ impl Session {
         let at = at_us.max(self.last_stamp);
         self.last_stamp = at;
         self.latch.event(at, buttons, down);
+        if down {
+            self.down |= buttons;
+        } else {
+            self.down = Buttons(self.down.0 & !buttons.0);
+        }
     }
 
     /// Releases every held button at `at_us`, for example when the window
@@ -501,6 +602,9 @@ impl Session {
                     break;
                 }
                 self.hold_us = None;
+                if let Some(ms) = self.hold_menu_ms.take() {
+                    self.sim.pass_menu_time(ms);
+                }
             }
             if self.start_due() {
                 continue;
@@ -544,9 +648,11 @@ impl Session {
                     Some(u64::from(wall_ms) * 1000)
                 }
             };
+            let menu_ms = menu_time(&next.kind);
             d.log.push(next);
             if let Some(us) = hold {
                 self.hold_us = Some(us);
+                self.hold_menu_ms = menu_ms;
                 return true;
             }
         }
@@ -569,12 +675,16 @@ impl Session {
             before_tick,
             outputs,
             directives,
+            resume_input,
             ..
         } = self;
         let report = driver.frame(Duration::from_micros(us), || {
             let n = *ticks;
             directives.commands_before(n, sim);
-            let live = latch.take(n);
+            let live = match resume_input.take() {
+                Some(input) => input,
+                None => latch.take(n),
+            };
             let scripted = script.as_ref().and_then(|s| {
                 let row = match s.ticks.len() {
                     len if *looped && len > 0 => (n % len as u64) as usize,
@@ -611,6 +721,9 @@ impl Session {
             *ticks += 1;
             snapshot
         });
+        if report.ticks > 0 {
+            self.stepping = false;
+        }
         Frame {
             ticks: report.ticks,
             alpha: report.alpha,
@@ -627,16 +740,59 @@ impl Session {
         }
     }
 
-    /// Stops the clock: frames run no ticks until [`Session::resume`].
+    /// Stops the clock: frames run no ticks until [`Session::resume`]. A
+    /// tick a resume left for the next frame runs first, so every resume
+    /// runs its tick however soon play stops again.
     pub fn pause(&mut self) {
+        if self.paused {
+            return;
+        }
+        if self.stepping {
+            self.run(0);
+        }
         self.driver.step_mut().pause();
         self.paused = true;
     }
 
-    /// Restarts the clock.
+    /// Restarts the clock. After a pause or a screen (a span still open,
+    /// see [`Session::open_span`]) play goes on as the [module
+    /// documentation](self) says: the help screen's time reaches the fuse,
+    /// the next frame runs exactly one tick at once with the input of
+    /// [`Session::pause_input`]'s rule, and real time counts from an empty
+    /// accumulator after it. Without a span (the window was in the
+    /// background) the clock just goes on.
     pub fn resume(&mut self) {
+        if !self.paused {
+            return;
+        }
         self.driver.step_mut().resume();
         self.paused = false;
+        let Some(span) = self.live_span.as_ref() else {
+            return;
+        };
+        if let Span::Menu(MenuScreen::Help) = span.span {
+            self.sim.pass_menu_time(span.wall_ms());
+        }
+        if self.pause_input == PauseInput::Original {
+            let held = self.down;
+            let pressed = match span.span {
+                // Pressed: down now and not held on the last tick before
+                // the pause.
+                Span::Pause => Buttons(held.0 & !self.sim.input().held.0),
+                // After a screen every key down counts as pressed already.
+                Span::Menu(_) => Buttons::NONE,
+            };
+            self.resume_input = Some(TickInput { held, pressed });
+            // The key events while stopped are not taken one by one: the
+            // latch goes on from the keys down now.
+            self.latch = InputLatch::new();
+            if !held.is_empty() {
+                self.latch.event(0, held, true);
+                self.latch.take(0);
+            }
+        }
+        self.driver.step_mut().step_once();
+        self.stepping = true;
     }
 
     /// True while paused.
@@ -674,13 +830,91 @@ pub fn recording_csv(script: &InputScript, fix: bool) -> String {
     format!("{}\n{}", behaviour_comment(fix), script.to_csv())
 }
 
+/// The key of the pause input switch in a recording's comment lines, as in
+/// the config file.
+pub const PAUSE_INPUT_KEY: &str = "pause_input";
+
+/// The key of the fuse clock switch in a recording's comment lines, as in
+/// the config file.
+pub const FUSE_CLOCK_KEY: &str = "fuse_clock";
+
+/// The behaviour switches of the pause and screens a recording was played
+/// with, from its comment lines; `None` for a line it does not have.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScriptSwitches {
+    /// How keys counted across a pause or a screen.
+    pub pause_input: Option<PauseInput>,
+    /// Whether help screen time reached the dynamite fuse.
+    pub fuse_clock: Option<FuseClock>,
+}
+
+/// The comment lines of the pause and screen switches of a recording:
+/// `# pause_input = original` and `# fuse_clock = original` (or the other
+/// values).
+pub fn switch_comments(pause_input: PauseInput, fuse_clock: FuseClock) -> String {
+    format!(
+        "# {PAUSE_INPUT_KEY} = {}\n# {FUSE_CLOCK_KEY} = {}",
+        pause_input.name(),
+        fuse_clock.name()
+    )
+}
+
+/// The switches script `text` says it was played with (the last line of
+/// each counts); lines with a value this game does not know are left out.
+pub fn script_switches(text: &str) -> ScriptSwitches {
+    let mut out = ScriptSwitches::default();
+    for l in text.lines() {
+        let Some((k, v)) = l.trim().strip_prefix('#').and_then(|r| r.split_once('=')) else {
+            continue;
+        };
+        let v = v.trim().trim_matches('"');
+        match k.trim() {
+            PAUSE_INPUT_KEY => {
+                if let Some(p) = PauseInput::from_name(v) {
+                    out.pause_input = Some(p);
+                }
+            }
+            FUSE_CLOCK_KEY => {
+                if let Some(f) = FuseClock::from_name(v) {
+                    out.fuse_clock = Some(f);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// `script` as CSV, led by the comment lines of every behaviour switch:
+/// the mid-air hit jump fix `fix` first (see [`recording_csv`]), then the
+/// pause and screen switches (see [`switch_comments`]).
+pub fn recording_text(
+    script: &InputScript,
+    fix: bool,
+    pause_input: PauseInput,
+    fuse_clock: FuseClock,
+) -> String {
+    format!(
+        "{}\n{}\n{}",
+        behaviour_comment(fix),
+        switch_comments(pause_input, fuse_clock),
+        script.to_csv()
+    )
+}
+
 /// Writes what `recorder` kept of `session` to `path` as an input script,
-/// led by the comment line of the mid-air hit jump fix the session plays
-/// with; returns the ticks written.
+/// led by the comment lines of the behaviour switches the session plays
+/// with (see [`recording_text`]); returns the ticks written.
 pub fn save_recording(recorder: &Recorder, session: &Session, path: &Path) -> Result<usize> {
     let script = recorder.script(session);
-    let fix = session.sim().config().tuning.behaviour.fix_double_jump;
-    std::fs::write(path, recording_csv(&script, fix))
+    let cfg = session.sim().config();
+    let text = recording_text(
+        &script,
+        cfg.tuning.behaviour.fix_double_jump,
+        session.pause_input(),
+        cfg.fuse_clock,
+    );
+    std::fs::write(path, text)
         .with_context(|| format!("writing the recording {}", path.display()))?;
     Ok(script.ticks.len())
 }
@@ -895,6 +1129,30 @@ mod tests {
         }
         assert_eq!(session.drain_outputs().0.len(), OUTPUT_LIMIT);
         assert_eq!(session.dropped_outputs(), 100);
+    }
+
+    #[test]
+    fn commands_stop_at_the_next_pause_or_menu() {
+        let mut sim = Sim::new(level(), SimConfig::default());
+        let at = |tick, kind| Directive { tick, kind };
+        let mut d = Directives {
+            plan: vec![
+                at(2, DirectiveKind::Command(ScriptCommand::EndLife)),
+                at(
+                    3,
+                    DirectiveKind::Pause {
+                        wall_ms: 100,
+                        held: None,
+                    },
+                ),
+                at(3, DirectiveKind::Command(ScriptCommand::EndLife)),
+            ],
+            ..Directives::default()
+        };
+        d.commands_before(5, &mut sim);
+        assert_eq!(d.next, 1, "the pause is left for the frame to hold");
+        assert_eq!(d.log.len(), 1);
+        assert_eq!(d.next_hold(), Some(3));
     }
 
     #[test]

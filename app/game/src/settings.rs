@@ -16,6 +16,8 @@
 //! scale = "fit"             # fit or integer
 //! widen_activation = false
 //! mid_air_hit_fix = off     # on: no second jump after a hit in mid-air
+//! pause_input = original    # release_all: keys released on pause and menus
+//! fuse_clock = original     # frozen: help time does not burn the fuse
 //! vsync = true
 //! fps_cap = 300             # with vsync off, 1 to 10000
 //! interpolation = true
@@ -66,6 +68,17 @@
 //! the random seed its script's header names (`# tuning default|original`,
 //! `# seed N`; see [`Settings::follow_header`]).
 //!
+//! Two more behaviour switches, also on the Gameplay page, keep the
+//! original's pause and screens by default (see [`crate::pause`]):
+//! `pause_input` (`--pause-input`) is how keys count across the pause key
+//! and the screens over play (`original`, or `release_all` to release
+//! every key when play stops), and `fuse_clock` (`--fuse-clock`) whether
+//! the time the help screen was up burns the dynamite fuse (`original`, or
+//! `frozen`). Like the mid-air hit jump fix they apply to games started
+//! after they change, replays and benchmarks play with their defaults
+//! unless the command line sets them, and a replay follows the lines its
+//! recording carries (see [`crate::session::script_switches`]).
+//!
 //! The front layer switch (`front_layer`, also in the Display menu) only
 //! changes what is drawn: off, the level's front plane is left out.
 
@@ -84,9 +97,11 @@ use claw_frame::{
     AspectPolicy, DEFAULT_FPS_CAP, DEFAULT_LOGIC_HEIGHT, DEFAULT_LOGIC_WIDTH, ScaleMode, ViewConfig,
 };
 use claw_sim::input::ScriptTuning;
+use claw_sim::tuning::FuseClock;
 use claw_sim::{ScriptHeader, SimConfig};
 
 use crate::keymap::{Action, Keymap, PadMap};
+use crate::pause::PauseInput;
 
 /// Default window size: the original view at twice its size.
 pub const DEFAULT_WINDOW: (u32, u32) = (1280, 960);
@@ -224,6 +239,15 @@ pub struct Args {
     /// use off unless this is given.
     #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
     pub mid_air_hit_fix: Option<bool>,
+    /// How keys count across the pause key and the screens over play:
+    /// original (default; nothing is released, a key pressed while paused
+    /// is pressed on the first tick) or release_all.
+    #[arg(long, value_name = "original|release_all", value_parser = parse_pause_input)]
+    pub pause_input: Option<PauseInput>,
+    /// Whether the time the help screen was up burns the dynamite fuse:
+    /// original (default) or frozen.
+    #[arg(long, value_name = "original|frozen", value_parser = parse_fuse_clock)]
+    pub fuse_clock: Option<FuseClock>,
     /// Wait for the display's refresh: on or off.
     #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
     pub vsync: Option<bool>,
@@ -310,6 +334,17 @@ pub fn parse_on_off(s: &str) -> Result<bool, String> {
     }
 }
 
+/// Parses a pause input switch: `original` or `release_all`.
+pub fn parse_pause_input(s: &str) -> Result<PauseInput, String> {
+    PauseInput::from_name(s.trim())
+        .ok_or_else(|| format!("expected original or release_all, got {s:?}"))
+}
+
+/// Parses a fuse clock switch: `original` or `frozen`.
+pub fn parse_fuse_clock(s: &str) -> Result<FuseClock, String> {
+    FuseClock::from_name(s.trim()).ok_or_else(|| format!("expected original or frozen, got {s:?}"))
+}
+
 /// Largest frame-rate cap accepted.
 pub const MAX_FPS_CAP: u32 = 10_000;
 
@@ -369,6 +404,10 @@ pub struct Settings {
     /// The mid-air hit jump fix: no second jump after a hit that ends in
     /// mid-air. Off by default, as in the original.
     pub mid_air_hit_fix: bool,
+    /// How keys count across the pause key and the screens over play.
+    pub pause_input: PauseInput,
+    /// Whether the time the help screen was up burns the dynamite fuse.
+    pub fuse_clock: FuseClock,
     /// Wait for the display refresh.
     pub vsync: bool,
     /// Frame-rate cap when the display refresh does not pace drawing, and
@@ -461,6 +500,8 @@ impl Settings {
             scale: Scale::default(),
             widen_activation: false,
             mid_air_hit_fix: false,
+            pause_input: PauseInput::Original,
+            fuse_clock: FuseClock::Original,
             vsync: true,
             fps_cap: Some(DEFAULT_FPS_CAP),
             interpolation: true,
@@ -614,6 +655,31 @@ impl Settings {
             None if s.mode != Mode::Play => s.mid_air_hit_fix = false,
             None => {}
         }
+        // The pause and screen switches the same way; a replay follows the
+        // lines its recording carries.
+        if s.mode != Mode::Play {
+            s.pause_input = PauseInput::Original;
+            s.fuse_clock = FuseClock::Original;
+        }
+        if let Mode::Replay { script, .. } = &s.mode
+            && let Ok(text) = fs::read_to_string(script)
+        {
+            let recorded = crate::session::script_switches(&text);
+            if let Some(p) = recorded.pause_input {
+                s.pause_input = p;
+            }
+            if let Some(f) = recorded.fuse_clock {
+                s.fuse_clock = f;
+            }
+        }
+        if let Some(p) = args.pause_input {
+            s.pause_input = p;
+            s.from_command_line.insert("pause_input");
+        }
+        if let Some(f) = args.fuse_clock {
+            s.fuse_clock = f;
+            s.from_command_line.insert("fuse_clock");
+        }
         Ok(s)
     }
 
@@ -678,6 +744,8 @@ impl Settings {
             .to_string(),
             "widen_activation" => self.widen_activation.to_string(),
             "mid_air_hit_fix" => on_off(self.mid_air_hit_fix),
+            "pause_input" => self.pause_input.name().to_string(),
+            "fuse_clock" => self.fuse_clock.name().to_string(),
             "vsync" => self.vsync.to_string(),
             "fps_cap" => self.fps_cap?.to_string(),
             "interpolation" => self.interpolation.to_string(),
@@ -757,8 +825,9 @@ impl Settings {
     /// chosen at run time still shows them.
     ///
     /// The movement tuning and the seed follow [`Settings::tuning`] and
-    /// [`Settings::seed`], and the mid-air hit jump fix follows
-    /// [`Settings::mid_air_hit_fix`].
+    /// [`Settings::seed`], the mid-air hit jump fix follows
+    /// [`Settings::mid_air_hit_fix`] and the fuse clock
+    /// [`Settings::fuse_clock`].
     pub fn sim_config(&self, size: (u32, u32)) -> SimConfig {
         let mut cfg = self.view_sim_config(size);
         if let Some(t) = self.tuning {
@@ -768,6 +837,7 @@ impl Settings {
             cfg.seed = seed;
         }
         cfg.tuning.behaviour.fix_double_jump = self.mid_air_hit_fix;
+        cfg.fuse_clock = self.fuse_clock;
         cfg
     }
 
@@ -883,7 +953,7 @@ pub struct ConfigFile {
 
 /// Keys a config file may hold, besides the `key_<action>` and
 /// `pad_<action>` bindings.
-pub const CONFIG_KEYS: [&str; 23] = [
+pub const CONFIG_KEYS: [&str; 25] = [
     "install",
     "level",
     "custom",
@@ -893,6 +963,8 @@ pub const CONFIG_KEYS: [&str; 23] = [
     "scale",
     "widen_activation",
     "mid_air_hit_fix",
+    "pause_input",
+    "fuse_clock",
     "vsync",
     "fps_cap",
     "interpolation",
@@ -996,6 +1068,8 @@ impl ConfigFile {
                 "scale" => s.scale = Scale::from_str(v, true).map_err(|e| err(key, e))?,
                 "widen_activation" => s.widen_activation = flag(key, v)?,
                 "mid_air_hit_fix" => s.mid_air_hit_fix = flag(key, v)?,
+                "pause_input" => s.pause_input = parse_pause_input(v).map_err(|e| err(key, e))?,
+                "fuse_clock" => s.fuse_clock = parse_fuse_clock(v).map_err(|e| err(key, e))?,
                 "vsync" => s.vsync = flag(key, v)?,
                 "fps_cap" => {
                     let n = v

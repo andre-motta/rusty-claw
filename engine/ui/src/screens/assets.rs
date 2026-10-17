@@ -45,6 +45,10 @@ pub const TITLE_SCREENS: &str = "STATES/ATTRACT/SCREENS";
 pub const TITLE_PICTURE: &str = "TITLE";
 /// Folder of the end-of-level pictures.
 pub const BOOTY_SCREENS: &str = "STATES/BOOTY/SCREENS";
+/// Folder of the help picture.
+pub const HELP_SCREENS: &str = "STATES/HELP/SCREENS";
+/// The help picture: the controls page.
+pub const HELP_PICTURE: &str = "HELP";
 
 /// Decodes an image file of the screens: a sprite image or a picture.
 pub fn decode_frame(data: &[u8], type_code: u32) -> Option<Frame> {
