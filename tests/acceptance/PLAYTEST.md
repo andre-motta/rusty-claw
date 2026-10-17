@@ -115,8 +115,7 @@ their reasons in `tests/acceptance/tolerances/references.toml`):
 Failures only, as above: note the line, what happened instead, and where.
 Start the third level with `make run-game ARGS="--install PATH --level 3"`,
 or play on from the second level. This section covers the level's new
-hazards and Claw's rope swing; the thieves are checked with their own
-lines.
+hazards, Claw's rope swing and the two thieves.
 
 1. Floor spikes: each row rises and sinks on its own beat, forever, with a sound as each spike starts up and down when it is on screen; rows of mixed spikes rise as a wave. A risen spike costs 10 health and knocks Claw back, then cannot hurt him again for a moment; a spike moving up or down, or down, never hurts. Only the bottom of a risen spike hurts: standing just beside one is safe, as in the original.
 2. Path elevators: the two groups past the first save point follow their loops (an eight-sided loop of four platforms, two five-sided loops of five) at a steady speed and never bump into each other. Jump on one and ride it all the way round: Claw stays on it on every leg, the slanted ones included, and walks and jumps off it as off any elevator.
@@ -125,3 +124,6 @@ lines.
 5. Rope swing, let go: press jump: Claw leaps from where he hangs with no push from the swing, and Left or Right steers the leap. He cannot catch the same rope again for half a second (another rope at once). Cross the first pit on its two ropes, one to the next.
 6. Rope swing, get hit: let a shot or an enemy hit Claw while he swings: he takes the damage and drops, and the rope may catch him again at once, cutting the hurt short, as in the original.
 
+7. Thieves: while Claw is level with a cutthroat on screen with nothing between them, it stands still and throws a knife about every 2 s, slashes with its sword when Claw comes close, and never walks up to him; a robber thief shoots arrows the same way. Each shouts once when it first sees Claw.
+8. A knife or an arrow that reaches Claw costs 10 health and is gone; one that reaches a wall stops there.
+9. Knock a thief out and lift it with Z: Claw carries it and throws it as he does an officer, and a thrown thief hurts the enemies it lands on. A beaten thief drops the loot it carries and stops attacking once it starts to fall.
