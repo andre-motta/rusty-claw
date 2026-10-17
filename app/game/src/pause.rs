@@ -49,7 +49,7 @@ use crate::session::Session;
 
 /// How keys held or pressed across a pause or a screen count when play
 /// goes on: a behaviour switch, set by `pause_input` in the settings file
-/// and on the Gameplay page and kept in recordings.
+/// or `--pause-input` on the command line and kept in recordings.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PauseInput {
     /// As in the original: no key is released. After the pause key, a key
