@@ -31,6 +31,15 @@ pub const PLANE_X_WRAP: u32 = 0x4;
 /// Plane flag: the plane repeats vertically.
 pub const PLANE_Y_WRAP: u32 = 0x8;
 
+/// The level's front plane: the plane the front layer switch hides, the
+/// last plane of the level unless that is the main plane (a level of three
+/// planes, background, action and front, has it at index 2). `None` when
+/// the level has no such plane.
+pub fn front_plane(planes: &[Plane]) -> Option<usize> {
+    let last = planes.len().checked_sub(1)?;
+    (last > 0 && planes[last].flags & PLANE_MAIN == 0).then_some(last)
+}
+
 /// Cell value of an empty cell.
 pub const CELL_EMPTY: i32 = -1;
 /// Cell value of a cell filled with the plane's fill colour.

@@ -17,6 +17,7 @@
 //! | main menu | quit, confirmed | the program ends |
 //! | play | Escape, the pause key or pad Start | in-game menu |
 //! | in-game menu | resume | play |
+//! | in-game menu | end life, confirmed | play: Claw dies at the next tick |
 //! | in-game menu | end the game, confirmed | main menu |
 //! | play | level complete, after its delay | tally |
 //! | tally | done | main menu, the level marked complete |
@@ -29,11 +30,18 @@
 //! game and load lists. Community custom levels are never saved, and their
 //! save points show no game-saved message ([`Flow::hide_messages`]).
 //!
+//! End life asks for a confirmation; its question is the low-lives one
+//! when Claw has fewer than 2 lives left, since that death ends the game.
+//! Confirmed, the menu closes and Claw dies at the start of the next tick
+//! ([`Effect::EndLife`]), losing a life as for any other death.
+//!
 //! Options changed in the menus apply at once and are written back to the
 //! config file, keeping its other lines as they are. Settings that the
-//! config file has no key for (the music switch, detail, the front layer,
-//! the play area size and interlaced movies) last until the game is
-//! closed. The window's own keys for the view (fullscreen, window size,
+//! config file has no key for (the music switch, the play area size and
+//! interlaced movies) last until the game is closed. The front layer
+//! switch hides or shows the level's front plane (its tiles only; objects
+//! still draw) and is saved as `front_layer`. High detail stays on: the
+//! game always draws in high detail. The window's own keys for the view (fullscreen, window size,
 //! aspect, scaling and smooth motion) change it for this run: the Video
 //! page shows the change, and choosing an entry there saves it.
 //!
@@ -154,6 +162,11 @@ pub enum Effect {
     PauseGame,
     /// Start them again (and the level music from its start).
     ResumeGame,
+    /// End Claw's life at the start of the next tick (the in-game menu's
+    /// end life, confirmed); comes right after [`Effect::ResumeGame`].
+    EndLife,
+    /// Show (true) or hide the level's front plane.
+    FrontLayer(bool),
     /// Play or change a sound (interface channel).
     Sound(AudioCue),
     /// Play the menu chord once.
@@ -442,6 +455,7 @@ impl Flow {
         state.switches.sound = settings.audio;
         state.switches.voice = settings.voice;
         state.switches.ambient = settings.ambient;
+        state.switches.front_layer = settings.front_layer;
         state.sound_volume = i32::from(settings.sound_volume);
         state.music_volume = i32::from(settings.music_volume);
         let mut flow = Flow {
@@ -907,7 +921,6 @@ impl Flow {
             MenuCommand::Load { level, entry: 0 } => progress.can_start(level),
             MenuCommand::Load { level, entry } => progress.has(level, entry),
             MenuCommand::Unavailable(_) => false,
-            MenuCommand::EndLife | MenuCommand::Open(Page::EndLifeConfirm) => false,
             MenuCommand::Toggle(Toggle::Voice | Toggle::Ambient) => sound,
             MenuCommand::Toggle(Toggle::Music) => music,
             _ => true,
@@ -1112,6 +1125,12 @@ impl Flow {
                 self.menu_sound(MenuKind::InGame, "SELECT");
                 self.resume();
             }
+            MenuCommand::EndLife => {
+                if self.screen == Screen::Pause {
+                    self.resume();
+                    self.effects.push(Effect::EndLife);
+                }
+            }
             MenuCommand::EndGame => {
                 self.enter(Screen::MainMenu);
             }
@@ -1144,7 +1163,6 @@ impl Flow {
             | MenuCommand::Back
             | MenuCommand::Controls
             | MenuCommand::Adjust(_)
-            | MenuCommand::EndLife
             | MenuCommand::Unavailable(_)
             | MenuCommand::Nothing => {}
         }
@@ -1205,6 +1223,10 @@ impl Flow {
     }
 
     fn toggle(&mut self, t: Toggle) {
+        if t == Toggle::HighDetail {
+            // The game always draws in high detail.
+            return;
+        }
         let on = !self.state.switches.get(t);
         self.state.switches.set(t, on);
         match t {
@@ -1232,7 +1254,12 @@ impl Flow {
                 self.persist(&["ambient"]);
             }
             Toggle::Music => self.effects.push(Effect::AudioSettings),
-            Toggle::HighDetail | Toggle::FrontLayer | Toggle::MovieInterlace => {}
+            Toggle::FrontLayer => {
+                self.settings.front_layer = on;
+                self.effects.push(Effect::FrontLayer(on));
+                self.persist(&["front_layer"]);
+            }
+            Toggle::HighDetail | Toggle::MovieInterlace => {}
         }
     }
 
@@ -1469,6 +1496,10 @@ impl Flow {
             0.0
         };
         self.elapsed += dt;
+        if let Some(sim) = sim {
+            // The end life question depends on the lives left.
+            self.state.lives = sim.stats().lives;
+        }
         if let Some((_, left)) = self.notices.front_mut() {
             *left -= dt;
             if *left <= 0.0 {

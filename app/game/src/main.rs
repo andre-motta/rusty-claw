@@ -19,7 +19,11 @@
 //!
 //! A replay plays with the mid-air hit jump fix its script was recorded
 //! with (off when the script does not say), unless `--mid-air-hit-fix`
-//! is given; a benchmark plays with it off unless the option is given.
+//! is given; a benchmark plays with it off unless the option is given. A
+//! replay also plays with the movement tuning and the random seed its
+//! script's header names (`# tuning default|original`, `# seed N`), and
+//! plays its pauses, menus and commands (`@` lines) where they were
+//! recorded.
 //!
 //! A benchmark prints its report as one line of JSON on standard output and
 //! a one-line PASS or FAIL verdict naming each budget on standard error. It
@@ -96,6 +100,7 @@ fn run(args: Args) -> Result<Outcome> {
         } => {
             let (script, recorded) = read_script(&script)?;
             settings.follow_script(recorded);
+            settings.follow_header(&script.header);
             let bundle = load_level(&settings.install, &settings.level)?;
             let rows = replay_headless(&bundle, &settings, script, render_hz, None);
             std::fs::write(&out, claw_sim::trace::to_csv(&rows))
@@ -128,6 +133,7 @@ fn run(args: Args) -> Result<Outcome> {
                 Mode::Replay { script, .. } => {
                     let (script, recorded) = read_script(&script)?;
                     settings.follow_script(recorded);
+                    settings.follow_header(&script.header);
                     WindowMode::Watch(script)
                 }
                 Mode::Bench { seconds, .. } => WindowMode::Bench(seconds),

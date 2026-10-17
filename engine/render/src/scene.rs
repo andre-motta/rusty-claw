@@ -14,6 +14,10 @@
 //!
 //! The scene is the single source of truth for the GPU path and for the CPU
 //! reference compositor in [`crate::cpu`].
+//!
+//! The front layer switch ([`SceneBuilder::set_front_layer`]) leaves the
+//! level's front plane out of the scene (see [`crate::view::front_plane`]);
+//! every object still draws, whatever its depth. It only changes drawing.
 
 use bytemuck::{Pod, Zeroable};
 use claw_assets::Palette;
@@ -24,7 +28,7 @@ use claw_frame::{
 use crate::effects::{Effect, Table};
 use crate::images::{IMAGE_GHOST, IMAGE_RLE, LevelGraphics};
 use crate::screen::{self, Mask, ScreenSprite};
-use crate::view::{PLANE_X_WRAP, PLANE_Y_WRAP, Rect, WorldView};
+use crate::view::{PLANE_X_WRAP, PLANE_Y_WRAP, Rect, WorldView, front_plane};
 
 /// Default largest composition target width or height.
 pub const DEFAULT_MAX_TARGET: u32 = 8192;
@@ -351,6 +355,7 @@ pub struct SceneBuilder {
     solver: ViewSolver,
     expand: (i32, i32),
     flash_period_ms: f64,
+    front_layer: bool,
 }
 
 impl SceneBuilder {
@@ -380,7 +385,18 @@ impl SceneBuilder {
             solver: ViewSolver::new(&graphics.planes, vw, vh),
             expand,
             flash_period_ms: FLASH_PERIOD_MS,
+            front_layer: true,
         }
+    }
+
+    /// Draws the level's front plane (true, the default) or leaves it out.
+    pub fn set_front_layer(&mut self, on: bool) {
+        self.front_layer = on;
+    }
+
+    /// True when the level's front plane is drawn.
+    pub fn front_layer(&self) -> bool {
+        self.front_layer
     }
 
     /// The view this builder presents.
@@ -545,7 +561,12 @@ impl SceneBuilder {
             sprite_z.push(s.z);
         }
 
-        let mut items = order_items(graphics, &sprite_z, main);
+        let hidden = if self.front_layer {
+            None
+        } else {
+            front_plane(&graphics.planes)
+        };
+        let mut items = order_items(graphics, &sprite_z, main, hidden);
 
         // The screen layer, after the whole world.
         for s in &input.screen {
@@ -609,9 +630,16 @@ fn wrap_to_view(pos: f64, view_start: f64, view_len: f64, size: Option<f64>) -> 
 }
 
 /// Drawing order: planes in level order, with sprites placed by z between
-/// them in interleaved levels, or all after the main plane otherwise.
-fn order_items(graphics: &LevelGraphics, sprite_z: &[i32], main: Option<usize>) -> Vec<Item> {
-    let drawn = |i: usize| graphics.planes[i].flags & crate::view::PLANE_NO_DRAW == 0;
+/// them in interleaved levels, or all after the main plane otherwise. The
+/// plane `hidden` (the front plane with the front layer off) is left out.
+fn order_items(
+    graphics: &LevelGraphics,
+    sprite_z: &[i32],
+    main: Option<usize>,
+    hidden: Option<usize>,
+) -> Vec<Item> {
+    let drawn =
+        |i: usize| graphics.planes[i].flags & crate::view::PLANE_NO_DRAW == 0 && Some(i) != hidden;
     let mut items = Vec::with_capacity(graphics.planes.len() + sprite_z.len());
     let mut next = 0usize;
     let n = graphics.planes.len();

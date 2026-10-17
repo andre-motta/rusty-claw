@@ -6,15 +6,22 @@
 //! claw-replay --install PATH [--level N | --custom FILE.WWD] --script ROUTE.csv
 //!             [--trace OUT.csv] [--tuning default|original] [--seed N]
 //!             [--res WxH] [--aspect pillarbox|frozen|widened]
-//!             [--start X,Y] [--logics on|off] [--expect-complete]
+//!             [--start X,Y] [--logics on|off] [--mid-air-hit-fix on|off]
+//!             [--expect-complete]
 //!             [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
 //! ```
 //!
 //! The script has the columns `tick,held_mask,pressed_mask`, one row per
 //! 18 ms tick. Its header keys `# level N`, `# tuning default|original` and
-//! `# seed N` stand in for `--level`, `--tuning` and `--seed` when those
-//! are not given; a flag given on the command line wins. Scripts with `@`
-//! directive lines are refused for now.
+//! `# seed N`, and its `# mid_air_hit_fix = on|off` line, stand in for
+//! `--level`, `--tuning`, `--seed` and `--mid-air-hit-fix` when those are
+//! not given; a flag given on the command line wins. Without either the
+//! mid-air hit jump fix is off, as in the original.
+//!
+//! The script's `@` directive lines are played at their tick boundaries: a
+//! command (`end_life`) takes effect before its tick, and a pause or a menu
+//! changes nothing in the game (play stops and goes on where it stopped;
+//! its wall time only matters to a game running in real time).
 //!
 //! The trace has one row per tick with Claw's position, the fractions
 //! carried to the next tick, his state and physics type, the camera point,
@@ -50,14 +57,18 @@ use std::process::ExitCode;
 
 use claw_assets::{Install, LevelData, LevelSource, Source};
 use claw_sim::claw_frame::{AspectPolicy, GameEvent, ViewConfig};
-use claw_sim::input::ScriptTuning;
+use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
 use claw_sim::trace::{self, Tolerances, TraceRow};
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel};
 
 const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FILE.WWD] \
 --script ROUTE.csv [--trace OUT.csv] [--tuning default|original] [--seed N] [--res WxH] \
-[--aspect pillarbox|frozen|widened] [--start X,Y] [--logics on|off] [--expect-complete] \
+[--aspect pillarbox|frozen|widened] [--start X,Y] [--logics on|off] \
+[--mid-air-hit-fix on|off] [--expect-complete] \
 [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]";
+
+/// The key of the mid-air hit jump fix in a script's comment line.
+const BEHAVIOUR_KEY: &str = "mid_air_hit_fix";
 
 /// Rows of each trace shown before a divergence.
 const CONTEXT_ROWS: usize = 5;
@@ -74,6 +85,7 @@ struct Args {
     seed: Option<u32>,
     start: Option<(i32, i32)>,
     logics: Option<bool>,
+    mid_air_hit_fix: Option<bool>,
     tuning: Option<ScriptTuning>,
     expect_complete: bool,
     compare: Option<PathBuf>,
@@ -134,6 +146,13 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                     _ => return Err(format!("bad logics {v:?}, expected on or off")),
                 });
             }
+            "--mid-air-hit-fix" => {
+                let v = value()?;
+                a.mid_air_hit_fix = Some(
+                    parse_on_off(&v)
+                        .ok_or_else(|| format!("bad mid-air hit fix {v:?}, expected on or off"))?,
+                );
+            }
             "--seed" => {
                 let v = value()?;
                 a.seed = Some(v.parse().map_err(|_| format!("bad seed {v:?}"))?);
@@ -158,6 +177,26 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         return Err(format!("--report needs --compare\n{USAGE}"));
     }
     Ok(a)
+}
+
+fn parse_on_off(v: &str) -> Option<bool> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "yes" | "1" => Some(true),
+        "off" | "false" | "no" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// The mid-air hit jump fix a script's `# mid_air_hit_fix = on|off`
+/// comment line names (the last such line counts); `None` without one.
+fn script_behaviour(text: &str) -> Option<bool> {
+    text.lines().rev().find_map(|l| {
+        let (k, v) = l.trim().strip_prefix('#')?.split_once('=')?;
+        if k.trim() != BEHAVIOUR_KEY {
+            return None;
+        }
+        parse_on_off(v)
+    })
 }
 
 /// The tolerances named on the command line: a preset or a file.
@@ -186,16 +225,11 @@ fn run(args: Args) -> Result<Outcome, String> {
         .map_err(|e| format!("reading {}: {e}", script_path.display()))?;
     let script =
         InputScript::parse(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
-    if let Some(d) = script.directives().first() {
-        return Err(format!(
-            "{}: the script holds directives ({} in all, the first {:?}); \
-             claw-replay does not play pauses, menus or commands yet",
-            script_path.display(),
-            script.directives().len(),
-            d.to_line()
-        ));
-    }
     let header = script.header;
+    let fix = args
+        .mid_air_hit_fix
+        .or(script_behaviour(&text))
+        .unwrap_or(false);
     if let (Some(flag), Some(key)) = (args.level, header.level)
         && flag != key
     {
@@ -248,13 +282,24 @@ fn run(args: Args) -> Result<Outcome, String> {
     if let Some(on) = args.logics {
         cfg.level_logics = on;
     }
+    cfg.tuning.behaviour.fix_double_jump = fix;
     let mut sim = Sim::new(sim_level, cfg);
     if let Some((x, y)) = args.start {
         settle_at(&mut sim, x, y);
     }
     let mut rows = Vec::with_capacity(script.ticks.len());
     let mut completed = false;
+    let mut directives = script.directives().iter().peekable();
+    let mut commands = 0;
     for (tick, &input) in script.ticks.iter().enumerate() {
+        while let Some(d) = directives.next_if(|d| d.tick <= tick) {
+            if let DirectiveKind::Command(c) = d.kind {
+                match c {
+                    ScriptCommand::EndLife => sim.end_life(),
+                }
+                commands += 1;
+            }
+        }
         sim.step(input);
         completed |= sim
             .last_events()
@@ -270,10 +315,13 @@ fn run(args: Args) -> Result<Outcome, String> {
     let unknown: usize = d.unknown_logics.values().sum();
     let inert: usize = d.inert_logics.values().sum();
     eprintln!(
-        "claw-replay: {} ticks, tuning {}, seed {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}",
+        "claw-replay: {} ticks, {} directives ({} commands), tuning {}, seed {}, mid-air hit fix {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}",
         rows.len(),
+        script.directives().len(),
+        commands,
         tuning.unwrap_or(ScriptTuning::Default).name(),
         sim.config().seed,
+        if fix { "on" } else { "off" },
         sim.config().activation.mode.name(),
         if sim.config().level_logics {
             "on"
@@ -425,13 +473,30 @@ mod tests {
     }
 
     #[test]
-    fn scripts_with_directives_are_refused() {
+    fn the_mid_air_hit_fix_comes_from_the_flag_or_the_script() {
+        let a = args("--install /i --script s.csv --mid-air-hit-fix on").unwrap();
+        assert_eq!(a.mid_air_hit_fix, Some(true));
+        assert!(args("--mid-air-hit-fix maybe").is_err());
+        assert_eq!(
+            script_behaviour("# mid_air_hit_fix = on\ntick,a,b\n0,0,0\n"),
+            Some(true)
+        );
+        assert_eq!(
+            script_behaviour("# mid_air_hit_fix = on\n# mid_air_hit_fix=off\n"),
+            Some(false),
+            "the last line counts"
+        );
+        assert_eq!(script_behaviour("# level 1\ntick,a,b\n"), None);
+    }
+
+    #[test]
+    fn scripts_with_directives_are_read() {
         let dir = std::env::temp_dir().join(format!("claw-replay-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("route.csv");
         std::fs::write(
             &script,
-            "tick,held_mask,pressed_mask\n0,0,0\n@1 command end_life\n",
+            "tick,held_mask,pressed_mask\n0,0,0\n@1 menu ingame 900 keys=l,y\n@1 command end_life\n",
         )
         .unwrap();
         let a = Args {
@@ -440,8 +505,9 @@ mod tests {
             level: Some(1),
             ..Args::default()
         };
+        // The script is accepted; the run stops at the missing install.
         let e = run(a).unwrap_err();
-        assert!(e.contains("directive"), "{e}");
+        assert!(e.contains("opening install"), "{e}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

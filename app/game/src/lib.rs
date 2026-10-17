@@ -9,7 +9,8 @@
 //! - [`session`]: the simulation, the fixed-step frame driver and input;
 //! - [`keymap`]: the keyboard and gamepad maps, and rebinding;
 //! - [`input`]: the input router every key and gamepad goes through, and
-//!   recording the input of a game;
+//!   recording the input of a game (its pauses, menus and end of a life
+//!   included);
 //! - [`saves`]: saved games;
 //! - [`audio`]: playing the game's sounds;
 //! - [`pause`]: what pauses play and what a pause holds;
@@ -21,7 +22,7 @@
 //!
 //! The game starts at the title and its main menu (new game, load game,
 //! options, quit) built from the game's own menu files and art; the
-//! in-game menu pauses play, finishing a level shows the treasure tally,
+//! in-game menu pauses play and can end a life, finishing a level shows the treasure tally,
 //! save points save the game, and options are written back to the config
 //! file. Claw stands, walks, runs, jumps, climbs and fights, with sound,
 //! music, the status bar, gamepads and rebindable keys.
@@ -49,6 +50,10 @@ pub use settings::{Aspect, LevelChoice, Mode, Scale, Settings};
 /// Replays `script` on `bundle` without a window, driving the frame loop
 /// with a simulated `hz` display clock (with optional jitter of a fifth of
 /// a frame from `jitter_seed`), and returns one trace row per script tick.
+/// The script's pauses and menus hold play for their wall time on that
+/// clock and its commands take effect before their ticks; the movement
+/// tuning and the seed come from `settings` (see
+/// [`Settings::follow_header`]).
 pub fn replay_headless(
     bundle: &LevelBundle,
     settings: &Settings,

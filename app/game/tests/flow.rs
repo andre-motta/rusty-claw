@@ -481,14 +481,18 @@ fn the_in_game_menu_pauses_resumes_and_ends_the_game() {
     r.input(MenuInput::Back);
     assert_eq!(r.flow.screen(), Screen::Play);
     assert!(!r.paused);
-    // Lose a life is greyed out until the game supports it.
+    // End life asks first; no goes back.
     r.flow.pause_key();
     r.effects();
     r.input(MenuInput::Down);
     r.choose();
     let nav = r.flow.in_game_menu().unwrap();
-    assert_eq!(nav.page(), Page::Root, "a greyed-out entry opens nothing");
-    assert!(r.sounds.contains(&"GAME_DISABLE".to_string()));
+    assert_eq!(nav.page(), Page::EndLifeConfirm);
+    r.input(MenuInput::Down);
+    r.choose();
+    assert_eq!(r.flow.in_game_menu().unwrap().page(), Page::Root);
+    assert_eq!(r.flow.screen(), Screen::Pause);
+    assert!(!r.sounds.contains(&"GAME_DISABLE".to_string()));
     // End the game: down to it, confirm.
     for _ in 0..3 {
         r.input(MenuInput::Down);
@@ -915,6 +919,11 @@ impl Played {
                         self.flow.set_in_game_menu(Some(in_game_menu()));
                     }
                     Effect::EndLevel => self.session = None,
+                    Effect::EndLife => {
+                        if let Some(s) = self.session.as_mut() {
+                            s.end_life();
+                        }
+                    }
                     _ => {}
                 }
                 self.pauses.follow(
@@ -977,9 +986,7 @@ impl Played {
 
     fn end_game(&mut self) {
         self.pause_key();
-        self.input(MenuInput::Down);
-        self.choose(); // end life, greyed out
-        for _ in 0..3 {
+        for _ in 0..4 {
             self.input(MenuInput::Down);
         }
         self.choose(); // end game
@@ -1077,6 +1084,15 @@ fn every_way_out_of_the_in_game_menu_leaves_the_sounds_running() {
     assert!(p.flow.pause_key());
     p.effects();
     assert!(p.sounds_run(), "after the pause key");
+    // End life, confirmed: play runs on and Claw dies.
+    p.pause_key();
+    p.input(MenuInput::Down);
+    p.choose(); // end life
+    p.choose(); // yes
+    assert_eq!(p.flow.screen(), Screen::Play);
+    assert!(p.sounds_run(), "after ending a life");
+    p.update(200.0);
+    assert_eq!(p.session.as_ref().unwrap().sim().stats().health, 0);
 
     // End the game, then start a new one: the new level's sounds play,
     // and the old level's ambient loop, stopped by the menu, does not come
@@ -1254,4 +1270,226 @@ fn the_in_game_options_switch_the_fix_for_the_next_level() {
     );
     let text = fs::read_to_string(&r.config).unwrap();
     assert!(text.lines().any(|l| l == "mid_air_hit_fix = on"), "{text}");
+}
+
+/// Runs `sim` for `ms` as the window would while play runs: ticks of 18 ms,
+/// their events handed to the flow.
+fn play_for(r: &mut Rig, ms: f64) {
+    let ticks = (ms / 18.0).ceil() as usize;
+    for _ in 0..ticks {
+        let Some(sim) = r.sim.as_mut() else { return };
+        if r.paused {
+            r.flow.update(18.0, None, Some(sim));
+        } else {
+            let events = sim.step(Default::default()).events;
+            let sim = r.sim.as_ref().unwrap();
+            r.flow.play_events(&events, sim);
+            r.flow.update(18.0, None, Some(sim));
+        }
+        r.effects();
+    }
+}
+
+/// Opens the in-game menu and chooses end life, then yes; the effects of
+/// the yes, in order.
+fn end_life_from_the_menu(r: &mut Rig) -> Vec<Effect> {
+    assert!(r.flow.pause_key());
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::Pause);
+    r.input(MenuInput::Down);
+    r.choose();
+    assert_eq!(r.flow.in_game_menu().unwrap().page(), Page::EndLifeConfirm);
+    r.flow.menu_input(MenuInput::Confirm, false);
+    let mut effects = r.flow.take_effects();
+    for _ in 0..20 {
+        r.flow.update(PRESS_MS / 10.0, None, r.sim.as_ref());
+        effects.extend(r.flow.take_effects());
+    }
+    for e in &effects {
+        match e {
+            Effect::PauseGame => r.paused = true,
+            Effect::ResumeGame => r.paused = false,
+            Effect::EndLife => r.sim.as_mut().unwrap().end_life(),
+            _ => {}
+        }
+    }
+    effects
+}
+
+/// A game in play with `lives` lives.
+fn rig_with_lives(lives: i32) -> Rig {
+    let mut r = Rig::new(Start::Play, |_| {});
+    let start = StartState {
+        carry: Some(Carry {
+            lives,
+            ..Carry::default()
+        }),
+        save: None,
+    };
+    r.sim = Some(Sim::with_start(level(), SimConfig::default(), start));
+    play_for(&mut r, 200.0);
+    r
+}
+
+#[test]
+fn end_life_closes_the_menu_and_claw_dies_at_the_next_tick() {
+    let mut r = rig_with_lives(3);
+    assert_eq!(r.flow.menu_state().lives, 3);
+    let effects = end_life_from_the_menu(&mut r);
+    let at = |e: &Effect| effects.iter().position(|x| x == e);
+    let resume = at(&Effect::ResumeGame).expect("the menu closes");
+    let end = at(&Effect::EndLife).expect("the life ends");
+    assert!(resume < end, "back to play first: {effects:?}");
+    assert_eq!(r.flow.screen(), Screen::Play);
+    assert!(r.sim.as_ref().unwrap().end_life_pending());
+    play_for(&mut r, 18.0);
+    let sim = r.sim.as_ref().unwrap();
+    assert_eq!(sim.stats().health, 0);
+    assert_eq!(
+        sim.player().unwrap().state,
+        claw_sim::player::state::DEATH_FALL
+    );
+    // He falls, loses a life and comes back; the game goes on.
+    play_for(&mut r, 6000.0);
+    let sim = r.sim.as_ref().unwrap();
+    assert_eq!(sim.stats().lives, 2);
+    assert_eq!(sim.stats().health, 100);
+    assert_eq!(r.flow.screen(), Screen::Play);
+    assert_eq!(r.flow.menu_state().lives, 2);
+}
+
+/// The question the in-game menu shows on its page: (set, frame).
+fn question(r: &Rig) -> Option<(String, i32)> {
+    struct Sized;
+    impl claw_ui::menu::draw::Art for Sized {
+        fn info(&mut self, _set: &str, _frame: i32) -> Option<claw_render::FrameInfo> {
+            Some(claw_render::FrameInfo {
+                width: 40,
+                height: 20,
+                offset_x: 0,
+                offset_y: 0,
+            })
+        }
+        fn frames(&mut self, _set: &str) -> Vec<i32> {
+            vec![1, 2, 3, 4, 5, 6]
+        }
+    }
+    let nav = r.flow.in_game_menu().unwrap();
+    claw_ui::menu::draw::picture(nav, &mut Sized, &r.flow.menu_state(), 0.0)
+        .into_iter()
+        .map(|m| m.sprite)
+        .find(|s| s.key == "GAME_INGAMEMENU_MAIN_CLAWICIDE")
+        .map(|s| (s.key.clone(), s.frame))
+}
+
+#[test]
+fn end_life_on_the_last_life_asks_the_low_lives_question_and_ends_the_game() {
+    // Two lives: the usual question.
+    let mut r = rig_with_lives(2);
+    assert!(r.flow.pause_key());
+    r.effects();
+    r.input(MenuInput::Down);
+    r.choose();
+    assert_eq!(question(&r).map(|q| q.1), Some(5));
+    // The last life: the low-lives question, and the game ends.
+    let mut r = rig_with_lives(1);
+    assert!(r.flow.pause_key());
+    r.effects();
+    r.input(MenuInput::Down);
+    r.choose();
+    assert_eq!(
+        question(&r),
+        Some(("GAME_INGAMEMENU_MAIN_CLAWICIDE".to_string(), 6))
+    );
+    r.input(MenuInput::Back);
+    r.input(MenuInput::Back);
+    assert_eq!(r.flow.screen(), Screen::Play);
+    r.paused = false;
+    let effects = end_life_from_the_menu(&mut r);
+    assert!(effects.contains(&Effect::EndLife));
+    let mut guard = 0;
+    while r.flow.screen() == Screen::Play {
+        play_for(&mut r, 100.0);
+        guard += 1;
+        assert!(guard < 100, "no game over");
+    }
+    assert_eq!(r.flow.screen(), Screen::GameOver);
+    assert_eq!(r.sim.as_ref().unwrap().stats().lives, 0);
+    r.reach_main_menu();
+    assert_eq!(r.ended, 1);
+}
+
+#[test]
+fn the_front_layer_switch_persists_and_high_detail_stays_on() {
+    let mut r = Rig::new(Start::Title, |_| {});
+    r.reach_main_menu();
+    assert!(r.flow.settings().front_layer);
+    assert!(r.flow.menu_state().switches.front_layer);
+    r.input(MenuInput::Down);
+    r.choose(); // options
+    r.input(MenuInput::Down);
+    r.choose(); // display
+    assert_eq!(r.page(), Page::Display);
+    // The display page's first entry is the front layer.
+    r.flow.menu_input(MenuInput::Confirm, false);
+    let mut effects = r.flow.take_effects();
+    for _ in 0..20 {
+        r.flow.update(PRESS_MS / 10.0, None, None);
+        effects.extend(r.flow.take_effects());
+    }
+    assert!(effects.contains(&Effect::FrontLayer(false)), "{effects:?}");
+    assert!(!r.flow.settings().front_layer);
+    assert!(!r.flow.menu_state().switches.front_layer);
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(text.lines().any(|l| l == "front_layer = off"), "{text}");
+    assert_eq!(
+        other_lines(&text, &["front_layer"]),
+        other_lines(CONFIG, &[]),
+        "other lines are kept byte for byte"
+    );
+    // The next run starts with it.
+    let reread = Settings::from_args(
+        &<claw_game::settings::Args as clap::Parser>::try_parse_from([
+            "rusty-claw",
+            "--config",
+            r.config.to_str().unwrap(),
+            "--install",
+            "/i",
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(!reread.front_layer);
+    let f = Flow::new(reread, None, None, FontArt::uniform(8, 10), Start::Title);
+    assert!(!f.menu_state().switches.front_layer);
+    assert!(f.menu_state().switches.high_detail);
+}
+
+#[test]
+fn high_detail_stays_on() {
+    let tree = {
+        let root = node(10000, vec![node(13005, vec![leaf(13502), leaf(13506)])]);
+        MenuTree::from_ifc(root, &CommandCatalogue::new(MenuKind::Main))
+    };
+    let dir = TempDir::new().unwrap();
+    let settings = Settings::new(dir.path().join("install"), LevelChoice::Retail(1));
+    let mut f = Flow::new(
+        settings,
+        None,
+        Some(tree),
+        FontArt::uniform(8, 10),
+        Start::Title,
+    );
+    while f.screen() != Screen::MainMenu {
+        f.menu_input(MenuInput::Confirm, false);
+        f.update(100.0, None, None);
+        let _ = f.take_effects();
+    }
+    f.update(FADE_MS, None, None);
+    f.menu_input(MenuInput::Confirm, false); // display
+    f.update(PRESS_MS + 1.0, None, None);
+    assert_eq!(f.main_menu().unwrap().page(), Page::Display);
+    f.menu_input(MenuInput::Confirm, false); // detail
+    f.update(PRESS_MS + 1.0, None, None);
+    assert!(f.menu_state().switches.high_detail);
 }
