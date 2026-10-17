@@ -9,8 +9,10 @@ use claw_assets::Palette;
 use claw_assets::ifc::IfcNode;
 use claw_frame::AudioCue;
 use claw_render::FrameInfo;
-use claw_ui::menu::command::{CommandCatalogue, MenuCommand, MenuKind, Page, Slider, Toggle};
-use claw_ui::menu::draw::{self, Art, MenuState, Switches};
+use claw_ui::menu::command::{
+    CommandCatalogue, GameplaySetting, MenuCommand, MenuKind, Page, Slider, Toggle,
+};
+use claw_ui::menu::draw::{self, Art, FontArt, MenuState, Switches};
 use claw_ui::menu::layout;
 use claw_ui::menu::nav::{BLINK_MS, Look, PRESS_MS, REPEAT_FIRST_MS, REPEAT_NEXT_MS};
 use claw_ui::menu::tree::{self, MenuTree};
@@ -887,6 +889,52 @@ fn in_game_confirmations_show_their_question() {
     let s = draw::sprites(&n, &mut art, &state, 0.0);
     assert!(s.iter().any(|x| x.frame == 6 && x.y == 202));
     assert!(s.iter().any(|x| x.key == "GAME_TREASURE_COINS"));
+}
+
+#[test]
+fn the_gameplay_page_lists_its_three_switches_magnified_in_both_menus() {
+    for (root, kind) in [
+        (main_menu(), MenuKind::Main),
+        (in_game_menu(), MenuKind::InGame),
+    ] {
+        let tree = MenuTree::from_ifc(root, &CommandCatalogue::new(kind));
+        let mut n = Navigator::new(tree);
+        let options = n.tree.find_page(Page::Options).unwrap();
+        let page = n
+            .tree
+            .add_text(options, "GAMEPLAY", MenuCommand::Open(Page::Gameplay));
+        for (text, g) in [
+            ("MID AIR HIT JUMP FIX OFF", GameplaySetting::MidAirHitFix),
+            ("PAUSE INPUT RELEASE ALL", GameplaySetting::PauseInput),
+            ("FUSE CLOCK ORIGINAL", GameplaySetting::FuseClock),
+        ] {
+            n.tree.add_text(page, text, MenuCommand::Gameplay(g));
+        }
+        n.tree.add_text(page, "BACK", MenuCommand::Back);
+        draw::measure(&mut n, &mut FontArt::uniform(8, 11));
+        n.show(page, 0);
+        assert_eq!(n.page(), Page::Gameplay);
+        let band = match kind {
+            MenuKind::Main => layout::main_band(Page::Gameplay),
+            _ => layout::in_game_band(Page::Gameplay),
+        };
+        let (top, bottom) = band.unwrap();
+        let entries = n.entries().to_vec();
+        assert_eq!(entries.len(), 4, "{kind:?}");
+        let cells: Vec<tree::Cell> = entries.iter().map(|&k| n.tree.items[k].cell).collect();
+        for &k in &entries {
+            assert_eq!(n.tree.items[k].zoom, 2, "{kind:?}: twice the size");
+        }
+        assert_eq!(cells[0].y, top, "{kind:?}");
+        for w in cells.windows(2) {
+            assert!(w[0].y + w[0].h < w[1].y, "{kind:?}: rows overlap");
+        }
+        let last = cells[cells.len() - 1];
+        assert!(
+            last.y + last.h <= bottom,
+            "{kind:?}: {last:?} leaves the band"
+        );
+    }
 }
 
 #[test]

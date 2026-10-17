@@ -34,6 +34,7 @@ pub(crate) enum Command {
     StopAll,
     PauseGame,
     ResumeGame,
+    HoldMusic(bool),
     Settings(MixSettings),
     Bank {
         epoch: u64,
@@ -124,6 +125,7 @@ impl AudioState {
                 Command::StopAll => self.mixer.stop_all(),
                 Command::PauseGame => self.mixer.pause_game(),
                 Command::ResumeGame => self.mixer.resume_game(),
+                Command::HoldMusic(on) => self.mixer.hold_music(on),
                 Command::Settings(s) => self.mixer.apply_settings(s),
                 Command::Bank { epoch, bank } => {
                     // The previous bank's last owner is the game side, which

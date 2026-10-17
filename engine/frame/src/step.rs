@@ -12,6 +12,11 @@
 //!
 //! Time is kept in whole microseconds so that accumulation is exact and a
 //! run depends only on the sequence of frame durations.
+//!
+//! Stepping out of a pause one tick at a time does not go through the
+//! accumulator's time: [`FixedStep::step_once`] makes the next frame run
+//! exactly one tick at once, whatever time is left over from before, and
+//! counts real time from an empty accumulator after it.
 
 use std::time::{Duration, Instant};
 
@@ -124,6 +129,16 @@ impl FixedStep {
     pub fn reset(&mut self) {
         self.accumulator_us = 0;
     }
+
+    /// Makes the next frame run exactly one tick at once, for stepping out
+    /// of a pause: the time left in the accumulator is dropped and one
+    /// whole tick takes its place, so the next [`FixedStep::advance`] runs
+    /// that tick first and then counts its own duration from an empty
+    /// accumulator (a frame of zero time runs the one tick alone). Calling
+    /// it again before that frame still leaves exactly one tick.
+    pub fn step_once(&mut self) {
+        self.accumulator_us = TICK_US;
+    }
 }
 
 /// Measures the duration of each rendered frame from a monotonic clock.
@@ -194,6 +209,33 @@ mod tests {
         assert!((a.alpha - 0.5).abs() < 1e-12);
         step.resume();
         assert_eq!(step.advance_us(9_000).ticks, 1);
+    }
+
+    #[test]
+    fn step_once_runs_one_tick_then_real_time() {
+        let mut step = FixedStep::new();
+        step.advance_us(9_000);
+        step.pause();
+        step.advance_us(500_000);
+        step.resume();
+        step.step_once();
+        step.step_once();
+        assert_eq!(step.accumulator_us(), TICK_US);
+        // A frame of no time runs the single tick and leaves nothing over.
+        let a = step.advance_us(0);
+        assert_eq!(a.ticks, 1);
+        assert_eq!(a.alpha, 0.0);
+        assert_eq!(step.accumulator_us(), 0);
+        // Then real time counts from an empty accumulator.
+        assert_eq!(step.advance_us(17_999).ticks, 0);
+        assert_eq!(step.advance_us(1).ticks, 1);
+        // With time in the same frame, the tick comes first and the time
+        // after it counts as usual.
+        step.step_once();
+        let a = step.advance_us(27_000);
+        assert_eq!(a.ticks, 2);
+        assert!((a.alpha - 0.5).abs() < 1e-12);
+        assert_eq!(step.total_ticks(), 4);
     }
 
     #[test]

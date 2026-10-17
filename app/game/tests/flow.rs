@@ -18,10 +18,11 @@ use claw_game::flow::{
     self, Effect, FADE_MS, Flow, MENU_BED, Progress, START_SLOT, Screen, Start, control_row,
 };
 use claw_game::keymap::{Keymap, PadMap};
-use claw_game::pause::Pauses;
+use claw_game::pause::{PauseInput, Pauses};
 use claw_game::saves::{SaveRecord, SaveStore, retail_level_name};
 use claw_game::settings::{LevelChoice, Settings};
 use claw_sim::logic::checkpoint::{MESSAGE_NOT_SAVED, MESSAGE_SAVED};
+use claw_sim::tuning::FuseClock;
 use claw_sim::{Carry, SavePos, Sim, SimConfig, SimLevel, StartState, TileMap};
 use claw_ui::menu::command::{CommandCatalogue, GameplaySetting, MenuCommand, MenuKind, Page};
 use claw_ui::menu::draw::FontArt;
@@ -1178,6 +1179,8 @@ fn the_gameplay_page_switches_the_mid_air_hit_fix_and_persists_it() {
         main_entries(&r),
         [
             MenuCommand::Gameplay(GameplaySetting::MidAirHitFix),
+            MenuCommand::Gameplay(GameplaySetting::PauseInput),
+            MenuCommand::Gameplay(GameplaySetting::FuseClock),
             MenuCommand::Back
         ]
     );
@@ -1230,6 +1233,73 @@ fn the_gameplay_page_switches_the_mid_air_hit_fix_and_persists_it() {
     assert!(!r.flow.settings().mid_air_hit_fix);
     let text = fs::read_to_string(&r.config).unwrap();
     assert!(text.lines().any(|l| l == "mid_air_hit_fix = off"), "{text}");
+}
+
+#[test]
+fn the_gameplay_page_switches_the_pause_and_fuse_behaviour_and_persists_it() {
+    let mut r = Rig::new(Start::Title, |_| {});
+    r.reach_main_menu();
+    assert_eq!(r.flow.settings().pause_input, PauseInput::Original);
+    assert_eq!(r.flow.settings().fuse_clock, FuseClock::Original);
+    r.input(MenuInput::Down);
+    r.choose(); // options
+    let entries = main_entries(&r);
+    for _ in 0..entries.len() - 2 {
+        r.input(MenuInput::Down);
+    }
+    r.choose(); // gameplay
+    assert_eq!(r.page(), Page::Gameplay);
+    let text = |r: &Rig| selected_text(r.flow.main_menu().unwrap());
+    // The pause input switch.
+    r.input(MenuInput::Down);
+    assert_eq!(text(&r).as_deref(), Some("PAUSE INPUT ORIGINAL"));
+    r.choose();
+    assert_eq!(r.flow.settings().pause_input, PauseInput::ReleaseAll);
+    assert_eq!(text(&r).as_deref(), Some("PAUSE INPUT RELEASE ALL"));
+    // The fuse clock switch.
+    r.input(MenuInput::Down);
+    assert_eq!(text(&r).as_deref(), Some("FUSE CLOCK ORIGINAL"));
+    r.choose();
+    assert_eq!(r.flow.settings().fuse_clock, FuseClock::Frozen);
+    assert_eq!(text(&r).as_deref(), Some("FUSE CLOCK FROZEN"));
+    assert_eq!(
+        r.flow.settings().sim_config((640, 480)).fuse_clock,
+        FuseClock::Frozen,
+        "new games play with it"
+    );
+    let saved = fs::read_to_string(&r.config).unwrap();
+    assert!(
+        saved.lines().any(|l| l == "pause_input = release_all"),
+        "{saved}"
+    );
+    assert!(saved.lines().any(|l| l == "fuse_clock = frozen"), "{saved}");
+    // The next run starts with both.
+    let args = <claw_game::settings::Args as clap::Parser>::try_parse_from([
+        "rusty-claw",
+        "--config",
+        r.config.to_str().unwrap(),
+        "--install",
+        "/i",
+    ])
+    .unwrap();
+    let reread = Settings::from_args(&args).unwrap();
+    assert_eq!(reread.pause_input, PauseInput::ReleaseAll);
+    assert_eq!(reread.fuse_clock, FuseClock::Frozen);
+    // Choosing them again goes back to the original.
+    r.choose();
+    assert_eq!(r.flow.settings().fuse_clock, FuseClock::Original);
+    r.input(MenuInput::Up);
+    r.choose();
+    assert_eq!(r.flow.settings().pause_input, PauseInput::Original);
+    let saved = fs::read_to_string(&r.config).unwrap();
+    assert!(
+        saved.lines().any(|l| l == "pause_input = original"),
+        "{saved}"
+    );
+    assert!(
+        saved.lines().any(|l| l == "fuse_clock = original"),
+        "{saved}"
+    );
 }
 
 #[test]

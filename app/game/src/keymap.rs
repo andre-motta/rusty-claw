@@ -5,8 +5,11 @@
 //! climb, crouch and look up, Space jumps, Ctrl attacks, Alt fires the
 //! selected weapon, Shift switches weapons, Z lifts and throws, and 1, 2
 //! and 3 select the pistol, magic and dynamite; the left and right Ctrl,
-//! Alt and Shift keys both work. Keys are matched by their physical
-//! position, so the map works on any keyboard layout.
+//! Alt and Shift keys both work. Escape opens the in-game menu, the Pause
+//! key pauses play without a menu (each press steps out of it one tick at
+//! a time, see [`crate::pause`]) and F1 shows the help screen. Keys are
+//! matched by their physical position, so the map works on any keyboard
+//! layout.
 //!
 //! The default pad map follows the original joystick buttons 1 to 9 on a
 //! standard gamepad (the Steam Deck's included):
@@ -21,7 +24,7 @@
 //! | right shoulder | 6 | pistol |
 //! | left trigger | 7 | magic |
 //! | right trigger | 8 | dynamite |
-//! | Start | 9 | pause (the menu) |
+//! | Start | 9 | the in-game menu |
 //! | d-pad and left stick | directions | move, climb, crouch, look up |
 //!
 //! Every action can be bound to any keys and pad buttons. Each key has a
@@ -53,8 +56,11 @@ pub enum Command {
     ToggleScale,
     /// Toggle interpolation between ticks.
     ToggleInterpolation,
-    /// Pause or resume.
+    /// Pause or resume without a menu (a gamepad's Start opens the
+    /// in-game menu instead, see [`crate::pause::game_key`]).
     Pause,
+    /// Show the help screen.
+    Help,
 }
 
 /// A key's meaning.
@@ -68,7 +74,7 @@ pub enum Action {
 
 /// Every bindable action with its stable name, in the order the config
 /// file lists them.
-pub const ACTIONS: [(&str, Action); 19] = [
+pub const ACTIONS: [(&str, Action); 20] = [
     ("left", Action::Button(Buttons::LEFT)),
     ("right", Action::Button(Buttons::RIGHT)),
     ("up", Action::Button(Buttons::UP)),
@@ -91,6 +97,7 @@ pub const ACTIONS: [(&str, Action); 19] = [
         Action::Command(Command::ToggleInterpolation),
     ),
     ("pause", Action::Command(Command::Pause)),
+    ("help", Action::Command(Command::Help)),
 ];
 
 impl Action {
@@ -375,15 +382,15 @@ pub const DEFAULT_KEYS: [(KeyCode, Action); 23] = {
         (KeyCode::F8, C(Command::ToggleScale)),
         (KeyCode::F7, C(Command::ToggleInterpolation)),
         (KeyCode::Pause, C(Command::Pause)),
-        (KeyCode::KeyP, C(Command::Pause)),
+        (KeyCode::F1, C(Command::Help)),
     ]
 };
 
 const DEFAULT_HELP: &str = "arrows move, climb, crouch and look up; Space jumps; Ctrl attacks; \
      Alt fires the weapon; Shift switches weapons; Z lifts and throws; \
-     1, 2, 3 select pistol, magic, dynamite; P or Pause pauses; \
-     F7 interpolation; F8 fit or integer scaling; F9 aspect (fill, centered, 4:3); \
-     F10 window size; F11 fullscreen; Escape quits";
+     1, 2, 3 select pistol, magic, dynamite; Pause pauses (each press steps one tick); \
+     F1 help; F7 interpolation; F8 fit or integer scaling; F9 aspect (fill, centered, 4:3); \
+     F10 window size; F11 fullscreen; Escape opens the menu (quits without menus)";
 
 impl Default for Keymap {
     fn default() -> Self {

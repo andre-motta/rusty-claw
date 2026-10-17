@@ -2,7 +2,11 @@
 //! without `CLAW_INSTALL`), with the level's own animations: a soldier's
 //! musket ball or Claw's own dynamite hits him in the air, and once the
 //! hit reaction is over a jump press starts a second jump by default, as
-//! in the original, and not with the mid-air hit jump fix on.
+//! in the original, and not with the mid-air hit jump fix on. The hit holds
+//! Claw for 22 ticks and the jump is taken on the one tick after the stand,
+//! as in the original at its 18 ms step; Claw's own stick of dynamite goes
+//! off 70 ticks after the throw and hurts 9 ticks later, or at the return
+//! from a help screen long enough to burn its fuse.
 
 use std::sync::Arc;
 
@@ -13,6 +17,7 @@ use claw_sim::logic::projectile::{self, ProjectileSpec};
 use claw_sim::object::{ObjectId, types};
 use claw_sim::physics::ptype;
 use claw_sim::player::state;
+use claw_sim::tuning::FuseClock;
 use claw_sim::{Sim, SimConfig, SimLevel};
 
 const JUMP: u32 = 0x1;
@@ -192,4 +197,168 @@ fn install_his_own_dynamite_in_mid_air_allows_a_second_jump_unless_fixed() {
     let Some(level) = level1() else { return };
     jumps_again(&mut own_dynamite_in_mid_air(&level, false));
     cannot_jump_again(&mut own_dynamite_in_mid_air(&level, true));
+}
+
+/// A hit in the air from `source` (0 an enemy's shot, 1 Claw's own
+/// dynamite), with `input(t)` played on tick `t` counted from the hit tick
+/// (0); Claw's (state, y) after each tick from the hit tick on.
+fn after_a_hit(
+    level: &Arc<SimLevel>,
+    source: u8,
+    input: &dyn Fn(u64) -> TickInput,
+) -> Vec<(i32, i32)> {
+    let mut sim = settled(level, false);
+    let health = sim.stats().health;
+    let (x, y) = sim.player().map(|o| (o.x, o.y)).unwrap();
+    let mut jump_at = None;
+    if source == 0 {
+        sim.step(press(JUMP));
+        for _ in 0..8 {
+            sim.step(hold(JUMP));
+        }
+        let (x, y) = sim.player().map(|o| (o.x, o.y)).unwrap();
+        launch(&mut sim, musket_ball(x, y));
+    } else {
+        // When the blast hurts a Claw who stands still; he jumps 3 ticks
+        // before it.
+        let mut dry = settled(level, false);
+        launch(&mut dry, dynamite(x, y));
+        let at = (1..300)
+            .find(|_| {
+                dry.step(TickInput::default());
+                dry.stats().health < health
+            })
+            .expect("the dynamite goes off");
+        launch(&mut sim, dynamite(x, y));
+        jump_at = Some(sim.tick() + at as u64 - 3);
+    }
+    let mut hit = None;
+    let mut rows = Vec::new();
+    for _ in 0..400 {
+        let n = sim.tick();
+        let i = match hit {
+            Some(h) => input(n - h),
+            None if Some(n) == jump_at => press(JUMP),
+            None => TickInput::default(),
+        };
+        sim.step(i);
+        if hit.is_none() && sim.stats().health < health {
+            hit = Some(n);
+            let o = sim.player().unwrap();
+            assert_eq!(o.physics_type, ptype::FALL, "hit in the air");
+        }
+        if hit.is_some() {
+            let o = sim.player().unwrap();
+            rows.push((o.state, o.y));
+            if rows.len() > 30 {
+                break;
+            }
+        }
+    }
+    assert!(hit.is_some(), "the hit came");
+    rows
+}
+
+#[test]
+fn install_the_stand_window_after_a_hit_in_the_air_is_the_tick_after_the_stand() {
+    let Some(level) = level1() else { return };
+    for source in [0, 1] {
+        let rows = after_a_hit(&level, source, &|_| TickInput::default());
+        let y = rows[0].1;
+        for (t, &(s, ry)) in rows.iter().enumerate().take(22) {
+            assert_eq!((s, ry), (state::HIT, y), "source {source}: tick h+{t}");
+        }
+        assert_eq!(
+            rows[22],
+            (state::STAND, y),
+            "source {source}: stand on h+22"
+        );
+        assert_eq!(rows[23].0, state::FALL, "source {source}: fall from h+23");
+        let rows = after_a_hit(&level, source, &|t| {
+            if t == 23 { press(JUMP) } else { hold(0) }
+        });
+        assert_eq!(rows[23].0, state::JUMP, "source {source}: jump on h+23");
+        assert!(rows[30].1 < y - 40, "source {source}: a full jump");
+        for at in (19..=22).chain(24..=26) {
+            let rows = after_a_hit(&level, source, &|t| {
+                if t == at { press(JUMP) } else { hold(0) }
+            });
+            assert!(
+                rows.iter().all(|&(s, _)| s != state::JUMP),
+                "source {source}: a press on h+{at} launched"
+            );
+        }
+    }
+}
+
+/// Claw throws a stick of dynamite at the level's start (a tap of the
+/// dynamite key); with `help = Some((after, ms))` a help screen of `ms`
+/// is up at the boundary `after` ticks after the throw tick. Returns the
+/// throw tick, the tick the stick went off in (`None` when it went off at
+/// the return from help) and the tick its blast hurt Claw.
+fn throw_and_wait(
+    level: &Arc<SimLevel>,
+    clock: FuseClock,
+    help: Option<(u64, u32)>,
+) -> (u64, Option<u64>, u64) {
+    let cfg = SimConfig {
+        fuse_clock: clock,
+        ..SimConfig::default()
+    };
+    let mut sim = Sim::new(level.clone(), cfg);
+    for _ in 0..60 {
+        sim.step(TickInput::default());
+    }
+    let sticks = sim.stats().dynamite;
+    let health = sim.stats().health;
+    let mut throw = None;
+    let mut went_off = None;
+    for i in 0..400 {
+        if let (Some(t), Some((after, ms))) = (throw, help)
+            && sim.tick() == t + after
+        {
+            sim.pass_menu_time(ms);
+        }
+        let live = |sim: &Sim| {
+            sim.objects()
+                .all()
+                .filter_map(|(_, o)| projectile::data(o))
+                .any(|d| d.phase == projectile::Phase::Exploding)
+        };
+        let before = live(&sim);
+        let n = sim.tick();
+        sim.step(if i == 0 {
+            press(Buttons::DYNAMITE.0)
+        } else {
+            TickInput::default()
+        });
+        if throw.is_none() && sim.stats().dynamite < sticks {
+            throw = Some(n);
+        }
+        if !before && went_off.is_none() && live(&sim) {
+            went_off = Some(n);
+        }
+        if sim.stats().health < health {
+            return (throw.expect("thrown"), went_off, n);
+        }
+    }
+    panic!("the blast never hurt Claw");
+}
+
+#[test]
+fn install_his_dynamite_goes_off_70_ticks_after_the_throw_tick_or_at_the_return_from_help() {
+    let Some(level) = level1() else { return };
+    let (t, went_off, hurt) = throw_and_wait(&level, FuseClock::Original, None);
+    assert_eq!(went_off, Some(t + 70), "lit in the throw tick");
+    assert_eq!(hurt, t + 79, "hurts 9 ticks after it goes off");
+    // Help after 18 ticks of fuse (324 ms) and up for 918 ms: 1242 ms, it
+    // goes off on its own tick; for 936 ms (1260 ms) it goes off at the
+    // return and hurts on the 8th tick after it.
+    let (t, went_off, hurt) = throw_and_wait(&level, FuseClock::Original, Some((19, 918)));
+    assert_eq!((went_off, hurt), (Some(t + 70), t + 79));
+    let (t, went_off, hurt) = throw_and_wait(&level, FuseClock::Original, Some((19, 936)));
+    assert_eq!((went_off, hurt), (None, t + 19 + 8));
+    // With the fuse clock frozen help freezes the fuse.
+    let (t, went_off, hurt) = throw_and_wait(&level, FuseClock::Frozen, Some((19, 2000)));
+    assert_eq!((went_off, hurt), (Some(t + 70), t + 79));
 }

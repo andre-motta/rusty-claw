@@ -64,7 +64,9 @@ fn default_key_table_is_the_original_one() {
         ("aspect", vec![KeyCode::F9]),
         ("scale", vec![KeyCode::F8]),
         ("interpolation", vec![KeyCode::F7]),
-        ("pause", vec![KeyCode::Pause, KeyCode::KeyP]),
+        // The original's pause key alone, and F1 for help.
+        ("pause", vec![KeyCode::Pause]),
+        ("help", vec![KeyCode::F1]),
     ];
     for (name, keys) in commands {
         assert_eq!(map.keys(Action::from_name(name).unwrap()), keys, "{name}");
@@ -84,7 +86,8 @@ fn default_pad_table_is_the_original_joystick_layout() {
     for (n, b) in SPEC_PAD {
         assert_eq!(map.action(by_number(n)), Some(B(b)), "button {n}");
     }
-    // Button 9 opens the menu: Start pauses.
+    // Button 9 opens the menu: Start is bound to the pause command, which
+    // opens the in-game menu when it comes from a pad.
     assert_eq!(by_number(9), PadButton::Start);
     assert_eq!(
         map.action(PadButton::Start),
@@ -479,6 +482,39 @@ fn menus_get_menu_inputs() {
 }
 
 #[test]
+fn keys_held_through_a_menu_are_held_again_with_the_original_rule() {
+    for keep in [true, false] {
+        let mut r = InputRouter::keyboard_only(Keymap::default());
+        r.set_keep_held(keep);
+        assert_eq!(r.key(KeyCode::ArrowRight, true), Some(down(Buttons::RIGHT)));
+        assert_eq!(r.buttons_down(), Buttons::RIGHT);
+        assert_eq!(
+            r.set_context(InputContext::Menu),
+            vec![up(Buttons::RIGHT)],
+            "a menu takes the keys"
+        );
+        // Keys go on being followed in the menu: Space is down when the
+        // menu closes, Right still is.
+        assert_eq!(
+            r.key(KeyCode::Space, true),
+            Some(Routed::Menu(MenuInput::Confirm))
+        );
+        assert_eq!(r.buttons_down(), Buttons::RIGHT | Buttons::JUMP);
+        assert_eq!(r.set_context(InputContext::Play), vec![]);
+        // Released in play: with the original rule the keys were held
+        // again, so their release counts; otherwise it is no release.
+        let released = r.key(KeyCode::ArrowRight, false);
+        if keep {
+            assert_eq!(released, Some(up(Buttons::RIGHT)));
+        }
+        assert_eq!(r.buttons_down(), Buttons::JUMP);
+        // Focus loss lets go of everything: no key stays stuck.
+        r.set_focused(false);
+        assert_eq!(r.buttons_down(), Buttons::NONE);
+    }
+}
+
+#[test]
 fn the_next_key_or_pad_button_can_be_captured() {
     let (mut r, pads) = router();
     let jump = B(Buttons::JUMP);
@@ -503,12 +539,12 @@ fn the_next_key_or_pad_button_can_be_captured() {
     assert_eq!(r.key(KeyCode::KeyW, true), Some(down(Buttons::JUMP)));
     assert_eq!(r.key(KeyCode::Space, true), None);
     r.capture_next_key(jump, None);
-    r.key(KeyCode::KeyP, true);
+    r.key(KeyCode::Pause, true);
     assert_eq!(
         r.take_capture(),
         Some(CaptureOutcome::Refused {
             action: jump,
-            input: Captured::Key(KeyCode::KeyP),
+            input: Captured::Key(KeyCode::Pause),
             conflict: Conflict::Reserved {
                 holder: Action::Command(Command::Pause)
             }

@@ -15,7 +15,10 @@
 //! | main menu | new game at level n | play, new-game values |
 //! | main menu | load (level n, start or save point) | play from the save |
 //! | main menu | quit, confirmed | the program ends |
-//! | play | Escape, the pause key or pad Start | in-game menu |
+//! | play | Escape or pad Start (not while the pause key holds play) | in-game menu |
+//! | play | F1 (also while the pause key holds play) | help |
+//! | in-game menu | help, or F1 | help |
+//! | help | Escape, Space, Enter, pad choose or back | play |
 //! | in-game menu | resume | play |
 //! | in-game menu | end life, confirmed | play: Claw dies at the next tick |
 //! | in-game menu | end the game, confirmed | main menu |
@@ -45,8 +48,15 @@
 //! aspect, scaling and smooth motion) change it for this run: the Video
 //! page shows the change, and choosing an entry there saves it.
 //!
-//! The Gameplay page under Options holds the mid-air hit jump fix (off by
-//! default, as in the original). A change there is saved at once and
+//! The pause key (see [`crate::pause`]) pauses play without a screen: the
+//! flow stays in play, and the window holds the level.
+//!
+//! The Gameplay page under Options holds the behaviour switches: the
+//! mid-air hit jump fix (off by default, as in the original), how keys
+//! count across a pause or a screen (`pause_input`) and whether help
+//! screen time reaches a lit dynamite fuse (`fuse_clock`), both at the
+//! original's behaviour by default (see [`crate::settings`]). Choosing an
+//! entry moves it to its next value. A change there is saved at once and
 //! applies to the next game or level started; the level in play keeps the
 //! behaviour it started with.
 //!
@@ -57,17 +67,19 @@ use std::collections::{BTreeSet, VecDeque};
 
 use claw_frame::{AudioCue, GameEvent, SoundChannel, SoundCue};
 use claw_sim::logic::checkpoint::MESSAGE_SAVED;
+use claw_sim::tuning::FuseClock;
 use claw_sim::{Sim, StartState};
 use claw_ui::menu::command::{
-    GameplaySetting, MenuCommand, MenuKind, Page, Slider, Toggle, VideoSetting,
+    GameplaySetting, MenuCommand, MenuKind, Page, Slider, Toggle, Unavailable, VideoSetting,
 };
 use claw_ui::menu::draw::{self, FontArt, MenuState};
 use claw_ui::menu::{MenuAction, MenuInput, MenuTree, Navigator};
-use claw_ui::screens::{BootyScreen, BootyStats, GameOverScreen, TitleScreen};
+use claw_ui::screens::{BootyScreen, BootyStats, GameOverScreen, HelpScreen, TitleScreen};
 use winit::keyboard::KeyCode;
 
 use crate::input::{CaptureOutcome, Captured};
 use crate::keymap::{Action, Keymap, PadMap, key_name};
+use crate::pause::PauseInput;
 use crate::saves::{SaveRecord, SaveStore, retail_level_name};
 use crate::settings::{LevelChoice, PAD_DEAD_ZONE_RANGE, Scale, Settings, WINDOW_SIZES};
 
@@ -125,7 +137,11 @@ pub const VIDEO_SETTINGS: [VideoSetting; 8] = [
 ];
 
 /// The Gameplay page's settings in order.
-pub const GAMEPLAY_SETTINGS: [GameplaySetting; 1] = [GameplaySetting::MidAirHitFix];
+pub const GAMEPLAY_SETTINGS: [GameplaySetting; 3] = [
+    GameplaySetting::MidAirHitFix,
+    GameplaySetting::PauseInput,
+    GameplaySetting::FuseClock,
+];
 
 /// What shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +154,8 @@ pub enum Screen {
     Play,
     /// The in-game menu over the frozen level.
     Pause,
+    /// The help screen over the frozen level.
+    Help,
     /// The end-of-level screens.
     Booty,
     /// The frozen level fading out after the last life.
@@ -189,6 +207,10 @@ pub enum Effect {
     },
     /// Show the title: hand a [`TitleScreen`] to [`Flow::set_title`].
     ShowTitle,
+    /// Show the help screen over the level in play (already paused): hand
+    /// a [`HelpScreen`] to [`Flow::set_help`]. [`Effect::ResumeGame`]
+    /// follows when it closes.
+    ShowHelp,
     /// Show the end-of-level screens: hand a [`BootyScreen`] for these
     /// stats to [`Flow::set_booty`].
     ShowBooty(BootyStats),
@@ -382,14 +404,28 @@ pub fn video_text(v: VideoSetting, settings: &Settings) -> String {
 }
 
 /// The Gameplay page's text of `g` for `settings`. The menu font has no
-/// hyphen, so "mid-air" is written as two words.
+/// hyphen or underscore, so "mid-air" is written as two words and the
+/// settings file's names with spaces (`release_all` is RELEASE ALL).
 pub fn gameplay_text(g: GameplaySetting, settings: &Settings) -> String {
     let on = |b: bool| if b { "ON" } else { "OFF" };
+    let name = |n: &str| n.replace('_', " ").to_ascii_uppercase();
     match g {
         GameplaySetting::MidAirHitFix => {
             format!("MID AIR HIT JUMP FIX {}", on(settings.mid_air_hit_fix))
         }
+        GameplaySetting::PauseInput => {
+            format!("PAUSE INPUT {}", name(settings.pause_input.name()))
+        }
+        GameplaySetting::FuseClock => {
+            format!("FUSE CLOCK {}", name(settings.fuse_clock.name()))
+        }
     }
+}
+
+/// The value after `v` in `all`, back to the first after the last.
+fn next_of<T: Copy + PartialEq>(all: &[T], v: T) -> T {
+    let i = all.iter().position(|&x| x == v).map_or(0, |i| i + 1);
+    all[i % all.len()]
 }
 
 /// The game flow.
@@ -402,6 +438,7 @@ pub struct Flow {
     in_game: Option<Navigator>,
     font: FontArt,
     title: Option<TitleScreen>,
+    help: Option<HelpScreen>,
     booty: Option<BootyScreen>,
     game_over: Option<GameOverScreen>,
     state: MenuState,
@@ -467,6 +504,7 @@ impl Flow {
             in_game: None,
             font,
             title: None,
+            help: None,
             booty: None,
             game_over: None,
             state,
@@ -653,6 +691,16 @@ impl Flow {
         self.title.as_ref()
     }
 
+    /// The help screen.
+    pub fn help(&self) -> Option<&HelpScreen> {
+        self.help.as_ref()
+    }
+
+    /// True while the level in play is complete and waits for its tally.
+    pub fn completing(&self) -> bool {
+        self.play.as_ref().is_some_and(|p| p.complete_in.is_some())
+    }
+
     /// The end-of-level screens.
     pub fn booty(&self) -> Option<&BootyScreen> {
         self.booty.as_ref()
@@ -715,6 +763,11 @@ impl Flow {
             self.effects.push(Effect::Sound(a));
         }
         self.title = Some(title);
+    }
+
+    /// Hands over the help screen asked for by [`Effect::ShowHelp`].
+    pub fn set_help(&mut self, help: HelpScreen) {
+        self.help = Some(help);
     }
 
     /// Hands over the screens asked for by [`Effect::ShowBooty`].
@@ -929,7 +982,10 @@ impl Flow {
             n.tree.set_enabled_by(rule);
         }
         if let Some(n) = self.in_game.as_mut() {
-            n.tree.set_enabled_by(rule);
+            // The in-game menu shows the help screen.
+            n.tree.set_enabled_by(|item| {
+                item.command == MenuCommand::Unavailable(Unavailable::Help) || rule(item)
+            });
         }
     }
 
@@ -966,6 +1022,11 @@ impl Flow {
                 let out = n.input(input);
                 self.menu_actions(MenuKind::InGame, out, from_pad);
             }
+            Screen::Help => {
+                if matches!(input, MenuInput::Confirm | MenuInput::Back) {
+                    self.close_help();
+                }
+            }
             Screen::Booty => {
                 if matches!(input, MenuInput::Confirm | MenuInput::Back)
                     && let Some(b) = self.booty.as_mut()
@@ -1001,9 +1062,10 @@ impl Flow {
         self.menu_actions(kind, out, false);
     }
 
-    /// Escape or the pause key during a game: in play it opens the in-game
-    /// menu, in the in-game menu it resumes. Returns true when the flow
-    /// took the key.
+    /// The menu key during a game (Escape, or a gamepad's Start): in play
+    /// it opens the in-game menu, in the in-game menu it resumes. Returns
+    /// true when the flow took the key. The window does not call it while
+    /// the pause key holds play (see [`crate::pause::game_key`]).
     pub fn pause_key(&mut self) -> bool {
         match self.screen {
             Screen::Play => {
@@ -1032,6 +1094,33 @@ impl Flow {
     fn resume(&mut self) {
         if self.screen == Screen::Pause {
             self.screen = Screen::Play;
+            self.effects.push(Effect::ResumeGame);
+        }
+    }
+
+    /// F1 during a game: the help screen over play (paused or not) or in
+    /// place of the in-game menu. Returns true when it opened.
+    pub fn help_key(&mut self) -> bool {
+        match self.screen {
+            Screen::Play if !self.completing() => {
+                self.screen = Screen::Help;
+                self.effects.push(Effect::PauseGame);
+                self.effects.push(Effect::ShowHelp);
+                true
+            }
+            Screen::Pause => {
+                self.screen = Screen::Help;
+                self.effects.push(Effect::ShowHelp);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn close_help(&mut self) {
+        if self.screen == Screen::Help {
+            self.screen = Screen::Play;
+            self.help = None;
             self.effects.push(Effect::ResumeGame);
         }
     }
@@ -1158,6 +1247,9 @@ impl Flow {
             }
             MenuCommand::PadDeadZone => {
                 self.dead_zone(1, true);
+            }
+            MenuCommand::Unavailable(Unavailable::Help) => {
+                self.help_key();
             }
             MenuCommand::Open(_)
             | MenuCommand::Back
@@ -1315,6 +1407,14 @@ impl Flow {
             GameplaySetting::MidAirHitFix => {
                 self.settings.mid_air_hit_fix = !self.settings.mid_air_hit_fix;
                 "mid_air_hit_fix"
+            }
+            GameplaySetting::PauseInput => {
+                self.settings.pause_input = next_of(&PauseInput::ALL, self.settings.pause_input);
+                "pause_input"
+            }
+            GameplaySetting::FuseClock => {
+                self.settings.fuse_clock = next_of(&FuseClock::ALL, self.settings.fuse_clock);
+                "fuse_clock"
             }
         };
         self.persist(&[key]);
@@ -1591,7 +1691,7 @@ impl Flow {
                     self.enter(Screen::MainMenu);
                 }
             }
-            Screen::Exit => {}
+            Screen::Help | Screen::Exit => {}
         }
     }
 
@@ -1632,5 +1732,8 @@ pub fn menu_input(m: crate::input::MenuInput) -> MenuInput {
 
 /// True for the screens drawn as standalone 640x480 screens.
 pub fn is_standalone(screen: Screen) -> bool {
-    matches!(screen, Screen::Title | Screen::MainMenu | Screen::Booty)
+    matches!(
+        screen,
+        Screen::Title | Screen::MainMenu | Screen::Booty | Screen::Help
+    )
 }

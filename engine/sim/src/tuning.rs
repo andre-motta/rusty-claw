@@ -228,6 +228,38 @@ pub struct Behaviour {
     pub fix_double_jump: bool,
 }
 
+/// Whether the time a help screen was up reaches the dynamite fuse (see
+/// [`crate::Sim::pass_menu_time`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum FuseClock {
+    /// As in the original: when play comes back from the help screen, a
+    /// lit stick of dynamite whose fuse has burnt by the game time plus
+    /// the time help was up goes off at once. The pause and the in-game
+    /// menu freeze the fuse.
+    #[default]
+    Original,
+    /// Every screen freezes the fuse, help included.
+    Frozen,
+}
+
+impl FuseClock {
+    /// Both values, the default first.
+    pub const ALL: [FuseClock; 2] = [FuseClock::Original, FuseClock::Frozen];
+
+    /// The name in settings and recordings.
+    pub fn name(self) -> &'static str {
+        match self {
+            FuseClock::Original => "original",
+            FuseClock::Frozen => "frozen",
+        }
+    }
+
+    /// The value named `name`.
+    pub fn from_name(name: &str) -> Option<FuseClock> {
+        FuseClock::ALL.into_iter().find(|f| f.name() == name)
+    }
+}
+
 /// All tuning data of a simulation.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Tuning {

@@ -23,7 +23,12 @@
 //! In menus ([`InputContext::Menu`]) the same inputs become menu inputs:
 //! the arrows, the d-pad and the stick move, Enter, Space, the jump keys,
 //! the South button and Start choose, and Escape, Backspace and the East
-//! button go back. [`InputRouter::capture_next_key`] makes the next key
+//! button go back. Leaving play releases every game button; when play
+//! comes back, the router either counts the keys still down as held again
+//! (with [`InputRouter::set_keep_held`], the original rule: they are held,
+//! not pressed) or waits for them to be pressed again.
+//! [`InputRouter::buttons_down`] says which game buttons the keys and pads
+//! hold at any time, menus included. [`InputRouter::capture_next_key`] makes the next key
 //! (or pad button) pressed the new binding of an action.
 //!
 //! [`Recorder`] keeps the input of every game tick a session plays, so a
@@ -328,6 +333,10 @@ pub struct InputRouter {
     focused: bool,
     /// Keys down that hold game buttons.
     keys: Vec<(KeyCode, Buttons)>,
+    /// Keys down that are bound to game buttons, whatever the context.
+    held_keys: Vec<(KeyCode, Buttons)>,
+    /// Keys still down when play comes back count as held.
+    keep_held: bool,
     /// Keys down that hold menu inputs.
     menu_keys: Vec<(KeyCode, MenuInput)>,
     pads: BTreeMap<usize, PadState>,
@@ -375,6 +384,8 @@ impl InputRouter {
             context: InputContext::Play,
             focused: true,
             keys: Vec::new(),
+            held_keys: Vec::new(),
+            keep_held: false,
             menu_keys: Vec::new(),
             pads: BTreeMap::new(),
             pad_out: Buttons::NONE,
@@ -453,9 +464,26 @@ impl InputRouter {
         self.context
     }
 
+    /// With `keep` (the original rule, see [`crate::pause::PauseInput`]),
+    /// keys bound to game buttons that are still down when play comes back
+    /// from a menu are held in play again (the session counts them as held
+    /// and not pressed); without it they count only once pressed again.
+    pub fn set_keep_held(&mut self, keep: bool) {
+        self.keep_held = keep;
+    }
+
+    /// The game buttons the keys and the pads hold down now, in play or in
+    /// a menu.
+    pub fn buttons_down(&self) -> Buttons {
+        self.held_keys
+            .iter()
+            .fold(self.pad_buttons(), |acc, &(_, b)| acc | b)
+    }
+
     /// Sends inputs to `context` from now on. Leaving play releases every
     /// game button held; buttons still held when play comes back count
-    /// only once pressed again.
+    /// as held again with [`InputRouter::set_keep_held`], else only once
+    /// pressed again.
     pub fn set_context(&mut self, context: InputContext) -> Vec<Routed> {
         let mut out = Vec::new();
         if context == self.context {
@@ -475,6 +503,9 @@ impl InputRouter {
                 self.menu_keys.clear();
                 self.pad_menu = Buttons::NONE;
                 self.pad_out = self.pad_buttons();
+                if self.keep_held {
+                    self.keys = self.held_keys.clone();
+                }
             }
         }
         self.context = context;
@@ -496,6 +527,7 @@ impl InputRouter {
                 out.push(Routed::Button(held, false));
             }
             self.keys.clear();
+            self.held_keys.clear();
             self.menu_keys.clear();
             for pad in self.pads.values_mut() {
                 pad.held.clear();
@@ -599,6 +631,12 @@ impl InputRouter {
         if down && let Some(capture) = self.capture.take() {
             self.capture_key(capture, key);
             return None;
+        }
+        if let Some(Action::Button(b)) = self.keymap.action(key) {
+            self.held_keys.retain(|(k, _)| *k != key);
+            if down {
+                self.held_keys.push((key, b));
+            }
         }
         if self.context == InputContext::Menu {
             if let Some(m) = self.menu_key(key) {
