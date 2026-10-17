@@ -199,6 +199,9 @@ pub struct Renderable {
     pub flash: bool,
     /// How the sprite combines with the destination.
     pub draw_mode: DrawMode,
+    /// Colour value the shadow, recolour, fill and blend modes use;
+    /// [`DrawMode::DEFAULT_COLOR`] when `None`. The other modes ignore it.
+    pub draw_color: Option<u8>,
     /// The object jumped this tick; draw it at the current position instead
     /// of interpolating from the previous one.
     pub teleported: bool,

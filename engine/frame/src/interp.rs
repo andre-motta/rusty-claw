@@ -10,8 +10,8 @@
 //!   than 500 px;
 //! - a renderable only in the current snapshot is drawn there; one only in
 //!   the previous snapshot is not drawn;
-//! - animation frame, image set, mirror, invert, draw mode and draw order are
-//!   taken from the current snapshot, never blended;
+//! - animation frame, image set, mirror, invert, draw mode, draw colour and
+//!   draw order are taken from the current snapshot, never blended;
 //! - effects that run on time (palette fades, blinking) read the frame's
 //!   simulation time, `time_ms`.
 
@@ -130,6 +130,7 @@ mod tests {
             invert: false,
             flash: false,
             draw_mode: DrawMode::NORMAL,
+            draw_color: None,
             teleported: false,
         }
     }
@@ -225,5 +226,21 @@ mod tests {
         assert_eq!(f.camera, Point { x: 5.0, y: 6.0 });
         assert_eq!((f.renderables[0].x, f.renderables[0].y), (3.0, 4.0));
         assert_eq!(f.time_ms, 9.0 * 18.0);
+    }
+
+    #[test]
+    fn draw_mode_and_colour_come_from_the_current_snapshot() {
+        let mut before = sprite(1, 0.0, 0.0, 0);
+        before.draw_mode = DrawMode::GHOST;
+        let mut after = sprite(1, 10.0, 0.0, 0);
+        after.draw_mode = DrawMode::SHADOW;
+        after.draw_color = Some(0x35);
+        let prev = snap(4, (0.0, 0.0), vec![before]);
+        let curr = snap(5, (0.0, 0.0), vec![after]);
+        for alpha in [0.0, 0.5, 1.0] {
+            let f = interpolate(&prev, &curr, alpha);
+            let r = f.renderables[0].source;
+            assert_eq!((r.draw_mode, r.draw_color), (DrawMode::SHADOW, Some(0x35)));
+        }
     }
 }

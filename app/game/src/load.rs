@@ -271,6 +271,7 @@ mod tests {
             invert: false,
             flash: false,
             draw_mode: DrawMode::default(),
+            draw_color: None,
             teleported: false,
         };
         let first = SimSnapshot {

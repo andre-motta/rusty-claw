@@ -1021,7 +1021,11 @@ impl Sim {
         let mut renderables: Vec<Renderable> = Vec::new();
         for id in self.objects.listed() {
             let o = self.objects.get(id).expect("listed object exists");
-            if let Some(r) = renderable(o) {
+            if let Some(mut r) = renderable(o) {
+                if Some(id) == self.player {
+                    r.draw_mode = self.claw.look.mode;
+                    r.draw_color = self.claw.look.color;
+                }
                 renderables.push(r);
             }
         }
@@ -1411,6 +1415,7 @@ fn renderable(o: &Object) -> Option<Renderable> {
         invert: o.draw_flags & draw_flags::INVERT != 0,
         flash: o.draw_flags & draw_flags::FLASH != 0,
         draw_mode: DrawMode::NORMAL,
+        draw_color: None,
         teleported: o.teleported,
     })
 }

@@ -53,7 +53,8 @@
 //! another of his lines runs); when it ends the level music comes back. Catnip starts the
 //! glitter that trails Claw; Vader makes him immune to enemies and every
 //! kind of shot for as long as it lasts. [`powerup_tick`] counts the time
-//! down after every state handler.
+//! down after every state handler. Ghost and Vader also change how Claw
+//! is drawn, see [`super::look`].
 
 use claw_frame::{
     AudioCue, GameEvent, MusicTrack, Point, ScreenTransition, SoundChannel, TransitionKind,
@@ -375,9 +376,11 @@ pub fn set_powerup(c: &mut Ctx, kind: u32, ms: u32) {
         return;
     }
     match current {
+        powerup::GHOST => c.p.look.set_normal(),
         powerup::CATNIP => end_glitter(c),
         powerup::VADER => {
             c.o.hit_type_flags |= types::ENEMY | types::ENEMY_SHOT | types::LEVEL_SHOT;
+            c.p.look.set_normal();
         }
         _ => {}
     }
@@ -415,7 +418,8 @@ fn end_glitter(c: &mut Ctx) {
 }
 
 /// Runs after every state handler: counts the running powerup down and
-/// applies its per-tick effect and awards extra lives from the score.
+/// applies its per-tick effect (Claw's look for Ghost and Vader, see
+/// [`super::look`]) and awards extra lives from the score.
 pub fn powerup_tick(c: &mut Ctx) {
     progress::extra_life_tick(c);
     let dt = c.dt_ms;
@@ -427,8 +431,13 @@ pub fn powerup_tick(c: &mut Ctx) {
         }
         return;
     }
-    if s.powerup_kind == powerup::VADER {
-        c.o.hit_type_flags &= !(types::ENEMY | types::ENEMY_SHOT | types::LEVEL_SHOT);
+    match s.powerup_kind {
+        powerup::GHOST => c.p.look.set_ghost(),
+        powerup::VADER => {
+            c.p.look.silhouette_tick(dt);
+            c.o.hit_type_flags &= !(types::ENEMY | types::ENEMY_SHOT | types::LEVEL_SHOT);
+        }
+        _ => {}
     }
 }
 
