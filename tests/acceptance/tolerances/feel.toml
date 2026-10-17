@@ -3,7 +3,12 @@
 # values were chosen.
 base = "feel"
 pos_px = 8            # Claw's position and the camera point, px
-pos_slack_ms = 18     # one tick of timing either way
+# Two ticks of timing either way. A fall from standing still runs up to
+# about one tick ahead of the original in the middle of the fall at this
+# frame rate (it lands within 4 ms of it), so one tick of slack is not
+# enough to hold the position within 8 px; two ticks hold every fall and
+# jump of Claw's own movement on the first level's routes.
+pos_slack_ms = 36
 state_slack_ms = 36   # state, physics type and held buttons: two ticks
 stats_slack_ms = 36   # health, score, lives, weapon and ammunition
 events_slack_ms = 54  # game events: three ticks (provisional)
