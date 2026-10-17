@@ -21,14 +21,25 @@
 //! 4. The new position is clamped to the patrol limits: a walker that
 //!    would cross a limit stops exactly on it.
 //! 5. The object moves there through the tiles and platforms. When the
-//!    tiles stop it short, the carried fraction is dropped. Unless it moves
-//!    without tile tests: a ceiling turns its vertical speed around, and a
-//!    wall on either side moves that patrol limit to where it stood before
-//!    the step and turns its speed across around at half.
+//!    tiles stop it short, the carried fraction is dropped, and when they
+//!    stop it up or down its vertical speed is the one the move it made
+//!    gives: `sqrt(v0^2 + 2 a (y - p0))` with the sign of `v0`, from the
+//!    speed `v0` and exact height `p0` it had before the step (a thrown
+//!    enemy falling at 804 px/s that lands 9.396 px lower lands at
+//!    827.04 px/s, not 840). Unless it moves without tile tests: a ceiling
+//!    then turns its vertical speed around, and a wall on either side moves
+//!    that patrol limit to where it stood before the step and turns its
+//!    speed across around at half.
 //! 6. Unless it moves without tile tests: landing on a death tile kills
-//!    it (spikes; goo is not told apart yet), and a standing walker with the
-//!    ledge guard whose leading edge would step past a floor's edge goes
-//!    back to where it stood and makes that its patrol limit.
+//!    it (spikes; goo is not told apart yet), and a standing enemy with the
+//!    ledge guard whose leading edge has no floor under it goes back to
+//!    where it stood before the step (both coordinates, its speed up or
+//!    down again from the move it made) and makes that its patrol limit.
+//!    The leading edge is the side its exact position moved to in the
+//!    step, after the tiles had their say: a thrown enemy whose move into
+//!    a step's side is stopped while it lands on the step's corner moved
+//!    back by the fraction it carried, so it looks at its back edge, finds
+//!    no floor there and lands where it was, in the air.
 //! 7. With the depth sort, it is drawn in front of Claw when his feet are
 //!    at or above its own, behind him otherwise.
 
@@ -132,6 +143,9 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     }
     let dt = step_seconds(d, w.now_ms);
     let standing = entry == ptype::STAND;
+    // Where the step starts from, exactly, and the speed up or down then.
+    let p0 = (f64::from(x0) + d.carry.0, f64::from(y0) + d.carry.1);
+    let v0y = d.vy;
     let px = clamp_to(
         f64::from(x0) + d.carry.0 + f64::from(ride.0) + axis_step_for(&mut d.vx, 0.0, dt),
         d.bounds,
@@ -177,6 +191,9 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
         }
         return None;
     }
+    if !standing && y != ty {
+        d.vy = speed_after(v0y, d.ay, f64::from(y) - p0.1);
+    }
     if r & res::CEILING != 0 {
         d.vy = -d.vy;
     } else if r & res::WALL != 0 && r & res::RIGHT != 0 {
@@ -190,7 +207,14 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     let death = (r & res::DEATH_TILE != 0 && state != Some(EnemyState::Dead) && !d.dead)
         .then_some(DeathKind::Spikes);
     if now == ptype::STAND && d.ledge_guard && !d.stationary {
-        ledge_guard(w, id, d, x0);
+        let moved = f64::from(x) + d.carry.0 - p0.0;
+        let before = Before {
+            x: x0,
+            y: y0,
+            p0,
+            v0y,
+        };
+        ledge_guard(w, id, d, before, moved);
     }
     let o = obj(w, id);
     d.moved_to = Some((o.x, o.y));
@@ -223,17 +247,36 @@ fn collide(w: &mut World, id: ObjectId, tx: i32, ty: i32) -> u32 {
     }
 }
 
-/// A standing walker whose leading edge has no floor under it (a floor
-/// pixel with a clear one above) goes back to `x0` and makes it its patrol
-/// limit on that side.
-fn ledge_guard(w: &mut World, id: ObjectId, d: &mut EnemyData, x0: i32) {
+/// Where an enemy was before its step: its position, its exact position
+/// and its speed up or down.
+#[derive(Debug, Clone, Copy)]
+struct Before {
+    x: i32,
+    y: i32,
+    p0: (f64, f64),
+    v0y: f64,
+}
+
+/// The speed after a move of `d` px from speed `v0` under acceleration
+/// `a`, with the sign of `v0` (negative when `v0` is 0): the speed the
+/// energy of the move gives.
+pub fn speed_after(v0: f64, a: f64, d: f64) -> f64 {
+    let v = (v0 * v0 + 2.0 * a * d).max(0.0).sqrt();
+    if v0 > 0.0 { v } else { -v }
+}
+
+/// A standing enemy whose leading edge (the side its exact position
+/// `moved` to in the step) has no floor under it (a floor pixel with a
+/// clear one above) goes back to where it was before the step and makes
+/// that its patrol limit on that side. Going back up or down corrects its
+/// vertical speed for the move it made.
+fn ledge_guard(w: &mut World, id: ObjectId, d: &mut EnemyData, before: Before, moved: f64) {
     let o = obj(w, id);
-    let moved = o.x - x0;
-    if moved == 0 || !o.move_rect.is_set() {
+    if moved == 0.0 || !o.move_rect.is_set() {
         return;
     }
     let edge = o.x
-        + if moved < 0 {
+        + if moved < 0.0 {
             o.move_rect.left
         } else {
             o.move_rect.right
@@ -243,13 +286,20 @@ fn ledge_guard(w: &mut World, id: ObjectId, d: &mut EnemyData, x0: i32) {
     if is_floor(map.attr(edge, feet + 1)) && map.attr(edge, feet) == CLEAR {
         return;
     }
-    if moved > 0 {
-        d.bounds.1 = x0;
+    if moved > 0.0 {
+        d.bounds.1 = before.x;
     } else {
-        d.bounds.0 = x0;
+        d.bounds.0 = before.x;
     }
-    obj_mut(w, id).x = x0;
+    let o = obj_mut(w, id);
+    let y = o.y;
+    o.x = before.x;
+    o.y = before.y;
     d.carry.0 = 0.0;
+    if y != before.y {
+        d.carry.1 = 0.0;
+        d.vy = speed_after(before.v0y, d.ay, f64::from(before.y) - before.p0.1);
+    }
 }
 
 /// Drawn in front of Claw when his feet are at or above the enemy's,

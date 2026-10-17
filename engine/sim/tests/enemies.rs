@@ -1144,6 +1144,135 @@ fn a_lifted_officer_is_carried_thrown_and_dies_of_the_third_landing() {
     assert!(sim.objects().get(id).is_none(), "removed a second later");
 }
 
+/// An officer of `level` (its record at x 3000), lifted by Claw, thrown,
+/// and then put in flight at the exact position `p` with speeds `v`, its
+/// movement box the one it is carried with facing right.
+fn officer_in_flight(
+    level: SimLevel,
+    claw_at: (i32, i32),
+    p: (f64, f64),
+    v: (f64, f64),
+) -> (Sim, ObjectId) {
+    let mut sim = sim_with(level, 12);
+    sim.teleport_player(claw_at.0, claw_at.1);
+    idle(&mut sim, 2);
+    let id = first(&sim, GameLogic::Officer);
+    let claw = sim
+        .objects()
+        .all()
+        .find(|(_, o)| o.kind == LogicKind::Player)
+        .map(|(id, _)| id)
+        .unwrap();
+    sim.with_world(|w| lift::lifted(w, id, claw));
+    sim.with_world(|w| lift::thrown(w, id, 0, 0));
+    let at = (p.0.trunc() as i32, p.1.trunc() as i32);
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(id).unwrap();
+        o.x = at.0;
+        o.y = at.1;
+        o.move_rect = Rect::new(-48, -44, 42, 19);
+        let d = enemy::data_mut(w, id).unwrap();
+        d.carry = (p.0 - f64::from(at.0), p.1 - f64::from(at.1));
+        d.moved_to = Some(at);
+        d.vx = v.0;
+        d.vy = v.1;
+        d.bounds = enemy::UNBOUNDED;
+        d.bounds_y = enemy::UNBOUNDED;
+    });
+    (sim, id)
+}
+
+fn near(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-3
+}
+
+#[test]
+fn a_thrown_officer_lands_at_the_speed_its_last_move_gives() {
+    // Falling at 804 px/s from 9.396 px above where the floor (y 960)
+    // stops it: a full tick would move it 14.796 px and end at 840 px/s,
+    // but the move it made gives sqrt(804^2 + 2 * 2000 * 9.396), 827.04.
+    let (mut sim, id) = officer_in_flight(
+        arena(vec![record("Officer", 3000, 900)]),
+        (2600, 899),
+        (3019.0, 930.604),
+        (-100.0, 804.0),
+    );
+    sim.step(TickInput::default());
+    let (o, d) = (obj(&sim, id), data(&sim, id));
+    assert_eq!((o.x, o.y, o.physics_type), (3019, 940, ptype::STAND));
+    assert!(near(d.vy, 827.042925), "{}", d.vy);
+    assert!(near(motion::speed_after(804.0, 2000.0, 9.396), d.vy));
+    // The bounce starts from it: lifted 1 px (the speed corrected for
+    // that), a third of it upwards, then one tick of gravity.
+    sim.step(TickInput::default());
+    let (o, d) = (obj(&sim, id), data(&sim, id));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Bounce));
+    assert_eq!((o.x, o.y), (3018, 934));
+    assert!(near(d.vy, -238.8737), "{}", d.vy);
+}
+
+#[test]
+fn a_bouncing_officer_keeps_the_fractions_of_its_exact_position() {
+    // Its second landing comes exactly at its target, with 0.832 px across
+    // and 0.0752 px down carried; the bounce lifts it 1 px and keeps both,
+    // so the next tick's 0.496 px across takes it to the next pixel.
+    let (mut sim, id) = officer_in_flight(
+        arena(vec![record("Officer", 3000, 900)]),
+        (2600, 899),
+        (3002.344, 935.2864),
+        (248.0 / 3.0, 248.0444),
+    );
+    sim.with_world(|w| enemy::data_mut(w, id).unwrap().bounces = 1);
+    sim.step(TickInput::default());
+    let o = obj(&sim, id);
+    assert_eq!((o.x, o.y, o.physics_type), (3003, 940, ptype::STAND));
+    sim.step(TickInput::default());
+    let (o, d) = (obj(&sim, id), data(&sim, id));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Bounce));
+    assert_eq!((o.x, o.y), (3004, 937));
+    assert!(near(d.vy, -56.3046), "{}", d.vy);
+}
+
+/// The arena with a step: the floor (y 960) is raised 64 px (to y 896)
+/// from x 3200 on.
+fn stepped_arena() -> SimLevel {
+    let mut l = arena(vec![record("Officer", 3000, 900)]);
+    let mut rows = vec![".".repeat(200); 14];
+    rows.push(format!("{}{}", ".".repeat(50), "#".repeat(150)));
+    rows.push("#".repeat(200));
+    rows.push("#".repeat(200));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    l.map = TileMap::from_ascii(64, &rows);
+    l
+}
+
+#[test]
+fn a_thrown_officer_caught_by_a_steps_corner_lands_where_it_was() {
+    // Falling right into the step's side: the wall stops it across and its
+    // right part lands on the step's top, but its exact position moved
+    // back by the fraction it carried, so the ledge guard looks at its
+    // left edge, finds no floor there and puts it back where it was before
+    // the step, standing in the air with its left limit there and its
+    // speed down corrected for the move it made.
+    let (mut sim, id) = officer_in_flight(
+        stepped_arena(),
+        (2600, 899),
+        (3167.364, 870.368),
+        (347.0, 526.0),
+    );
+    sim.step(TickInput::default());
+    let (o, d) = (obj(&sim, id), data(&sim, id));
+    assert_eq!((o.x, o.y, o.physics_type), (3167, 870, ptype::STAND));
+    assert_eq!(d.bounds.0, 3167);
+    assert_eq!(d.vx, 347.0);
+    assert!(near(d.vy, 524.5989), "{}", d.vy);
+    // It bounces from there, a third as fast.
+    sim.step(TickInput::default());
+    let (o, d) = (obj(&sim, id), data(&sim, id));
+    assert_eq!((o.x, o.y, o.physics_type), (3169, 866, ptype::FLY));
+    assert!(near(d.vx, 115.6667) && near(d.vy, -137.5908), "{d:?}");
+}
+
 #[test]
 fn a_dropped_officer_gets_up_and_goes_home() {
     let (mut sim, id) = lone("Officer", None);

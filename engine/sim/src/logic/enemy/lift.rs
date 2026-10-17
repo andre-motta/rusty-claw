@@ -15,7 +15,8 @@
 //! - Thrown: it flies under gravity as a thrown object (hurting the
 //!   enemies it meets) for at most 2 s, after which it is gone with its
 //!   death sound, a splash and its loot. Its first two landings bounce it
-//!   (a third of the speed, the first with a thud); the third stops it for
+//!   (lifted 1 px with the fractions of its exact position kept, at a
+//!   third of the speed, the first with a thud); the third stops it for
 //!   500 ms, and then the fall costs it 4 health: at 0 or below it dies
 //!   where it lies, otherwise it gets up, goes Home and cannot be lifted
 //!   for 1.5 s.
@@ -343,11 +344,13 @@ fn landing(w: &mut World, id: ObjectId) {
             let o = obj_mut(w, id);
             o.physics_type = ptype::FLY;
             o.y -= 1;
+            let at = (o.x, o.y);
             if let Some(d) = data_mut(w, id) {
                 let v = (d.vy * d.vy - 2.0 * d.ay).max(0.0).sqrt();
                 d.vx /= 3.0;
                 d.vy = -v / 3.0;
-                d.carry = (0.0, 0.0);
+                // The lift keeps the fractions of its exact position.
+                d.moved_to = Some(at);
             }
         }
         3 => {
