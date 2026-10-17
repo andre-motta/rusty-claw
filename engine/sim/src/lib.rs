@@ -46,7 +46,9 @@
 //!   times as the original played at 60 frames per second; jump heights are
 //!   those of the original (45 px tapped, 145 px held).
 //! - [`input`]: the input latch that maps timestamped button events to
-//!   ticks, and recorded input scripts; [`trace`]: per-tick traces.
+//!   ticks, and recorded input scripts (routes) with their header keys and
+//!   directives; [`trace`]: per-tick traces, their parser, and the
+//!   comparison against a reference trace of the same route.
 //! - [`rng`]: the seeded random stream.
 //!
 //! Each tick's snapshot carries the status bar values, the sound cues and
@@ -54,9 +56,9 @@
 //! every level object stays an inert placeholder and collisions run no
 //! handler, as in the first playable version.
 //!
-//! The level logic families are stubs to be filled in: they bind to their
-//! objects and do nothing yet. Claw's attacks, deaths and special states
-//! fall back to standing.
+//! Logic names the build does not run yet still bind to their objects:
+//! those objects are drawn and stay inert, and
+//! [`sim::Diagnostics::inert_logics`] counts them.
 
 #![forbid(unsafe_code)]
 
@@ -83,11 +85,11 @@ pub use claw_frame;
 pub use claw_frame::{Buttons, SimSnapshot, TickInput, ViewConfig};
 
 pub use activation::{ActivationConfig, ActivationMode};
-pub use input::{InputLatch, InputScript};
+pub use input::{Directive, DirectiveKind, InputLatch, InputScript, ScriptHeader};
 pub use level::SimLevel;
 pub use logic::{GameLogic, ObjectData, World};
 pub use player::stats::{Carry, PlayerStats, SavePos, StartState};
 pub use sim::{Sim, SimConfig};
 pub use tiles::TileMap;
-pub use trace::TraceRow;
+pub use trace::{Tolerances, TraceRow};
 pub use tuning::Tuning;

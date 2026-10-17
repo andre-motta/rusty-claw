@@ -829,6 +829,12 @@ impl Sim {
         &self.rng
     }
 
+    /// The state of the shared random stream: after a step, the state the
+    /// next tick starts from. Traces record it in their `rng` column.
+    pub fn rng_state(&self) -> u32 {
+        self.rng.state()
+    }
+
     /// The sound-only random stream.
     pub fn sound_rng(&self) -> &Rng {
         &self.sound_rng
