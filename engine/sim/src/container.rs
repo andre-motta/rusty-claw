@@ -112,6 +112,12 @@ impl Container {
         self.objects.iter().filter(|o| o.is_some()).count()
     }
 
+    /// Number of slots: every id handed out so far, including those of
+    /// objects since removed (ids are never reused).
+    pub fn slots(&self) -> usize {
+        self.objects.len()
+    }
+
     /// True when no object exists.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
