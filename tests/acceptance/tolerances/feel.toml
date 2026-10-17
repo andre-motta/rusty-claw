@@ -1,0 +1,10 @@
+# Feel: a run of the original at 60 frames per second (frames of 17, 17
+# and 16 ms) against the default tuning. See README.md for how these
+# values were chosen.
+base = "feel"
+pos_px = 8            # Claw's position and the camera point, px
+pos_slack_ms = 18     # one tick of timing either way
+state_slack_ms = 36   # state, physics type and held buttons: two ticks
+stats_slack_ms = 36   # health, score, lives, weapon and ammunition
+events_slack_ms = 54  # game events: three ticks (provisional)
+rng = false           # the two runs step the random stream differently

@@ -80,7 +80,10 @@ impl InputLatch {
 /// - Header keys, comment lines naming how the route is meant to be played:
 ///   `# level N`, `# tuning default|original` and `# seed N` (the state of
 ///   the shared random stream at time zero). An `=` between the key and the
-///   value is accepted. Every other line starting with `#` is a comment.
+///   value is accepted. The words `level`, `tuning` and `seed` are reserved:
+///   a `#` line whose first word is one of them is read as that header key
+///   and must hold a valid value, so a comment never starts with them.
+///   Every other line starting with `#` is a comment.
 /// - Directives, lines starting with `@`, which take effect at the tick
 ///   boundary before row `<tick>`:
 ///   - `@<tick> pause <wall_ms> [held=<mask>]`;
