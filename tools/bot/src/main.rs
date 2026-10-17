@@ -6,7 +6,8 @@
 //!          [--tuning default|original] [--nodes N] [--budget-min M]
 //!          [--seed S] [--hints FILE] [--from-route FILE --from-tick T]
 //!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--threads N]
-//!          [--cache-games N] [--no-shadows] [--margin-samples N] [--quiet]
+//!          [--cache-games N] [--no-shadows] [--margin-samples N]
+//!          [--intro any|play|skip] [--carry FILE] [--quiet]
 //! ```
 //!
 //! The route is an input script (`tick,held_mask,pressed_mask`, one row
@@ -48,6 +49,17 @@
 //! counts three): more is faster and takes more memory, and never changes
 //! the route.
 //!
+//! On a level that ends with a boss, the route goes through the boss
+//! room's door, defeats the boss and takes the gem his defeat releases.
+//! `--intro play` keeps to routes that enter the boss room the normal way,
+//! so the boss's introduction plays; `--intro skip` keeps to routes whose
+//! entry skips it (a jump on the first tick in the room); `any`, the
+//! default, takes either.
+//! `--carry FILE` starts the level with the progress a game carried into
+//! it, read from the `# start_score = ...` lines of FILE (the lines a
+//! recording of a game's later level starts with); the route's header
+//! repeats them, so a replay starts the level the same way.
+//!
 //! No route is written whose held mask changes twice less than two ticks
 //! apart.
 //!
@@ -61,13 +73,15 @@ use std::time::{Duration, Instant};
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_bot::actions::MIN_SPACING;
 use claw_bot::route::{self, Header, TuningName};
+use claw_bot::search::Intro;
 use claw_bot::{Goal, SearchConfig, search_report};
-use claw_sim::{InputScript, ScriptHeader, Sim, SimLevel};
+use claw_sim::{Carry, InputScript, ScriptHeader, Sim, SimLevel, StartState};
 
 const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S] [--hints FILE] \
 [--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
-[--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--quiet]";
+[--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] \
+[--intro any|play|skip] [--carry FILE] [--quiet]";
 
 /// Priority cost of a fragile move, px.
 const DEFAULT_FRAGILE_COST: i64 = 400;
@@ -94,6 +108,8 @@ struct Args {
     cache_games: usize,
     shadows: bool,
     margin_samples: usize,
+    intro: Intro,
+    carry: Option<PathBuf>,
     quiet: bool,
 }
 
@@ -117,6 +133,8 @@ impl Default for Args {
             cache_games: SearchConfig::default().cached_sims,
             shadows: true,
             margin_samples: 40,
+            intro: Intro::Any,
+            carry: None,
             quiet: false,
         }
     }
@@ -177,6 +195,11 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                 a.cache_games = v.parse::<usize>().map_err(|_| num("game count"))?.max(1)
             }
             "--margin-samples" => a.margin_samples = v.parse().map_err(|_| num("sample count"))?,
+            "--intro" => {
+                a.intro = Intro::parse(&v)
+                    .ok_or_else(|| format!("bad intro {v:?}, expected any, play or skip"))?
+            }
+            "--carry" => a.carry = Some(PathBuf::from(&v)),
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
     }
@@ -191,10 +214,28 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
     Ok(a)
 }
 
-/// The game a route starts from: the level start, or with `start` the
-/// segment start (see [`route::settle_at`]).
-fn start_sim(level: SimLevel, tuning: TuningName, seed: u32, start: Option<(i32, i32)>) -> Sim {
-    let mut sim = Sim::new(level, route::sim_config(tuning, seed));
+/// The game a route starts from: the level start (with `carry`, the
+/// progress carried in), or with `start` the segment start (see
+/// [`route::settle_at`]).
+fn start_sim(
+    level: SimLevel,
+    tuning: TuningName,
+    seed: u32,
+    start: Option<(i32, i32)>,
+    carry: Option<&Carry>,
+) -> Sim {
+    let cfg = route::sim_config(tuning, seed);
+    let mut sim = match carry {
+        Some(c) => Sim::with_start(
+            level,
+            cfg,
+            StartState {
+                carry: Some(c.clone()),
+                save: None,
+            },
+        ),
+        None => Sim::new(level, cfg),
+    };
     if let Some((x, y)) = start {
         route::settle_at(&mut sim, x, y, seed);
     }
@@ -275,7 +316,16 @@ fn run(a: Args) -> Result<bool, String> {
         .map_err(|e| format!("loading level {level_no}: {e}"))?;
     let sim_level =
         SimLevel::from_level(&level, &store).map_err(|e| format!("preparing level: {e}"))?;
-    let mut start = start_sim(sim_level, a.tuning, a.seed, a.start);
+    let carry = match &a.carry {
+        Some(p) => {
+            let text =
+                std::fs::read_to_string(p).map_err(|e| format!("reading {}: {e}", p.display()))?;
+            let c = route::parse_carry(&text).map_err(|e| format!("{}: {e}", p.display()))?;
+            Some(c.ok_or_else(|| format!("{} has no start lines", p.display()))?)
+        }
+        None => None,
+    };
+    let mut start = start_sim(sim_level, a.tuning, a.seed, a.start, carry.as_ref());
 
     let mut prefix = InputScript::default();
     if let (Some(path), Some(t)) = (&a.from_route, a.from_tick) {
@@ -293,6 +343,14 @@ fn run(a: Args) -> Result<bool, String> {
         }
         // The search plays the prefix as plain ticks, so a directive inside
         // it would make the continued route play differently.
+        let prefix_carry =
+            route::parse_carry(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        if prefix_carry != carry {
+            return Err(format!(
+                "{}: the route starts with other progress than --carry gives",
+                path.display()
+            ));
+        }
         if let Some(d) = script.directives.iter().find(|d| d.tick <= t) {
             return Err(format!(
                 "{} has a directive at tick {}, at or before the continue point {t}; only plain ticks can be continued",
@@ -325,6 +383,7 @@ fn run(a: Args) -> Result<bool, String> {
         fragile_cost: a.fragile_cost,
         cached_sims: a.cache_games,
         shadows: a.shadows,
+        intro: a.intro,
         wall_limit: a.budget_min.map(|m| Duration::from_secs_f64(m * 60.0)),
         log_every: if a.quiet { 0 } else { 500 },
         ..SearchConfig::default()
@@ -360,11 +419,18 @@ fn run(a: Args) -> Result<bool, String> {
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().into_owned()),
         start: a.start,
+        carry: carry.clone(),
     };
     std::fs::write(&out, route::route_csv(&header, &script))
         .map_err(|e| format!("writing {}: {e}", out.display()))?;
 
-    let fresh = start_sim(start.level().clone(), a.tuning, a.seed, a.start);
+    let fresh = start_sim(
+        start.level().clone(),
+        a.tuning,
+        a.seed,
+        a.start,
+        carry.as_ref(),
+    );
     let played = route::play(&fresh, &script, &Goal::LevelComplete);
     if !played.won() {
         return Err("the route found does not win when played from the start".into());
@@ -440,6 +506,14 @@ mod tests {
         assert_eq!(s.start, Some((10355, 2051)));
         assert!(args("--start 10").is_err());
         assert!(args("--start 1,2 --from-route p.csv --from-tick 3").is_err());
+        assert_eq!(a.intro, Intro::Any);
+        assert_eq!(args("--intro skip").map(|a| a.intro), Ok(Intro::Skip));
+        assert_eq!(args("--intro play").map(|a| a.intro), Ok(Intro::Play));
+        assert!(args("--intro maybe").is_err());
+        assert_eq!(
+            args("--carry c.csv").map(|a| a.carry),
+            Ok(Some(PathBuf::from("c.csv")))
+        );
         assert_eq!(a.level, Some(1));
         assert_eq!(a.tuning, TuningName::Original);
         assert_eq!(a.nodes, 5000);

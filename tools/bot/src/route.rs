@@ -2,7 +2,9 @@
 //! report, playing a route back and its timing margin.
 
 use claw_sim::claw_frame::GameEvent;
-use claw_sim::{InputScript, Sim, SimConfig};
+use claw_sim::claw_frame::output::Weapon;
+use claw_sim::player::stats::TREASURE_KINDS;
+use claw_sim::{Carry, InputScript, Sim, SimConfig};
 
 use crate::actions::MIN_SPACING;
 use crate::search::{Goal, SearchStats, dying};
@@ -99,6 +101,128 @@ pub struct Header {
     /// Where Claw was placed and settled before the route, when the route
     /// is a segment (see [`settle_at`]).
     pub start: Option<(i32, i32)>,
+    /// The progress the level starts with, when it is not a new game's:
+    /// the level after another in one game (see [`carry_lines`]).
+    pub carry: Option<Carry>,
+}
+
+/// The prefix of the keys of a level's start in a recording's comment
+/// lines (`# start_score = 25000`).
+pub const START_PREFIX: &str = "start_";
+
+/// The progress keys of a level's start, in the order a recording writes
+/// them.
+pub const CARRY_KEYS: [&str; 8] = [
+    "score",
+    "health",
+    "lives",
+    "pistol",
+    "magic",
+    "dynamite",
+    "weapon",
+    "treasure_game",
+];
+
+fn weapon_name(w: Weapon) -> &'static str {
+    match w {
+        Weapon::Pistol => "pistol",
+        Weapon::Magic => "magic",
+        Weapon::Dynamite => "dynamite",
+    }
+}
+
+/// The comment lines of the progress a level starts with, as a recording
+/// of a game's later level writes them: `# start_score = 25000`, ...,
+/// `# start_treasure_game = 10, 2, 0, 0, 0, 0, 0, 0, 0`.
+pub fn carry_lines(c: &Carry) -> String {
+    let counts: Vec<String> = c.treasure_game.iter().map(u32::to_string).collect();
+    let values = [
+        c.score.to_string(),
+        c.health.to_string(),
+        c.lives.to_string(),
+        c.pistol.to_string(),
+        c.magic.to_string(),
+        c.dynamite.to_string(),
+        weapon_name(c.weapon).to_string(),
+        counts.join(", "),
+    ];
+    CARRY_KEYS
+        .iter()
+        .zip(values)
+        .map(|(k, v)| format!("# {START_PREFIX}{k} = {v}\n"))
+        .collect()
+}
+
+/// The progress a level starts with, read from the `# start_...` comment
+/// lines of `text` (a recording of the level, or the lines alone; the last
+/// line of a key counts): `None` with no such line, an error when one of
+/// [`CARRY_KEYS`] is missing or unreadable.
+pub fn parse_carry(text: &str) -> Result<Option<Carry>, String> {
+    let mut fields: Vec<(&str, &str)> = Vec::new();
+    for line in text.lines() {
+        let Some((k, v)) = line
+            .trim()
+            .strip_prefix('#')
+            .and_then(|r| r.split_once('='))
+        else {
+            continue;
+        };
+        let Some(k) = k.trim().strip_prefix(START_PREFIX) else {
+            continue;
+        };
+        if CARRY_KEYS.contains(&k) {
+            fields.retain(|(f, _)| *f != k);
+            fields.push((k, v.trim()));
+        }
+    }
+    if fields.is_empty() {
+        return Ok(None);
+    }
+    let get = |k: &str| {
+        fields
+            .iter()
+            .find(|(f, _)| *f == k)
+            .map(|(_, v)| *v)
+            .ok_or_else(|| format!("{START_PREFIX}{k} is missing"))
+    };
+    let bad = |k: &str, v: &str| format!("bad {START_PREFIX}{k} {v:?}");
+    let int = |k: &str| -> Result<i32, String> {
+        let v = get(k)?;
+        v.parse().map_err(|_| bad(k, v))
+    };
+    // In the order of the keys, so the first one missing is named.
+    let score = get("score")?;
+    let score = score.parse().map_err(|_| bad("score", score))?;
+    let health = int("health")?;
+    let lives = int("lives")?;
+    let pistol = int("pistol")?;
+    let magic = int("magic")?;
+    let dynamite = int("dynamite")?;
+    let weapon = match get("weapon")? {
+        "pistol" => Weapon::Pistol,
+        "magic" => Weapon::Magic,
+        "dynamite" => Weapon::Dynamite,
+        v => return Err(bad("weapon", v)),
+    };
+    let counts = get("treasure_game")?;
+    let parsed: Vec<u32> = counts
+        .split(',')
+        .map(|n| n.trim().parse())
+        .collect::<Result<_, _>>()
+        .map_err(|_| bad("treasure_game", counts))?;
+    let treasure_game: [u32; TREASURE_KINDS] = parsed
+        .try_into()
+        .map_err(|_| bad("treasure_game", counts))?;
+    Ok(Some(Carry {
+        score,
+        health,
+        lives,
+        pistol,
+        magic,
+        dynamite,
+        weapon,
+        treasure_game,
+    }))
 }
 
 impl Header {
@@ -117,12 +241,16 @@ impl Header {
         if let Some((x, y)) = self.start {
             out.push_str(&format!("# start {x},{y}\n"));
         }
+        if let Some(c) = &self.carry {
+            out.push_str(&carry_lines(c));
+        }
         out
     }
 
     /// Reads the header keys from a route's comment lines; a key that is
     /// missing takes its default (level 1, default tuning, seed 1, fix
-    /// off).
+    /// off, a new game's progress, also when the start lines are
+    /// unreadable).
     pub fn parse(text: &str) -> Header {
         let mut h = Header {
             level: 1,
@@ -131,6 +259,7 @@ impl Header {
             mid_air_hit_fix: false,
             hints: None,
             start: None,
+            carry: parse_carry(text).ok().flatten(),
         };
         for line in text.lines() {
             let Some(rest) = line.trim().strip_prefix('#') else {
@@ -315,6 +444,7 @@ pub fn report_json(
             "  \"generated\": {},\n",
             "  \"deaths_pruned\": {},\n",
             "  \"landings_pruned\": {},\n",
+            "  \"entries_pruned\": {},\n",
             "  \"fragile_children\": {},\n",
             "  \"fragile_on_route\": {},\n",
             "  \"duplicates\": {},\n",
@@ -347,6 +477,7 @@ pub fn report_json(
         stats.generated,
         stats.deaths_pruned,
         stats.landings_pruned,
+        stats.entries_pruned,
         stats.fragile,
         stats.fragile_on_route,
         stats.duplicates,
@@ -380,6 +511,7 @@ mod tests {
             mid_air_hit_fix: false,
             hints: Some("level3".into()),
             start: Some((10355, 2051)),
+            carry: None,
         };
         let s = InputScript::from_held(&[0, 0, 1, 1, 0, 0]);
         let text = route_csv(&h, &s);
@@ -391,6 +523,43 @@ mod tests {
         assert_eq!(parsed.header.tuning, Some(ScriptTuning::Original));
         assert_eq!(parsed.header.seed, Some(42));
         assert!(text.contains("# mid_air_hit_fix = off\n"));
+    }
+
+    #[test]
+    fn the_carried_progress_round_trips_through_the_start_lines() {
+        let carry = Carry {
+            score: 25_000,
+            health: 85,
+            lives: 8,
+            pistol: 12,
+            magic: 5,
+            dynamite: 3,
+            weapon: Weapon::Magic,
+            treasure_game: [10, 2, 0, 0, 0, 1, 0, 0, 0],
+        };
+        let lines = carry_lines(&carry);
+        assert!(lines.starts_with("# start_score = 25000\n# start_health = 85\n"));
+        assert!(lines.ends_with("# start_treasure_game = 10, 2, 0, 0, 0, 1, 0, 0, 0\n"));
+        assert_eq!(parse_carry(&lines), Ok(Some(carry.clone())));
+        let h = Header {
+            level: 2,
+            tuning: TuningName::Original,
+            seed: 1_617_999_171,
+            mid_air_hit_fix: false,
+            hints: None,
+            start: None,
+            carry: Some(carry),
+        };
+        let text = route_csv(&h, &InputScript::from_held(&[0, 0]));
+        assert_eq!(Header::parse(&text), h);
+        assert_eq!(InputScript::parse(&text).unwrap().ticks.len(), 2);
+        // No start lines: a new game's progress; other start keys are not
+        // progress.
+        assert_eq!(parse_carry("# level 2\n# start_x = 5\n0,0,0\n"), Ok(None));
+        let e = parse_carry("# start_score = 1\n").unwrap_err();
+        assert!(e.contains("start_health is missing"), "{e}");
+        let e = parse_carry(&lines.replace("magic\n", "sword\n")).unwrap_err();
+        assert!(e.contains("start_weapon"), "{e}");
     }
 
     #[test]

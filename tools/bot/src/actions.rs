@@ -5,6 +5,17 @@
 //! [`MIN_SPACING`] ticks, so any chain of actions changes the held mask at
 //! most every [`MIN_SPACING`] ticks: a display at 60 Hz or slower never
 //! drops a press.
+//!
+//! A boss level adds two kinds of macro ([`choices_in`]):
+//!
+//! - the fight's, offered while a boss is in play: a short wait to time a
+//!   blow against the boss's own attacks, a blow struck after turning to
+//!   either side, and jumps to leap clear (the retreat) or over him; the
+//!   walks are the approach;
+//! - the door's, offered on the ground near the boss room's door: walk
+//!   toward the door for a few ticks, then jump on through it, so that one
+//!   of them jumps on Claw's first tick in the room (the jump-in entry,
+//!   which skips the boss's introduction).
 
 use claw_sim::player::state;
 use claw_sim::{Buttons, Sim};
@@ -32,6 +43,18 @@ pub const DOWN: u32 = Buttons::DOWN.0;
 
 /// Ticks the jump button is held for, from a tap to a full jump.
 pub const JUMP_HOLDS: [usize; 4] = [2, 5, 9, 14];
+
+/// Length of the fight's short wait, ticks.
+pub const SHORT: usize = 3;
+
+/// Ticks the jump of a door entry holds jump (with the direction).
+pub const ENTRY_JUMP: usize = 12;
+
+/// Ticks a door entry walks before it jumps: one entry each.
+pub const ENTRY_WALKS: std::ops::RangeInclusive<u8> = 2..=8;
+
+/// How near the door, across, Claw must stand for the door entries, px.
+pub const DOOR_REACH: i32 = 240;
 
 /// One macro-action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -64,6 +87,22 @@ pub enum Action {
     Up,
     /// Climb down.
     Down,
+    /// Hold nothing for a moment ([`SHORT`] ticks), to time a blow.
+    Short,
+    /// Turn to `dir` (-1 left, 1 right) and strike once with the sword.
+    Strike {
+        /// The side to strike: -1 left, 1 right.
+        dir: i8,
+    },
+    /// Walk `dir` for `walk` ticks, then jump on in that direction (jump
+    /// held [`ENTRY_JUMP`] ticks): through a door, a jump on the first tick
+    /// beyond it.
+    Entry {
+        /// Direction: -1 left, 1 right.
+        dir: i8,
+        /// Ticks walked before the jump.
+        walk: u8,
+    },
 }
 
 impl Action {
@@ -95,6 +134,18 @@ impl Action {
             Action::Crouch => seg(DOWN, STEP),
             Action::Up => seg(UP, STEP),
             Action::Down => seg(DOWN, STEP),
+            Action::Short => seg(0, SHORT),
+            Action::Strike { dir } => {
+                seg(dir_mask(dir), MIN_SPACING);
+                seg(ATTACK, MIN_SPACING);
+                seg(0, STEP - MIN_SPACING);
+            }
+            Action::Entry { dir, walk } => {
+                let d = dir_mask(dir);
+                seg(d, usize::from(walk).max(MIN_SPACING));
+                seg(d | JUMP, ENTRY_JUMP);
+                seg(d, MIN_SPACING);
+            }
         }
         out
     }
@@ -105,6 +156,8 @@ impl Action {
             Action::Jump { dir, hold, up } => {
                 format!("jump{dir:+}x{hold}{}", if up { "up" } else { "" })
             }
+            Action::Strike { dir } => format!("strike{dir:+}"),
+            Action::Entry { dir, walk } => format!("entry{dir:+}x{walk}"),
             other => format!("{other:?}").to_lowercase(),
         }
     }
@@ -153,6 +206,65 @@ pub fn phase(sim: &Sim) -> Phase {
         | state::ON_EDGE => Phase::Ground,
         _ => Phase::Busy,
     }
+}
+
+/// What the actions of a boss level depend on besides the game.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Arena {
+    /// The boss room's door, when the level has one.
+    pub door: Option<(i32, i32)>,
+}
+
+/// The actions worth trying in `sim`, in a fixed order: [`choices`], with
+/// the fight's macros instead while a boss is in play and the door
+/// entries near the door (see the module documentation).
+pub fn choices_in(sim: &Sim, arena: &Arena) -> Vec<Action> {
+    let boss = sim.boss();
+    if boss.current().is_some() && boss.defeated().is_none() {
+        return fight_choices(sim);
+    }
+    let mut out = choices(sim);
+    if let (Some((dx, dy)), Some(o), Phase::Ground) = (arena.door, sim.player(), phase(sim)) {
+        let across = dx - o.x;
+        if across.abs() <= DOOR_REACH && (dy - o.y).abs() <= DOOR_REACH {
+            let dir = if across >= 0 { 1 } else { -1 };
+            out.extend(ENTRY_WALKS.map(|walk| Action::Entry { dir, walk }));
+        }
+    }
+    out
+}
+
+/// The actions of a boss fight: the walks (the approach), the waits, the
+/// blows, and jumps to leap clear or over.
+fn fight_choices(sim: &Sim) -> Vec<Action> {
+    let mut out = vec![Action::Wait, Action::Left, Action::Right];
+    match phase(sim) {
+        Phase::Ground => {
+            out.extend([
+                Action::Short,
+                Action::Attack,
+                Action::Strike { dir: -1 },
+                Action::Strike { dir: 1 },
+            ]);
+            for dir in [1i8, -1] {
+                for hold in [JUMP_HOLDS[1], JUMP_HOLDS[3]] {
+                    out.push(Action::Jump {
+                        dir,
+                        hold: hold as u8,
+                        up: false,
+                    });
+                }
+            }
+            out.push(Action::Jump {
+                dir: 0,
+                hold: JUMP_HOLDS[3] as u8,
+                up: false,
+            });
+        }
+        Phase::Air => out.push(Action::Attack),
+        Phase::Climb | Phase::Busy => {}
+    }
+    out
 }
 
 /// The actions worth trying in `sim`, in a fixed order.
@@ -222,7 +334,15 @@ mod tests {
             Action::Crouch,
             Action::Up,
             Action::Down,
+            Action::Short,
+            Action::Strike { dir: -1 },
+            Action::Strike { dir: 1 },
         ];
+        for dir in [-1i8, 1] {
+            for walk in ENTRY_WALKS {
+                all.push(Action::Entry { dir, walk });
+            }
+        }
         for dir in [-1, 0, 1] {
             for hold in JUMP_HOLDS {
                 for up in [false, true] {
