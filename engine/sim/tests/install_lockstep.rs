@@ -41,14 +41,35 @@
 //!     (lives 6), at the checkpoint 14223,2298 in tick 5389, walking with
 //!     full health.
 //!
+//!
+//! Three more rules show on a later bot route, run in the original the
+//! same way:
+//!
+//! 11. A walker that a wall turned turns again with that speed truncated,
+//!     which leads back into the wall, and stays on the wall's limit: the
+//!     rat at 12381,2261 walking right at 60 px/s runs into a wall in tick
+//!     4296 (speed -30 px/s, right limit 12381) and stands there walking
+//!     left with 30 px/s to the right from tick 4297 on; it rolls again
+//!     when it comes back into reach in tick 4418.
+//! 12. A goodie's bounce lifts its exact height by 1.0 and keeps the
+//!     fraction: the health goodie that lands at 1764.7374 in tick 4633 is
+//!     at 1762.2519 in tick 4634, turns into a pickup in tick 4655 and its
+//!     glitter draws its delay in tick 4656.
+//! 13. The respawn between ticks runs an update pass, wakes the objects
+//!     around Claw and runs a second pass: the officer at 15609,1539 by the
+//!     checkpoint goes Home in the first pass and strikes from the second,
+//!     showing its strike's first frame in tick 6301 after the life lost
+//!     in tick 6300, and makes its next Home's draws in tick 6348.
+//!
 //! The random stream equals the original's after every tick checked here
-//! (the reference trace of the same route holds it for every tick; see
+//! (the reference traces of the same routes hold it for every tick; see
 //! `tests/acceptance/tolerances/references.toml`).
 
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_frame::GameEvent;
+use claw_sim::logic::enemy::{self, EnemyState};
 use claw_sim::logic::pickup;
-use claw_sim::object::ObjectId;
+use claw_sim::object::{Object, ObjectId};
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel, Tuning};
 
 /// The random state the reference runs of the first level start from.
@@ -107,6 +128,78 @@ const ROUTE: &str = "
     2000000:6 0:6 1000001:14 1000000:15
 ";
 
+/// The later route: held masks in hex, each with its run of ticks (6452
+/// ticks).
+const ROUTE_2: &str = "
+    0:2 2000001:14 2000000:2 0:6 2000000:6 0:6 2000000:6 2000001:14 2000000:32 2000001:14
+    2000000:26 2000001:14 2000000:26 2000001:14 2000000:14 4000000:6 2000001:14 2000000:2
+    1000000:12 4000000:6 2000001:14 2000000:2 1000000:12 4000000:6 2000001:5 2000000:2
+    1000000:6 4000000:6 2000001:14 2000000:14 2000001:14 2000000:26 2000001:14 2000000:26
+    2000001:14 2000000:26 2000001:14 2000000:20 0:6 1:14 0:2 2000000:24 2000001:9 2000000:20
+    2000001:9 2000000:8 0:6 2000000:6 2000001:9 2000000:56 2000001:9 2000000:38 8000000:6
+    2000001:2 2000000:2 2000001:9 2000000:98 8000000:6 2000000:6 8000000:6 2000001:2 2000000:2
+    2:2 0:6 2000000:6 2000001:5 2000000:14 0:6 2000001:2 2000000:2 0:18 2000001:9 2000000:26
+    1000001:9 1000000:2 2000000:6 0:12 2000001:14 2000000:2 1000000:18 2000000:6 8000000:6 1:14
+    0:2 2000001:14 2000000:8 2:2 0:18 2000001:9 2000000:26 2000001:14 2000000:14 0:6 2000001:2
+    2000000:14 2:2 0:6 2000000:6 8000000:6 2000001:14 2000000:2 2000001:14 2000000:20 2000001:2
+    2000000:20 2000001:14 2000000:26 2000001:14 2000000:8 1000000:6 2000000:6 2000001:14
+    2000000:20 8000000:6 2000001:14 2000000:2 2000001:2 2000000:86 4000000:6 8000000:42
+    2000001:14 2000000:20 0:6 8000000:6 8000002:2 8000000:6 2000000:48 0:6 2000001:9 2000000:86
+    2:2 0:6 2000000:12 1000000:12 2000000:6 0:12 8000002:2 8000000:6 1:14 0:2 8000000:6 1:14
+    0:8 8000000:6 1:14 0:2 2000001:14 2000000:14 4000000:6 2000001:14 2000000:2 0:6 1000000:6
+    2000001:2 2000000:68 2000001:2 2000000:44 0:6 2000000:18 2000001:14 2000000:14 2000001:14
+    2000000:14 2000001:14 2000000:2 1000000:12 4000000:6 2000001:14 2000000:2 1000000:6
+    4000000:6 2000001:14 2000000:2 1000000:12 4000000:6 2000001:14 2000000:2 1000000:6 0:6
+    2000001:14 2000000:26 2000001:14 2000000:26 2000001:14 2000000:26 2000001:14 2000000:32
+    2000001:14 2000000:26 2000001:14 2000000:26 2000001:14 2000000:2 0:6 4000000:6 2000001:5
+    2000000:2 4000000:6 2000001:14 2000000:20 2000001:14 2000000:20 2:2 0:6 2000001:14
+    2000000:20 0:6 2000001:5 2000000:2 1000000:6 2:2 0:6 2000001:14 2000000:26 2000001:14
+    2000000:26 2000001:14 2000000:14 0:6 2000000:6 0:18 2000000:12 2000001:14 2000000:20 0:6
+    2000001:14 2000000:20 0:6 2000001:14 2000000:20 4000000:6 2000001:14 2000000:2 1000000:12
+    4000000:6 2000001:14 2000000:2 1000000:12 4000000:6 2000001:14 2000000:2 1000000:12
+    4000000:6 2000001:14 2000000:14 1:14 0:2 1000000:6 2000000:6 1:14 0:8 1000000:6 2000000:6
+    1:14 0:2 1000000:6 2000000:6 2:2 0:6 1:14 0:2 2000000:6 2:2 0:6 1000000:6 1:14 0:14 2:2 0:6
+    1000001:14 1000000:2 0:6 4000000:6 2000001:14 2000000:2 1000000:6 4000000:6 2000001:14
+    2000000:2 1000000:12 4000000:6 1000001:14 1000000:2 2000000:12 4000000:18 2000001:14
+    2000000:20 2000001:14 2000000:8 0:6 2:2 0:6 2000000:6 2000001:14 2000000:26 2000001:14
+    2000000:26 2000001:14 2000000:20 6000001:14 6000000:2 2000001:14 2000000:2 1000000:12
+    4000000:6 2000001:14 2000000:2 1000000:12 0:6 2000001:14 2000000:20 2000001:14 2000000:14
+    0:6 2000000:6 2000001:14 2000000:20 0:6 2000001:14 2000000:26 2000001:14 2000000:26
+    2000001:14 2000000:26 2000001:14 2000000:20 0:6 2000001:14 2000000:14 0:6 2000000:6
+    2000001:14 2000000:26 2000001:14 2000000:26 2000001:14 2000000:20 0:6 2000000:6 2000001:14
+    2000000:20 0:12 2000001:14 2000000:32 2000001:14 2000000:26 2000001:14 2000000:14
+    2000001:14 2000000:20 1:14 0:2 2000000:24 2000001:14 2000000:20 8000000:6 2000001:9
+    2000000:2 2000001:9 2000000:14 2000001:2 2000000:2 2:2 0:6 2000000:30 8000000:6 2000001:9
+    2000000:2 2:2 0:6 2000000:12 2000001:2 2000000:50 2000001:2 2000000:62 1:5 0:2 2:2 0:6
+    2000000:90 2:2 0:6 2000000:72 2:2 0:6 2000000:6 0:18 2000000:18 1:14 0:2 2000000:24
+    2000001:9 2000000:20 2000001:14 2000000:20 2000001:14 2000000:20 2000001:14 2000000:20
+    2000001:14 2000000:20 2000001:14 2000000:20 0:6 1:14 0:2 2000000:24 2000001:14 2000000:14
+    0:6 2000000:6 2000001:14 2000000:8 4000000:6 1000001:14 1000000:2 2000000:12 4000000:6
+    1000001:14 1000000:2 2000000:12 4000000:6 1000001:14 1000000:2 0:6 2000000:6 0:6 1000001:14
+    1000000:26 1000001:9 1000000:2 2:2 0:6 1000000:6 1000001:14 1000000:20 1000001:14
+    1000000:20 1000001:14 1000000:8 2:2 0:6 1000000:6 1000001:14 1000000:26 1000001:14
+    1000000:20 0:6 1000001:14 1000000:14 0:6 2000001:14 2000000:2 1000000:6 2000000:12
+    1000001:14 1000000:2 0:6 1000000:6 0:6 2000001:14 2000000:2 1000000:6 2000000:12 2000001:14
+    2000000:2 2:2 0:6 2000000:12 2000001:14 2000000:26 2000001:14 2000000:20 2000001:14
+    2000000:20 2000001:9 2000000:14 1000000:6 8000000:6 8000002:2 8000000:6 2000000:6
+    2000001:14 2000000:14 2:2 0:6 2000000:6 2000001:14 2000000:26 2000001:14 2000000:26
+    2000001:14 2000000:26 2000001:14 2000000:38 0:6 1:14 0:8 4000000:6 2000001:14 2000000:2
+    1000000:12 4000000:6 2000001:14 2000000:68 2000001:9 2000000:20 2000001:9 2000000:80 0:6
+    2000000:6 2000001:14 2000000:26 2000001:14 2000000:26 2000001:14 2000000:26 2000001:14
+    2000000:2
+";
+
+/// The original's random state after these ticks of the later route.
+const RNG_2: [(usize, u32); 7] = [
+    (4296, 4_098_875_518),
+    (4417, 1_837_547_191),
+    (4418, 1_701_631_589),
+    (4655, 3_573_468_272),
+    (4656, 2_496_133_491),
+    (6301, 2_019_001_823),
+    (6348, 2_369_301_279),
+];
+
 /// The original's random state after these ticks.
 const RNG: [(usize, u32); 22] = [
     (829, 2_891_961_556),
@@ -144,16 +237,23 @@ fn level1() -> Option<SimLevel> {
     Some(SimLevel::from_level(&level, &store).expect("level 1 prepares"))
 }
 
-fn route() -> InputScript {
+/// The input script of `runs` (hex held masks with their runs of ticks),
+/// `len` ticks long.
+fn route(runs: &str, len: usize) -> InputScript {
     let mut held = Vec::new();
-    for run in ROUTE.split_whitespace() {
+    for run in runs.split_whitespace() {
         let (mask, n) = run.split_once(':').expect("mask:ticks");
         let mask = u32::from_str_radix(mask, 16).expect("hex mask");
         let n: usize = n.parse().expect("ticks");
         held.extend(std::iter::repeat_n(mask, n));
     }
-    assert_eq!(held.len(), 5400);
+    assert_eq!(held.len(), len);
     InputScript::from_held(&held)
+}
+
+/// The object with serial number `serial`.
+fn by_serial(sim: &Sim, serial: u32) -> Option<(ObjectId, &Object)> {
+    sim.objects().all().find(|(_, o)| o.serial == serial)
 }
 
 /// The flying goodie moving across at `vx` px/s, if any.
@@ -182,7 +282,7 @@ fn count(sim: &Sim, logic: &str) -> usize {
 #[test]
 fn install_level1_follows_the_original_at_each_rule() {
     let Some(level) = level1() else { return };
-    let script = route();
+    let script = route(ROUTE, 5400);
     let cfg = SimConfig {
         tuning: Tuning::original_speeds(),
         seed: RNG_AT_T0,
@@ -272,6 +372,92 @@ fn install_level1_follows_the_original_at_each_rule() {
                 assert_eq!((claw.x, claw.y, claw.state), (14223, 2298, 9));
                 assert_eq!(sim.stats().health, 100);
                 assert!(sim.transition().is_none(), "the circles take no game time");
+                ended = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(ended);
+}
+
+#[test]
+fn install_level1_follows_the_original_at_the_wall_the_bounce_and_the_respawn() {
+    let Some(level) = level1() else { return };
+    let script = route(ROUTE_2, 6452);
+    let cfg = SimConfig {
+        tuning: Tuning::original_speeds(),
+        seed: RNG_AT_T0,
+        ..SimConfig::default()
+    };
+    let mut sim = Sim::new(level, cfg);
+    // The serial numbers the level gives the rat, the goodie and the
+    // officer.
+    let (rat, goodie, officer) = (129, 1667, 1019);
+    let mut ended = false;
+    for (tick, t) in script.ticks.iter().enumerate() {
+        let snap = sim.step(*t);
+        if let Some(&(_, want)) = RNG_2.iter().find(|r| r.0 == tick) {
+            assert_eq!(sim.rng_state(), want, "random state after tick {tick}");
+        }
+        let walker = |sim: &Sim| {
+            let (_, o) = by_serial(sim, rat).expect("the rat");
+            let d = enemy::data_of(o).expect("built");
+            (o.x, o.y, EnemyState::from_id(o.state), d.vx, d.bounds.1)
+        };
+        let flying = |sim: &Sim| {
+            let (_, o) = by_serial(sim, goodie).expect("the goodie");
+            (o.y, pickup::data_of(o).and_then(|d| d.goodie))
+        };
+        match tick {
+            // Rule 11: the wall turns the rat's speed and moves its limit,
+            // and the turn leaves it pushing into the wall for good.
+            4295 => assert_eq!(
+                walker(&sim),
+                (12381, 2261, Some(EnemyState::MoveRight), 60.0, i32::MAX)
+            ),
+            4296 => assert_eq!(
+                walker(&sim),
+                (12381, 2261, Some(EnemyState::MoveRight), -30.0, 12381)
+            ),
+            4297..=4344 => assert_eq!(
+                walker(&sim),
+                (12381, 2261, Some(EnemyState::MoveLeft), 30.0, 12381),
+                "tick {tick}"
+            ),
+            // Rule 12: the bounce keeps the landing's fraction.
+            4633 => {
+                let (y, g) = flying(&sim);
+                let g = g.expect("flying");
+                assert_eq!(y, 1764);
+                assert!((g.pos.1 - 1764.7374).abs() < 1e-4, "{}", g.pos.1);
+            }
+            4634 => {
+                let (y, g) = flying(&sim);
+                let g = g.expect("flying");
+                assert_eq!((y, g.bounces), (1762, 2));
+                assert!((g.pos.1 - 1762.2519).abs() < 1e-4, "{}", g.pos.1);
+            }
+            4654 => assert!(flying(&sim).1.is_some(), "still bouncing"),
+            4655 => {
+                let (_, o) = by_serial(&sim, goodie).expect("the goodie");
+                assert_eq!(&*o.logic, "HealthPowerup");
+            }
+            // Rule 13: the life lost, then the officer by the checkpoint
+            // strikes from the respawn's second pass.
+            6300 => {
+                assert_eq!(sim.stats().lives, 6);
+                assert!(snap.events.contains(&GameEvent::ClawDied { lives_left: 6 }));
+                let (_, o) = by_serial(&sim, officer).expect("the officer");
+                assert_eq!((o.x, o.y), (15609, 1539));
+                assert_eq!(EnemyState::from_id(o.state), Some(EnemyState::Idle));
+            }
+            6301 => {
+                let (_, o) = by_serial(&sim, officer).expect("the officer");
+                assert_eq!(EnemyState::from_id(o.state), Some(EnemyState::Strike));
+                assert_eq!(o.frame, 200, "the strike's first frame");
+            }
+            6348 => {
                 ended = true;
                 break;
             }
