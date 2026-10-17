@@ -50,9 +50,10 @@ fn ticks(ms: u64) -> usize {
     ms.div_ceil(TICK).max(1) as usize
 }
 
-/// A script of (mask, duration in ms) segments.
+/// A script of (mask, duration in ms) segments, after one tick with every
+/// key up (a key already down when play starts counts only once released).
 fn script(segments: &[(u32, u64)]) -> InputScript {
-    let mut held = Vec::new();
+    let mut held = vec![0];
     for &(mask, ms) in segments {
         held.extend(std::iter::repeat_n(mask, ticks(ms)));
     }
@@ -96,7 +97,7 @@ fn scenarios() -> Vec<Scenario> {
             &[(0, 1500)],
             Some(FLAT),
             Some(Teleport {
-                tick: 5,
+                tick: 6,
                 dx: 0,
                 dy: -448,
             }),
@@ -119,7 +120,7 @@ fn scenarios() -> Vec<Scenario> {
             &[(0, 2500)],
             Some(FLAT),
             Some(Teleport {
-                tick: 25,
+                tick: 26,
                 dx: 900,
                 dy: 0,
             }),
@@ -422,14 +423,15 @@ fn metrics(sc: &Scenario, rows: &[Row]) -> Vec<(String, f64)> {
                 _ => "jump_full",
             };
             let y0 = rows[0].y;
+            let press = press_ms(sc, JUMP);
             let top = rows.iter().min_by_key(|r| (r.y, r.t)).unwrap();
             let land = rows
                 .iter()
                 .find(|r| r.t > top.t && r.y >= y0)
                 .expect("lands");
             put(&format!("{key}_peak"), f64::from(y0 - top.y));
-            put(&format!("{key}_time_to_peak_ms"), top.t as f64);
-            put(&format!("{key}_airtime_ms"), land.t as f64);
+            put(&format!("{key}_time_to_peak_ms"), (top.t - press) as f64);
+            put(&format!("{key}_airtime_ms"), (land.t - press) as f64);
         }
         "fall" => {
             let snap = sc.teleport.unwrap().tick * TICK;
@@ -580,7 +582,7 @@ fn builtin() -> BTreeMap<String, Target> {
         ("jump_full_peak", 145.0, 1.0, false),
         ("jump_full_time_to_peak_ms", 366.5, 18.0, false),
         ("jump_full_airtime_ms", 724.5, 18.0, false),
-        ("climb_speed", 239.56, 3.0, true),
+        ("climb_speed", 220.0, 3.0, true),
         ("climb_down_speed", 220.05, 3.0, true),
         ("fall_terminal_vy", 1042.13, 25.0, false),
         ("ledge_drop_px", 64.0, 1.0, false),
