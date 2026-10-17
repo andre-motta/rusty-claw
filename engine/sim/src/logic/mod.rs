@@ -351,13 +351,16 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     }
 }
 
-/// `carrier` lifted `id`. Kegs, crates and the human enemies (officers
-/// and soldiers, see [`enemy::lift`]) react; other families ignore it.
+/// `carrier` lifted `id`. Kegs, crates and the human enemies (officers,
+/// soldiers, cutthroats and robber thieves, see [`enemy::lift`]) react;
+/// other families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
         Some(GameLogic::Crate) => crates::lifted(w, id, carrier),
-        Some(GameLogic::Officer | GameLogic::Soldier) => enemy::lift::lifted(w, id, carrier),
+        Some(
+            GameLogic::Officer | GameLogic::Soldier | GameLogic::CutThroat | GameLogic::RobberThief,
+        ) => enemy::lift::lifted(w, id, carrier),
         _ => {}
     }
 }
@@ -367,16 +370,22 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::thrown(w, id, vx, vy),
         Some(GameLogic::Crate) => crates::thrown(w, id, vx, vy),
-        Some(GameLogic::Officer | GameLogic::Soldier) => enemy::lift::thrown(w, id, vx, vy),
+        Some(
+            GameLogic::Officer | GameLogic::Soldier | GameLogic::CutThroat | GameLogic::RobberThief,
+        ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
 }
 
-/// Claw starts winding up a throw of `id`: a held officer or soldier
-/// shifts a little back and down (see [`enemy::lift::wind_up`]); other
+/// Claw starts winding up a throw of `id`: a held human enemy shifts a little back and down (see [`enemy::lift::wind_up`]); other
 /// families ignore it.
 pub fn wind_up(w: &mut World, id: ObjectId) {
-    if matches!(family(w, id), Some(GameLogic::Officer | GameLogic::Soldier)) {
+    if matches!(
+        family(w, id),
+        Some(
+            GameLogic::Officer | GameLogic::Soldier | GameLogic::CutThroat | GameLogic::RobberThief
+        )
+    ) {
         enemy::lift::wind_up(w, id);
     }
 }
@@ -386,7 +395,9 @@ pub fn dropped(w: &mut World, id: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::dropped(w, id),
         Some(GameLogic::Crate) => crates::dropped(w, id),
-        Some(GameLogic::Officer | GameLogic::Soldier) => enemy::lift::dropped(w, id),
+        Some(
+            GameLogic::Officer | GameLogic::Soldier | GameLogic::CutThroat | GameLogic::RobberThief,
+        ) => enemy::lift::dropped(w, id),
         _ => {}
     }
 }
@@ -464,14 +475,20 @@ mod unit {
         }
     }
 
-    /// A flat floor with an officer, a soldier and a rat beside Claw, all
-    /// built.
-    fn enemies_beside_claw() -> (Sim, ObjectId, [ObjectId; 3]) {
+    /// A flat floor with an officer, a soldier, a rat, a cutthroat and a
+    /// robber thief beside Claw, all built.
+    fn enemies_beside_claw() -> (Sim, ObjectId, [ObjectId; 5]) {
         let mut rows = vec![".".repeat(60); 15];
         rows.push("#".repeat(60));
         let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
         let mut level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600));
-        for (name, x) in [("Officer", 900), ("Soldier", 1100), ("Rat", 1200)] {
+        for (name, x) in [
+            ("Officer", 900),
+            ("Soldier", 1100),
+            ("Rat", 1200),
+            ("CutThroat", 1300),
+            ("RobberThief", 1400),
+        ] {
             level.objects.push(ObjectSpec::at(name, x, 900, 4000));
         }
         let mut sim = Sim::new(level, SimConfig::default());
@@ -489,6 +506,8 @@ mod unit {
             find(GameLogic::Officer),
             find(GameLogic::Soldier),
             find(GameLogic::Rat),
+            find(GameLogic::CutThroat),
+            find(GameLogic::RobberThief),
         ];
         let claw = sim
             .objects()
@@ -522,9 +541,9 @@ mod unit {
 
     #[test]
     fn lifting_an_officer_or_a_soldier_reaches_its_family() {
-        let (sim, claw, [officer, soldier, rat]) = enemies_beside_claw();
+        let (sim, claw, [officer, soldier, rat, cutthroat, robber]) = enemies_beside_claw();
         let rat_before = look(&sim, rat);
-        for id in [officer, soldier] {
+        for id in [officer, soldier, cutthroat, robber] {
             let mut sim = sim.clone();
             assert!(enemy_state(&sim, id).is_some(), "built");
             sim.with_world(|w| lifted(w, id, claw));
@@ -532,7 +551,7 @@ mod unit {
             sim.with_world(|w| thrown(w, id, 300, -650));
             assert_eq!(enemy_state(&sim, id), Some(EnemyState::Thrown));
         }
-        for id in [officer, soldier] {
+        for id in [officer, soldier, cutthroat, robber] {
             let mut sim = sim.clone();
             sim.with_world(|w| {
                 lifted(w, id, claw);
@@ -553,8 +572,8 @@ mod unit {
 
     #[test]
     fn winding_up_reaches_a_lifted_officer_or_soldier() {
-        let (sim, claw, [officer, soldier, rat]) = enemies_beside_claw();
-        for id in [officer, soldier] {
+        let (sim, claw, [officer, soldier, rat, cutthroat, robber]) = enemies_beside_claw();
+        for id in [officer, soldier, cutthroat, robber] {
             let mut sim = sim.clone();
             let winding = |sim: &Sim| {
                 enemy::data_of(sim.objects().get(id).expect("the enemy exists"))
@@ -578,8 +597,8 @@ mod unit {
 
     #[test]
     fn an_enemy_nobody_lifted_ignores_throws_and_drops() {
-        let (sim, _, [officer, soldier, _]) = enemies_beside_claw();
-        for id in [officer, soldier] {
+        let (sim, _, [officer, soldier, _, cutthroat, robber]) = enemies_beside_claw();
+        for id in [officer, soldier, cutthroat, robber] {
             let mut sim = sim.clone();
             let before = look(&sim, id);
             sim.with_world(|w| {

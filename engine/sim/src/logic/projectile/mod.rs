@@ -18,6 +18,12 @@
 //!   The magic claw and the sword shots pierce: only walls stop them. The
 //!   magic claw sheds two sparkles a tick and carries a light flare. A
 //!   musket ball flying left has its boxes turned to face left.
+//! - The cutthroat's knife and the robber thief's arrow are musket balls
+//!   with their own pictures: 400 px/s, no gravity, 10 damage, their
+//!   boxes taken from their first frame (and turned to face left when
+//!   they fly left). Like the ball they hurt Claw and are gone, break the
+//!   crates they pass and fly on, and touch neither powder kegs nor
+//!   enemies; nothing can hit them.
 //! - Every projectile moves on its own clock: each motion step covers the
 //!   game time since its previous step, taken from the step's end in
 //!   seconds and kept as a running sum of double-precision differences,
@@ -240,6 +246,19 @@ impl Class {
     /// Flies straight and is removed at the first wall.
     pub fn is_straight(self) -> bool {
         !matches!(self, Class::Dynamite | Class::RatBomb)
+    }
+}
+
+/// The movement and attack box of a straight shot drawn from `image`
+/// when the level does not know the first frame of that set and the set
+/// is not its class's own: the first frame's drawn box in the game's own
+/// art. The cutthroat's knife is 28 x 11 px, the robber thief's arrow
+/// 36 x 6 px.
+pub fn image_frame_box(image: &str) -> Option<Rect> {
+    match image {
+        "LEVEL_KNIFE" => Some(Rect::new(-13, -5, 14, 4)),
+        "LEVEL_ARROW" => Some(Rect::new(-19, -3, 16, 2)),
+        _ => None,
     }
 }
 
@@ -478,7 +497,9 @@ pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
     // The boxes come from the first frame of the set and keep that size
     // whatever frame the animation shows later.
     o.frame = w.image_frames(image).map_or(1, |(first, _)| first);
-    let frame_box = w.frame_box(image, o.frame).unwrap_or(class.frame_box());
+    let frame_box = w
+        .frame_box(image, o.frame)
+        .unwrap_or_else(|| image_frame_box(image).unwrap_or(class.frame_box()));
     o.move_rect = frame_box;
     o.attack_rect = frame_box;
     let mut d = ProjectileData {

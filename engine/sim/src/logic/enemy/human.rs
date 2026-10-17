@@ -49,15 +49,26 @@
 //!   0..201;
 //! - the springboard launch: one of 0..100;
 //! - nothing else here draws.
+//!
+//! # Straight shots
+//!
+//! The thieves of the third level fire the same way: the class loads a
+//! [`Shot`] and a firing animation, and [`fire_tick`] releases one
+//! straight shot (a `Bullet` with the class's picture) on the animation's
+//! shot frame, once per firing animation, then goes Home when the
+//! animation ends. A flinch or anything else that changes the state
+//! before the shot frame cancels the shot.
 
 use crate::logic::World;
-use crate::object::{ObjectId, Rect, engine_state, flags};
+use crate::logic::projectile::{self, ProjectileSpec};
+use crate::object::{ObjectId, Rect, engine_state, flags, types};
 use crate::physics::ptype;
 use crate::tiles::{CLEAR, CLIMB, GROUND, SOLID};
 
 use super::{
-    Class, Deferred, EnemyState, Handler, Timer, class_of, data, data_mut, face_claw, facing_rect,
-    lift, motion, obj, obj_mut, on_screen, play, rand, say, sees_claw, set_anim, set_state, states,
+    Class, Deferred, EnemyState, Handler, Shot, Timer, class_of, data, data_mut, face_claw,
+    facing_rect, lift, motion, obj, obj_mut, on_screen, play, rand, say, sees_claw, set_anim,
+    set_state, states,
 };
 
 /// Logic names this module runs: none, the human classes use it.
@@ -703,6 +714,89 @@ pub fn jump_over_tick(w: &mut World, id: ObjectId) {
         release(w, id);
         go_home(w, id);
     }
+}
+
+// ----------------------------------------------------------------------
+// Straight shots
+
+/// Logic of a human enemy's straight shot.
+pub const SHOT_LOGIC: &str = "Bullet";
+
+/// A straight shot a human class fires: its picture, its damage (whatever
+/// the difficulty) and the sound of its release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StraightShot {
+    /// Image set of the shot.
+    pub image: &'static str,
+    /// Damage it deals.
+    pub damage: i32,
+    /// Sound played as it leaves ("" for none).
+    pub sound: &'static str,
+}
+
+/// Loads the shot the enemy fires next: it leaves `muzzle` (across in
+/// the enemy's facing, and down) from the enemy at `speed` px/s in its
+/// facing, flat. The firing animation is the class's to start.
+pub fn load_shot(w: &mut World, id: ObjectId, muzzle: (i32, i32), speed: i32) {
+    let right = super::faces_right(obj(w, id));
+    let shot = Shot {
+        dx: if right { muzzle.0 } else { -muzzle.0 },
+        dy: muzzle.1,
+        vx: if right { speed } else { -speed },
+        vy: 0,
+    };
+    if let Some(d) = data_mut(w, id) {
+        d.shot = shot;
+        d.shots = 0;
+    }
+}
+
+/// Firing a straight shot: advances the firing animation; on its first
+/// shot frame the loaded shot leaves (once per firing animation) with
+/// `shot`'s sound; Home when the animation ends. Draws nothing.
+pub fn fire_tick(w: &mut World, id: ObjectId, shot: StraightShot) {
+    let event = w.advance_anim(id);
+    if event == 1 && data(w, id).is_some_and(|d| d.shots == 0) {
+        if let Some(d) = data_mut(w, id) {
+            d.shots = 1;
+        }
+        release_shot(w, id, shot);
+    }
+    if obj(w, id).anim.is_done() {
+        go_home(w, id);
+    }
+}
+
+/// Launches the loaded shot one depth behind the enemy and plays its
+/// sound.
+fn release_shot(w: &mut World, id: ObjectId, shot: StraightShot) {
+    let Some(s) = data(w, id).map(|d| d.shot) else {
+        return;
+    };
+    let (x, y, z) = {
+        let o = obj(w, id);
+        (o.x, o.y, o.z)
+    };
+    projectile::spawn(
+        w,
+        ProjectileSpec {
+            logic: SHOT_LOGIC,
+            x: x + s.dx,
+            y: y + s.dy,
+            z: z - 1,
+            vx: s.vx,
+            vy: s.vy,
+            damage: shot.damage,
+            type_flags: types::ENEMY_SHOT,
+            hit_type_flags: 0,
+            special_flags: 0,
+            image_set: shot.image,
+            owner: Some(id),
+            fuse_ms: None,
+            power: 0,
+        },
+    );
+    play(w, shot.sound);
 }
 
 #[cfg(test)]
