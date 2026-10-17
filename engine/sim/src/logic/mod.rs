@@ -59,10 +59,13 @@ pub mod crates;
 pub mod decor;
 pub mod effect;
 pub mod enemy;
+pub mod floor_spike;
 pub mod keg;
+pub mod path_elevator;
 pub mod pickup;
 pub mod platform;
 pub mod projectile;
+pub mod rope;
 pub mod sound;
 pub mod sound_object;
 pub mod world;
@@ -107,10 +110,20 @@ pub enum GameLogic {
     /// The boss fight's stage: the warp into the boss's room, the
     /// introduction and the boss's health bar.
     BossStage,
+    /// The cutthroat, the knife-throwing thief.
+    CutThroat,
+    /// The robber thief, the archer.
+    RobberThief,
+    /// Floor spikes that rise and sink on the level clock.
+    FloorSpike,
+    /// Platforms that follow a closed route on the level clock.
+    PathElevator,
+    /// Swinging ropes.
+    Rope,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 16] = [
+pub const ALL: [GameLogic; 21] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -127,6 +140,11 @@ pub const ALL: [GameLogic; 16] = [
     GameLogic::Cannon,
     GameLogic::Raux,
     GameLogic::BossStage,
+    GameLogic::CutThroat,
+    GameLogic::RobberThief,
+    GameLogic::FloorSpike,
+    GameLogic::PathElevator,
+    GameLogic::Rope,
 ];
 
 /// A logic's own data, by family.
@@ -163,6 +181,16 @@ pub enum ObjectData {
     Raux(enemy::raux::RauxData),
     /// A piece of a boss fight's stage.
     BossStage(boss_stage::BossStageData),
+    /// A cutthroat.
+    CutThroat(enemy::cutthroat::CutThroatData),
+    /// A robber thief.
+    RobberThief(enemy::robberthief::RobberThiefData),
+    /// A floor spike.
+    FloorSpike(floor_spike::FloorSpikeData),
+    /// A path elevator.
+    PathElevator(path_elevator::PathElevatorData),
+    /// A rope.
+    Rope(rope::RopeData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -185,6 +213,11 @@ macro_rules! dispatch {
             GameLogic::Cannon => cannon::$f($($arg),*),
             GameLogic::Raux => enemy::raux::$f($($arg),*),
             GameLogic::BossStage => boss_stage::$f($($arg),*),
+            GameLogic::CutThroat => enemy::cutthroat::$f($($arg),*),
+            GameLogic::RobberThief => enemy::robberthief::$f($($arg),*),
+            GameLogic::FloorSpike => floor_spike::$f($($arg),*),
+            GameLogic::PathElevator => path_elevator::$f($($arg),*),
+            GameLogic::Rope => rope::$f($($arg),*),
         }
     };
 }
@@ -209,6 +242,11 @@ macro_rules! constant {
             GameLogic::Cannon => cannon::$c,
             GameLogic::Raux => enemy::raux::$c,
             GameLogic::BossStage => boss_stage::$c,
+            GameLogic::CutThroat => enemy::cutthroat::$c,
+            GameLogic::RobberThief => enemy::robberthief::$c,
+            GameLogic::FloorSpike => floor_spike::$c,
+            GameLogic::PathElevator => path_elevator::$c,
+            GameLogic::Rope => rope::$c,
         }
     };
 }
@@ -235,6 +273,11 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::Cannon => cannon::BUILT,
         GameLogic::Raux => enemy::raux::BUILT,
         GameLogic::BossStage => boss_stage::BUILT,
+        GameLogic::CutThroat => enemy::cutthroat::BUILT,
+        GameLogic::RobberThief => enemy::robberthief::BUILT,
+        GameLogic::FloorSpike => floor_spike::BUILT,
+        GameLogic::PathElevator => path_elevator::BUILT,
+        GameLogic::Rope => rope::BUILT,
         _ => true,
     }
 }
