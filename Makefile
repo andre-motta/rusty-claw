@@ -59,8 +59,8 @@ test-install:
 	@dir="$(call module_dir,$(MODULE))"; \
 	if [ -z "$$dir" ]; then echo "unknown module '$(MODULE)'" >&2; exit 2; fi; \
 	if ! ls $$dir/tests/install_*.rs >/dev/null 2>&1; then echo "module '$(MODULE)' has no install tests" >&2; exit 2; fi; \
-	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --test 'install_*'"; \
-	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --test 'install_*'
+	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --tests"; \
+	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --tests
 
 # Replays $(CLAW_REFERENCE)/$(REF)/route.csv with the tuning, random state
 # and start point (teleport) its meta.toml names for each clock (or only
