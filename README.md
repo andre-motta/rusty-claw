@@ -46,8 +46,9 @@ into goo, and Raux, the level's boss, with his introduction (or the
 jump-in that skips it), the boss health bar, his defeat and the gem that
 ends the level. After each level's end-of-level screen the next level
 starts with the progress carried, so the first two levels play as one
-game. Its routes follow the original step for step at one 18 ms step per
-frame (see [Routes and comparing with the original](#routes-and-comparing-with-the-original)).
+game. Its original-speed routes, the run from the first level into the
+second included, win in the original too and follow it step for step at
+one 18 ms step per frame (see [Routes and comparing with the original](#routes-and-comparing-with-the-original)).
 
 Every retail level loads and runs. In levels 3 to 14, the objects the
 first two levels do not have (other enemies, bosses, traps and the like)

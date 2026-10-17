@@ -507,7 +507,7 @@ fn special_pickup(c: &mut Ctx, id: ObjectId) {
 
 /// A warp: a warp taken in a jump turns the jump into a fall; with a
 /// target Claw moves there at the end of the tick (see
-/// [`super::special::Special::warp_to`]). The warp stays when its smarts
+/// [`super::special::SpecialData::warp_to`]). The warp stays when its smarts
 /// are set.
 fn warp(c: &mut Ctx, id: ObjectId, f: &PickupFields) {
     if c.o.state == state::JUMP {

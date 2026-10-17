@@ -433,9 +433,38 @@ tolerance = "exact"
 # (the door's move between ticks puts Claw in the room a step later and
 # 5 px further on, where Raux's first blow lands on him). The bot found
 # the route in tests/acceptance/routes/ again from just before the door;
-# the original has not played the new one yet.
+# the original has played the new one: see `level2/bot-original-v2`.
 [[compare]]
 reference = "level2/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's current route of the second level (original speeds), one 18 ms
+# step per frame. Both games win the level on it, Raux's fight included,
+# and they are equal on every compared row (10973 steps, 197.5 s) except
+# one: when Raux's defeat releases Claw to stand at 197208 ms, 300 ms
+# before the gem, the original draws a random number in that step and the
+# game a step later (not traced yet).
+[[compare]]
+reference = "level2/bot-original-v2"
+clock = "c18"
+tolerance = "exact"
+known.rng = 197208
+
+# The second level of a game that started with the current first-level
+# route (`level1/pair-original-v2`), entered through the end-of-level
+# screen with 100 health, one 18 ms step per frame. It plays the same
+# route as `level2/bot-original-v2` and matches it the same way: equal on
+# every row except that one random draw.
+[[compare]]
+reference = "level2/pair-original-v2"
+clock = "c18"
+tolerance = "exact"
+known.rng = 197208
+
+# The first part of that game: equal on every row.
+[[compare]]
+reference = "level1/pair-original-v2"
 clock = "c18"
 tolerance = "exact"
 
@@ -478,6 +507,44 @@ known.score = 3750
 known.health = 8800
 known.events = 30528
 known.lives = 30550
+
+# The bot's current route of the second level (default tuning) at 60
+# frames per second, and its jump-in variant. Both leave the feel
+# tolerance at the first ladder jump as `level2/bot` does, and neither
+# game finishes the level on them: they are compared for feel, not
+# required to win.
+[[compare]]
+reference = "level2/bot-v2"
+clock = "c60"
+tolerance = "feel"
+known.y = 1217
+known.cam_y = 1217
+known.state_id = 1884
+known.physics_type = 1884
+known.x = 2284
+known.cam_x = 2284
+known.score = 3750
+known.events = 18504
+known.pistol = 31750
+known.health = 95600
+known.lives = 119717
+known.boss_fight = 172667
+
+[[compare]]
+reference = "level2/introskip-v2"
+clock = "c60"
+tolerance = "feel"
+known.y = 1217
+known.cam_y = 1217
+known.state_id = 1884
+known.physics_type = 1884
+known.x = 2284
+known.cam_x = 2284
+known.score = 3750
+known.events = 18504
+known.pistol = 31750
+known.health = 95600
+known.lives = 119717
 
 # The second level of a game that started with
 # tests/acceptance/routes/level1-original.csv, played in the original
