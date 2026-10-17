@@ -173,6 +173,10 @@ pub struct SpecialData {
     /// clears it at the end of that pass, when it wakes and sets up the
     /// objects around his new place (see [`crate::Sim::step`]).
     pub warped: bool,
+    /// Claw was let go after a boss's defeat: the next tick takes Left and
+    /// Right out of the latched keys, so a direction still held counts at
+    /// once (see [`crate::Sim::step`]).
+    pub unlatch_directions: bool,
 }
 
 /// Forgets which special state was entered; every cancel of the attack
@@ -501,11 +505,13 @@ pub fn enter_boss_freeze(c: &mut Ctx) -> bool {
 
 /// Lets Claw go after a boss's defeat (see
 /// [`World::release_claw_boss_end`]): only when he is held in
-/// [`BOSS_END`], his attack ends and he stands. True when he was let go.
+/// [`BOSS_END`], Left and Right stop counting as latched from the next
+/// tick, his attack ends and he stands. True when he was let go.
 pub fn release_boss_end(c: &mut Ctx) -> bool {
     if c.o.state != BOSS_END {
         return false;
     }
+    c.p.special.unlatch_directions = true;
     attack::cancel(c);
     super::enter_stand(c);
     true
