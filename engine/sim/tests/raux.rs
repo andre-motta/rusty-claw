@@ -1,7 +1,7 @@
 //! Raux on a synthetic arena, with the boss fight flag set directly: how
 //! he is built, waiting for the fight, his decisions at Home, his strike,
-//! his leap over Claw, his dodges, blocks and flinches, his health and
-//! the health bar, his death and its report, the reset when Claw
+//! his leap over Claw, his dodges, blocks and flinches, his health (the
+//! health bar is the introduction's, not his), his death and its report, the reset when Claw
 //! respawns, and the order of his random draws.
 //!
 //! The tests named `install_*` read the user's own install from the folder
@@ -832,27 +832,21 @@ fn health_and_damage_follow_the_difficulty_factors() {
 }
 
 #[test]
-fn the_health_bar_shows_his_health_while_it_is_shown() {
+fn he_never_sets_the_health_bar_himself() {
     let (mut sim, id) = in_fight(80);
     sim.step(TickInput::default());
     assert_eq!(sim.boss().meter(), None, "he does not show it himself");
-    sim.with_world(|w| {
-        w.set_boss_meter(Some(BossMeter {
-            value: 100,
-            max: 100,
-        }))
-    });
+    let shown = BossMeter {
+        value: 100,
+        max: 100,
+    };
+    sim.with_world(|w| w.set_boss_meter(Some(shown)));
     let blow = attacker(&mut sim, types::PLAYER, 10, 0);
     hit(&mut sim, id, blow, 500, false);
     sim.step(TickInput::default());
-    assert_eq!(
-        sim.boss().meter(),
-        Some(BossMeter {
-            value: 90,
-            max: 100
-        })
-    );
-    assert_eq!(sim.snapshot().hud.boss_meter.map(|m| m.value), Some(90));
+    assert_eq!(obj(&sim, id).health, 90);
+    // Only the bar the introduction makes follows his health.
+    assert_eq!(sim.boss().meter(), Some(shown));
 }
 
 #[test]

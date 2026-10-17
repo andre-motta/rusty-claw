@@ -636,6 +636,10 @@ impl Sim {
         self.input = input;
         // A latched key stays latched until a tick finds it up.
         self.latched = Buttons(self.latched.0 & input.held.0);
+        // Claw let go after a boss's defeat moves on a held direction at once.
+        if std::mem::take(&mut self.claw.special.unlatch_directions) {
+            self.latched = Buttons(self.latched.0 & !(Buttons::LEFT.0 | Buttons::RIGHT.0));
+        }
         self.claw_input = TickInput {
             held: Buttons(input.held.0 & !self.latched.0),
             pressed: Buttons(input.pressed.0 & !self.latched.0),
