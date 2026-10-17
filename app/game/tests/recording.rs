@@ -2,9 +2,10 @@
 //! replaying it: the recording is an input script whose `@` directives hold
 //! play for the wall time of each pause and menu and give the commands at
 //! their tick boundaries, so the replay runs the same ticks at any display
-//! rate. Synthetic levels built in code, plus one case on the first level
-//! of the user's own install (read from `CLAW_INSTALL` at run time, skipped
-//! when it is unset).
+//! rate. A level's recording replays from the start it names (the
+//! progress carried in and the start point), as `--replay` plays it.
+//! Synthetic levels built in code, plus cases on the user's own install
+//! (read from `CLAW_INSTALL` at run time, skipped when it is unset).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -12,7 +13,8 @@ use std::time::Duration;
 use claw_frame::{Buttons, SimulatedRefresh};
 use claw_game::input::Recorder;
 use claw_game::session::{
-    Span, behaviour_comment, recording_csv, save_recording, script_behaviour,
+    GameRecording, LevelRecording, Span, behaviour_comment, recording_csv, replay_trace,
+    save_recording, script_behaviour, start_sim,
 };
 use claw_game::settings::{LevelChoice, Settings};
 use claw_game::{Session, load_level, replay_headless};
@@ -367,6 +369,146 @@ fn old_recordings_parse_and_write_back_unchanged() {
     assert_eq!(session.directives(), s.directives().to_vec());
 }
 
+/// The progress a later level starts with.
+fn carried() -> StartState {
+    StartState {
+        carry: Some(Carry {
+            score: 31_500,
+            lives: 5,
+            health: 70,
+            ..Carry::default()
+        }),
+        save: None,
+    }
+}
+
+/// Plays `sim` for three seconds of walking and jumping with a pause,
+/// recorded into `rec` as retail level `level` started from `start` at
+/// `at`, with frames of `hz`; returns the live trace and the file written.
+fn record_level(
+    rec: &mut GameRecording,
+    sim: Sim,
+    level: u32,
+    start: StartState,
+    at: Option<(i32, i32)>,
+    hz: f64,
+) -> (Vec<String>, PathBuf) {
+    let mut session = Session::new(sim);
+    session.record_trace();
+    rec.start_from(&mut session, Some(level), start, at);
+    let dt = Duration::from_secs_f64(1.0 / hz);
+    let frames = (3.0 * hz) as u32;
+    let key = |s: &mut Session, b: Buttons, down: bool| {
+        let at = s.stamp(Duration::from_millis(2));
+        s.key(at, b, down);
+    };
+    for f in 0..frames {
+        match f {
+            _ if f == (0.2 * hz) as u32 => key(&mut session, RIGHT, true),
+            _ if f == (0.9 * hz) as u32 => key(&mut session, JUMP, true),
+            _ if f == (1.1 * hz) as u32 => key(&mut session, JUMP, false),
+            _ if f == (1.5 * hz) as u32 => {
+                session.open_span(Span::Pause);
+                session.pause();
+            }
+            _ if f == (1.8 * hz) as u32 => {
+                session.resume();
+                session.close_span();
+            }
+            _ if f == (2.4 * hz) as u32 => key(&mut session, RIGHT, false),
+            _ => {}
+        }
+        session.frame(dt);
+    }
+    let (path, ticks) = rec.finish(&session).unwrap().unwrap();
+    assert_eq!(ticks as u64, session.ticks());
+    (rows_of(session.trace()), path)
+}
+
+#[test]
+fn a_later_levels_recording_replays_from_its_start_at_every_rate() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut rec = GameRecording::new(dir.path().join("game.csv"));
+    let at = Some((1400, 700));
+    let sim = start_sim(level(), SimConfig::default(), carried(), at);
+    let (live, path) = record_level(&mut rec, sim, 2, carried(), at, 144.0);
+
+    // As `--replay FILE --trace OUT` reads it: the level and the start
+    // point from the file, whatever level the settings had.
+    let r = LevelRecording::read(&path).unwrap();
+    assert_eq!(
+        (r.level(), r.start.clone(), r.start_at),
+        (Some(2), carried(), at)
+    );
+    let mut settings = Settings::new("/i", LevelChoice::Retail(1));
+    settings.follow_recording(&r).unwrap();
+    assert_eq!(settings.level, LevelChoice::Retail(2));
+    assert_eq!(settings.start, at);
+    let cfg = r.sim_config(SimConfig::default());
+    for hz in [60.0, 144.0, 240.0] {
+        let sim = start_sim(level(), cfg.clone(), r.start.clone(), settings.start);
+        let rows = replay_trace(sim, r.script.clone(), settings.pause_input, hz);
+        assert_eq!(rows_of(&rows), live, "{hz} Hz");
+        assert_eq!(rows[0].score, 31_500, "the carried score");
+    }
+    // From a new game's values at the level's own start, as the replay
+    // played it before, it is another game.
+    let fresh = Sim::new(level(), cfg);
+    let rows = replay_trace(fresh, r.script.clone(), settings.pause_input, 60.0);
+    assert_ne!(rows_of(&rows), live);
+}
+
+#[test]
+fn a_replay_refuses_a_start_it_was_not_made_with() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut rec = GameRecording::new(dir.path().join("game.csv"));
+    let sim = start_sim(level(), SimConfig::default(), carried(), Some((1400, 700)));
+    let (_, path) = record_level(&mut rec, sim, 2, carried(), Some((1400, 700)), 60.0);
+    let r = LevelRecording::read(&path).unwrap();
+    let settings = |level: LevelChoice, cli: bool, start: Option<(i32, i32)>| {
+        let mut s = Settings::new("/i", level);
+        if cli {
+            s.from_command_line.extend(["level", "custom"]);
+        }
+        s.start = start;
+        s
+    };
+    // The level it names, or another named on the command line.
+    let mut s = settings(LevelChoice::Retail(2), true, None);
+    s.follow_recording(&r).unwrap();
+    let err = settings(LevelChoice::Retail(3), true, None)
+        .follow_recording(&r)
+        .unwrap_err();
+    assert!(err.to_string().contains("level 2"), "{err}");
+    assert!(
+        settings(LevelChoice::Custom("a.wwd".into()), true, None)
+            .follow_recording(&r)
+            .is_err()
+    );
+    // Its start point, or another one on the command line.
+    let mut s = settings(LevelChoice::Retail(2), false, Some((1400, 700)));
+    s.follow_recording(&r).unwrap();
+    let err = settings(LevelChoice::Retail(2), false, Some((10, 20)))
+        .follow_recording(&r)
+        .unwrap_err();
+    assert!(err.to_string().contains("1400,700"), "{err}");
+
+    // A save point start cannot be moved by --start.
+    let text = "# level 2\n# start_slot = 1\n# start_x = 900\n# start_y = 600\n0,0,0\n";
+    let at_save = LevelRecording::parse(text).unwrap();
+    assert!(
+        settings(LevelChoice::Retail(2), false, Some((10, 20)))
+            .follow_recording(&at_save)
+            .is_err()
+    );
+    // An older recording names neither: the settings' level and --start
+    // play it, as before.
+    let old = LevelRecording::parse("0,0,0\n1,0,0\n").unwrap();
+    let mut s = settings(LevelChoice::Retail(5), true, Some((10, 20)));
+    s.follow_recording(&old).unwrap();
+    assert_eq!((s.level, s.start), (LevelChoice::Retail(5), Some((10, 20))));
+}
+
 // ------------------------------------------------------------ install
 
 fn install() -> Option<PathBuf> {
@@ -429,4 +571,61 @@ fn install_a_route_with_a_menu_and_end_life_replays_the_same_at_every_rate() {
         let rows = replay_headless(&bundle, &settings, script.clone(), hz, jitter);
         assert_eq!(trace::to_csv(&rows), first, "{hz} Hz {jitter:?}");
     }
+}
+
+#[test]
+fn install_replay_on_the_command_line_plays_a_later_level_from_its_start() {
+    let Some(root) = install() else { return };
+    let settings = Settings::new(&root, LevelChoice::Retail(2));
+    let bundle = load_level(&settings.install, &settings.level).unwrap();
+    let (x, y) = bundle.sim_level.start;
+    let at = Some((x + 96, y - 32));
+    let sim = start_sim(
+        bundle.sim_level.clone(),
+        settings.sim_config(settings.res),
+        carried(),
+        at,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let mut rec = GameRecording::new(dir.path().join("game.csv"));
+    let (live, path) = record_level(&mut rec, sim, 2, carried(), at, 60.0);
+    // An empty config file, so the user's own does not change the replay.
+    let config = dir.path().join("config.toml");
+    std::fs::write(&config, "").unwrap();
+    let run = |extra: &[&str]| {
+        let out = dir.path().join("trace.csv");
+        let _ = std::fs::remove_file(&out);
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_rusty-claw"));
+        cmd.arg("--config")
+            .arg(&config)
+            .arg("--install")
+            .arg(&root)
+            .arg("--no-audio")
+            .arg("--replay")
+            .arg(&path)
+            .arg("--trace")
+            .arg(&out)
+            .args(extra);
+        let o = cmd.output().unwrap();
+        let text = std::fs::read_to_string(&out).ok();
+        (
+            o.status.success(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+            text,
+        )
+    };
+    let (ok, err, text) = run(&[]);
+    assert!(ok, "{err}");
+    let rows: Vec<String> = text
+        .unwrap()
+        .lines()
+        .skip(1)
+        .map(|l| l.replace(",script,", ",input,"))
+        .collect();
+    assert_eq!(rows, live, "replayed as played");
+    assert!(err.contains("31500"), "the start is announced: {err}");
+    // Another level on the command line is refused.
+    let (ok, err, text) = run(&["--level", "1"]);
+    assert!(!ok && text.is_none(), "{err}");
+    assert!(err.contains("level 2"), "{err}");
 }
