@@ -123,6 +123,9 @@ pub struct SearchConfig {
     /// Priority cost of a fragile child, px (0: children are not checked
     /// for fragility).
     pub fragile_cost: i64,
+    /// With the fragility check on, also play every move in the shadow
+    /// games (see [`Shadow`]).
+    pub shadows: bool,
 }
 
 impl Default for SearchConfig {
@@ -145,6 +148,7 @@ impl Default for SearchConfig {
             start_held_for: usize::MAX,
             land_gap: 0,
             fragile_cost: 0,
+            shadows: true,
         }
     }
 }
@@ -360,7 +364,11 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
         cache: HashMap::new(),
         cache_order: BTreeSet::new(),
         root: 0,
-        root_sim: Worlds::new(start.clone(), cfg.start_held, cfg.fragile_cost > 0),
+        root_sim: Worlds::new(
+            start.clone(),
+            cfg.start_held,
+            cfg.fragile_cost > 0 && cfg.shadows,
+        ),
         lead,
         earlier: Vec::new(),
         stats: SearchStats {

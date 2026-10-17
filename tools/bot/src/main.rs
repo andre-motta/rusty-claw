@@ -6,7 +6,7 @@
 //!          [--tuning default|original] [--nodes N] [--budget-min M]
 //!          [--seed S] [--hints FILE] [--from-route FILE --from-tick T]
 //!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--threads N]
-//!          [--margin-samples N] [--quiet]
+//!          [--cache-games N] [--no-shadows] [--margin-samples N] [--quiet]
 //! ```
 //!
 //! The route is an input script (`tick,held_mask,pressed_mask`, one row
@@ -42,7 +42,11 @@
 //! `--fragile-cost PX` is what a move costs the search when it fails with
 //! its timing shifted by a tick (it dies or ends elsewhere): the found
 //! route then prefers moves with room to spare. It defaults to
-//! 400; 0 turns the check off.
+//! 400; 0 turns the check off, and `--no-shadows` keeps the check to the
+//! moves' own timing (no shadow games). `--cache-games N` is how many games the
+//! search keeps in memory (512 by default; a node with its shadow games
+//! counts three): more is faster and takes more memory, and never changes
+//! the route.
 //!
 //! No route is written whose held mask changes twice less than two ticks
 //! apart.
@@ -63,7 +67,7 @@ use claw_sim::{InputScript, ScriptHeader, Sim, SimLevel};
 const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S] [--hints FILE] \
 [--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
-[--threads N] [--margin-samples N] [--quiet]";
+[--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--quiet]";
 
 /// Priority cost of a fragile move, px.
 const DEFAULT_FRAGILE_COST: i64 = 400;
@@ -87,6 +91,8 @@ struct Args {
     land_gap: Option<u64>,
     fragile_cost: i64,
     threads: usize,
+    cache_games: usize,
+    shadows: bool,
     margin_samples: usize,
     quiet: bool,
 }
@@ -108,6 +114,8 @@ impl Default for Args {
             land_gap: None,
             fragile_cost: DEFAULT_FRAGILE_COST,
             threads: 1,
+            cache_games: SearchConfig::default().cached_sims,
+            shadows: true,
             margin_samples: 40,
             quiet: false,
         }
@@ -122,6 +130,10 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         }
         if flag == "--quiet" {
             a.quiet = true;
+            continue;
+        }
+        if flag == "--no-shadows" {
+            a.shadows = false;
             continue;
         }
         let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -161,6 +173,9 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                 }
             }
             "--threads" => a.threads = v.parse::<usize>().map_err(|_| num("thread count"))?.max(1),
+            "--cache-games" => {
+                a.cache_games = v.parse::<usize>().map_err(|_| num("game count"))?.max(1)
+            }
             "--margin-samples" => a.margin_samples = v.parse().map_err(|_| num("sample count"))?,
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
@@ -308,6 +323,8 @@ fn run(a: Args) -> Result<bool, String> {
             TuningName::Original => 0,
         }),
         fragile_cost: a.fragile_cost,
+        cached_sims: a.cache_games,
+        shadows: a.shadows,
         wall_limit: a.budget_min.map(|m| Duration::from_secs_f64(m * 60.0)),
         log_every: if a.quiet { 0 } else { 500 },
         ..SearchConfig::default()
@@ -413,6 +430,9 @@ mod tests {
     fn parses_the_documented_arguments() {
         let a = args("--install /i --level 1 --out r.csv --tuning original --nodes 5000 --budget-min 30 --seed 7 --hints h.txt --from-route p.csv --from-tick 100 --land-gap 3 --threads 4 --quiet").unwrap();
         assert_eq!(a.land_gap, Some(3));
+        assert_eq!(args("--cache-games 1536").map(|a| a.cache_games), Ok(1536));
+        assert!(!args("--no-shadows").unwrap().shadows);
+        assert!(a.shadows);
         assert_eq!(a.fragile_cost, DEFAULT_FRAGILE_COST);
         assert_eq!(args("--fragile-cost 0").map(|a| a.fragile_cost), Ok(0));
         assert!(args("--fragile-cost -1").is_err());
