@@ -52,10 +52,13 @@
 # walk start before rule 16), so the routes were found again by the bot.
 # The entries before them hold runs of earlier routes and stay as further
 # checks; they are never replaced, only tightened. With rules 8 to 17,
-# five of the six `c18` stores (`level1/opening`, `level1/bot-original`,
+# five of the seven `c18` stores (`level1/opening`, `level1/bot-original`,
 # `level1/video`, `level1/bot-original-v2` and `level1/bot-original-v3`)
-# are equal to the original on every compared row, random stream
-# included.
+# are equal to the original in every game column of every compared row,
+# random stream included; `level1/bot-original-v3` still differs in the
+# events' format in the tick of a save. The other two
+# (`level1/bot-original-delay1` and `level1/bot-original-seg3410`) keep
+# the steps listed in their entries.
 
 # The first level's opening, one 18 ms step per frame against the original
 # speeds and the original's random state at time zero. Equal on every row,

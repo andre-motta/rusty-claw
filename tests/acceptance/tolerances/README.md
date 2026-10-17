@@ -193,7 +193,8 @@ margin rules); the original has not played the new routes yet.
 
 The earlier stores stay listed as further checks: `level1/bot-original-v2`
 and `level1/bot-v2` hold the routes from before the draws took the
-original's schedule (the `c18` one is now equal on every step too), and
+original's schedule (the `c18` one is now equal on every step too, in
+every column), and
 `level1/bot-original`, `level1/bot`, the `-delay1` stores and
 `level1/bot-original-seg3410` hold earlier routes, whose keys were
 already down on their first row.
@@ -266,8 +267,10 @@ routes it touches:
     draws nothing there, the game draws one number. Claw's columns stay
     equal until 19620 ms.
 
-  Neither step is traced to its cause yet. Every other `c18` store is
-  equal on every step.
+  Neither step is traced to its cause yet. The other five `c18` stores
+  are equal on every step in every game column, random stream included;
+  `level1/bot-original-v3` keeps only the events' format difference
+  below.
 - **The events' format.** In the tick of a save the game also reports
   the save point and its message, which the original's traces do not
   list (`level1/bot-original-v3`, 36450 ms).
