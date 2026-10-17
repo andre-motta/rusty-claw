@@ -3,8 +3,10 @@
 //! Every enemy: Strike, Pause, Falling, Dead and walking (MoveLeft,
 //! MoveRight). Human enemies also: Home, Advance, FastAdvance, Pace, the
 //! hit reactions (HitLow, HitHigh), the leap at Claw (JumpAtClaw) and the
-//! springboard jump (Jump). Being lifted and thrown is in
-//! [`super::lift`].
+//! hop up (Jump), plus the states of [`super::human`] (backing off,
+//! stepping in, the hop back, blocks, the human idle state, the
+//! springboard launch and the leap over Claw). Being lifted and thrown is
+//! in [`super::lift`].
 //!
 //! Patrol limits are compared for equality with the position: the
 //! movement step clamps a walker onto a limit it would cross, so it stands
@@ -24,9 +26,10 @@ use crate::physics::ptype;
 
 use super::{
     Class, DeathKind, EnemyState, HIT_SOUNDS, Handler, Timer, UNBOUNDED, class_of, data, data_mut,
-    face_claw, facing_rect, field, give_strike_token, lift, obj, obj_mut, on_screen, play, rand,
-    sees_claw, set_anim, set_facing, set_state, take_strike_token,
+    face_claw, facing_rect, field, give_strike_token, human, lift, obj, obj_mut, on_screen, play,
+    rand, sees_claw, set_anim, set_facing, set_state, take_strike_token,
 };
+use crate::object::flags;
 
 /// Walking speed toward Claw, px/s.
 pub const ADVANCE_SPEED: f64 = 60.0;
@@ -50,7 +53,8 @@ pub const PAUSE_MIN: u64 = 300;
 /// See [`PAUSE_MIN`].
 pub const PAUSE_SPREAD: u32 = 301;
 
-/// The shared handler of a state, for a human enemy or not.
+/// The shared handler of a state, for a human enemy or not. A human class
+/// without an idle handler of its own idles as [`human::idle_tick`] says.
 pub fn shared_handler(s: EnemyState, human: bool) -> Option<Handler> {
     let common: Option<Handler> = match s {
         EnemyState::Strike => Some(strike_tick),
@@ -77,7 +81,7 @@ pub fn shared_handler(s: EnemyState, human: bool) -> Option<Handler> {
         EnemyState::Jump => Some(jump_tick),
         EnemyState::Thrown => Some(lift::thrown_tick),
         EnemyState::Bounce => Some(lift::bounce_tick),
-        _ => None,
+        _ => human::handler(s),
     }
 }
 
@@ -179,13 +183,23 @@ pub fn enter_strike(w: &mut World, id: ObjectId) {
 
 /// Strike: on the animation's strike frame, when the level's strike token
 /// is free, the enemy takes it, the strike box becomes its attack box for
-/// that tick and the strike sound plays; when the animation ends the
-/// token is given back and the enemy goes Home, free again.
+/// that tick and the strike sound plays (the enemy's own when it has one,
+/// see [`human::HumanSounds::strike`], otherwise its class's); when the
+/// animation ends the token is given back and the enemy goes Home, free
+/// again.
 pub fn strike_tick(w: &mut World, id: ObjectId) {
     let event = w.advance_anim(id);
     let Some(class) = class_of(w, id) else { return };
     if event == 1 && take_strike_token(w, id) {
-        play(w, class.sounds.strike);
+        let own = data(w, id).map_or("", |d| d.human.sounds.strike);
+        play(
+            w,
+            if own.is_empty() {
+                class.sounds.strike
+            } else {
+                own
+            },
+        );
         let rect = data(w, id).map_or(Rect::UNSET, |d| d.strike_rect);
         let o = obj_mut(w, id);
         o.attack_rect = facing_rect(o, rect);
@@ -536,9 +550,10 @@ pub fn jump_at_claw_tick(w: &mut World, id: ObjectId) {
     }
 }
 
-/// A springboard threw the enemy: busy, no patrol limits, flying toward
-/// the springboard's target (the first point of its own limits, or the
-/// springboard itself without one).
+/// A springboard threw the enemy: first the hop up ([`human::enter_jump`],
+/// which makes a standing enemy safe until it lands), then busy, no patrol
+/// limits, flying toward the springboard's target (the first point of its
+/// own limits, or the springboard itself without one).
 pub fn enter_spring_jump(w: &mut World, id: ObjectId, spring: ObjectId) {
     let Some(class) = class_of(w, id) else { return };
     let Some(target) = w.objects.get(spring).map(|s| {
@@ -550,6 +565,7 @@ pub fn enter_spring_jump(w: &mut World, id: ObjectId, spring: ObjectId) {
     }) else {
         return;
     };
+    human::enter_jump(w, id);
     let (ex, ey) = {
         let o = obj(w, id);
         (o.x, o.y)
@@ -567,11 +583,13 @@ pub fn enter_spring_jump(w: &mut World, id: ObjectId, spring: ObjectId) {
     }
 }
 
-/// Jump: Home and free once it has landed, stopped.
+/// Jump: once it has landed, stopped, hits are allowed again and it goes
+/// Home, free.
 pub fn jump_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     if obj(w, id).physics_type == ptype::STAND {
         set_vx(w, id, 0.0);
+        obj_mut(w, id).flags &= !flags::SAFE;
         class_go_home(w, id);
         set_busy(w, id, false);
     }
