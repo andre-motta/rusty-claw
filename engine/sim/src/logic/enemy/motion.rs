@@ -33,8 +33,11 @@
 //! 6. Unless it moves without tile tests: landing on a death tile kills
 //!    it (spikes; goo is not told apart yet), and a standing enemy with the
 //!    ledge guard whose leading edge has no floor under it goes back to
-//!    where it stood before the step (both coordinates, its speed up or
-//!    down again from the move it made) and makes that its patrol limit.
+//!    where it stood before the step and makes that its patrol limit. It
+//!    goes back across only when it entered the step standing, so one
+//!    riding a platform up or down stays on it; one that entered the step
+//!    in the air goes back on both coordinates, its speed up or down again
+//!    from the move it made.
 //!    The leading edge is the side its exact position moved to in the
 //!    step, after the tiles had their say: a thrown enemy whose move into
 //!    a step's side is stopped while it lands on the step's corner moved
@@ -213,6 +216,7 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
             y: y0,
             p0,
             v0y,
+            standing,
         };
         ledge_guard(w, id, d, before, moved);
     }
@@ -247,14 +251,15 @@ fn collide(w: &mut World, id: ObjectId, tx: i32, ty: i32) -> u32 {
     }
 }
 
-/// Where an enemy was before its step: its position, its exact position
-/// and its speed up or down.
+/// Where an enemy was before its step: its position, its exact position,
+/// its speed up or down, and whether it started the step standing.
 #[derive(Debug, Clone, Copy)]
 struct Before {
     x: i32,
     y: i32,
     p0: (f64, f64),
     v0y: f64,
+    standing: bool,
 }
 
 /// The speed after a move of `d` px from speed `v0` under acceleration
@@ -268,8 +273,10 @@ pub fn speed_after(v0: f64, a: f64, d: f64) -> f64 {
 /// A standing enemy whose leading edge (the side its exact position
 /// `moved` to in the step) has no floor under it (a floor pixel with a
 /// clear one above) goes back to where it was before the step and makes
-/// that its patrol limit on that side. Going back up or down corrects its
-/// vertical speed for the move it made.
+/// that its patrol limit on that side. An enemy that entered the step in
+/// the air also goes back up or down, and its vertical speed is corrected
+/// for the move it made; one that entered it standing keeps its height,
+/// which is where the platform it rides carried it.
 fn ledge_guard(w: &mut World, id: ObjectId, d: &mut EnemyData, before: Before, moved: f64) {
     let o = obj(w, id);
     if moved == 0.0 || !o.move_rect.is_set() {
@@ -292,10 +299,13 @@ fn ledge_guard(w: &mut World, id: ObjectId, d: &mut EnemyData, before: Before, m
         d.bounds.0 = before.x;
     }
     let o = obj_mut(w, id);
-    let y = o.y;
     o.x = before.x;
-    o.y = before.y;
     d.carry.0 = 0.0;
+    if before.standing {
+        return;
+    }
+    let y = o.y;
+    o.y = before.y;
     if y != before.y {
         d.carry.1 = 0.0;
         d.vy = speed_after(before.v0y, d.ay, f64::from(before.y) - before.p0.1);

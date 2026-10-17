@@ -1047,6 +1047,91 @@ fn a_fall_onto_spikes_kills_in_place() {
     assert!(sim.objects().get(id).is_none(), "removed after a second");
 }
 
+/// A walking rat (it has the ledge guard) standing on an elevator that
+/// runs up and down over open air: its leading edge never finds tile floor,
+/// so the guard sends it back across on every step that moves it (its
+/// patrol limits are opened again each tick to keep the guard firing), but
+/// it keeps the height the elevator carried it to and rides the surface
+/// the whole way.
+#[test]
+fn a_guarded_walker_rides_a_platform_up_and_down() {
+    let mut rows = vec![".".repeat(200); 15];
+    rows.push("#".repeat(200));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut lift = ObjectSpec::at("Elevator", 3000, 500, 0);
+    // A vertical track from 440 to 560 at 150 px/s.
+    lift.record[52] = 440;
+    lift.record[54] = 560;
+    lift.record[56] = 150;
+    let mut sim = sim_with(
+        level(
+            &rows,
+            (1000, 600),
+            vec![lift, bounded("Rat", 3000, 900, 2900, 3100)],
+        ),
+        5,
+    );
+    send_claw_away(&mut sim);
+    let id = first(&sim, GameLogic::Rat);
+    let lift = sim
+        .objects()
+        .all()
+        .find(|(_, o)| &*o.logic == "Elevator")
+        .map(|(id, _)| id)
+        .expect("the elevator");
+    assert!(data(&sim, id).ledge_guard);
+    let rides = |sim: &Sim| {
+        let o = obj(sim, id);
+        let p = obj(sim, lift);
+        o.flags & flags::ON_ELEVATOR != 0
+            && o.object_below == Some(lift)
+            && feet_of(o) == p.y + p.hit_rect.top - 1
+    };
+    // Built on the floor; stand it on the elevator.
+    sim.with_world(|w| {
+        let top = w.objects.get(lift).map(|p| p.y + p.hit_rect.top).unwrap();
+        let o = w.objects.get_mut(id).unwrap();
+        o.x = 3000;
+        o.y = top - 1 - o.move_rect.bottom;
+        o.physics_type = ptype::STAND;
+        o.flags |= flags::ON_ELEVATOR;
+        o.object_below = Some(lift);
+    });
+    let (mut up, mut down, mut guarded) = (0, 0, 0);
+    for t in 0..300 {
+        sim.with_world(|w| {
+            if let Some(ObjectData::Enemy(d)) = w.objects.get_mut(id).map(|o| &mut o.data) {
+                d.bounds = (2900, 3100);
+            }
+        });
+        let y = obj(&sim, lift).y;
+        sim.step(TickInput::default());
+        let dy = obj(&sim, lift).y - y;
+        let d = data(&sim, id);
+        if d.bounds != (2900, 3100) {
+            guarded += 1;
+            if dy < 0 {
+                up += 1;
+            } else if dy > 0 {
+                down += 1;
+            }
+        }
+        let o = obj(&sim, id);
+        assert!(
+            rides(&sim),
+            "tick {t}: feet {} on an elevator at {} (moved {dy})",
+            feet_of(o),
+            obj(&sim, lift).y
+        );
+        assert_eq!(o.physics_type, ptype::STAND, "tick {t}");
+    }
+    assert!(guarded > 100, "the guard fired on {guarded} ticks");
+    assert!(
+        up > 0 && down > 0,
+        "the guard fired going up ({up}) and down ({down})"
+    );
+}
+
 // ----------------------------------------------------------------------
 // Narrow ledges
 
