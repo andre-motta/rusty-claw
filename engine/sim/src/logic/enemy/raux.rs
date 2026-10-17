@@ -47,8 +47,8 @@
 //! 2. one of 0..3: the strike and block sounds of the tick;
 //! 3. one of 0..100 when Claw attacks facing him from within his two
 //!    inner range boxes (it passes below his smarts, always at 100);
-//! 4. the state's draws: Idle one of 0..100 once his wait is over (modes
-//!    0, 1, 2, 5, 6); Home one of 0..121, then in mode 4 one of 0..100,
+//! 4. the state's draws: Idle one of 0..100 on a frame pulse tick once
+//!    his wait is over (modes 0, 1, 2, 5, 6); Home one of 0..121, then in mode 4 one of 0..100,
 //!    then moving back's or moving ahead's, then the shared Home's when he
 //!    is still Home; FastAdvance one, discarded; Pace one of 0..100 per
 //!    limit reached.
@@ -496,8 +496,9 @@ pub fn go_idle(w: &mut World, id: ObjectId) {
 }
 
 /// Idle: Home when Claw is within 150 px (modes 3, 4); otherwise, once
-/// his wait is over, a 5% chance each tick of pacing. Draws: one of 0..100
-/// once the wait is over (not in modes 3, 4).
+/// his wait is over, a 5% chance of pacing on each frame pulse tick.
+/// Draws: one of 0..100 on a frame pulse tick once the wait is over (not
+/// in modes 3, 4).
 pub fn idle_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     let now = w.now_ms;
@@ -506,7 +507,7 @@ pub fn idle_tick(w: &mut World, id: ObjectId) {
     };
     match mode {
         3 | 4 => go_home(w, id),
-        _ if wait.done(now) && rand(w, 100) < PACE_CHANCE => start_pacing(w, id),
+        _ if wait.done(now) && w.pulse && rand(w, 100) < PACE_CHANCE => start_pacing(w, id),
         _ => {}
     }
 }

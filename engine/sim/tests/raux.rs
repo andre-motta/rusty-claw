@@ -321,32 +321,49 @@ fn going_idle_says_his_line_when_the_roll_is_below_500() {
 }
 
 #[test]
-fn idle_out_of_range_he_may_pace_only_after_four_seconds() {
+fn idle_out_of_range_he_may_pace_only_after_four_seconds_on_a_pulse() {
     let (mut sim, id) = with_claw(3, 2000, fight::ON, 2);
     assert_eq!(state_of(&sim, id), Some(EnemyState::Idle));
     let wait = data(&sim, id).pace_wait;
-    // Before the wait is over Idle draws nothing.
+    // Before the wait is over Idle draws nothing, even on a pulse tick.
     let before = sim.rng_state();
-    sim.with_world(|w| raux::idle_tick(w, id));
+    sim.with_world(|w| {
+        w.pulse = true;
+        raux::idle_tick(w, id);
+    });
     assert_eq!(sim.rng_state(), before);
-    // After it, one draw of 0..100: below 5 he paces.
+    // After it, a tick off the frame pulse draws nothing and he stays.
+    sim.with_world(|w| {
+        enemy::data_mut(w, id).unwrap().pace_wait = enemy::Timer::new(0, 0);
+    });
+    let before = sim.rng_state();
+    sim.with_world(|w| {
+        w.pulse = false;
+        raux::idle_tick(w, id);
+    });
+    assert_eq!(sim.rng_state(), before);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Idle));
+    // On a pulse tick, one draw of 0..100: below 5 he paces.
     let five = (0..100_000u32)
         .find(|&s| Rng::new(s).below(100) < 5)
         .unwrap();
     let more = (0..100_000u32)
         .find(|&s| Rng::new(s).below(100) >= 5)
         .unwrap();
-    sim.with_world(|w| {
-        enemy::data_mut(w, id).unwrap().pace_wait = enemy::Timer::new(0, 0);
-    });
     let mut s = sim.clone();
     s.set_rng_state(more);
-    s.with_world(|w| raux::idle_tick(w, id));
+    s.with_world(|w| {
+        w.pulse = true;
+        raux::idle_tick(w, id);
+    });
     assert_eq!(state_of(&s, id), Some(EnemyState::Idle));
     assert_eq!(draws_between(more, s.rng_state()), 1);
     let mut s = sim.clone();
     s.set_rng_state(five);
-    s.with_world(|w| raux::idle_tick(w, id));
+    s.with_world(|w| {
+        w.pulse = true;
+        raux::idle_tick(w, id);
+    });
     assert_eq!(state_of(&s, id), Some(EnemyState::Pace));
     assert_eq!(wait.len, 4000);
 }
