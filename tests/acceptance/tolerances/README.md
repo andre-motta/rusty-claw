@@ -65,20 +65,19 @@ twice at each clock with identical traces.
 
 ### c18: tick for tick
 
-- Claw's position, state, physics type and the camera point are equal on
-  every tick for the first 16.7 s: standing, both jumps, walking off the
-  step, walking, the climb, the treasure (score equal) and the running
-  jumps.
-- At 16776 ms the officer's sword hits Claw in the game while he jumps
-  down past it; in the original it misses. The officer's choices follow
-  the random stream, which already differs there (see "What is fixed and
-  what remains" below). Everything after follows from that hit.
+- Claw's position, state, physics type, health and the camera point are
+  equal on every tick of the run: standing, both jumps, walking off the
+  step, walking, the climb, the treasure, the running jumps and the
+  officer. With the random draws in the original's schedule the officer's
+  strike that hit Claw at 16776 ms only in the game is gone; the officer
+  falls to Claw a little later in the game (the score at 17946 ms).
 - With the level's objects held inert, Claw's horizontal position is equal
   for the whole 32.5 s run and his height until the original's officer
   first hits him at 25938 ms. Claw's own movement and the camera therefore
   follow the original exactly at this clock; no movement fix is needed.
-- The random stream is equal tick for tick from time zero until 2268 ms
-  on the opening (until 162 ms on the bot's route).
+- The random stream is equal tick for tick from time zero until 7506 ms
+  on the opening (see "What is fixed and what remains" below for every
+  route).
 - Sound choices that the original draws from the shared stream (Claw's hit
   sound and pain line, the officer's line) already come from the shared
   stream in the game. The sound variant of an animation frame comes from a
@@ -168,19 +167,23 @@ route in `references.toml` at its clock's preset):
 
 ## What the first level's bot routes show
 
-The routes in `tests/acceptance/routes/` were played in the original twice
-at their clock, with identical traces both times: `level1-original.csv`
-at `c18` (store `level1/bot-original-v2`) and `level1.csv` at `c60` (store
-`level1/bot-v2`), both from the original's random state at time zero.
-Neither finishes the first level in the original; both finish it in the
-game.
+The stores `level1/bot-original-v2` (`c18`) and `level1/bot-v2` (`c60`)
+hold the original's runs, twice at their clock with identical traces both
+times and from the original's random state at time zero, of the routes
+that were in `tests/acceptance/routes/` before the random draws took the
+original's schedule. Neither finishes the first level in the original.
+With that schedule the officer near the start hits Claw at 8586 ms in the
+game too, as in the original, and those routes no longer win in the game,
+so the bot found the routes in `tests/acceptance/routes/` again (same
+seed, same margin rules); the original has not played the new routes yet.
 
-- **`c18`.** Claw's position, state and the camera are equal tick for
-  tick until 8586 ms. There an officer's sword hits Claw in the original
-  (Claw flinches, health 90) and misses him in the game. The officer's
-  choice follows the random stream, which is equal only until 162 ms (see
-  below). From the hit the route plays from the wrong place, and the
-  original ends at 2774,4730 with the level unfinished.
+- **`c18`.** The game draws the same numbers as the original, step for
+  step, until 51498 ms, and Claw's position, state and the camera are
+  equal tick for tick until 51552 ms, the officer's hit at 8586 ms
+  included. At 51516 ms an officer falls in the original (its hit burst,
+  its loot and its death draw nine numbers more than the game draws in
+  that step), while in the game it stands and its sword hits Claw at
+  51552 ms; the route goes another way from there.
 - **`c60`.** Claw's first fall off the start step is 26 px apart at
   684 ms, within the two ticks of timing the feel tolerance allows. Such
   small differences add up: the game reaches the ladder near 2.8 s about
@@ -210,17 +213,44 @@ Fixed in the game, and so no longer listed as differences:
   land in tick 0, and the random stream is equal from time zero.
 - **The climb.** The default tuning climbs up at the original's 220 px/s,
   so the opening's climb at `c60` holds within the feel tolerance.
+- **The random draw schedule.** The game draws from the shared random
+  stream in the original's schedule (the seven rules listed at the top of
+  `references.toml`): the small objects wake in an 831x623 window, objects
+  made in the update pass run in it when they land after the object the
+  pass visits next, a glitter draws its delay when the pass reaches it,
+  the ambient timers run after the rest of the tick, a pacing enemy is at
+  a limit only when its exact position is, a woken enemy first moves for
+  the time it slept (at most 200 ms), and Claw's hit burst draws its y
+  jitter first.
 
 Known differences that remain, each listed in `references.toml` for the
 routes it touches:
 
-- **The random draw schedule.** Every third logic step the original draws
-  more numbers from the shared random stream than the game does (three
-  against one at 162 ms on the bot's route). The stream is equal until
-  then, and every random choice after it (an enemy's next move, whether a
-  strike lands, a standing attack's variant) can come out differently.
-  This is the first `c18` difference on every route; it is the next thing
-  to match, and the entries are tightened when it is.
+- **Draws still out of step.** With the schedule above the random
+  stream stays equal much longer, but each `c18` store still has a first
+  step where the two games draw a different number of times; every random
+  choice after it (an enemy's next move, whether a strike lands, a
+  standing attack's variant) can come out differently. Per store:
+  - `level1/bot-original-v2`: equal until 51498 ms; at 51516 ms the
+    original draws nine numbers more, where an officer falls in the
+    original and stands in the game.
+  - `level1/opening`: equal until 7488 ms; at 7506 ms the game draws one
+    number fewer. Claw's columns stay equal throughout; only the score
+    differs, from 17946 ms.
+  - `level1/video`: equal until 5328 ms; at 5346 ms the game draws one
+    number fewer. Claw's columns stay equal until 54774 ms.
+  - `level1/bot-original`: equal until 24660 ms; at 24678 ms the game
+    draws one number more. Claw's columns stay equal until 27378 ms.
+  - `level1/bot-original-delay1`: the first difference is not in the
+    stream: a standing attack holds Claw longer in the original at
+    24858 ms while the stream is still equal (until 25794 ms).
+  - `level1/bot-original-seg3410`: differs at 18 ms, the segment's first
+    step after Claw is placed and the stream is set: the original draws
+    nothing there, the game draws one number. Claw's columns stay equal
+    until 11970 ms (the score).
+
+  None of these steps is traced to its cause yet; they are the next
+  things to match, and the entries are tightened when they are.
 - **Open-loop routes at `c60`.** Frames of 16 and 17 ms against the
   game's 18 ms ticks move a landing or a ladder grab by a frame or two,
   and a route played without looking at the game goes another way from

@@ -28,7 +28,7 @@ fn original_half_extents() {
     let cfg = ActivationConfig::original();
     assert_eq!(cfg.half_extents(0, cfg.view), (800, 600));
     assert_eq!(cfg.half_extents(1, cfg.view), (1280, 960));
-    assert_eq!(cfg.half_extents(2, cfg.view), (384, 288));
+    assert_eq!(cfg.half_extents(2, cfg.view), (415, 311));
 }
 
 #[test]
@@ -83,10 +83,10 @@ fn original_windows_near_both_plane_edges() {
     let cfg = ActivationConfig::original();
     for (point, cx, cy) in [((100, 100), 320, 240), ((6390, 3190), 6080, 2960)] {
         let objs = [
-            object("TreasurePowerup", 2, cx + 384, cy),
-            object("TreasurePowerup", 2, cx + 385, cy),
-            object("TreasurePowerup", 2, cx - 384, cy - 288),
-            object("TreasurePowerup", 2, cx, cy + 289),
+            object("TreasurePowerup", 2, cx + 415, cy),
+            object("TreasurePowerup", 2, cx + 416, cy),
+            object("TreasurePowerup", 2, cx - 415, cy - 311),
+            object("TreasurePowerup", 2, cx, cy + 312),
             object("Officer", 0, cx + 800, cy + 600),
             object("Officer", 0, cx - 801, cy),
             object("Elevator", 1, cx + 1280, cy - 960),
@@ -205,10 +205,10 @@ fn level_with_objects() -> SimLevel {
 #[test]
 fn level_objects_load_dormant_and_wake_near_the_camera() {
     let mut sim = Sim::new(level_with_objects(), SimConfig::default());
-    // At load the windows are around the start point (y = 600), so the
-    // pickup at y = 900 is still dormant; the camera then moves to Claw
-    // and the next enter pass wakes it.
-    assert_eq!(sim.activation().dormant_count(), 2);
+    // At load the windows are around the start point (y = 600): the
+    // pickup at y = 900 is inside the small objects' 311 px half height and
+    // live from the start, the far one stays dormant.
+    assert_eq!(sim.activation().dormant_count(), 1);
     sim.step(TickInput::default());
     sim.step(TickInput::default());
     let d = sim.diagnostics();
