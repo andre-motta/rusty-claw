@@ -12,6 +12,9 @@
 //! tick's outbox ([`crate::logic::World::shake`]), and the simulation
 //! starts it from the tick of the request. The current point is what the
 //! view centres on.
+//!
+//! A warp's set-up takes no game time ([`Camera::settle`]): the camera
+//! only jumps to Claw when he is out of its reach, and moves no further.
 
 use crate::physics::ptype;
 use crate::player::state as claw_state;
@@ -138,6 +141,31 @@ impl Camera {
         );
     }
 
+    /// The camera's part of a warp's set-up, which takes no game time: when
+    /// it follows Claw (no scripted point) and he is more than the snap
+    /// distance away on either axis, the current point jumps to him;
+    /// otherwise nothing moves. Nothing is drawn from the random stream.
+    pub fn settle(&mut self, claw: Option<&Followed>, point: Option<(i32, i32)>, t: &CameraTuning) {
+        let Some(claw) = claw else { return };
+        if point.is_some()
+            || claw.state == claw_state::DEATH_FALL
+            || !matches!(
+                self.state,
+                state::FOLLOW | state::LOOK_DOWN | state::LOOK_UP
+            )
+        {
+            return;
+        }
+        let target = (claw.x, claw.y);
+        let (dx, dy) = (target.0 - self.current.0, target.1 - self.current.1);
+        if dx.abs() > t.snap_distance || dy.abs() > t.snap_distance {
+            self.state = state::FOLLOW;
+            self.target = target;
+            self.current = target;
+            self.teleported = true;
+        }
+    }
+
     /// One logic call. `claw` is None while there is no player; `point` is
     /// the scripted camera point, if any.
     pub fn tick(
@@ -248,6 +276,25 @@ mod tests {
         assert!(cam.teleported);
         run(&mut cam, &claw(2001, 1000));
         assert_eq!(cam.current, (2001 - 500 + 9, 1000));
+    }
+
+    #[test]
+    fn settling_only_jumps_to_a_claw_out_of_reach() {
+        let t = CameraTuning::default();
+        let mut cam = Camera::default();
+        run(&mut cam, &claw(1000, 1000));
+        run(&mut cam, &claw(1000, 1000));
+        cam.settle(Some(&claw(1400, 1000)), None, &t);
+        assert_eq!(cam.current, (1000, 1000), "within reach: no move");
+        assert!(!cam.teleported);
+        cam.settle(Some(&claw(3000, 1600)), Some((0, 0)), &t);
+        assert_eq!(cam.current, (1000, 1000), "a scripted point holds it");
+        cam.settle(Some(&claw(3000, 1600)), None, &t);
+        assert_eq!((cam.current, cam.target), ((3000, 1600), (3000, 1600)));
+        assert!(cam.teleported);
+        let mut fresh = Camera::default();
+        fresh.settle(Some(&claw(3000, 1600)), None, &t);
+        assert_eq!(fresh.current, (0, 0), "not started yet");
     }
 
     #[test]

@@ -482,9 +482,11 @@ pub struct ColumnOverride {
 /// State and input (`state_id`, `physics_type`, `held`, `boss_fight`),
 /// stats (`health`, `score`, `lives`, `weapon`, the ammunition and
 /// `boss_health`) and game events must be equal, but may change up to their
-/// slack earlier or later than in the reference. A cell left empty on
-/// either side (an older trace without the boss columns, or no current
-/// boss) is not compared. The random stream state is compared only with `rng` on.
+/// slack earlier or later than in the reference. A cell left empty in the
+/// reference (no current boss, or an older trace without the boss columns)
+/// or in a rebuild trace without the boss columns is not compared; a
+/// rebuild trace with the boss columns and no boss health where the
+/// reference has a number diverges. The random stream state is compared only with `rng` on.
 /// `overrides` change single columns, and can turn on columns that are off
 /// by default (`frac_x`, `frac_y`, `pressed`, `activation`).
 #[derive(Debug, Clone, PartialEq)]
@@ -952,6 +954,26 @@ fn value<'a>(r: &'a TraceRow, name: &str) -> Value<'a> {
     }
 }
 
+/// Whether `row` comes from a trace that writes column `name` and left it
+/// empty on purpose: a trace with the boss columns writes `boss_health`
+/// empty while there is no current boss.
+fn carries_empty(row: &TraceRow, name: &str) -> bool {
+    name == "boss_health" && row.boss_fight.is_some()
+}
+
+/// How far the rebuild row `row` is from the reference value `rv` in
+/// column `name`; `None` when the two cannot be compared (a column the
+/// rebuild trace does not write). A rebuild trace that writes the boss
+/// columns but has no boss health where the reference has a number is as
+/// far off as can be: the rebuild has no current boss there.
+fn rebuild_diff(rv: &Value<'_>, row: &TraceRow, name: &str) -> Option<f64> {
+    let at = value(row, name);
+    match (rv, &at) {
+        (Value::Num(_), Value::Missing) if carries_empty(row, name) => Some(f64::INFINITY),
+        _ => rv.diff(&at),
+    }
+}
+
 /// The compared game events of a row.
 fn compared_events(r: &TraceRow) -> Vec<&str> {
     r.events
@@ -1077,11 +1099,11 @@ pub fn compare(rebuild: &[TraceRow], reference: &[TraceRow], tol: &Tolerances) -
                 continue;
             }
             let at = value(&rebuild[k0], c.name);
-            let mut best = rv.diff(&at);
+            let mut best = rebuild_diff(&rv, &rebuild[k0], c.name);
             if best.is_none_or(|d| d > ct.max_diff) && ct.slack_ms > 0 {
                 let slack = i64::from(ct.slack_ms);
                 for k in rows_meeting(rebuild, t - slack, t + slack) {
-                    if let Some(d) = rv.diff(&value(&rebuild[k], c.name)) {
+                    if let Some(d) = rebuild_diff(&rv, &rebuild[k], c.name) {
                         best = Some(best.map_or(d, |b: f64| b.min(d)));
                     }
                 }
@@ -1094,11 +1116,15 @@ pub fn compare(rebuild: &[TraceRow], reference: &[TraceRow], tol: &Tolerances) -
                 summary.max_diff = Some(summary.max_diff.map_or(best, |m| m.max(best)));
             }
             if best > ct.max_diff {
+                let shown = match at {
+                    Value::Missing => "none".to_string(),
+                    _ => at.show(),
+                };
                 let d = Divergence {
                     t_ms: r.t_ms,
                     column: c.name.to_string(),
                     reference: rv.show(),
-                    rebuild: at.show(),
+                    rebuild: shown,
                     reference_row: ri,
                     rebuild_row: k0,
                 };
@@ -1317,5 +1343,41 @@ mod tests {
         // Rows without events past the end are only counted.
         reference[12].events.clear();
         assert!(compare(&rebuild, &reference, &Tolerances::feel()).passed());
+    }
+    #[test]
+    fn a_missing_boss_health_diverges_when_the_rebuild_writes_the_boss_columns() {
+        let mut rebuild = rows(10, "script");
+        let mut reference = rows(10, "reference");
+        for r in &mut reference {
+            r.boss_fight = Some(0);
+        }
+        reference[4].boss_health = Some(100);
+        // A rebuild without the boss columns is not compared on them.
+        assert!(compare(&rebuild, &reference, &Tolerances::exact()).passed());
+        // With them, no boss where the reference has one is a divergence.
+        for r in &mut rebuild {
+            r.boss_fight = Some(0);
+        }
+        let c = compare(&rebuild, &reference, &Tolerances::exact());
+        let d = c.first_divergence.expect("the rebuild has no boss");
+        assert_eq!(
+            (
+                d.t_ms,
+                d.column.as_str(),
+                d.reference.as_str(),
+                d.rebuild.as_str()
+            ),
+            (5 * 18, "boss_health", "100", "none")
+        );
+        // Within the slack, a boss health of the same value passes.
+        rebuild[5].boss_health = Some(100);
+        let mut tol = Tolerances::exact();
+        tol.stats_slack_ms = 18;
+        assert!(compare(&rebuild, &reference, &tol).passed());
+        assert!(!compare(&rebuild, &reference, &Tolerances::exact()).passed());
+        // Empty on both sides (no current boss) is not compared.
+        reference[4].boss_health = None;
+        rebuild[5].boss_health = None;
+        assert!(compare(&rebuild, &reference, &Tolerances::exact()).passed());
     }
 }
