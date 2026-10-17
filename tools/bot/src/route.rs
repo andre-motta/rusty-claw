@@ -322,6 +322,7 @@ pub fn report_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use claw_sim::input::ScriptTuning;
 
     #[test]
     fn headers_round_trip_and_the_script_still_parses() {
@@ -335,7 +336,12 @@ mod tests {
         let s = InputScript::from_held(&[0, 0, 1, 1, 0, 0]);
         let text = route_csv(&h, &s);
         assert_eq!(Header::parse(&text), h);
-        assert_eq!(InputScript::parse(&text).unwrap(), s);
+        let parsed = InputScript::parse(&text).unwrap();
+        assert_eq!(parsed.ticks, s.ticks);
+        assert!(parsed.directives.is_empty());
+        assert_eq!(parsed.header.level, Some(3));
+        assert_eq!(parsed.header.tuning, Some(ScriptTuning::Original));
+        assert_eq!(parsed.header.seed, Some(42));
         assert!(text.contains("# mid_air_hit_fix = off\n"));
     }
 

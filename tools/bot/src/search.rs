@@ -559,7 +559,10 @@ impl Search<'_> {
             })
             .collect();
         Found {
-            script: InputScript { ticks },
+            script: InputScript {
+                ticks,
+                ..InputScript::default()
+            },
             stats: self.stats.clone(),
             done_at,
         }

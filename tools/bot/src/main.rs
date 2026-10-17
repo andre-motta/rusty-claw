@@ -183,6 +183,15 @@ fn run(a: Args) -> Result<bool, String> {
                 script.ticks.len()
             ));
         }
+        // The search plays the prefix as plain ticks, so a directive inside
+        // it would make the continued route play differently.
+        if let Some(d) = script.directives.iter().find(|d| d.tick <= t) {
+            return Err(format!(
+                "{} has a directive at tick {}, at or before the continue point {t}; only plain ticks can be continued",
+                path.display(),
+                d.tick
+            ));
+        }
         prefix.ticks = script.ticks[..t].to_vec();
         for &input in &prefix.ticks {
             start.step(input);
