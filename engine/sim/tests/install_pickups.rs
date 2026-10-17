@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use claw_assets::{AssetStore, Install, LevelData, LevelSource};
 use claw_sim::logic::pickup::{self, state as pstate};
 use claw_sim::logic::{self, ObjectData, crates, keg};
-use claw_sim::object::{LogicKind, ObjectId, flags};
+use claw_sim::object::{LogicKind, ObjectId, Rect, flags};
 use claw_sim::trace::{self, TraceRow};
 use claw_sim::{GameLogic, InputLatch, InputScript, Sim, SimConfig, SimLevel};
 use common::*;
@@ -470,6 +470,8 @@ fn install_level1_pickups_and_crates_touch_with_their_pictures() {
         .objects()
         .all()
         .filter(|(_, o)| o.kind == LogicKind::Game(GameLogic::Pickup))
+        // A pickup with no attack box yet holds the unset rectangle.
+        .filter(|(_, o)| o.attack_rect.left != Rect::UNSET_LEFT)
         .map(|(_, o)| {
             (
                 o.attack_rect.right - o.attack_rect.left,
