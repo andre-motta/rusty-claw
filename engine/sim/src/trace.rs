@@ -7,7 +7,9 @@
 //! followed by its values, separated by `:` (for example
 //! `checkpoint:6200:3100|message:3:2000`); it is empty when nothing
 //! happened. The `rng` column is the state of the shared random stream
-//! after the tick, in decimal.
+//! after the tick, in decimal. `boss_fight` is the boss fight flag (0, 1
+//! or 2) and `boss_health` the current boss's health, empty while there is
+//! no current boss.
 //!
 //! A reference trace of the same route, in the same trace format, has one
 //! row per logic step of the run it records: `tick` is the step index,
@@ -28,7 +30,7 @@ use crate::tuning::TICK_MS;
 
 /// Column names of a trace. Columns are only ever appended, so older traces
 /// are a prefix of this list.
-pub const HEADER: &str = "tick,t_ms,dt_ms,x,y,frac_x,frac_y,state_id,physics_type,cam_x,cam_y,held,pressed,source,activation,health,score,lives,weapon,pistol,magic,dynamite,events,rng";
+pub const HEADER: &str = "tick,t_ms,dt_ms,x,y,frac_x,frac_y,state_id,physics_type,cam_x,cam_y,held,pressed,source,activation,health,score,lives,weapon,pistol,magic,dynamite,events,rng,boss_fight,boss_health";
 
 /// One trace row.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +87,12 @@ pub struct TraceRow {
     /// State of the shared random stream after the tick; `None` when the
     /// trace does not record it.
     pub rng: Option<u32>,
+    /// The boss fight flag (0, 1 or 2); `None` when the trace does not
+    /// record it.
+    pub boss_fight: Option<u8>,
+    /// The current boss's health; `None` while there is no current boss,
+    /// or when the trace does not record it.
+    pub boss_health: Option<i32>,
 }
 
 /// Name of a weapon in traces.
@@ -120,6 +128,11 @@ impl TraceRow {
         let input = sim.input();
         let stats = sim.stats();
         let events: Vec<String> = sim.last_events().iter().map(event_text).collect();
+        let boss = sim.boss();
+        let boss_health = boss
+            .current()
+            .and_then(|id| sim.objects().get(id))
+            .map(|o| o.health);
         TraceRow {
             tick,
             t_ms: (tick + 1) * u64::from(TICK_MS),
@@ -145,11 +158,13 @@ impl TraceRow {
             dynamite: stats.dynamite,
             events: events.join("|"),
             rng: Some(sim.rng_state()),
+            boss_fight: Some(boss.fight()),
+            boss_health,
         }
     }
 
-    /// The row as CSV (no line end). A NaN fraction and a missing `rng`
-    /// are written as empty cells.
+    /// The row as CSV (no line end). A NaN fraction and a missing `rng`,
+    /// `boss_fight` or `boss_health` are written as empty cells.
     pub fn to_csv(&self) -> String {
         let frac = |f: f64| {
             if f.is_nan() {
@@ -161,7 +176,7 @@ impl TraceRow {
         let mut s = String::new();
         let _ = write!(
             s,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             self.tick,
             self.t_ms,
             self.dt_ms,
@@ -185,7 +200,9 @@ impl TraceRow {
             self.magic,
             self.dynamite,
             self.events,
-            self.rng.map(|r| r.to_string()).unwrap_or_default()
+            self.rng.map(|r| r.to_string()).unwrap_or_default(),
+            self.boss_fight.map(|b| b.to_string()).unwrap_or_default(),
+            self.boss_health.map(|h| h.to_string()).unwrap_or_default()
         );
         s
     }
@@ -245,9 +262,10 @@ fn parse_mask_cell(s: &str) -> Option<u32> {
 /// `tick` and `t_ms` are required. Columns missing from the header (an
 /// older trace without `rng`, for example) or cells missing at the end of
 /// a row take defaults: `dt_ms` the time since the previous row, `rng`
-/// none, fractions NaN, numbers 0 and text empty. The cells of `frac_x`,
-/// `frac_y`, `activation` and `rng` may be empty. Lines starting with `#`
-/// are comments.
+/// none, `boss_fight` and `boss_health` none, fractions NaN, numbers 0 and
+/// text empty. The cells of `frac_x`, `frac_y`, `activation`, `rng`,
+/// `boss_fight` and `boss_health` may be empty. Lines starting with `#` are
+/// comments.
 pub fn parse(text: &str) -> Result<Vec<TraceRow>, String> {
     let mut lines = text
         .lines()
@@ -318,6 +336,14 @@ pub fn parse(text: &str) -> Result<Vec<TraceRow>, String> {
             None | Some("") => None,
             Some(v) => Some(parse_number::<u32>(v).ok_or_else(|| err("rng", v))?),
         };
+        let boss_fight = match cell("boss_fight") {
+            None | Some("") => None,
+            Some(v) => Some(parse_number::<u8>(v).ok_or_else(|| err("boss_fight", v))?),
+        };
+        let boss_health = match cell("boss_health") {
+            None | Some("") => None,
+            Some(v) => Some(parse_number::<i32>(v).ok_or_else(|| err("boss_health", v))?),
+        };
         rows.push(TraceRow {
             tick,
             t_ms,
@@ -343,6 +369,8 @@ pub fn parse(text: &str) -> Result<Vec<TraceRow>, String> {
             dynamite: num!("dynamite", i32).unwrap_or(0),
             events: cell("events").unwrap_or("").to_string(),
             rng,
+            boss_fight,
+            boss_health,
         });
     }
     Ok(rows)
@@ -381,7 +409,7 @@ const fn col(name: &'static str, group: Group, text: bool) -> Column {
 
 /// The columns [`compare`] knows, in header order. `tick`, `t_ms`, `dt_ms`
 /// and `source` describe the rows and are never compared.
-const COLUMNS: [Column; 20] = [
+const COLUMNS: [Column; 22] = [
     col("x", Group::Position, false),
     col("y", Group::Position, false),
     col("frac_x", Group::Off, false),
@@ -402,6 +430,8 @@ const COLUMNS: [Column; 20] = [
     col("dynamite", Group::Stats, false),
     col("events", Group::Events, true),
     col("rng", Group::Rng, false),
+    col("boss_fight", Group::State, false),
+    col("boss_health", Group::Stats, false),
 ];
 
 /// Event kinds both traces record and [`compare`] matches.
@@ -449,10 +479,12 @@ pub struct ColumnOverride {
 /// How closely a rebuild trace must follow a reference trace.
 ///
 /// Positions (`x`, `y`, `cam_x`, `cam_y`) may differ by up to `pos_px`.
-/// State and input (`state_id`, `physics_type`, `held`), stats (`health`,
-/// `score`, `lives`, `weapon` and the ammunition) and game events must be
-/// equal, but may change up to their slack earlier or later than in the
-/// reference. The random stream state is compared only with `rng` on.
+/// State and input (`state_id`, `physics_type`, `held`, `boss_fight`),
+/// stats (`health`, `score`, `lives`, `weapon`, the ammunition and
+/// `boss_health`) and game events must be equal, but may change up to their
+/// slack earlier or later than in the reference. A cell left empty on
+/// either side (an older trace without the boss columns, or no current
+/// boss) is not compared. The random stream state is compared only with `rng` on.
 /// `overrides` change single columns, and can turn on columns that are off
 /// by default (`frac_x`, `frac_y`, `pressed`, `activation`).
 #[derive(Debug, Clone, PartialEq)]
@@ -914,6 +946,8 @@ fn value<'a>(r: &'a TraceRow, name: &str) -> Value<'a> {
         "magic" => n(f64::from(r.magic)),
         "dynamite" => n(f64::from(r.dynamite)),
         "rng" => r.rng.map_or(Value::Missing, |v| n(f64::from(v))),
+        "boss_fight" => r.boss_fight.map_or(Value::Missing, |v| n(f64::from(v))),
+        "boss_health" => r.boss_health.map_or(Value::Missing, |v| n(f64::from(v))),
         _ => Value::Missing,
     }
 }
@@ -1217,6 +1251,8 @@ mod tests {
             dynamite: 3,
             events: String::new(),
             rng: None,
+            boss_fight: None,
+            boss_health: None,
         }
     }
 

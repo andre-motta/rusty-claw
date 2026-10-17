@@ -11,6 +11,7 @@ use crate::anim::{Animation, FRAME_SOUND_IN_VIEW, FRAME_SOUND_POSITIONAL};
 use crate::container::Container;
 use crate::level::SimLevel;
 use crate::logic::sound;
+use crate::logic::world_boss::BossState;
 use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags};
 use crate::physics::{self, Collider, Platform};
 use crate::player::Claw;
@@ -36,6 +37,9 @@ pub struct VoiceRequest {
 /// the camera has already run; a voice request made by Claw's code is
 /// carried out as soon as his handler returns, and one still waiting at
 /// the end of the tick is carried out then, so none outlives its tick.
+///
+/// The boss fight state ([`BossState`], see [`super::world_boss`]) is a
+/// state too: it lasts the whole level and starts cleared with it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Outbox {
     audio: Vec<AudioCue>,
@@ -45,6 +49,7 @@ pub struct Outbox {
     spawned: Vec<ObjectId>,
     shake_ms: Option<u32>,
     voice: Vec<VoiceRequest>,
+    pub(crate) boss: BossState,
 }
 
 impl Outbox {
@@ -122,6 +127,11 @@ impl Outbox {
     /// The screen transition in progress.
     pub fn transition(&self) -> Option<ScreenTransition> {
         self.transition
+    }
+
+    /// The boss fight state.
+    pub fn boss(&self) -> &BossState {
+        &self.boss
     }
 
     /// Takes the tick's cues and events, leaving the fade and transition.

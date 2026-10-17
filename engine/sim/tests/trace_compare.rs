@@ -34,6 +34,8 @@ fn row(tick: u64, t_ms: u64, dt_ms: u32, x: i32, source: &str) -> TraceRow {
         dynamite: 3,
         events: String::new(),
         rng: Some(7),
+        boss_fight: None,
+        boss_health: None,
     }
 }
 
@@ -313,18 +315,19 @@ fn traces_round_trip_through_csv() {
     });
     let text = trace::to_csv(&rows);
     assert!(text.starts_with(HEADER));
-    assert!(HEADER.ends_with(",events,rng"));
+    assert!(HEADER.ends_with(",events,rng,boss_fight,boss_health"));
     assert_eq!(trace::parse(&text).unwrap(), rows);
 }
 
 #[test]
 fn old_traces_without_the_rng_column_parse() {
     let rows = rebuild(3, walk);
-    let old_header = HEADER.strip_suffix(",rng").unwrap();
+    let old_header = HEADER.strip_suffix(",rng,boss_fight,boss_health").unwrap();
     let mut text = format!("{old_header}\n");
     for r in &rows {
+        // Without the rng cell and the two boss cells after it.
         let line = r.to_csv();
-        text.push_str(line.rsplit_once(',').unwrap().0);
+        text.push_str(line.rsplitn(4, ',').nth(3).unwrap());
         text.push('\n');
     }
     let parsed = trace::parse(&text).unwrap();

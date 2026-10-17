@@ -221,9 +221,14 @@ fn seeds_change_the_random_stream_only() {
     );
     // The traces differ only in the rng column, which records each run's
     // random stream state.
+    let rng_at = trace::HEADER.split(',').position(|c| c == "rng").unwrap();
     let without_rng = |t: &str| -> Vec<String> {
         t.lines()
-            .map(|l| l.rsplit_once(',').map_or(l, |(head, _)| head).to_string())
+            .map(|l| {
+                let mut cells: Vec<&str> = l.split(',').collect();
+                cells.remove(rng_at);
+                cells.join(",")
+            })
             .collect()
     };
     assert_eq!(
@@ -231,7 +236,16 @@ fn seeds_change_the_random_stream_only() {
         without_rng(&b),
         "walking draws no random numbers"
     );
-    assert!(a.lines().nth(1).unwrap().ends_with(",1"), "{a}");
-    assert!(b.lines().nth(1).unwrap().ends_with(",99"), "{b}");
+    let first_rng = |t: &str| {
+        t.lines()
+            .nth(1)
+            .unwrap()
+            .split(',')
+            .nth(rng_at)
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(first_rng(&a), "1", "{a}");
+    assert_eq!(first_rng(&b), "99", "{b}");
     let _ = TickInput::default();
 }

@@ -12,7 +12,7 @@ use crate::activation::{Activation, ActivationConfig, ActivationMode, Centres};
 use crate::camera::{Camera, Followed};
 use crate::container::{CollisionEvent, Container};
 use crate::level::{ObjectSpec, SimLevel};
-use crate::logic::{self, Outbox, World};
+use crate::logic::{self, BossState, Outbox, World};
 use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags};
 use crate::physics::Platform;
 use crate::player::stats::{Carry, PlayerStats, StartState, TREASURE_KINDS};
@@ -240,7 +240,18 @@ impl Runner<'_> {
         };
         objects.swap_payload(id, &mut held);
         self.say_requested(objects);
+        self.take_camera_request();
         Some(r)
+    }
+
+    /// Hands the camera point a logic asked for through
+    /// [`World::set_camera_override`] to the camera's override, the same
+    /// one Claw's code sets: called after every logic call, so the later of
+    /// two writes wins as if both wrote it directly.
+    fn take_camera_request(&mut self) {
+        if let Some(point) = self.out.boss.take_camera() {
+            *self.camera_override = point;
+        }
     }
 
     /// Carries out the voice requests made since the last call, in request
@@ -252,6 +263,7 @@ impl Runner<'_> {
             for v in voice {
                 logic::sound::claw_say(&mut w, &v.key, v.force);
             }
+            self.take_camera_request();
         }
     }
 
@@ -293,6 +305,7 @@ impl Runner<'_> {
             LogicKind::Game(_) => {
                 let mut w = self.world(objects);
                 logic::tick(&mut w, id);
+                self.take_camera_request();
             }
         }
     }
@@ -303,6 +316,7 @@ impl Runner<'_> {
         if matches!(objects.get(id).map(|o| o.kind), Some(LogicKind::Game(_))) {
             let mut w = self.world(objects);
             logic::tick(&mut w, id);
+            self.take_camera_request();
         }
     }
 
@@ -314,12 +328,14 @@ impl Runner<'_> {
                 if let Some(LogicKind::Game(_)) = kind(objects, attacker) {
                     let mut w = self.world(objects);
                     logic::on_attack(&mut w, attacker, victim);
+                    self.take_camera_request();
                 }
             }
             CollisionEvent::Hit { attacker, victim } => match kind(objects, victim) {
                 Some(LogicKind::Game(_)) => {
                     let mut w = self.world(objects);
                     logic::on_hit(&mut w, victim, attacker);
+                    self.take_camera_request();
                 }
                 Some(LogicKind::Player) => {
                     self.with_claw(objects, victim, |c| player::hit::claw_hit(c, attacker));
@@ -334,6 +350,9 @@ impl Runner<'_> {
     /// already asked to be destroyed are removed instead, and those with
     /// [`flags::RUN_AT_CREATION`] run their logic once at once.
     fn list_spawned(&mut self, objects: &mut Container) {
+        // A camera point asked for outside the calls above (a tool's world
+        // call, the dynamite fuse) reaches the camera here.
+        self.take_camera_request();
         while self.out.has_spawned() {
             for id in self.out.take_spawned() {
                 let Some(o) = objects.get(id) else { continue };
@@ -807,7 +826,22 @@ impl Sim {
                 remaining_ms: s.powerup_ms,
             }),
             timer_ms: None,
+            boss_meter: self.out.boss().meter(),
+            boss_banner: self.out.boss().banner(),
         }
+    }
+
+    /// The boss fight state: the fight flag, the current boss, the health
+    /// bar and the name banner (see [`crate::logic::world_boss`]). It
+    /// starts cleared when the level loads.
+    pub fn boss(&self) -> &BossState {
+        self.out.boss()
+    }
+
+    /// The camera's scripted point, when one is set (by Claw's code, a
+    /// logic or [`Sim::set_camera_point`]).
+    pub fn camera_override(&self) -> Option<(i32, i32)> {
+        self.camera_override
     }
 
     /// Starts `level` like [`Sim::new`], then applies `start`: carried
