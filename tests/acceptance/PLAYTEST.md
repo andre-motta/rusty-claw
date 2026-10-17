@@ -44,8 +44,29 @@ Failures only, as above: note the line, what happened instead, and where.
 `PATH` is your install; `make compare` also needs `CLAW_REFERENCE`, the
 folder with the reference traces of the first level's routes.
 
+Known differences from the original on LEVEL1, not to report. They are
+explained in `tests/acceptance/tolerances/README.md`, and those a compared
+route meets are listed with their reasons in
+`tests/acceptance/tolerances/references.toml`:
+
+- The random draw schedule: every third game step the original draws more
+  random numbers than the game, so from about 0.2 s into a route enemies
+  can choose differently (for example an officer's strike that hits Claw
+  in one game and misses in the other). It is still to be matched.
+- Feel at 60 frames per second: a fall from standing still runs up to
+  about one tick ahead of the original mid-fall, and a running jump with
+  the jump key held only part of the way peaks 11 px lower. A route played
+  blind at 60 frames per second drifts from there and need not finish the
+  level in both games.
+- Left or Right held from before play starts: in the original the held
+  direction counts again once Claw's state changes (for example after a
+  jump), in the game only once it is released and pressed again.
+
+No longer a difference: Claw climbs up at 220 px/s, as in the original.
+Report a climb that feels faster or slower.
+
 1. Watch the bot's run of the first level: `make run-game ARGS="--install PATH --level 1 --replay tests/acceptance/routes/level1.csv"`. Claw goes from the start to the map piece without a death you would not expect, and the level ends.
-2. `CLAW_INSTALL=PATH CLAW_REFERENCE=... make compare REF=level1/bot` ends with "no divergence beyond the known ones"; each divergence it prints is one `tests/acceptance/tolerances/references.toml` lists for that route, with its reason.
+2. `CLAW_INSTALL=PATH CLAW_REFERENCE=... make compare REF=level1/bot-original-v2` and `make compare REF=level1/bot-v2` (the original's runs of the current routes, at `c18` and `c60`) each end with "no divergence beyond the known ones"; each divergence printed is one `tests/acceptance/tolerances/references.toml` lists for that route, with its reason.
 3. In LEVEL1, press Pause: the game freezes with the small PAUSE sign and no menu, and the sounds and music stop. Press Pause again: play goes on and the music carries on where it stopped. Escape does nothing while paused.
 4. Tap Pause twice quickly, several times: each resume advances the game by exactly one tick. Holding Pause steps at the keyboard repeat rate.
 5. Pause, press and hold Jump, then resume: Claw jumps on the first tick. Hold Jump before pausing and keep holding it through the resume: no new jump.

@@ -35,13 +35,33 @@
 //! its digits show only while a powerup has time left. The animations run
 //! on the frame's simulation time.
 //!
+//! During a boss fight two more pieces show, both on the original 640x480
+//! view and drawn before the status bar (above the playfield, below the
+//! bar):
+//!
+//! | Piece | Image set | Position |
+//! | --- | --- | --- |
+//! | the boss's name banner ([`HudState::boss_banner`]) | `LEVEL_BOSSNAME` | its centre `(x, y)` on the 640x480 view, centred in a larger picture |
+//! | the boss's health bar ([`HudState::boss_meter`]) | `GAME_BOSSBAR` | `((W - 1) / 2 + 1, H - 33)`: (320, 447) at 640x480 |
+//!
+//! The health bar's level is a 226 x 7 px band from 18 px right of the
+//! bar frame's left edge and 11 px below its top: `pct = trunc(value * 100
+//! / max)`, limited to 0..=100; at 100 the band is all full colour (palette
+//! index 0x34), at 0 or less all empty colour (0x7E), otherwise empty with
+//! its left `trunc(0.01 * pct * 226)` px full ([`boss_meter_layout`]). The
+//! band is drawn right after the bar's frame, as solid sprites the status
+//! bar makes itself when its art loads ([`BOSS_BAND_FULL`],
+//! [`BOSS_BAND_EMPTY`]): pieces 7 px high and 1, 2, 4 ... 128 px wide, so
+//! each part of the band takes at most eight of them.
+//!
 //! Messages ("Your game has been saved") are one line of the game's bitmap
 //! font, centred on the picture's centre column with its top 110 pixels
 //! below the top edge. One message shows at a time; a new one replaces it
 //! and restarts its time. Messages age only while the game runs, and the
 //! caller hides them during screen transitions.
 
-use claw_assets::{Ani, AssetStore, Registries};
+use claw_assets::{Ani, AssetStore, Frame, Registries};
+use claw_frame::output::BossMeter;
 use claw_frame::{DrawMode, GameEvent, HudState, Weapon};
 use claw_render::{Anchor, FrameInfo, LevelGraphics, ScreenSprite};
 
@@ -86,6 +106,44 @@ pub const IMAGE_SETS: &[&str] = &[
     TIMER,
     FONT,
 ];
+
+/// The boss's health bar frame.
+pub const BOSS_BAR: &str = "GAME_BOSSBAR";
+/// The boss's name banner, the level's own art.
+pub const BOSS_NAME: &str = "LEVEL_BOSSNAME";
+
+/// The image sets of a boss fight's pieces. They are preloaded with the
+/// status bar's, but only boss levels have a banner, so a missing one is
+/// not reported.
+pub const BOSS_IMAGE_SETS: &[&str] = &[BOSS_BAR, BOSS_NAME];
+
+/// The health bar's full colour, as solid pieces made by
+/// [`HudArt::load`]: frame `w` is `w` px wide and [`BOSS_FILL_HEIGHT`] high
+/// for every power of two `w` up to [`BOSS_BAND_PIECE_MAX`], with its
+/// hotspot on its top-left pixel.
+pub const BOSS_BAND_FULL: &str = "STATUSBAR_BOSS_BAND_FULL";
+/// The health bar's empty colour, made like [`BOSS_BAND_FULL`].
+pub const BOSS_BAND_EMPTY: &str = "STATUSBAR_BOSS_BAND_EMPTY";
+/// Width of the widest band piece.
+pub const BOSS_BAND_PIECE_MAX: i32 = 128;
+
+/// The original view the banner moves on.
+pub const BOSS_VIEW: (i32, i32) = (640, 480);
+/// The health bar's hotspot row is `H - 33` in a picture `H` rows high:
+/// 32 rows above its last row (447 at 480).
+pub const BOSS_BAR_RISE: i32 = 33;
+/// The level band starts this far right of the bar frame's left edge.
+pub const BOSS_FILL_LEFT: i32 = 18;
+/// The level band starts this far below the bar frame's top edge.
+pub const BOSS_FILL_TOP: i32 = 11;
+/// Width of the level band.
+pub const BOSS_FILL_WIDTH: i32 = 226;
+/// Height of the level band.
+pub const BOSS_FILL_HEIGHT: i32 = 7;
+/// Palette index of the band's full part.
+pub const BOSS_FULL_INDEX: u8 = 0x34;
+/// Palette index of the band's empty part.
+pub const BOSS_EMPTY_INDEX: u8 = 0x7E;
 
 /// The chest animation.
 pub const CHEST_ANIMATION: &str = "GAME_INTERFACE_CHEST";
@@ -224,8 +282,31 @@ pub struct HudArt {
     pub stopwatch: Animation,
     /// Font glyph sizes by frame number, 0 to [`FONT_GLYPHS`].
     pub glyphs: Vec<Option<FrameInfo>>,
+    /// Size and hotspot of the boss's health bar frame, when the art has
+    /// it.
+    pub boss_bar: Option<FrameInfo>,
     /// Image sets and animations that were not found.
     pub missing: Vec<String>,
+}
+
+/// The band pieces in palette index `index`, by frame number (the width).
+fn band_pieces(index: u8) -> Vec<(i32, Frame)> {
+    let h = BOSS_FILL_HEIGHT as u32;
+    std::iter::successors(Some(1), |&w| (w < BOSS_BAND_PIECE_MAX).then_some(w * 2))
+        .map(|w| {
+            let frame = Frame {
+                width: w as u32,
+                height: h,
+                // The hotspot on the top-left pixel.
+                offset_x: w >> 1,
+                offset_y: (h >> 1) as i32,
+                flags: 0,
+                indices: vec![index; (w as u32 * h) as usize],
+                opaque: None,
+            };
+            (w, frame)
+        })
+        .collect()
 }
 
 fn left_x(info: Option<FrameInfo>) -> i32 {
@@ -241,6 +322,10 @@ impl HudArt {
     /// sets) with animations from `animation`.
     pub fn load(graphics: &mut LevelGraphics, animation: impl Fn(&str) -> Option<Ani>) -> HudArt {
         graphics.preload(IMAGE_SETS);
+        graphics.preload(BOSS_IMAGE_SETS);
+        graphics.insert_set(BOSS_BAND_FULL, &band_pieces(BOSS_FULL_INDEX));
+        graphics.insert_set(BOSS_BAND_EMPTY, &band_pieces(BOSS_EMPTY_INDEX));
+        let boss_bar = graphics.frame_info(BOSS_BAR, -1);
         let mut missing = Vec::new();
         for key in IMAGE_SETS {
             if graphics.frame_numbers(key).is_empty() {
@@ -292,6 +377,7 @@ impl HudArt {
             heart_frames,
             stopwatch,
             glyphs,
+            boss_bar,
             missing,
         }
     }
@@ -442,7 +528,15 @@ pub fn layout_with(
 ) -> Vec<ScreenSprite> {
     let (l, r) = placement.insets(presentation);
     let (tl, tr) = (Anchor::TopLeft, Anchor::TopRight);
-    let mut out = Vec::with_capacity(22);
+    let mut out = Vec::with_capacity(24);
+    if let Some(centre) = hud.boss_banner {
+        out.push(boss_banner_sprite(centre, presentation));
+    }
+    if let Some(m) = hud.boss_meter {
+        let meter = boss_meter_layout(art, m, presentation);
+        out.push(meter.bar);
+        out.extend(meter.fills.iter().flat_map(band_sprites));
+    }
     let chest = art.chest.frame_at(time_ms).unwrap_or(-1);
     out.push(sprite(CHEST, chest, tl, l + art.chest_x, 15));
     digit_row(
@@ -508,6 +602,127 @@ pub fn layout_with(
         );
     }
     out
+}
+
+/// A solid rectangle in the picture, in game pixels from its top-left
+/// corner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FillRect {
+    /// Left edge.
+    pub left: i32,
+    /// Top edge.
+    pub top: i32,
+    /// Width.
+    pub width: u32,
+    /// Height.
+    pub height: u32,
+    /// Palette index.
+    pub index: u8,
+}
+
+/// The boss's health bar: its frame and the level band over it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BossMeterLayout {
+    /// The bar's frame.
+    pub bar: ScreenSprite,
+    /// The level band: the full part, then the empty part, each left out
+    /// when it has no width.
+    pub fills: Vec<FillRect>,
+}
+
+/// The band piece sprites that cover `fill`: the widest pieces first, left
+/// to right ([`BOSS_BAND_FULL`] or [`BOSS_BAND_EMPTY`] by its index; other
+/// indices draw nothing).
+pub fn band_sprites(fill: &FillRect) -> Vec<ScreenSprite> {
+    let key = match fill.index {
+        BOSS_FULL_INDEX => BOSS_BAND_FULL,
+        BOSS_EMPTY_INDEX => BOSS_BAND_EMPTY,
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    let mut left = fill.left;
+    let mut rest = fill.width as i32;
+    let mut piece = BOSS_BAND_PIECE_MAX;
+    while rest > 0 {
+        while piece > rest {
+            piece >>= 1;
+        }
+        out.push(sprite(key, piece, Anchor::TopLeft, left, fill.top));
+        left += piece;
+        rest -= piece;
+    }
+    out
+}
+
+/// The percentage of the bar that shows full: `trunc(value * 100 / max)`
+/// limited to 0..=100 (0 without a maximum).
+pub fn boss_percent(m: BossMeter) -> i32 {
+    if m.max <= 0 {
+        return 0;
+    }
+    let pct = f64::from(m.value) * 100.0 / f64::from(m.max);
+    (pct.trunc() as i64).clamp(0, 100) as i32
+}
+
+/// Width of the band's full part at `pct`: all of it at 100, none at 0 or
+/// less, otherwise `trunc(0.01 * pct * 226)` px.
+pub fn boss_full_width(pct: i32) -> i32 {
+    if pct >= 100 {
+        BOSS_FILL_WIDTH
+    } else if pct <= 0 {
+        0
+    } else {
+        (0.01 * f64::from(pct) * f64::from(BOSS_FILL_WIDTH)) as i32
+    }
+}
+
+/// The offset that centres the original 640x480 view in a picture of
+/// `presentation` game pixels.
+fn view_offset(presentation: (u32, u32)) -> (i32, i32) {
+    (
+        (presentation.0 as i32 - BOSS_VIEW.0) / 2,
+        (presentation.1 as i32 - BOSS_VIEW.1) / 2,
+    )
+}
+
+/// The boss's name banner centred at `centre` on the original 640x480
+/// view, in a picture of `presentation` game pixels.
+pub fn boss_banner_sprite(centre: (i32, i32), presentation: (u32, u32)) -> ScreenSprite {
+    let (dx, dy) = view_offset(presentation);
+    sprite(BOSS_NAME, -1, Anchor::TopLeft, centre.0 + dx, centre.1 + dy)
+}
+
+/// The boss's health bar showing `m` in a picture of `presentation` game
+/// pixels: the frame centred near the bottom edge, and the level band
+/// measured from the frame's edges.
+pub fn boss_meter_layout(art: &HudArt, m: BossMeter, presentation: (u32, u32)) -> BossMeterLayout {
+    let (w, h) = (presentation.0 as i32, presentation.1 as i32);
+    let (x, y) = ((w - 1) / 2 + 1, h - BOSS_BAR_RISE);
+    let bar = sprite(BOSS_BAR, -1, Anchor::TopLeft, x, y);
+    let info = art.boss_bar.unwrap_or(FrameInfo {
+        width: 260,
+        height: 28,
+        offset_x: 0,
+        offset_y: 0,
+    });
+    let left = x - (info.width >> 1) as i32 + info.offset_x + BOSS_FILL_LEFT;
+    let top = y - (info.height >> 1) as i32 + info.offset_y + BOSS_FILL_TOP;
+    let full = boss_full_width(boss_percent(m));
+    let rect = |left: i32, width: i32, index: u8| FillRect {
+        left,
+        top,
+        width: width as u32,
+        height: BOSS_FILL_HEIGHT as u32,
+        index,
+    };
+    let mut fills = Vec::with_capacity(2);
+    if full > 0 {
+        fills.push(rect(left, full, BOSS_FULL_INDEX));
+    }
+    if full < BOSS_FILL_WIDTH {
+        fills.push(rect(left + full, BOSS_FILL_WIDTH - full, BOSS_EMPTY_INDEX));
+    }
+    BossMeterLayout { bar, fills }
 }
 
 /// The font frame of a character: space 0, letters 1 to 26 (either case),
