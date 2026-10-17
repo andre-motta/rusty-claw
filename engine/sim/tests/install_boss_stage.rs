@@ -156,7 +156,7 @@ fn walk_to_the_door(sim: &mut Sim) -> u64 {
     settle_at(sim, START.0, START.1);
     idle(sim, 15);
     for k in 15..200u64 {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(sim, RIGHT));
         let o = sim.player().unwrap();
         if o.x > DOOR.0 + 1000 {
             assert_eq!((o.x, o.y), TARGET, "the door's target");
@@ -200,7 +200,7 @@ fn install_level2_walking_through_the_door_runs_the_introduction() {
     assert_eq!(sim.camera().current, TARGET, "the camera jumped to Claw");
     // His first tick there: still walking, inside the box, and the trigger
     // fires in its collision pass.
-    sim.step(hold(RIGHT));
+    sim.step(key_down(&sim, RIGHT));
     let o = sim.player().unwrap();
     let at = (o.x, o.y);
     println!(
@@ -217,7 +217,7 @@ fn install_level2_walking_through_the_door_runs_the_introduction() {
     assert_eq!(sim.claw().checkpoint, Some(at));
     // The next tick: the flag, the freeze and the camera on the boss's
     // point (no boss is built yet on this level, so no bar and no pan).
-    sim.step(hold(RIGHT));
+    sim.step(key_down(&sim, RIGHT));
     assert_eq!(sim.boss().fight(), fight::STAGING);
     assert_eq!(sim.player().unwrap().state, state::FREEZE);
     if sim.boss().current().is_none() {
@@ -263,7 +263,7 @@ fn install_level2_jump_on_the_first_arena_tick_skips_the_introduction() {
         if landed.is_none() && sim.player().unwrap().physics_type == ptype::WALK {
             landed = Some(sim.player().unwrap().x);
         }
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
     }
     let landed = landed.expect("Claw landed");
     println!("skip: landed walking at x {landed} (the original game: 23790 at c18)");
@@ -282,7 +282,7 @@ fn install_level2_jump_on_the_first_arena_tick_skips_the_introduction() {
     // Pressed one tick later it is too late: the trigger fired on the first
     // tick, and the introduction runs.
     let mut sim = at_door.clone();
-    sim.step(hold(RIGHT));
+    sim.step(key_down(&sim, RIGHT));
     assert!(checkpoint_in(sim.last_events()).is_some());
     sim.step(jump_right());
     assert_eq!(sim.boss().fight(), fight::STAGING);

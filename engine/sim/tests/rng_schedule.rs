@@ -264,6 +264,7 @@ fn an_ambient_manager_made_after_the_first_tick_is_updated() {
         held: Buttons(RIGHT),
         pressed: Buttons(0),
     };
+    sim.step(press(RIGHT));
     for _ in 0..400 {
         sim.step(walk);
         if sound_object::manager_of(sim.objects()).is_some() {

@@ -79,6 +79,23 @@
 //!   it, see [`crate::pause::Pauses::apply`]) and the key events while it
 //!   is stopped count in the first tick.
 //!
+//! # A death's circles
+//!
+//! When Claw loses a life with lives left, the tick ends with him dead and
+//! he respawns before the next tick, taking no game time (see
+//! [`claw_sim::player::death`]). A session that shows the game
+//! ([`Session::with_death_circles`], as the window's does) draws the
+//! death's circles in between, in frame time only: no tick runs for
+//! [`CIRCLES_MS`] after the tick of the death. The circle closes on the body for
+//! [`CLOSE_MS`](claw_sim::player::death::CLOSE_MS); then Claw respawns
+//! ([`Sim::respawn_now`]), the screen stays black and the circle opens on
+//! him, and play goes on with the next tick ([`Session::circles`] says what
+//! to draw meanwhile). Key events meanwhile count from the next tick, as
+//! after a pause. Like a pause, the circles take frame time only, so a
+//! replay or a trace has the same ticks at any display rate. Without them
+//! (headless replays, tools and tests) the respawn comes with the next tick
+//! as when the simulation is stepped directly, and frames go on ticking.
+//!
 //! # Recordings across levels
 //!
 //! A game that goes from one level to the next is recorded level by level
@@ -116,9 +133,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use claw_frame::step::{MAX_FRAME_US, TICK_US};
-use claw_frame::{AudioCue, Buttons, FrameDriver, GameEvent, InterpolatedFrame, TickInput};
+use claw_frame::step::{MAX_FRAME_US, MAX_TICKS_PER_FRAME, TICK_US};
+use claw_frame::{
+    AudioCue, Buttons, FrameDriver, GameEvent, InterpolatedFrame, ScreenTransition, TickInput,
+};
 use claw_sim::input::{MenuScreen, ScriptCommand, ScriptTuning};
+use claw_sim::player::death::{CLOSE_MS, HOLD_MS, OPEN_MS};
 use claw_sim::trace::TraceRow;
 use claw_sim::tuning::FuseClock;
 use claw_sim::{
@@ -137,6 +157,22 @@ pub struct Frame {
     pub ticks: u32,
     /// Interpolation factor after the ticks, in [0, 1).
     pub alpha: f64,
+}
+
+/// Frame time a death's circles take between two ticks, ms: the closing
+/// circle, the black screen and the opening circle.
+pub const CIRCLES_MS: u32 = CLOSE_MS + HOLD_MS + OPEN_MS;
+
+/// What a frame drawn during a death's circles shows (see the [module
+/// documentation](self)).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Circles {
+    /// The transition to draw: the circle closing on the body, then, once
+    /// Claw is back, the circle opening on him.
+    pub transition: ScreenTransition,
+    /// Time into that transition, ms; negative while the screen stays
+    /// black before the opening circle starts.
+    pub elapsed_ms: f64,
 }
 
 /// Cost of one tick.
@@ -312,6 +348,10 @@ pub struct Session {
     stepping: bool,
     /// The input of that tick, when the resume decided it.
     resume_input: Option<TickInput>,
+    /// A death's circles in progress: the frame time they have run, µs.
+    circles_us: Option<u64>,
+    /// Deaths' circles take frame time (see [`Session::with_death_circles`]).
+    death_circles: bool,
 }
 
 impl std::fmt::Debug for Session {
@@ -352,7 +392,18 @@ impl Session {
             down: Buttons::NONE,
             stepping: false,
             resume_input: None,
+            circles_us: None,
+            death_circles: false,
         }
+    }
+
+    /// Draws each death's circles between the tick that took the life and
+    /// the next, in [`CIRCLES_MS`] of frame time (see the [module
+    /// documentation](self)), as a session that shows the game does. The
+    /// ticks are the same with or without them.
+    pub fn with_death_circles(mut self) -> Session {
+        self.death_circles = true;
+        self
     }
 
     /// Plays with `rule` for keys across a pause or a screen (the original
@@ -583,11 +634,17 @@ impl Session {
     }
 
     /// The simulation time `wall_us` of frame time after the last frame:
-    /// the time a replayed pause or menu holds play (the one in progress
-    /// and those due on the way) does not count.
+    /// the time a death's circles in progress take, and the time a replayed
+    /// pause or menu holds play (the one in progress and those due on the
+    /// way), do not count.
     fn sim_time_after(&self, wall_us: u64) -> u64 {
         let mut now = self.now_us();
-        let mut left = wall_us.saturating_sub(self.hold_us.unwrap_or(0));
+        let circles_left = self.circles_us.map_or(0, |done| {
+            (u64::from(CIRCLES_MS) * 1000).saturating_sub(done)
+        });
+        let mut left = wall_us
+            .saturating_sub(circles_left)
+            .saturating_sub(self.hold_us.unwrap_or(0));
         let d = &self.directives;
         for next in &d.plan[d.next.min(d.plan.len())..] {
             let wall = match next.kind {
@@ -640,6 +697,20 @@ impl Session {
         }
         let mut ticks = 0;
         loop {
+            if let Some(done) = self.circles_us.as_mut() {
+                let total = u64::from(CIRCLES_MS) * 1000;
+                let take = left.min(total - *done);
+                *done += take;
+                left -= take;
+                let done = *done;
+                if done >= u64::from(CLOSE_MS) * 1000 {
+                    self.respawn();
+                }
+                if done < total {
+                    break;
+                }
+                self.circles_us = None;
+            }
             if let Some(hold) = self.hold_us.as_mut() {
                 let take = left.min(*hold);
                 *hold -= take;
@@ -668,8 +739,9 @@ impl Session {
                 }
                 None => left,
             };
-            ticks += self.run(feed).ticks;
-            left -= feed;
+            let (ran, used) = self.run_to_death(feed);
+            ticks += ran;
+            left -= used;
             if left == 0 {
                 break;
             }
@@ -678,6 +750,82 @@ impl Session {
             ticks,
             alpha: self.driver.alpha(),
         }
+    }
+
+    /// Runs the ticks `us` of frame time give, as [`Session::run`] does,
+    /// but stops after a tick in which Claw lost a life with lives left:
+    /// the death's circles then start, and the frame time not used goes to
+    /// them. Returns the ticks run and the frame time used.
+    fn run_to_death(&mut self, us: u64) -> (u32, u64) {
+        let acc = self.driver.step_mut().accumulator_us();
+        let total = acc + us.min(MAX_FRAME_US);
+        let n = (total / TICK_US).min(u64::from(MAX_TICKS_PER_FRAME));
+        if n <= 1 || !self.death_circles {
+            let ran = self.run(us).ticks;
+            self.watch_death(ran);
+            return (ran, us);
+        }
+        // One tick at a time, so a death ends the run where it happens; the
+        // ticks and the time left over are those of one run of `us`.
+        let mut used = 0;
+        let mut ran = 0;
+        for _ in 0..n {
+            let need = TICK_US - self.driver.step_mut().accumulator_us().min(TICK_US);
+            let r = self.run(need).ticks;
+            ran += r;
+            used += need;
+            if self.watch_death(r) {
+                return (ran, used);
+            }
+        }
+        self.run(total % TICK_US);
+        (ran, us)
+    }
+
+    /// Starts the death's circles after `ran` ticks when the last one left
+    /// a respawn waiting; true when it did. They start at the end of that
+    /// tick: the time already waiting in the accumulator is theirs.
+    fn watch_death(&mut self, ran: u32) -> bool {
+        if self.death_circles && ran > 0 && self.circles_us.is_none() && self.sim.respawn_pending()
+        {
+            let step = self.driver.step_mut();
+            self.circles_us = Some(step.accumulator_us());
+            step.reset();
+            return true;
+        }
+        false
+    }
+
+    /// Claw respawns between the ticks once the closing circle is over:
+    /// the frame to draw becomes the respawned game, and the cues and
+    /// events of the respawn are handed over with the ticks'.
+    fn respawn(&mut self) {
+        if !self.sim.respawn_now() {
+            return;
+        }
+        let snapshot = self.sim.snapshot();
+        self.outputs.add(&snapshot.audio, &snapshot.events);
+        self.driver.restart(snapshot);
+        if self.stepping {
+            self.driver.step_mut().step_once();
+        }
+    }
+
+    /// What to draw while a death's circles run between two ticks (see the
+    /// [module documentation](self)); `None` otherwise.
+    pub fn circles(&self) -> Option<Circles> {
+        let done = self.circles_us?;
+        let transition = self.sim.transition()?;
+        let ms = done as f64 / 1000.0;
+        let elapsed_ms = if transition.closing {
+            ms
+        } else {
+            ms - f64::from(CLOSE_MS + HOLD_MS)
+        };
+        Some(Circles {
+            transition,
+            elapsed_ms,
+        })
     }
 
     /// Plays the directives due at the boundary before the next tick:
@@ -785,7 +933,8 @@ impl Session {
     /// The frame to draw: interpolated between the last two ticks, or the
     /// latest tick alone.
     pub fn interpolated(&self, interpolate: bool) -> InterpolatedFrame<'_> {
-        if interpolate {
+        // A death's circles show the game as it stands between the ticks.
+        if interpolate && self.circles_us.is_none() {
             self.driver.interpolated()
         } else {
             self.driver.latest()

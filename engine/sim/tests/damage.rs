@@ -13,7 +13,7 @@ use claw_sim::level::ObjectSpec;
 use claw_sim::logic::ObjectData;
 use claw_sim::logic::effect::EffectKind;
 use claw_sim::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags, special, types};
-use claw_sim::player::death::{CLOSE_MS, HOLD_MS, OPEN_MS, powerup, ticks_of};
+use claw_sim::player::death::{CLOSE_MS, powerup, ticks_of};
 use claw_sim::player::hit::PickupFields;
 use claw_sim::player::state;
 use claw_sim::tiles::TileMap;
@@ -430,11 +430,15 @@ fn end_of_level_reports_the_map_piece_length() {
     assert_eq!(events, vec![GameEvent::LevelComplete { after_ms: 1520 }]);
     assert!(played(&audio, "GAME_MAPPIECE"));
     assert!(removed_next(&mut sim, p));
-    // Claw stands still for two ticks while the level ends.
+    // Claw stands still for two ticks while the level ends: Right pressed
+    // in the second is lost, a press after it walks.
     let x = sim.player().unwrap().x;
-    sim.step(hold(RIGHT));
+    sim.step(press(RIGHT));
     assert_eq!(sim.player().unwrap().x, x);
     sim.step(hold(RIGHT));
+    assert_eq!(sim.player().unwrap().x, x);
+    sim.step(TickInput::default());
+    sim.step(press(RIGHT));
     assert!(sim.player().unwrap().x > x);
 }
 
@@ -622,41 +626,25 @@ fn losing_all_health_falls_out_of_view_then_respawns() {
         (t.center.x, t.center.y),
         (f64::from(o.x + 30), f64::from(o.y + 55))
     );
-    // The body stays put while the circle closes.
-    let y = o.y;
-    for _ in 1..ticks_of(CLOSE_MS) {
-        step(&mut sim);
-        assert_eq!(sim.player().unwrap().y, y);
-        assert_eq!(sim.player().unwrap().state, state::DEATH_FALL);
-    }
+    // The circles take no game time: Claw respawns before the next tick,
+    // which finds him back at the level start, standing and free to move.
+    assert!(sim.respawn_pending());
     let (audio, events) = step(&mut sim);
     assert!(events.is_empty());
     assert!(played(&audio, "GAME_FLAGWAVE"), "back at the level start");
     let o = sim.player().unwrap();
     assert_eq!((o.x, o.y, o.state), (x0, y0, state::STAND));
+    assert!(o.flags & flags::SAFE == 0, "not frozen or safe");
     assert_eq!(sim.stats().health, 100);
     assert_eq!(sim.stats().lives, 6);
-    let respawned = sim.tick() - 1;
-    assert_eq!(respawned, died_at + ticks_of(CLOSE_MS));
-    let t = transition(&sim).expect("opening circle");
-    assert!(!t.closing);
-    assert_eq!(t.start_tick, respawned + ticks_of(HOLD_MS));
-    assert_eq!(t.duration_ms, OPEN_MS);
+    assert_eq!(sim.tick(), died_at + 2);
     assert_eq!(
-        (t.center.x, t.center.y),
-        (f64::from(x0), f64::from(y0 - 32))
+        transition(&sim),
+        None,
+        "the circles are drawn between ticks"
     );
-    // Frozen and safe until the circle is open.
-    let frozen = ticks_of(HOLD_MS) + ticks_of(OPEN_MS);
-    for _ in 1..frozen {
-        sim.step(hold(RIGHT));
-        assert_eq!(sim.player().unwrap().x, x0);
-        assert!(sim.player().unwrap().flags & flags::SAFE != 0);
-    }
-    sim.step(hold(RIGHT));
-    assert_eq!(transition(&sim), None);
-    assert!(sim.player().unwrap().flags & flags::SAFE == 0);
-    assert!(sim.player().unwrap().x > x0, "moves again");
+    sim.step(press(RIGHT));
+    assert!(sim.player().unwrap().x > x0, "moves at once");
 }
 
 #[test]
@@ -694,13 +682,14 @@ fn death_on_a_death_tile_respawns_at_the_last_checkpoint() {
     let events = run_until(&mut sim, TickInput::default(), 10, |s| s.stats().lives == 6);
     assert_eq!(events, vec![GameEvent::ClawDied { lives_left: 6 }]);
     assert_eq!(sim.stats().attempt, 1);
-    let mut flag_sound = false;
-    for _ in 0..ticks_of(CLOSE_MS) {
-        let (audio, events) = step(&mut sim);
-        assert!(events.is_empty(), "the lives step runs once");
-        flag_sound |= played(&audio, "GAME_FLAGWAVE");
-    }
-    assert!(flag_sound, "the flag sound marks a checkpoint respawn");
+    // Back at the checkpoint in the next tick: the circles take no game
+    // time.
+    let (audio, events) = step(&mut sim);
+    assert!(events.is_empty(), "the lives step runs once");
+    assert!(
+        played(&audio, "GAME_FLAGWAVE"),
+        "the flag sound marks a checkpoint respawn"
+    );
     let o = sim.player().unwrap();
     assert_eq!((o.x, o.y, o.state), (1210, 899, state::STAND));
     assert_eq!(sim.stats().health, 100);

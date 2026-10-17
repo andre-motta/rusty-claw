@@ -1129,7 +1129,12 @@ fn sword_shot(c: &mut Ctx) {
 ///
 /// The jump's handover to the fall at its top does not come here while an
 /// air attack runs (see [`carry_over_jump_top`]).
+///
+/// Every cancel also takes Left and Right off the key latch: a direction
+/// still held counts as pressed again on the next tick (see
+/// [`super::Claw::repress_directions`]).
 pub fn cancel(c: &mut Ctx) {
+    c.p.repress_directions = true;
     if let Some(held) = c.p.special.lifted.take() {
         c.with_world(|w| logic::dropped(w, held));
     }

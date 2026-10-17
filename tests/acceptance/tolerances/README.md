@@ -65,18 +65,18 @@ twice at each clock with identical traces.
 
 ### c18: tick for tick
 
-- Claw's position, state, physics type, health and the camera point are
-  equal on every tick of the run: standing, both jumps, walking off the
-  step, walking, the climb, the treasure, the running jumps and the
-  officer. With the random draws in the original's schedule the officer's
-  strike that hit Claw at 16776 ms only in the game is gone; the officer
-  falls to Claw a little later in the game (the score at 17946 ms).
+- Every column is equal on every tick of the run, the score and the
+  random stream included: standing, both jumps, walking off the step,
+  walking, the climb, the treasure, the running jumps and the officer.
+  With the random draws in the original's schedule the officer's strike
+  that hit Claw at 16776 ms only in the game is gone, and with the
+  goodies' spin and the kegs' depth (see "What is fixed and what remains")
+  the officer falls and its coins are taken in the original's ticks.
 - With the level's objects held inert, Claw's horizontal position is equal
   for the whole 32.5 s run and his height until the original's officer
   first hits him at 25938 ms. Claw's own movement and the camera therefore
   follow the original exactly at this clock; no movement fix is needed.
-- The random stream first differs at 7506 ms on the opening (see "What
-  is fixed and what remains" below for every route).
+- The random stream is equal from time zero to the end of the run.
 - Sound choices that the original draws from the shared stream (Claw's hit
   sound and pain line, the officer's line) already come from the shared
   stream in the game. The sound variant of an animation frame comes from a
@@ -166,35 +166,37 @@ route in `references.toml` at its clock's preset):
 
 ## What the first level's bot routes show
 
-The stores `level1/bot-original-v2` (`c18`) and `level1/bot-v2` (`c60`)
+The stores `level1/bot-original-v3` (`c18`) and `level1/bot-v3` (`c60`)
 hold the original's runs, twice at their clock with identical traces both
 times and from the original's random state at time zero, of the routes
-that were in `tests/acceptance/routes/` before the random draws took the
-original's schedule. Neither finishes the first level in the original.
-With that schedule the officer near the start hits Claw at 8586 ms in the
-game too, as in the original, and those routes no longer win in the game,
-so the bot found the routes in `tests/acceptance/routes/` again (same
-seed, same margin rules); the original has not played the new routes yet.
+that were in `tests/acceptance/routes/` before the ten rules listed in
+"What is fixed and what remains" (the goodies, the save points, the
+enemy built beside its limits, the kegs' depth, the walk start and the
+respawn).
 
-- **`c18`.** The random stream first differs at 51516 ms, and Claw's
-  position, state and the camera are equal tick for tick until 51552 ms,
-  the officer's hit at 8586 ms included. At 51516 ms an officer falls in the original (its hit burst,
-  its loot and its death draw nine numbers more than the game draws in
-  that step), while in the game it stands and its sword hits Claw at
-  51552 ms; the route goes another way from there.
-- **`c60`.** Claw's first fall off the start step is 26 px apart at
-  684 ms, within the two ticks of timing the feel tolerance allows. Such
-  small differences add up: the game reaches the ladder near 2.8 s about
-  45 ms after the original, jumps off it about 35 ms later, and is 20 px
-  lower in that jump at 3217 ms. From there the route, played without
-  looking at the game, goes another way, and in the original ends
-  against the wall right of the start (1814,4794). This is expected of a
-  route played open loop at 60 frames per second: `c60` is compared for
-  feel stretch by stretch and need not finish the level.
+- **`c18`.** The game equals the original on all 6691 compared steps
+  (120.4 s): Claw's position, state and physics type, the camera, health,
+  score, lives, ammunition and the random stream. The route loses a life
+  on the death tiles at 97002 ms in both games: it was planned with the
+  walk start the game had before (Claw walked from standing while a
+  direction was held; the original walks on its press), and it does not
+  finish the level. The only difference is the events column's format: in
+  the tick of a save the game also reports the save point and its
+  message.
+- **`c60`.** As for `level1/bot-v2`, whose route starts the same way:
+  within the feel tolerance until Claw is 20 px lower in the jump off the
+  ladder at 3217 ms, then the two runs go different ways.
 
-The earlier stores (`level1/bot-original`, `level1/bot`, the `-delay1`
-stores and `level1/bot-original-seg3410`) hold earlier routes, whose keys
-were already down on their first row; they stay listed as further checks.
+Since that route loses in the original, the bot found the routes in
+`tests/acceptance/routes/` again with these rules (same seed, same
+margin rules); the original has not played the new routes yet.
+
+The earlier stores stay listed as further checks: `level1/bot-original-v2`
+and `level1/bot-v2` hold the routes from before the draws took the
+original's schedule (the `c18` one is now equal on every step too), and
+`level1/bot-original`, `level1/bot`, the `-delay1` stores and
+`level1/bot-original-seg3410` hold earlier routes, whose keys were
+already down on their first row.
 
 ## What is fixed and what remains
 
@@ -220,36 +222,55 @@ Fixed in the game, and so no longer listed as differences:
   a limit only when its exact position is, a woken enemy first moves for
   the time it slept (at most 200 ms), and Claw's hit burst draws its y
   jitter first.
+- **Goodies.** An item a crate or an enemy drops spins through its set
+  while it flies and becomes collectable with the box of the picture it
+  shows then (an edge-on coin is 8 px wide); it moves on an exact
+  position, one tick of constant acceleration at a time, with its first
+  picture's box grown 10 px left, up and right, and a wall on either side
+  turns it around at half speed; and each call it first acts on what its
+  previous move left (a landing makes it bounce in the next call, the
+  call after the fourth bounce makes it a pickup).
+- **Save points.** Saving the game leaves the random stream in the save's
+  own state (1695759300), and the ambient timers count no time in the
+  tick of a save.
+- **Enemies placed beside their limits.** A human enemy placed outside
+  its patrol limits starts on the nearer limit, on the floor below it.
+  Which step of the original's set-up does this is not known; the game
+  moves it there before it is dropped to the floor, which gives the
+  original's result.
+- **Kegs.** A lying keg is drawn in front of Claw or behind him by where
+  his feet are, as the enemies are, so the kegs behind him run before him.
+- **The walk start.** Standing, Claw starts a walk when Right or Left is
+  pressed, and an attack's end or any change of his state makes a
+  direction still held count as pressed in the next tick: a direction
+  pressed during a standing attack walks after the attack's end.
+- **The respawn.** A lost life with lives left ends its tick with Claw
+  dead, and he is back at the checkpoint before the next tick, with the
+  camera and the objects around him set up and one update pass run. The
+  closing and opening circles are drawn by the game's window between the
+  two ticks, outside game time, so recordings and traces have no ticks
+  for them.
 
 Known differences that remain, each listed in `references.toml` for the
 routes it touches:
 
-- **Draws still out of step.** With the schedule above the random
-  stream stays equal much longer, but each `c18` store still has a first
-  step where the two games draw a different number of times; every random
-  choice after it (an enemy's next move, whether a strike lands, a
-  standing attack's variant) can come out differently. Per store (the
-  time is `known.rng` in `references.toml`):
-  - `level1/bot-original-v2`: first differs at 51516 ms, where the
-    original draws nine numbers more: an officer falls in the original and
-    stands in the game.
-  - `level1/opening`: first differs at 7506 ms, where the game draws one
-    number fewer. Claw's columns stay equal throughout; only the score
-    differs, from 17946 ms.
-  - `level1/video`: first differs at 5346 ms, where the game draws one
-    number fewer. Claw's columns stay equal until 54774 ms.
-  - `level1/bot-original`: first differs at 24678 ms, where the game
-    draws one number more. Claw's columns stay equal until 27378 ms.
-  - `level1/bot-original-delay1`: first differs at 25812 ms. The first
-    difference of the store is not in the stream: a standing attack holds
-    Claw longer in the original at 24858 ms, before it.
+- **Draws still out of step.** Two `c18` stores still have a step where
+  the two games draw a different number of times (the time is
+  `known.rng` in `references.toml`):
+  - `level1/bot-original-delay1`: first differs at 47052 ms, where Claw
+    has stood since his respawn and the game draws, a step early, one of
+    the two numbers the original draws in the next step. Claw's columns
+    stay equal until 52452 ms.
   - `level1/bot-original-seg3410`: first differs at 18 ms, the segment's
     first step after Claw is placed and the stream is set: the original
     draws nothing there, the game draws one number. Claw's columns stay
-    equal until 11970 ms (the score).
+    equal until 19620 ms.
 
-  None of these steps is traced to its cause yet; they are the next
-  things to match, and the entries are tightened when they are.
+  Neither step is traced to its cause yet. Every other `c18` store is
+  equal on every step.
+- **The events' format.** In the tick of a save the game also reports
+  the save point and its message, which the original's traces do not
+  list (`level1/bot-original-v3`, 36450 ms).
 - **Open-loop routes at `c60`.** Frames of 16 and 17 ms against the
   game's 18 ms ticks move a landing or a ladder grab by a frame or two,
   and a route played without looking at the game goes another way from

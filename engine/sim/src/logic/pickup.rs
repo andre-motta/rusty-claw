@@ -20,7 +20,12 @@
 //! ([`spawn_drop`], [`drop_loot`]): they hop out, can be taken 125 ms after
 //! they appear, bounce up to four times at half speed and then become the
 //! ordinary pickup of their code where they are. An item whose picture the
-//! level does not have is not dropped.
+//! level does not have is not dropped. A goodie spins through its set
+//! (`GAME_CYCLE100`, from its first frame) while it flies, and the box it
+//! can be taken with is the box of the frame it shows when it becomes
+//! collectable. Each call it first acts on what the previous call's move
+//! left (a landing makes it bounce, the fourth bounce over makes it a
+//! pickup), then moves (see [`Goodie`]).
 //!
 //! The map piece that ends a level shows `GAME_MAPPIECE` on odd levels
 //! other than 13 and `LEVEL_GEM` on the others (see [`map_piece_set`]).
@@ -46,8 +51,8 @@
 //! [`census`] counts the treasure a level holds, by kind, for the end of
 //! level tally.
 //!
-//! Pickups and glitter show a still image instead of cycling through their
-//! set.
+//! Placed pickups and glitter show a still image instead of cycling
+//! through their set; only a flying goodie spins.
 
 use claw_frame::SoundChannel;
 
@@ -163,7 +168,7 @@ pub const IMAGE_SETS: &[&str] = &[
 ];
 
 /// Prefixes of the animations this family may play.
-pub const ANIM_PREFIXES: &[&str] = &["GAME_GLITTER", "GAME_POINTS"];
+pub const ANIM_PREFIXES: &[&str] = &["GAME_GLITTER", "GAME_POINTS", "GAME_CYCLE"];
 
 // ------------------------------------------------------------ the table
 
@@ -600,6 +605,16 @@ pub struct Flight {
 }
 
 /// Motion of a bouncing goodie.
+///
+/// The goodie keeps an exact position. Each move covers one tick of
+/// constant acceleration exactly (`v dt + a dt^2 / 2`, then `v += a dt`),
+/// and the goodie is moved through the tiles to the whole pixels of the
+/// new exact position (towards 0). When the tiles stop it short on an
+/// axis, the exact position on that axis becomes where it stopped, and
+/// under gravity the speed becomes the one it has at that height
+/// (`sign(v) sqrt(v^2 + 2 a (stopped - wanted))`). Then a wall on the
+/// right or the left turns the speed across around at half, and a ceiling
+/// turns the speed up and down around.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Goodie {
     /// Horizontal speed, px/s.
@@ -608,8 +623,8 @@ pub struct Goodie {
     pub vy: f64,
     /// Downward acceleration, px/s/s.
     pub gravity: f64,
-    /// Sub-pixel movement carried to the next tick.
-    pub rest: (f64, f64),
+    /// Exact position, level pixels.
+    pub pos: (f64, f64),
     /// Time since it appeared, ms.
     pub age_ms: u32,
     /// Bounces so far.
@@ -730,6 +745,11 @@ pub const GOODIE_COLLECT_MS: u32 = 125;
 pub const GOODIE_BOUNCES: u32 = 4;
 /// Fastest bounce, px/s up.
 pub const GOODIE_MAX_BOUNCE: f64 = 500.0;
+/// Animation a goodie spins with while it flies.
+pub const GOODIE_ANIM: &str = "GAME_CYCLE100";
+/// A goodie's movement box is the box of its first picture grown by this
+/// much to the left, up and to the right (not down), px.
+pub const GOODIE_MOVE_GROW: i32 = 10;
 /// Time a goodie on a deadly tile flashes before it is removed, ms.
 pub const GOODIE_DYING_MS: i32 = 1000;
 /// Length of the flight to the status bar, ms.
@@ -1045,15 +1065,25 @@ pub fn spawn_drop(w: &mut World, x: i32, y: i32, powerup_code: i32) -> Option<Ob
     if !level_has_set(w.level, set) {
         return None;
     }
+    let image_set = runtime_image_set(set);
+    let first = w.image_frames(&image_set).map_or(-1, |(first, _)| first);
     let mut o = new_object(BOUNCING_GOODIE, x, y, GOODIE_Z);
-    o.image_set = runtime_image_set(set);
-    o.frame = -1;
+    o.image_set = image_set;
+    o.frame = first;
     // A goodie is not a pickup yet: it cannot touch anything until it can
     // be taken, and it stays active wherever it flies.
     o.type_flags = 1;
     o.flags |= flags::NO_COLLIDE | flags::ALWAYS_ACTIVE;
     o.physics_type = ptype::FLY;
-    o.move_rect = FRAME_BOX;
+    // It moves with the box of its first picture grown to the left, up and
+    // to the right.
+    let b = picture_box(w, &o);
+    o.move_rect = Rect::new(
+        b.left - GOODIE_MOVE_GROW,
+        b.top - GOODIE_MOVE_GROW,
+        b.right + GOODIE_MOVE_GROW,
+        b.bottom,
+    );
     o.state = state::GOODIE_FALLING;
     o.data = ObjectData::Pickup(PickupData {
         drop_code: Some(code),
@@ -1061,11 +1091,14 @@ pub fn spawn_drop(w: &mut World, x: i32, y: i32, powerup_code: i32) -> Option<Ob
             vx: 0.0,
             vy: -f64::from(DROP_SPEED),
             gravity: GOODIE_GRAVITY,
+            pos: (f64::from(x), f64::from(y)),
             ..Goodie::default()
         }),
         ..PickupData::default()
     });
-    Some(w.spawn(o))
+    let id = w.spawn(o);
+    w.set_anim(id, GOODIE_ANIM);
+    Some(id)
 }
 
 /// Drops several items at (x, y), as a defeated enemy or a crate in a
@@ -1146,12 +1179,15 @@ fn settle(w: &mut World, id: ObjectId) {
 
 fn goodie_tick(w: &mut World, id: ObjectId) {
     let level = w.level_number();
-    let picture = picture_box(w, w.objects.get(id).expect("caller checked"));
-    let o = w.objects.get_mut(id).expect("caller checked");
-    let st = o.state;
+    let st = w.objects.get(id).expect("caller checked").state;
     if st == engine_state::DESTROYING {
         return;
     }
+    if st != state::GOODIE_DYING {
+        w.advance_anim(id);
+    }
+    let picture = picture_box(w, w.objects.get(id).expect("caller checked"));
+    let o = w.objects.get_mut(id).expect("caller checked");
     let Some(mut g) = data_mut(o).goodie else {
         return;
     };
@@ -1164,41 +1200,14 @@ fn goodie_tick(w: &mut World, id: ObjectId) {
         data_mut(o).goodie = Some(g);
         return;
     }
-    // Ballistic motion through the tiles.
-    let dt = f64::from(TICK_MS) / 1000.0;
-    g.vy += g.gravity * dt;
-    let fx = g.vx * dt + g.rest.0;
-    let fy = g.vy * dt + g.rest.1;
-    let (dx, dy) = (fx.trunc(), fy.trunc());
-    g.rest = (fx - dx, fy - dy);
-    let (tx, ty) = (o.x + dx as i32, o.y + dy as i32);
-    o.physics_type = if o.physics_type == ptype::STAND {
-        ptype::FLY
-    } else {
-        o.physics_type
-    };
-    let r = w.physics(id, tx, ty, 0);
-    let o = w.objects.get_mut(id).expect("checked");
-    if r & res::CEILING != 0 && g.vy < 0.0 {
-        g.vy = 0.0;
-        g.rest.1 = 0.0;
-    }
-    if r & res::WALL != 0 {
-        g.rest.0 = 0.0;
-    }
-    let landed = o.physics_type == ptype::STAND;
-    g.age_ms = g.age_ms.saturating_add(TICK_MS);
-    if r & res::DEATH_TILE != 0 {
-        o.state = state::GOODIE_DYING;
-        o.draw_flags |= draw_flags::FLASH;
-        o.flags |= flags::NO_COLLIDE;
-        g.dying_ms = Some(GOODIE_DYING_MS);
-        data_mut(o).goodie = Some(g);
-        return;
-    }
+    // First the state rule, on what the previous call's move left: a
+    // landing (standing) makes it bounce, and it can be taken from its
+    // seventh call (125 ms).
     let taken = o.special_flags & special::FLYING_TO_HUD != 0;
+    let landed = o.physics_type == ptype::STAND;
+    let mut bounced = false;
     if st == state::GOODIE_FALLING {
-        if g.age_ms >= GOODIE_COLLECT_MS && o.type_flags == 1 {
+        if g.age_ms + TICK_MS >= GOODIE_COLLECT_MS && o.type_flags == 1 {
             make_collectable(o, level, picture);
         }
         if taken {
@@ -1209,9 +1218,7 @@ fn goodie_tick(w: &mut World, id: ObjectId) {
         if landed {
             make_collectable(o, level, picture);
             bounce(o, &mut g);
-            data_mut(o).goodie = Some(g);
-            sound::play_from(w, id, "GAME_PUBOUNCE1", SoundChannel::Effect);
-            return;
+            bounced = true;
         }
     } else if st == state::GOODIE_BOUNCING {
         if g.bounces >= GOODIE_BOUNCES || taken {
@@ -1221,15 +1228,61 @@ fn goodie_tick(w: &mut World, id: ObjectId) {
         }
         if landed {
             bounce(o, &mut g);
-            data_mut(o).goodie = Some(g);
-            sound::play_from(w, id, "GAME_PUBOUNCE1", SoundChannel::Effect);
-            return;
+            bounced = true;
         }
+    }
+    if bounced {
+        data_mut(o).goodie = Some(g);
+        sound::play_from(w, id, "GAME_PUBOUNCE1", SoundChannel::Effect);
+    }
+    let o = w.objects.get_mut(id).expect("caller checked");
+    // Then the move: one tick of constant acceleration on the exact
+    // position, through the tiles to its whole pixels.
+    let dt = f64::from(TICK_MS) / 1000.0;
+    let want = (
+        g.pos.0 + g.vx * dt,
+        g.pos.1 + g.vy * dt + 0.5 * g.gravity * dt * dt,
+    );
+    g.vy += g.gravity * dt;
+    let (tx, ty) = (want.0.trunc() as i32, want.1.trunc() as i32);
+    if o.physics_type == ptype::STAND {
+        o.physics_type = ptype::FLY;
+    }
+    let r = w.physics(id, tx, ty, 0);
+    let o = w.objects.get_mut(id).expect("checked");
+    g.pos = want;
+    if o.x != tx {
+        // Stopped short across: no acceleration there, the speed stays.
+        g.pos.0 = f64::from(o.x);
+    }
+    if o.y != ty {
+        let v = (g.vy * g.vy + 2.0 * g.gravity * (f64::from(o.y) - want.1))
+            .max(0.0)
+            .sqrt();
+        g.vy = if g.vy > 0.0 { v } else { -v };
+        g.pos.1 = f64::from(o.y);
+    }
+    if r & res::CEILING != 0 {
+        g.vy = -g.vy;
+    }
+    if r & res::RIGHT != 0 {
+        g.vx *= -0.5;
+    }
+    if r & res::LEFT != 0 {
+        g.vx *= -0.5;
+    }
+    g.age_ms = g.age_ms.saturating_add(TICK_MS);
+    if r & res::DEATH_TILE != 0 {
+        o.state = state::GOODIE_DYING;
+        o.draw_flags |= draw_flags::FLASH;
+        o.flags |= flags::NO_COLLIDE;
+        g.dying_ms = Some(GOODIE_DYING_MS);
     }
     data_mut(o).goodie = Some(g);
 }
 
-/// A landing goodie hops back up at half speed (at most 500 px/s).
+/// A landing goodie hops back up at half speed (at most 500 px/s), from
+/// 1 px above where it landed.
 fn bounce(o: &mut Object, g: &mut Goodie) {
     g.bounces += 1;
     o.state = state::GOODIE_BOUNCING;
@@ -1237,7 +1290,7 @@ fn bounce(o: &mut Object, g: &mut Goodie) {
     o.y -= 1;
     let v = (g.vy * g.vy - 2.0 * g.gravity).max(0.0).sqrt();
     g.vy = (-0.5 * v).max(-GOODIE_MAX_BOUNCE);
-    g.rest.1 = 0.0;
+    g.pos.1 = f64::from(o.y);
 }
 
 // ------------------------------------------------------------ the boss's gem

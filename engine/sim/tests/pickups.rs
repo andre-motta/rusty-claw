@@ -1570,12 +1570,13 @@ fn pickup_and_crate_boxes_come_from_the_pictures() {
     assert_eq!(obj(&sim, h).attack_rect, food, "health is not padded");
     let c = find(&sim, "FrontCrate")[0];
     assert_eq!((obj(&sim, c).hit_rect, obj(&sim, c).frame), (crate_box, 1));
-    // The crate's coin comes out showing the set's first image, -1, and
-    // touches with that image's box once it can be taken.
+    // The crate's coin comes out showing the set's first image and, with
+    // no spin in this level, touches with that image's box once it can be
+    // taken.
     let claw = claw(&mut sim);
     hit(&mut sim, c, claw);
     let g = find(&sim, pickup::BOUNCING_GOODIE)[0];
-    assert_eq!(obj(&sim, g).frame, -1);
+    assert_eq!(obj(&sim, g).frame, 1);
     step(&mut sim, 10);
     assert_eq!(obj(&sim, g).attack_rect, pickup::goodie_box(coin));
 }

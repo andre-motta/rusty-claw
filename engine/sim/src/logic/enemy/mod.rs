@@ -1008,8 +1008,11 @@ pub struct Body {
 
 /// Gives the enemy its body and `fields`: an enemy that can be hit, is
 /// removed far outside the level and (for human enemies) is told before it
-/// is removed; then it is dropped to the floor below it.
+/// is removed; then it is dropped to the floor below it. A human enemy
+/// placed outside its patrol limits across is first moved onto the nearer
+/// limit (see [`clamp_into_bounds`]).
 pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human: bool) {
+    let bounds = fields.bounds;
     let o = obj_mut(w, id);
     o.image_set = crate::level::runtime_image_set(body.image_set);
     o.type_flags = types::ENEMY;
@@ -1030,7 +1033,26 @@ pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human
     o.health = scaled(body.health, HEALTH_FACTOR);
     o.damage = scaled(body.damage, DAMAGE_FACTOR);
     o.data = ObjectData::Enemy(fields.into());
+    if human {
+        clamp_into_bounds(o, bounds);
+    }
     drop_to_floor(w, id);
+}
+
+/// Moves `o` across into its patrol limits `bounds` (min, max), each when
+/// set, before it is dropped to the floor: an enemy placed beside its
+/// range starts on the limit, standing on the floor below it.
+///
+/// Inferred: in the original such a soldier is on its limit and on the
+/// floor below it right after it is built, before it ever moves, but the
+/// step of its construction that moves it is not known; clamping before
+/// the floor drop gives that result.
+pub fn clamp_into_bounds(o: &mut Object, bounds: (i32, i32)) {
+    let (lo, hi) = bounds;
+    if lo > hi {
+        return;
+    }
+    o.x = o.x.clamp(lo, hi);
 }
 
 /// Puts the enemy 32 px higher, then down on the first floor below it,
