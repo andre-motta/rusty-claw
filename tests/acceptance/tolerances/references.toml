@@ -1,5 +1,8 @@
-# Routes the install test `install_reference` compares with their
-# reference traces (README.md explains the clocks and the files).
+# Routes the install tests compare with their reference traces (README.md
+# explains the clocks and the files): `install_reference` plays them tick
+# by tick, and `install_differential`, the gate, plays them through the
+# game's frame loop at 60 Hz and compares c18 runs with exact.toml and c60
+# runs with feel.toml.
 #
 # Each [[compare]] entry names a route in the reference store
 # ($CLAW_REFERENCE/<reference>/), the clock of the reference runs (c18 or
@@ -8,6 +11,11 @@
 # its tolerance; the test fails when a column leaves it earlier, or when a
 # column with no known divergence leaves it at all. When a known divergence
 # comes later or goes away, the test says so and the entry is tightened.
+#
+# The entries of the bot's routes, the delayed routes and the segment
+# record the first divergences of the routes as stored, measured while the
+# game still acted on keys held from the start of play; they are replaced
+# once the original has played the new routes.
 
 # The first level's opening, one 18 ms step per frame against the original
 # speeds and the original's random state at time zero. Claw's movement and
@@ -31,18 +39,155 @@ known.rng = 18
 
 # The same route at 60 frames per second against the default tuning.
 # Claw stays within the feel tolerance until the climb up the ladder,
-# where the game climbs faster than the original (from 11150 ms), and the
+# where the game climbs faster than the original (from 11400 ms with two
+# ticks of position timing), and the
 # officer's sword hits Claw in the original at 16384 ms but not in the
 # game.
 [[compare]]
 reference = "level1/opening"
 clock = "c60"
 tolerance = "feel"
-known.x = 16417
-known.y = 11150
+known.x = 16450
+known.y = 11400
 known.state_id = 12750
 known.physics_type = 12750
-known.cam_x = 16417
-known.cam_y = 11150
+known.cam_x = 16450
+known.cam_y = 11400
 known.health = 16384
 known.score = 23050
+
+# The bot's winning route of the first level (original speeds), one 18 ms
+# step per frame. The original ignores keys that are already down when
+# play starts until they are released and pressed again; the route presses
+# Right and Jump on its first row, so Claw stands still in the original
+# while he jumps at once in the game, and the rest of the route plays from
+# another place. The random stream differs from the first tick (enemy
+# random draws come in another order).
+[[compare]]
+reference = "level1/bot-original"
+clock = "c18"
+tolerance = "exact"
+known.x = 18
+known.y = 18
+known.state_id = 18
+known.physics_type = 18
+known.cam_x = 18
+known.cam_y = 18
+known.rng = 18
+known.health = 8550
+known.score = 5472
+known.events = 9738
+
+# The bot's winning route of the first level (default tuning) at 60 frames
+# per second: the same start, Claw first moves on the 31st frame in the
+# original. Not required to finish the level.
+[[compare]]
+reference = "level1/bot"
+clock = "c60"
+tolerance = "feel"
+known.x = 67
+known.y = 67
+known.state_id = 17
+known.physics_type = 17
+known.cam_x = 67
+known.cam_y = 67
+known.score = 4517
+known.events = 7812
+known.health = 86484
+
+# A route written down from a recording of a fast run of the first level,
+# at 60 frames per second. It never climbs out of the start area, in the
+# original and the game alike. A running jump with the jump key held part
+# of the way peaks 11 px lower in the game's default tuning (6050 ms); from
+# about 68 s Claw stands at a wall in both games at slightly different
+# points.
+[[compare]]
+reference = "level1/video"
+clock = "c60"
+tolerance = "feel"
+known.y = 6050
+known.cam_y = 6050
+known.state_id = 6050
+known.physics_type = 6050
+known.x = 68000
+known.cam_x = 68000
+known.score = 69684
+
+# The same route, one 18 ms step per frame against the original speeds:
+# Claw's movement is equal tick for tick for 54.8 s, until a standing
+# attack holds Claw for 21 steps in the original and 8 in the game (the
+# attack's variant is drawn from the random stream, which differs from the
+# first tick).
+[[compare]]
+reference = "level1/video"
+clock = "c18"
+tolerance = "exact"
+known.rng = 18
+known.state_id = 54792
+known.physics_type = 54792
+known.y = 57726
+known.cam_y = 57726
+known.x = 68112
+known.cam_x = 68112
+known.score = 73242
+
+# The bot's route (original speeds) with one empty row first, so its keys
+# are pressed after play starts. An officer's sword hits Claw in the game
+# at 8568 ms while in the original it misses him; the random stream
+# differs from the first tick.
+[[compare]]
+reference = "level1/bot-original-delay1"
+clock = "c18"
+tolerance = "exact"
+known.rng = 18
+known.state_id = 8568
+known.physics_type = 8568
+known.health = 8568
+known.x = 8586
+known.cam_x = 8586
+known.y = 8604
+known.cam_y = 8604
+known.events = 9144
+known.score = 10224
+known.lives = 36036
+
+# The bot's route (default tuning) with one empty row first, at 60 frames
+# per second. At 550 ms the jump key is pressed on the frame Claw lands in
+# the original, where the press is spent while he still falls; the game
+# landed a tick earlier and jumps. A route played without looking at the
+# game goes another way from there.
+[[compare]]
+reference = "level1/bot-delay1"
+clock = "c60"
+tolerance = "feel"
+known.state_id = 550
+known.physics_type = 550
+known.y = 600
+known.cam_y = 600
+known.x = 1050
+known.cam_x = 1050
+known.score = 4534
+known.events = 7830
+known.health = 53634
+
+# A segment of the bot's route (original speeds) from row 3410, with Claw
+# placed at 10355,2051 and left to settle, and the random stream set at
+# the segment's time zero. Claw's movement is equal tick for tick for
+# 13.6 s, until a standing attack holds Claw for 21 steps in the original
+# and 8 in the game (the attack's variant is drawn from the random stream,
+# which differs from the first tick).
+[[compare]]
+reference = "level1/bot-original-seg3410"
+clock = "c18"
+tolerance = "exact"
+known.rng = 18
+known.x = 13590
+known.cam_x = 13590
+known.state_id = 13590
+known.physics_type = 13590
+known.y = 14238
+known.cam_y = 14238
+known.health = 14814
+known.score = 11970
+known.events = 19188
+known.lives = 27702

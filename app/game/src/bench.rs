@@ -62,22 +62,41 @@
 //! measured in a window with vsync on; elsewhere they are reported as not
 //! measurable, never as passed. [`Report::summary`] is the one-line PASS
 //! or FAIL verdict naming each budget.
+//!
+//! # Along a route
+//!
+//! [`run_headless_route`] benchmarks a route file instead (`--bench-route
+//! FILE`): an input script played from the level's start with the tuning,
+//! seed and behaviour switches its header names, as a replay plays it,
+//! through the same frame loop, offscreen, with every frame drawn and
+//! measured as above. The run lasts until the route's last row has run (or
+//! for at most `--bench SECONDS` when given). Its report adds
+//! `bench_route`: the route file and its length, how much of it ran,
+//! whether the level was completed, the sprite sets first looked up while
+//! drawing (each one read and decoded files on the frame path; it must be 0
+//! at the route's end, a budget of its own) and a digest of the route's
+//! trace. The trace depends only on the route and the simulated display
+//! rate, never on how fast the machine draws, so two runs give the same
+//! digest, and it is the trace a replay of the route through
+//! [`route_session`] gives.
 
 use std::fmt::Write as _;
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use claw_frame::{Buttons, FramePacer, SimulatedRefresh};
+use claw_frame::{Buttons, FramePacer, GameEvent, SimulatedRefresh};
 use claw_render::gpu::COLOR_FORMAT;
 use claw_render::{FrameInput, Gpu, Offscreen, Renderer, SceneBuilder};
 use claw_sim::logic::enemy;
 use claw_sim::object::LogicKind;
 use claw_sim::tiles::{GROUND, SOLID};
+use claw_sim::trace::{self, TraceRow};
 use claw_sim::{GameLogic, InputScript, Sim, SimLevel};
 
 use crate::audio::{AudioBridge, ViewInfo, load_soundfont};
 use crate::load::{load_graphics, load_level, new_sim, preload};
-use crate::session::{Session, TickSample};
+use crate::session::{Session, TickSample, script_behaviour, script_switches};
 use crate::settings::Settings;
 use crate::window::StatusLayer;
 
@@ -1023,21 +1042,275 @@ pub fn json_string(s: &str) -> String {
     out
 }
 
+/// A route file for [`run_headless_route`]: an input script played from
+/// the level's start.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RouteFile {
+    /// The file's name, for the report.
+    pub name: String,
+    /// The route.
+    pub script: InputScript,
+    /// The file's text, for the behaviour switches its comment lines name.
+    pub text: String,
+}
+
+impl RouteFile {
+    /// Reads and parses the route at `path`.
+    pub fn read(path: &Path) -> Result<RouteFile> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading route {}", path.display()))?;
+        RouteFile::parse(&path.display().to_string(), text)
+    }
+
+    /// The route named `name` with the text `text`.
+    pub fn parse(name: &str, text: String) -> Result<RouteFile> {
+        let script = InputScript::parse(&text).with_context(|| format!("route {name}"))?;
+        if script.ticks.is_empty() {
+            anyhow::bail!("route {name} has no rows");
+        }
+        Ok(RouteFile {
+            name: name.to_string(),
+            script,
+            text,
+        })
+    }
+
+    /// Makes `settings` play the route as a replay of it plays: the level,
+    /// tuning and seed its header names, and the mid-air hit jump fix and
+    /// the pause and fuse switches its comment lines name, each unless the
+    /// command line set it.
+    pub fn apply(&self, settings: &mut Settings) {
+        let header = &self.script.header;
+        if let Some(level) = header.level
+            && !settings.from_command_line.contains("level")
+        {
+            settings.level = crate::settings::LevelChoice::Retail(level);
+        }
+        settings.follow_script(script_behaviour(&self.text));
+        settings.follow_header(header);
+        let switches = script_switches(&self.text);
+        if let Some(p) = switches.pause_input
+            && !settings.from_command_line.contains("pause_input")
+        {
+            settings.pause_input = p;
+        }
+        if let Some(f) = switches.fuse_clock
+            && !settings.from_command_line.contains("fuse_clock")
+        {
+            settings.fuse_clock = f;
+        }
+    }
+}
+
+/// The session that plays `script` from `sim` the way a route benchmark
+/// does, with `settings`' pause switch, recording one trace row per tick.
+/// A replay of the same route through it gives the benchmark's trace.
+pub fn route_session(sim: Sim, script: &InputScript, settings: &Settings) -> Session {
+    let mut session = Session::new(sim)
+        .with_pause_input(settings.pause_input)
+        .with_replay(script.clone());
+    session.record_trace();
+    session
+}
+
+/// FNV-1a over the trace's CSV: the same rows give the same digest on every
+/// machine and build.
+pub fn trace_digest(rows: &[TraceRow]) -> u64 {
+    trace::to_csv(rows)
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+        })
+}
+
+/// What a route benchmark found along the route.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RouteOutcome {
+    /// The route file.
+    pub file: String,
+    /// Rows in the route.
+    pub rows: usize,
+    /// Ticks of the route that ran.
+    pub ticks_run: usize,
+    /// The level-complete event came during the route.
+    pub level_completed: bool,
+    /// Sprite sets first looked up while drawing, from the first frame on
+    /// (0 when the preload is complete).
+    pub sets_loaded_while_drawing: usize,
+    /// [`trace_digest`] of the route's ticks that ran.
+    pub trace_digest: u64,
+    /// The route's trace, one row per tick that ran.
+    pub trace: Vec<TraceRow>,
+}
+
+impl RouteOutcome {
+    /// Every row of the route ran.
+    pub fn finished(&self) -> bool {
+        self.ticks_run >= self.rows
+    }
+}
+
+/// A route benchmark's result: the benchmark report and the route's.
+#[derive(Debug, Clone)]
+pub struct RouteReport {
+    /// The benchmark, as for the combat route.
+    pub report: Report,
+    /// The route.
+    pub route: RouteOutcome,
+}
+
+impl RouteReport {
+    /// The report's budgets, then sprite sets loaded while drawing (want 0).
+    pub fn checks(&self) -> Vec<BudgetCheck> {
+        let mut out = self.report.checks();
+        let n = self.route.sets_loaded_while_drawing;
+        let at = if self.route.finished() {
+            "at the route's end".to_string()
+        } else {
+            format!(
+                "after {} of the route's {} ticks",
+                self.route.ticks_run, self.route.rows
+            )
+        };
+        out.push(BudgetCheck {
+            name: "loaded while drawing",
+            verdict: if n == 0 { Verdict::Pass } else { Verdict::Fail },
+            text: format!("{n} sprite sets {at} (want 0)"),
+        });
+        out
+    }
+
+    /// True when no measured budget failed.
+    pub fn passed(&self) -> bool {
+        self.checks().iter().all(|c| c.verdict != Verdict::Fail)
+    }
+
+    /// One line: PASS or FAIL, each budget with its outcome, then how far
+    /// the route went.
+    pub fn summary(&self) -> String {
+        let parts: Vec<String> = self
+            .checks()
+            .iter()
+            .map(|c| {
+                let tag = match c.verdict {
+                    Verdict::Pass => " ok",
+                    Verdict::Fail => " FAIL",
+                    Verdict::NotMeasurable => "",
+                };
+                format!("{} {}{tag}", c.name, c.text)
+            })
+            .collect();
+        let r = &self.route;
+        let mut line = format!(
+            "bench {}: {}; route {}: {} of {} ticks",
+            if self.passed() { "PASS" } else { "FAIL" },
+            parts.join("; "),
+            r.file,
+            r.ticks_run,
+            r.rows
+        );
+        if r.level_completed {
+            line.push_str(", level completed");
+        }
+        if !r.finished() {
+            line.push_str(", stopped before its end");
+        }
+        let _ = write!(line, ", trace digest {:016x}", r.trace_digest);
+        line
+    }
+
+    /// The report as one line of JSON: the benchmark's report with a
+    /// `bench_route` object, and `pass` covering the route's budget too.
+    pub fn to_json(&self) -> String {
+        let mut s = self.report.to_json();
+        let r = &self.route;
+        let pass = format!("\"pass\": {}", self.report.passed());
+        if let Some(i) = s.rfind(&pass) {
+            s.replace_range(i..i + pass.len(), &format!("\"pass\": {}", self.passed()));
+        }
+        s.pop();
+        let _ = write!(
+            s,
+            ", \"bench_route\": {{\"file\": {}, \"rows\": {}, \"ticks_run\": {}, \
+             \"finished\": {}, \"level_completed\": {}, \"sets_loaded_while_drawing\": {}, \
+             \"loaded_while_drawing_ok\": {}, \"trace_digest\": \"{:016x}\"}}}}",
+            json_string(&r.file),
+            r.rows,
+            r.ticks_run,
+            r.finished(),
+            r.level_completed,
+            r.sets_loaded_while_drawing,
+            r.sets_loaded_while_drawing == 0,
+            r.trace_digest,
+        );
+        s
+    }
+}
+
+/// What a headless run plays.
+enum RunPlan<'a> {
+    /// The combat route for `seconds` of wall time.
+    Combat { seconds: f64 },
+    /// A route file from the level's start, until its end or for at most
+    /// `seconds` of wall time.
+    Route {
+        route: &'a RouteFile,
+        seconds: Option<f64>,
+    },
+}
+
 /// Runs the headless benchmark: loads the level, draws offscreen at
 /// `settings.res` for `seconds` of wall time with a simulated `hz` display
 /// clock, plays the sounds and music through a silent output, and returns
 /// the report. Frames are paced to `hz` unless `settings.fps_cap` is `None`
 /// (a throughput run). A start point in the settings replaces the route's.
 pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report> {
+    run_planned(settings, hz, RunPlan::Combat { seconds }).map(|(report, _)| report)
+}
+
+/// Runs the headless benchmark along `route` (see the [module
+/// documentation](self)): from the level's start (or `settings.start`)
+/// until the route's last row has run, or for at most `seconds` of wall
+/// time when given. `settings` should already follow the route
+/// ([`RouteFile::apply`]).
+pub fn run_headless_route(
+    settings: &Settings,
+    route: &RouteFile,
+    seconds: Option<f64>,
+    hz: f64,
+) -> Result<RouteReport> {
+    let (report, outcome) = run_planned(settings, hz, RunPlan::Route { route, seconds })?;
+    let route = outcome.context("the route run reports its route")?;
+    Ok(RouteReport { report, route })
+}
+
+fn run_planned(
+    settings: &Settings,
+    hz: f64,
+    plan: RunPlan<'_>,
+) -> Result<(Report, Option<RouteOutcome>)> {
     let started = Instant::now();
     let bundle = load_level(&settings.install, &settings.level)?;
     let mut graphics = load_graphics(&bundle, settings.pack.as_deref())?;
     let size = settings.res;
     let view = settings.view(size);
     let sim = new_sim(&bundle, settings.sim_config(size), settings.start);
-    // The route covers the run at the game's pace, with a quarter to spare;
-    // from the given start point when there is one.
-    let bench_route = combat_route(&sim, seconds * 1.25 + 2.0, settings.start.is_some());
+    let (bench_route, seconds, route_file) = match plan {
+        RunPlan::Combat { seconds } => {
+            // The route covers the run at the game's pace, with a quarter
+            // to spare; from the given start point when there is one.
+            let r = combat_route(&sim, seconds * 1.25 + 2.0, settings.start.is_some());
+            (r, Some(seconds), None)
+        }
+        RunPlan::Route { route, seconds } => {
+            let r = BenchRoute {
+                script: route.script.clone(),
+                teleports: Vec::new(),
+                kind: "route",
+            };
+            (r, seconds, Some(route))
+        }
+    };
     let start = settings.start.or(bench_route.start());
     let mut audio_settings = settings.audio_settings();
     audio_settings.enabled = true;
@@ -1067,9 +1340,18 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
     let presentation = builder.composition().presentation;
     let output = Offscreen::new(&gpu, size);
     let route_ticks = bench_route.script.ticks.len();
-    let mut session = Session::new(sim).with_replay(bench_route.script.clone());
-    session.set_before_tick(bench_route.mover());
+    let mut session = match route_file {
+        Some(_) => route_session(sim, &bench_route.script, settings),
+        None => {
+            let mut s = Session::new(sim).with_replay(bench_route.script.clone());
+            s.set_before_tick(bench_route.mover());
+            s
+        }
+    };
     let mut combat = Combat::default();
+    // The preload looks every set up through the drawing path too: only
+    // what frames look up from here on counts.
+    let sets_preloaded = graphics.loaded_while_drawing();
     {
         status.update(session.sim(), 0);
         let frame = session.interpolated(false);
@@ -1093,8 +1375,19 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
         None => "none (throughput run)".to_string(),
     };
     let mut samples = Samples::default();
+    let mut level_completed = false;
     let run = Instant::now();
-    while run.elapsed().as_secs_f64() < seconds {
+    loop {
+        let more = match (route_file, seconds) {
+            (Some(_), cap) => {
+                (session.ticks() as usize) < route_ticks
+                    && cap.is_none_or(|s| run.elapsed().as_secs_f64() < s)
+            }
+            (None, cap) => run.elapsed().as_secs_f64() < cap.unwrap_or(0.0),
+        };
+        if !more {
+            break;
+        }
         // The wait comes before the frame's clock starts: it is never
         // counted as work.
         pacer.wait();
@@ -1130,10 +1423,26 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
         if f.ticks > 0 {
             combat.look(session.sim());
         }
+        level_completed |= events
+            .iter()
+            .any(|e| matches!(e, GameEvent::LevelComplete { .. }));
     }
     let seconds = run.elapsed().as_secs_f64();
     let comp = *builder.composition();
-    Ok(Report {
+    let outcome = route_file.map(|route| {
+        let mut rows = session.trace().to_vec();
+        rows.truncate(route_ticks);
+        RouteOutcome {
+            file: route.name.clone(),
+            rows: route_ticks,
+            ticks_run: rows.len(),
+            level_completed,
+            sets_loaded_while_drawing: graphics.loaded_while_drawing() - sets_preloaded,
+            trace_digest: trace_digest(&rows),
+            trace: rows,
+        }
+    });
+    let report = Report {
         mode: "headless",
         level: bundle.name.clone(),
         res: size,
@@ -1161,7 +1470,8 @@ pub fn run_headless(settings: &Settings, seconds: f64, hz: f64) -> Result<Report
         audio: Some(audio_run),
         samples,
         ticks_measured: session.tick_samples().to_vec(),
-    })
+    };
+    Ok((report, outcome))
 }
 
 #[cfg(test)]

@@ -29,10 +29,13 @@ help:
 	@echo "                               prints the first divergence and a per-column summary for each"
 	@echo "                               trace; fails on a divergence that references.toml does not"
 	@echo "                               list, or comes earlier than listed; STRICT=1 fails on any"
-	@echo "                               divergence; tolerances in tests/acceptance/tolerances/)"
+	@echo "                               divergence and on a game trace shorter than the reference;"
+	@echo "                               a store's meta.toml teleport = \"X,Y\" is the start point;"
+	@echo "                               tolerances in tests/acceptance/tolerances/)"
 	@echo "make run-viewer ARGS=...       run the level viewer"
 	@echo "make run-game ARGS=...         run the game"
-	@echo "make bench ARGS=...            run the game with --bench SECONDS in ARGS"
+	@echo "make bench ARGS=...            run the game with --bench SECONDS in ARGS, or along a route"
+	@echo "                               with --bench-route FILE.csv --headless"
 	@echo "make replay ARGS=...           run the replay tool"
 	@echo "make soundfont                 fetch the music SoundFont into your data directory"
 
@@ -59,12 +62,13 @@ test-install:
 	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --test 'install_*'"; \
 	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --test 'install_*'
 
-# Replays $(CLAW_REFERENCE)/$(REF)/route.csv with the tuning and random
-# state its meta.toml names for each clock (or only CLOCK) and compares the
-# game with every reference trace of that clock. It fails on a divergence
-# that tests/acceptance/tolerances/references.toml does not list for that
-# route and clock (or that comes earlier than listed), and with STRICT=1 on
-# any divergence; see tests/acceptance/tests/install_reference.rs.
+# Replays $(CLAW_REFERENCE)/$(REF)/route.csv with the tuning, random state
+# and start point (teleport) its meta.toml names for each clock (or only
+# CLOCK) and compares the game with every reference trace of that clock. It
+# fails on a divergence that tests/acceptance/tolerances/references.toml
+# does not list for that route and clock (or that comes earlier than
+# listed), and with STRICT=1 on any divergence and on a game trace that ends
+# before the reference trace; see tests/acceptance/tests/install_reference.rs.
 compare:
 	@if [ -z "$(CLAW_INSTALL)" ]; then echo "CLAW_INSTALL is not set; point it at your own install" >&2; exit 2; fi
 	@if [ -z "$(CLAW_REFERENCE)" ]; then echo "CLAW_REFERENCE is not set; point it at the reference store" >&2; exit 2; fi

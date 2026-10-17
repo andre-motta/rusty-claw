@@ -319,6 +319,71 @@ measuring throughput. When the desktop is smaller than `--res`, a window
 benchmark gets what fits and every frame is also drawn offscreen at the
 requested size.
 
+## Routes and comparing with the original
+
+A route is an input script that plays a level from its start. Besides the
+rows, it can name how it is played in `#` header lines (`# level N`,
+`# tuning default|original`, `# seed N`, and the behaviour switches it was
+made with), and it can hold `@` lines for what happens between two ticks:
+a pause or a menu screen with its wall time, or the in-game menu's end of a
+life. Replays, `claw-replay` and the benchmark all follow them.
+
+The routes in `tests/acceptance/routes/` finish the first level:
+`level1.csv` with the default tuning and `level1-original.csv` with the
+original game's speeds. They are written by the search bot, `claw-bot`,
+which tries short sequences of moves on copies of the headless game and
+keeps the ones that bring Claw closer to the level's end. Its budget counts
+the positions it tries, not time, so the same arguments always give the
+same route.
+
+```sh
+# watch the bot's route
+make run-game ARGS='--install PATH --level 1 --replay tests/acceptance/routes/level1.csv'
+# search a route (the report goes next to it as route.json)
+cargo run --release -p claw-bot -- --install PATH --level 1 --out route.csv
+# benchmark along a route from the level's start to its end, offscreen
+make bench ARGS='--install PATH --level 1 --headless --res 3840x2160 --bench-route tests/acceptance/routes/level1.csv'
+```
+
+The route benchmark measures every frame as the combat benchmark does,
+fails when a sprite set had to be loaded while drawing, and prints a digest
+of the route's trace: the same on every run, at any display rate.
+
+A reference trace is a run of the original game playing the same route,
+written in the same trace format, one row per game step. Reference traces
+are not part of this repository; point `CLAW_REFERENCE` at the folder that
+holds them, one folder per route (`level<N>/<name>/` with the route as
+`route.csv`, the traces as `trace-<clock>-r<k>.csv` and `meta.toml` saying
+how they were played). A route can be played on two clocks:
+
+- `c18`, one 18 ms game step per frame, compared tick for tick with the
+  original speeds and the same random state: every column must be equal;
+- `c60`, 60 frames per second, compared with the default tuning within the
+  small differences in position and timing that `feel.toml` allows.
+
+```sh
+# replay the route with the store's tuning and random state, compare with
+# every reference trace, print the first divergence and a per-column table
+CLAW_INSTALL=PATH CLAW_REFERENCE=DIR make compare REF=level1/opening
+make compare REF=level1/bot CLOCK=c60      # one clock
+make compare REF=level1/bot STRICT=1       # fail on any divergence
+# one trace with the replay tool
+make replay ARGS='--install PATH --script route.csv --tuning original --seed N --compare trace.csv --tolerance exact'
+```
+
+`make compare` fails on a divergence that
+`tests/acceptance/tolerances/references.toml` does not list for the route,
+or that comes earlier than listed; that file records, with a reason, where
+each compared route is known to leave its tolerance. A route that starts
+somewhere in the middle of a level names its start point in `meta.toml`
+(`teleport = "X,Y"`): Claw is placed there and left to settle before the
+route starts, as `--start X,Y` does. `make test-install MODULE=acceptance`
+with `CLAW_REFERENCE` set runs every listed route twice: tick by tick
+(`install_reference`), and through the game's own frame loop at 60 Hz at
+the gate's preset, exact at `c18` and feel at `c60` (`install_differential`).
+`tests/acceptance/tolerances/README.md` explains the clocks and the
+tolerance values.
+
 ## Development
 
 ```sh
@@ -335,6 +400,7 @@ install tests read your install at run time and skip themselves without it:
 | `CLAW_INSTALL` | every install test: `make test-install MODULE=<module>` refuses to run without it |
 | `CLAW_GOLDEN_DIR` | optional: a folder of reference visible-tile grids (`level<N>_<W>x<H>.json`) the render and acceptance tests compare against |
 | `CLAW_TOLERANCES` | optional: a TOML table of movement targets to check instead of the built-in one |
+| `CLAW_REFERENCE` | optional: the folder of reference traces that `make compare` and the reference tests read (those tests skip without it) |
 | `CLAW_GPU_TESTS=1` | optional: run the renderer's GPU tests on synthetic data without an install |
 | `CLAW_AUDIO_SMOKE=1` | optional: open the real audio device in the audio tests |
 
@@ -379,8 +445,8 @@ unless `--uncapped` is given.
   magic hit on an enemy shows no lingering flame or frost. The play-test list
   (`tests/acceptance/PLAYTEST.md`) asks about each one a player can see on
   the first level and names the rest, such as goo, as untested there.
-- The in-game menu's end-life entry, the front layer and detail settings
-  and the play area size are shown but have no effect yet.
+- The detail setting and the play area size are shown but have no effect
+  yet; the game always draws in high detail.
 - One profile, without profile screens.
 
 ## Layout
@@ -396,7 +462,8 @@ unless `--uncapped` is given.
 | `app/info` | `claw-info` | level summary tool |
 | `app/viewer` | `claw-viewer` | level viewer |
 | `app/game` | `claw-game` | the game (`rusty-claw` binary) |
-| `tools/replay` | `claw-replay` | input replay and traces |
+| `tools/replay` | `claw-replay` | input replay, traces and their comparison |
+| `tools/bot` | `claw-bot` | search bot that writes winning routes |
 | `tests/acceptance` | `claw-acceptance` | end-to-end tests |
 
 ## Licence
