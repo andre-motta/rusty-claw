@@ -850,7 +850,10 @@ impl Recorder {
         if (ticks.len() as u64) < session.ticks() {
             ticks.push(session.sim().input());
         }
-        InputScript { ticks }
+        InputScript {
+            ticks,
+            ..InputScript::default()
+        }
     }
 
     /// Writes the recording to `path` as an input script.

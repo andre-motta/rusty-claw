@@ -634,6 +634,7 @@ fn recordings_carry_the_mid_air_hit_fix() {
             },
             TickInput::default(),
         ],
+        ..InputScript::default()
     };
     for fix in [false, true] {
         let csv = recording_csv(&script, fix);

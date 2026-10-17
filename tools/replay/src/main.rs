@@ -1,37 +1,66 @@
-//! `claw-replay`: runs a recorded input script through the simulation of a
-//! level from your own install and writes a per-tick trace.
+//! `claw-replay`: runs a recorded input script (a route) through the
+//! simulation of a level from your own install, writes a per-tick trace and
+//! can compare it with a reference trace of the same route.
 //!
 //! ```text
-//! claw-replay --install PATH (--level N | --custom FILE.WWD)
-//!             --script INPUT.csv --trace OUT.csv
-//!             [--res WxH] [--aspect pillarbox|frozen|widened] [--seed N]
-//!             [--start X,Y] [--logics on|off]
+//! claw-replay --install PATH [--level N | --custom FILE.WWD] --script ROUTE.csv
+//!             [--trace OUT.csv] [--tuning default|original] [--seed N]
+//!             [--res WxH] [--aspect pillarbox|frozen|widened]
+//!             [--start X,Y] [--logics on|off] [--expect-complete]
+//!             [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
 //! ```
 //!
 //! The script has the columns `tick,held_mask,pressed_mask`, one row per
-//! 18 ms tick. The trace has one row per tick with Claw's position, the
-//! fractions carried to the next tick, his state and physics type, the
-//! camera point, the input, the activation mode, his health, score, lives,
-//! selected weapon and ammunition, and the tick's game events. Two runs
-//! with the same arguments write identical traces.
+//! 18 ms tick. Its header keys `# level N`, `# tuning default|original` and
+//! `# seed N` stand in for `--level`, `--tuning` and `--seed` when those
+//! are not given; a flag given on the command line wins. Scripts with `@`
+//! directive lines are refused for now.
+//!
+//! The trace has one row per tick with Claw's position, the fractions
+//! carried to the next tick, his state and physics type, the camera point,
+//! the input, the activation mode, his health, score, lives, selected
+//! weapon and ammunition, the tick's game events and the state of the
+//! shared random stream. Two runs with the same arguments write identical
+//! traces.
+//!
+//! `--tuning original` plays with the original game's movement numbers at
+//! the fixed 18 ms step instead of the default 60 fps tuning.
 //!
 //! `--logics off` leaves every level object inert, as in the first playable
 //! version, for comparing movement with earlier traces.
 //!
 //! `--start X,Y` moves Claw to (X, Y) before the script and lets him and the
 //! camera settle; the script's first tick is the first traced tick.
+//!
+//! `--expect-complete` checks that the level ends (a level-complete event)
+//! within the script.
+//!
+//! `--compare REF.csv` compares the run with a reference trace of the same
+//! route, in the same trace format, at the `exact` or `feel` tolerance
+//! preset or the tolerances of a file (see `claw_sim::trace`), prints a
+//! per-column summary and the first divergence with the five rows of each
+//! trace leading up to it, and with `--report` writes the same text to a
+//! file.
+//!
+//! Exit status: 0 when everything passed, 1 on a divergence, 2 on a usage
+//! or input error, 3 when `--expect-complete` saw no level end.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use claw_assets::{Install, LevelData, LevelSource, Source};
-use claw_sim::claw_frame::{AspectPolicy, ViewConfig};
-use claw_sim::trace::{self, TraceRow};
+use claw_sim::claw_frame::{AspectPolicy, GameEvent, ViewConfig};
+use claw_sim::input::ScriptTuning;
+use claw_sim::trace::{self, Tolerances, TraceRow};
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel};
 
-const USAGE: &str = "usage: claw-replay --install PATH (--level N | --custom FILE.WWD) \
---script INPUT.csv --trace OUT.csv [--res WxH] [--aspect pillarbox|frozen|widened] [--seed N] \
-[--start X,Y] [--logics on|off]";
+const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FILE.WWD] \
+--script ROUTE.csv [--trace OUT.csv] [--tuning default|original] [--seed N] [--res WxH] \
+[--aspect pillarbox|frozen|widened] [--start X,Y] [--logics on|off] [--expect-complete] \
+[--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]";
+
+/// Rows of each trace shown before a divergence.
+const CONTEXT_ROWS: usize = 5;
 
 #[derive(Debug, Default)]
 struct Args {
@@ -45,6 +74,11 @@ struct Args {
     seed: Option<u32>,
     start: Option<(i32, i32)>,
     logics: Option<bool>,
+    tuning: Option<ScriptTuning>,
+    expect_complete: bool,
+    compare: Option<PathBuf>,
+    tolerance: Option<String>,
+    report: Option<PathBuf>,
 }
 
 fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -52,6 +86,10 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
     while let Some(flag) = it.next() {
         if flag == "--help" || flag == "-h" {
             return Err(USAGE.to_string());
+        }
+        if flag == "--expect-complete" {
+            a.expect_complete = true;
+            continue;
         }
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
@@ -100,16 +138,69 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                 let v = value()?;
                 a.seed = Some(v.parse().map_err(|_| format!("bad seed {v:?}"))?);
             }
+            "--tuning" => {
+                let v = value()?;
+                a.tuning =
+                    Some(ScriptTuning::from_name(&v).ok_or_else(|| {
+                        format!("bad tuning {v:?}, expected default or original")
+                    })?);
+            }
+            "--compare" => a.compare = Some(PathBuf::from(value()?)),
+            "--tolerance" => a.tolerance = Some(value()?),
+            "--report" => a.report = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
+    }
+    if a.compare.is_some() != a.tolerance.is_some() {
+        return Err(format!("--compare and --tolerance go together\n{USAGE}"));
+    }
+    if a.report.is_some() && a.compare.is_none() {
+        return Err(format!("--report needs --compare\n{USAGE}"));
     }
     Ok(a)
 }
 
-fn run(args: Args) -> Result<(), String> {
+/// The tolerances named on the command line: a preset or a file.
+fn load_tolerances(spec: &str) -> Result<Tolerances, String> {
+    if let Some(t) = Tolerances::preset(spec) {
+        return Ok(t);
+    }
+    let text = std::fs::read_to_string(spec).map_err(|e| {
+        format!("--tolerance {spec:?} is neither exact, feel nor a readable file: {e}")
+    })?;
+    Tolerances::from_toml(&text).map_err(|e| format!("{spec}: {e}"))
+}
+
+/// How a run ended, for the exit status.
+#[derive(Debug, Default)]
+struct Outcome {
+    diverged: bool,
+    incomplete: bool,
+}
+
+fn run(args: Args) -> Result<Outcome, String> {
     let install_path = args.install.ok_or(USAGE)?;
     let script_path = args.script.ok_or(USAGE)?;
-    let trace_path = args.trace.ok_or(USAGE)?;
+    let tolerances = args.tolerance.as_deref().map(load_tolerances).transpose()?;
+    let text = std::fs::read_to_string(&script_path)
+        .map_err(|e| format!("reading {}: {e}", script_path.display()))?;
+    let script =
+        InputScript::parse(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
+    if let Some(d) = script.directives().first() {
+        return Err(format!(
+            "{}: the script holds directives ({} in all, the first {:?}); \
+             claw-replay does not play pauses, menus or commands yet",
+            script_path.display(),
+            script.directives().len(),
+            d.to_line()
+        ));
+    }
+    let header = script.header;
+    if let (Some(flag), Some(key)) = (args.level, header.level)
+        && flag != key
+    {
+        eprintln!("claw-replay: --level {flag} overrides the script's level {key}");
+    }
     let install = Install::open(&install_path)
         .map_err(|e| format!("opening install {}: {e}", install_path.display()))?;
     let mut store = install
@@ -124,15 +215,19 @@ fn run(args: Args) -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
             LevelSource::Custom
         }
-        _ => return Err(format!("pass exactly one of --level and --custom\n{USAGE}")),
+        (None, None) => match header.level {
+            Some(level) => LevelSource::Retail(level),
+            None => {
+                return Err(format!(
+                    "pass --level or --custom, or give the script a `# level N` line\n{USAGE}"
+                ));
+            }
+        },
+        _ => return Err(format!("pass only one of --level and --custom\n{USAGE}")),
     };
     let level = LevelData::build(&store, source).map_err(|e| format!("loading level: {e}"))?;
     let sim_level =
         SimLevel::from_level(&level, &store).map_err(|e| format!("preparing level: {e}"))?;
-    let text = std::fs::read_to_string(&script_path)
-        .map_err(|e| format!("reading {}: {e}", script_path.display()))?;
-    let script =
-        InputScript::parse(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
 
     let mut view = ViewConfig::default();
     if let Some((w, h)) = args.res {
@@ -143,7 +238,11 @@ fn run(args: Args) -> Result<(), String> {
         view.aspect_policy = aspect;
     }
     let mut cfg = SimConfig::for_view(view);
-    if let Some(seed) = args.seed {
+    let tuning = args.tuning.or(header.tuning);
+    if let Some(tuning) = tuning {
+        cfg.tuning = tuning.tuning();
+    }
+    if let Some(seed) = args.seed.or(header.seed) {
         cfg.seed = seed;
     }
     if let Some(on) = args.logics {
@@ -154,18 +253,27 @@ fn run(args: Args) -> Result<(), String> {
         settle_at(&mut sim, x, y);
     }
     let mut rows = Vec::with_capacity(script.ticks.len());
+    let mut completed = false;
     for (tick, &input) in script.ticks.iter().enumerate() {
         sim.step(input);
+        completed |= sim
+            .last_events()
+            .iter()
+            .any(|e| matches!(e, GameEvent::LevelComplete { .. }));
         rows.push(TraceRow::capture(&sim, tick as u64, "script"));
     }
-    std::fs::write(&trace_path, trace::to_csv(&rows))
-        .map_err(|e| format!("writing {}: {e}", trace_path.display()))?;
+    if let Some(path) = &args.trace {
+        std::fs::write(path, trace::to_csv(&rows))
+            .map_err(|e| format!("writing {}: {e}", path.display()))?;
+    }
     let d = sim.diagnostics();
     let unknown: usize = d.unknown_logics.values().sum();
     let inert: usize = d.inert_logics.values().sum();
     eprintln!(
-        "claw-replay: {} ticks, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped), trace {}",
+        "claw-replay: {} ticks, tuning {}, seed {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}",
         rows.len(),
+        tuning.unwrap_or(ScriptTuning::Default).name(),
+        sim.config().seed,
         sim.config().activation.mode.name(),
         if sim.config().level_logics {
             "on"
@@ -176,12 +284,15 @@ fn run(args: Args) -> Result<(), String> {
         unknown,
         inert,
         d.dropped_records,
-        trace_path.display()
+        args.trace
+            .as_ref()
+            .map(|p| format!(", trace {}", p.display()))
+            .unwrap_or_default()
     );
     if let Some(last) = rows.last() {
         let events = rows.iter().filter(|r| !r.events.is_empty()).count();
         eprintln!(
-            "claw-replay: at the end health {}, score {}, lives {}, weapon {}, ammunition {}/{}/{}; {} ticks with game events",
+            "claw-replay: at the end health {}, score {}, lives {}, weapon {}, ammunition {}/{}/{}; {} ticks with game events{}",
             last.health,
             last.score,
             last.lives,
@@ -189,10 +300,45 @@ fn run(args: Args) -> Result<(), String> {
             last.pistol,
             last.magic,
             last.dynamite,
-            events
+            events,
+            if completed {
+                "; the level was completed"
+            } else {
+                ""
+            }
         );
     }
-    Ok(())
+
+    let mut outcome = Outcome::default();
+    if let (Some(ref_path), Some(tol)) = (&args.compare, &tolerances) {
+        let ref_text = std::fs::read_to_string(ref_path)
+            .map_err(|e| format!("reading {}: {e}", ref_path.display()))?;
+        let reference =
+            trace::parse(&ref_text).map_err(|e| format!("{}: {e}", ref_path.display()))?;
+        if reference.is_empty() {
+            return Err(format!(
+                "{}: the reference trace has no rows",
+                ref_path.display()
+            ));
+        }
+        let cmp = trace::compare(&rows, &reference, tol);
+        let mut text = trace::report(&rows, &reference, &cmp, CONTEXT_ROWS);
+        if cmp.rows_compared == 0 {
+            text.push_str(
+                "nothing was compared: the reference starts after the rebuild trace ends\n",
+            );
+        }
+        print!("{text}");
+        if let Some(path) = &args.report {
+            std::fs::write(path, &text).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        }
+        outcome.diverged = !cmp.passed() || cmp.rows_compared == 0;
+    }
+    if args.expect_complete && !completed {
+        eprintln!("claw-replay: the level was not completed within the script");
+        outcome.incomplete = true;
+    }
+    Ok(outcome)
 }
 
 /// Moves Claw and waits until he and the camera have stood still for ten
@@ -217,10 +363,14 @@ fn settle_at(sim: &mut Sim, x: i32, y: i32) {
 fn main() -> ExitCode {
     let result = parse_args(std::env::args().skip(1)).and_then(run);
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(Outcome { diverged: true, .. }) => ExitCode::from(1),
+        Ok(Outcome {
+            incomplete: true, ..
+        }) => ExitCode::from(3),
+        Ok(_) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("claw-replay: {e}");
-            ExitCode::FAILURE
+            ExitCode::from(2)
         }
     }
 }
@@ -246,5 +396,52 @@ mod tests {
         assert!(args("--level x").is_err());
         assert!(args("--bogus").is_err());
         assert!(args("--res 12").is_err());
+    }
+
+    #[test]
+    fn parses_the_route_and_comparison_arguments() {
+        let a = args(
+            "--install /i --script r.csv --tuning original --expect-complete \
+             --compare ref.csv --tolerance feel --report out.txt",
+        )
+        .unwrap();
+        assert_eq!(a.tuning, Some(ScriptTuning::Original));
+        assert!(a.expect_complete);
+        assert_eq!(a.compare, Some(PathBuf::from("ref.csv")));
+        assert_eq!(a.tolerance.as_deref(), Some("feel"));
+        assert_eq!(a.report, Some(PathBuf::from("out.txt")));
+        assert_eq!(a.trace, None, "the trace file is optional");
+        assert!(args("--tuning fast").is_err());
+        assert!(args("--compare ref.csv").is_err(), "needs a tolerance");
+        assert!(args("--tolerance exact").is_err(), "needs a reference");
+        assert!(args("--report out.txt").is_err(), "needs a reference");
+    }
+
+    #[test]
+    fn tolerances_come_from_a_preset_or_a_file() {
+        assert_eq!(load_tolerances("exact").unwrap(), Tolerances::exact());
+        assert_eq!(load_tolerances("feel").unwrap(), Tolerances::feel());
+        assert!(load_tolerances("/nonexistent/tolerances.toml").is_err());
+    }
+
+    #[test]
+    fn scripts_with_directives_are_refused() {
+        let dir = std::env::temp_dir().join(format!("claw-replay-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("route.csv");
+        std::fs::write(
+            &script,
+            "tick,held_mask,pressed_mask\n0,0,0\n@1 command end_life\n",
+        )
+        .unwrap();
+        let a = Args {
+            install: Some(dir.join("no-install")),
+            script: Some(script),
+            level: Some(1),
+            ..Args::default()
+        };
+        let e = run(a).unwrap_err();
+        assert!(e.contains("directive"), "{e}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
