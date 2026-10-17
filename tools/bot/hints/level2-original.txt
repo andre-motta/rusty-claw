@@ -1,0 +1,8 @@
+# Waypoints for the second level at the original speeds, past the pit
+# with the moving platform near the start: down the right-hand ladder
+# beside the low block, onto the floor right of the pit, up the ladder
+# by the tall wall, and up the ladder above it.
+2268,4850
+2470,4787
+2524,4560
+2464,4200
