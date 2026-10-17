@@ -69,11 +69,298 @@ impl InputLatch {
     }
 }
 
-/// A recorded input script: one [`TickInput`] per tick.
+/// A recorded input script, also called a route: one [`TickInput`] per
+/// tick, optional header keys and optional directives.
+///
+/// The text form is CSV with the columns `tick,held_mask,pressed_mask` (a
+/// header line, one row per tick, masks in hex with `0x` or decimal). Row
+/// `k` covers game time `[18k, 18k + 18)` ms from the level's first logic
+/// step, the route's time zero. Two further kinds of line are allowed:
+///
+/// - Header keys, comment lines naming how the route is meant to be played:
+///   `# level N`, `# tuning default|original` and `# seed N` (the state of
+///   the shared random stream at time zero). An `=` between the key and the
+///   value is accepted. Every other line starting with `#` is a comment.
+/// - Directives, lines starting with `@`, which take effect at the tick
+///   boundary before row `<tick>`:
+///   - `@<tick> pause <wall_ms> [held=<mask>]`;
+///   - `@<tick> menu <help|ingame|pause> <wall_ms> [keys=<list>]`, the list
+///     being key names separated by commas;
+///   - `@<tick> command end_life`.
+///
+/// A directive kind this reader does not know is an error, never skipped, so
+/// a route can never be played differently from how it was written.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InputScript {
     /// Inputs by tick.
     pub ticks: Vec<TickInput>,
+    /// Header keys.
+    pub header: ScriptHeader,
+    /// Directives in tick order (directives of the same tick keep the order
+    /// they were written in).
+    pub directives: Vec<Directive>,
+}
+
+/// The header keys of an input script; `None` when a key is absent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ScriptHeader {
+    /// `# level N`: the level the route plays.
+    pub level: Option<u32>,
+    /// `# tuning default|original`: the movement tuning the route is for.
+    pub tuning: Option<ScriptTuning>,
+    /// `# seed N`: the state of the shared random stream at time zero.
+    pub seed: Option<u32>,
+}
+
+/// The movement tuning named by a script's `# tuning` key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptTuning {
+    /// The default tuning, matching the original played at 60 frames per
+    /// second.
+    Default,
+    /// The original game's movement numbers at the fixed 18 ms step
+    /// ([`crate::Tuning::original_speeds`]).
+    Original,
+}
+
+impl ScriptTuning {
+    /// The name used in scripts and on command lines.
+    pub fn name(self) -> &'static str {
+        match self {
+            ScriptTuning::Default => "default",
+            ScriptTuning::Original => "original",
+        }
+    }
+
+    /// The tuning of a name, `default` or `original`.
+    pub fn from_name(name: &str) -> Option<ScriptTuning> {
+        match name {
+            "default" => Some(ScriptTuning::Default),
+            "original" => Some(ScriptTuning::Original),
+            _ => None,
+        }
+    }
+
+    /// The movement constants this names.
+    pub fn tuning(self) -> crate::Tuning {
+        match self {
+            ScriptTuning::Default => crate::Tuning::default(),
+            ScriptTuning::Original => crate::Tuning::original_speeds(),
+        }
+    }
+}
+
+/// One `@` line of an input script.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Directive {
+    /// The row the directive takes effect before (the boundary between rows
+    /// `tick - 1` and `tick`); at most the number of rows.
+    pub tick: usize,
+    /// What happens there.
+    pub kind: DirectiveKind,
+}
+
+/// What a directive does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectiveKind {
+    /// `pause <wall_ms> [held=<mask>]`: play is paused for `wall_ms`
+    /// milliseconds of wall time, with `held` the buttons held during the
+    /// pause.
+    Pause {
+        /// Wall time paused, ms.
+        wall_ms: u32,
+        /// Buttons held during the pause, when given.
+        held: Option<u32>,
+    },
+    /// `menu <screen> <wall_ms> [keys=<list>]`: a menu screen is open for
+    /// `wall_ms` milliseconds of wall time, with the keys pressed in it.
+    Menu {
+        /// The screen.
+        screen: MenuScreen,
+        /// Wall time on the screen, ms.
+        wall_ms: u32,
+        /// Key names pressed on the screen, in order.
+        keys: Vec<String>,
+    },
+    /// `command <name>`: a game command.
+    Command(ScriptCommand),
+}
+
+/// A menu screen a directive opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuScreen {
+    /// `help`: the help screen.
+    Help,
+    /// `ingame`: the in-game menu.
+    InGame,
+    /// `pause`: the pause screen.
+    Pause,
+}
+
+impl MenuScreen {
+    /// The name used in scripts.
+    pub fn name(self) -> &'static str {
+        match self {
+            MenuScreen::Help => "help",
+            MenuScreen::InGame => "ingame",
+            MenuScreen::Pause => "pause",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<MenuScreen> {
+        match name {
+            "help" => Some(MenuScreen::Help),
+            "ingame" => Some(MenuScreen::InGame),
+            "pause" => Some(MenuScreen::Pause),
+            _ => None,
+        }
+    }
+}
+
+/// A game command a directive gives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptCommand {
+    /// `end_life`: Claw gives up the current life.
+    EndLife,
+}
+
+impl ScriptCommand {
+    /// The name used in scripts.
+    pub fn name(self) -> &'static str {
+        match self {
+            ScriptCommand::EndLife => "end_life",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<ScriptCommand> {
+        match name {
+            "end_life" => Some(ScriptCommand::EndLife),
+            _ => None,
+        }
+    }
+}
+
+impl Directive {
+    /// The directive as a script line (no line end).
+    pub fn to_line(&self) -> String {
+        let mut s = format!("@{} ", self.tick);
+        match &self.kind {
+            DirectiveKind::Pause { wall_ms, held } => {
+                s.push_str(&format!("pause {wall_ms}"));
+                if let Some(h) = held {
+                    s.push_str(&format!(" held=0x{h:x}"));
+                }
+            }
+            DirectiveKind::Menu {
+                screen,
+                wall_ms,
+                keys,
+            } => {
+                s.push_str(&format!("menu {} {wall_ms}", screen.name()));
+                if !keys.is_empty() {
+                    s.push_str(&format!(" keys={}", keys.join(",")));
+                }
+            }
+            DirectiveKind::Command(c) => s.push_str(&format!("command {}", c.name())),
+        }
+        s
+    }
+
+    /// Parses one `@` line (without its line number).
+    fn parse(line: &str) -> Result<Directive, String> {
+        let mut words = line.split_whitespace();
+        let at = words.next().unwrap_or_default();
+        let tick: usize = at
+            .strip_prefix('@')
+            .and_then(|t| t.parse().ok())
+            .ok_or_else(|| format!("bad directive tick {at:?}, expected @<tick>"))?;
+        let kind = words
+            .next()
+            .ok_or_else(|| format!("directive {at} has no kind"))?;
+        let rest: Vec<&str> = words.collect();
+        let wall_ms = |w: Option<&&str>| -> Result<u32, String> {
+            let w = w.ok_or_else(|| format!("{kind} directive needs a wall time in ms"))?;
+            w.parse()
+                .map_err(|_| format!("bad wall time {w:?} in {kind} directive"))
+        };
+        let kind = match kind {
+            "pause" => {
+                let wall_ms = wall_ms(rest.first())?;
+                let mut held = None;
+                for opt in &rest[1..] {
+                    match opt.split_once('=') {
+                        Some(("held", v)) if held.is_none() => {
+                            held =
+                                Some(parse_mask(v).ok_or_else(|| format!("bad held mask {v:?}"))?);
+                        }
+                        _ => return Err(format!("unexpected {opt:?} in pause directive")),
+                    }
+                }
+                DirectiveKind::Pause { wall_ms, held }
+            }
+            "menu" => {
+                let screen = rest
+                    .first()
+                    .ok_or("menu directive needs a screen: help, ingame or pause")?;
+                let screen = MenuScreen::from_name(screen).ok_or_else(|| {
+                    format!("unknown menu screen {screen:?}, expected help, ingame or pause")
+                })?;
+                let wall_ms = wall_ms(rest.get(1))?;
+                let mut keys = None;
+                for opt in rest.iter().skip(2) {
+                    match opt.split_once('=') {
+                        Some(("keys", v)) if keys.is_none() => {
+                            let list: Vec<String> = v.split(',').map(str::to_string).collect();
+                            if let Some(bad) = list.iter().find(|k| !is_key_name(k)) {
+                                return Err(format!("bad key name {bad:?} in menu directive"));
+                            }
+                            keys = Some(list);
+                        }
+                        _ => return Err(format!("unexpected {opt:?} in menu directive")),
+                    }
+                }
+                DirectiveKind::Menu {
+                    screen,
+                    wall_ms,
+                    keys: keys.unwrap_or_default(),
+                }
+            }
+            "command" => {
+                let name = rest
+                    .first()
+                    .ok_or("command directive needs a command name")?;
+                let c = ScriptCommand::from_name(name)
+                    .ok_or_else(|| format!("unknown command {name:?}, expected end_life"))?;
+                if let Some(extra) = rest.get(1) {
+                    return Err(format!("unexpected {extra:?} in command directive"));
+                }
+                DirectiveKind::Command(c)
+            }
+            other => {
+                return Err(format!(
+                    "unknown directive kind {other:?}, expected pause, menu or command"
+                ));
+            }
+        };
+        Ok(Directive { tick, kind })
+    }
+}
+
+fn is_key_name(k: &str) -> bool {
+    !k.is_empty()
+        && k.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// A held-mask change that comes too soon after the previous one (see
+/// [`InputScript::spacing_warnings`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpacingWarning {
+    /// The tick whose held mask differs from the tick before.
+    pub tick: usize,
+    /// Ticks since the previous change.
+    pub gap: usize,
 }
 
 /// A problem in an input script.
@@ -101,23 +388,116 @@ fn parse_mask(s: &str) -> Option<u32> {
     }
 }
 
+/// Header key names.
+const HEADER_KEYS: [&str; 3] = ["level", "tuning", "seed"];
+
+impl ScriptHeader {
+    /// Reads a `#` comment line into the header if it is a header key:
+    /// `Ok(true)` when it was one, `Ok(false)` for a plain comment.
+    fn read(&mut self, comment: &str) -> Result<bool, String> {
+        let mut words = comment.split_whitespace();
+        let Some(key) = words.next() else {
+            return Ok(false);
+        };
+        // `# level 3`, `# level = 3`, and `# level=3` all name the key.
+        let (key, glued) = match key.split_once('=') {
+            Some((k, v)) => (k, Some(v)),
+            None => (key, None),
+        };
+        if !HEADER_KEYS.contains(&key) {
+            return Ok(false);
+        }
+        let mut rest: Vec<&str> = glued.filter(|v| !v.is_empty()).into_iter().collect();
+        rest.extend(words);
+        if glued.is_none()
+            && let Some(first) = rest.first().copied()
+            && let Some(v) = first.strip_prefix('=')
+        {
+            if v.is_empty() {
+                rest.remove(0);
+            } else {
+                rest[0] = v;
+            }
+        }
+        let [value] = rest[..] else {
+            return Err(format!("header key {key} needs exactly one value"));
+        };
+        let dup = || format!("header key {key} is given twice");
+        match key {
+            "level" => {
+                if self.level.is_some() {
+                    return Err(dup());
+                }
+                self.level = Some(
+                    value
+                        .parse()
+                        .map_err(|_| format!("bad level {value:?} in header"))?,
+                );
+            }
+            "tuning" => {
+                if self.tuning.is_some() {
+                    return Err(dup());
+                }
+                self.tuning = Some(ScriptTuning::from_name(value).ok_or_else(|| {
+                    format!("bad tuning {value:?} in header, expected default or original")
+                })?);
+            }
+            _ => {
+                if self.seed.is_some() {
+                    return Err(dup());
+                }
+                self.seed = Some(
+                    value
+                        .parse()
+                        .map_err(|_| format!("bad seed {value:?} in header"))?,
+                );
+            }
+        }
+        Ok(true)
+    }
+
+    /// The header as `#` lines, each ending in a line end.
+    fn to_lines(self) -> String {
+        let mut out = String::new();
+        if let Some(level) = self.level {
+            out.push_str(&format!("# level {level}\n"));
+        }
+        if let Some(tuning) = self.tuning {
+            out.push_str(&format!("# tuning {}\n", tuning.name()));
+        }
+        if let Some(seed) = self.seed {
+            out.push_str(&format!("# seed {seed}\n"));
+        }
+        out
+    }
+}
+
 impl InputScript {
-    /// Parses CSV text with the columns `tick,held_mask,pressed_mask` (a
-    /// header line, one row per tick, masks in hex with `0x` or decimal).
-    /// Lines starting with `#` are comments. Ticks must start at 0 and
-    /// increase by one.
+    /// Parses the text form described on [`InputScript`]. Ticks must start
+    /// at 0 and increase by one; directives may sit anywhere, but name a
+    /// tick no greater than the number of rows.
     pub fn parse(text: &str) -> Result<InputScript, ScriptError> {
         let mut ticks = Vec::new();
+        let mut header = ScriptHeader::default();
+        let mut directives: Vec<(usize, Directive)> = Vec::new();
         let mut header_seen = false;
         for (i, raw) in text.lines().enumerate() {
             let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
             let err = |message: String| ScriptError {
                 line: i + 1,
                 message,
             };
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(comment) = line.strip_prefix('#') {
+                header.read(comment).map_err(err)?;
+                continue;
+            }
+            if line.starts_with('@') {
+                directives.push((i + 1, Directive::parse(line).map_err(err)?));
+                continue;
+            }
             if !header_seen {
                 header_seen = true;
                 if line.split(',').next().map(str::trim) == Some("tick") {
@@ -143,7 +523,23 @@ impl InputScript {
                 pressed: Buttons(pressed),
             });
         }
-        Ok(InputScript { ticks })
+        if let Some((line, d)) = directives.iter().find(|(_, d)| d.tick > ticks.len()) {
+            return Err(ScriptError {
+                line: *line,
+                message: format!(
+                    "directive at tick {} is past the last row (the script has {} rows)",
+                    d.tick,
+                    ticks.len()
+                ),
+            });
+        }
+        // Stable: directives of one tick keep their written order.
+        directives.sort_by_key(|(_, d)| d.tick);
+        Ok(InputScript {
+            ticks,
+            header,
+            directives: directives.into_iter().map(|(_, d)| d).collect(),
+        })
     }
 
     /// A script from held masks per tick; pressed is the rising edge.
@@ -160,14 +556,63 @@ impl InputScript {
                 t
             })
             .collect();
-        InputScript { ticks }
+        InputScript {
+            ticks,
+            ..InputScript::default()
+        }
     }
 
-    /// Writes the script back as CSV.
+    /// The script's directives in tick order.
+    pub fn directives(&self) -> &[Directive] {
+        &self.directives
+    }
+
+    /// Writes the script back as text: the header keys, the column line,
+    /// then the rows with each directive just before the row it names.
+    /// [`InputScript::parse`] reads it back unchanged.
     pub fn to_csv(&self) -> String {
-        let mut out = String::from("tick,held_mask,pressed_mask\n");
+        let mut out = self.header.to_lines();
+        out.push_str("tick,held_mask,pressed_mask\n");
+        let mut directives: Vec<&Directive> = self.directives.iter().collect();
+        directives.sort_by_key(|d| d.tick);
+        let mut next = directives.into_iter().peekable();
         for (i, t) in self.ticks.iter().enumerate() {
+            while let Some(d) = next.next_if(|d| d.tick <= i) {
+                out.push_str(&d.to_line());
+                out.push('\n');
+            }
             out.push_str(&format!("{i},0x{:x},0x{:x}\n", t.held.0, t.pressed.0));
+        }
+        for d in next {
+            out.push_str(&d.to_line());
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Held-mask changes that come fewer than `min_ticks` ticks after the
+    /// previous change (the mask before the first tick counts as nothing
+    /// held). A consumer that samples the route at another rate can miss
+    /// such a short press or release; routes keep changes at least two
+    /// ticks apart.
+    pub fn spacing_warnings(&self, min_ticks: usize) -> Vec<SpacingWarning> {
+        let mut out = Vec::new();
+        let mut prev_mask = 0u32;
+        let mut prev_change: Option<usize> = None;
+        for (k, t) in self.ticks.iter().enumerate() {
+            if t.held.0 == prev_mask {
+                continue;
+            }
+            if let Some(p) = prev_change
+                && k - p < min_ticks
+            {
+                out.push(SpacingWarning {
+                    tick: k,
+                    gap: k - p,
+                });
+            }
+            prev_mask = t.held.0;
+            prev_change = Some(k);
         }
         out
     }
