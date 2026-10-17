@@ -407,6 +407,22 @@ const COLUMNS: [Column; 20] = [
 /// Event kinds both traces record and [`compare`] matches.
 pub const COMPARED_EVENTS: [&str; 4] = ["checkpoint", "level_complete", "claw_died", "game_over"];
 
+/// Event kinds [`compare`] matches by name alone: a reference trace writes
+/// the level end as plain `level_complete`, without the time value the
+/// rebuild adds.
+pub const NAME_ONLY_EVENTS: [&str; 1] = ["level_complete"];
+
+/// The name of an encoded event (the text before its first `:`).
+fn event_kind(e: &str) -> &str {
+    e.split(':').next().unwrap_or_default()
+}
+
+/// Whether two encoded events are the same event: equal text, or the same
+/// kind for the kinds in [`NAME_ONLY_EVENTS`].
+fn same_event(a: &str, b: &str) -> bool {
+    a == b || (event_kind(a) == event_kind(b) && NAME_ONLY_EVENTS.contains(&event_kind(a)))
+}
+
 /// The resolved tolerance of one column.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColumnTolerance {
@@ -484,8 +500,17 @@ impl Tolerances {
     /// default tuning. Positions within 8 px, allowing one tick of timing
     /// either way; states and stats within two ticks; game events within
     /// three ticks; the random stream is not compared, since the two runs
-    /// step it a different number of times. Per-level tolerance files
-    /// refine these starting values.
+    /// step it a different number of times.
+    ///
+    /// The position, state and stats values are the smallest that hold
+    /// Claw's own movement on the first level's opening route (standing,
+    /// tapped and full jumps, walking off a step, walking, running jumps
+    /// and treasure pickups) at 60 frames per second: his position there
+    /// stays within 8 px of the original after one tick of timing, and his
+    /// state and stats change within two ticks of it. Climbing and fights
+    /// with enemies are outside these values. The event slack is still a
+    /// provisional starting value: that route raises no game event. The
+    /// tolerance files in the acceptance tests refine these per route.
     pub fn feel() -> Tolerances {
         Tolerances {
             pos_px: 8,
@@ -830,9 +855,10 @@ pub struct Comparison {
 }
 
 impl Comparison {
-    /// No divergence.
+    /// No divergence, and at least one reference row was compared: two
+    /// traces that do not overlap in time never pass.
     pub fn passed(&self) -> bool {
-        self.first_divergence.is_none()
+        self.first_divergence.is_none() && self.rows_compared > 0
     }
 }
 
@@ -896,10 +922,7 @@ fn value<'a>(r: &'a TraceRow, name: &str) -> Value<'a> {
 fn compared_events(r: &TraceRow) -> Vec<&str> {
     r.events
         .split('|')
-        .filter(|e| {
-            let kind = e.split(':').next().unwrap_or_default();
-            COMPARED_EVENTS.contains(&kind)
-        })
+        .filter(|e| COMPARED_EVENTS.contains(&event_kind(e)))
         .collect()
 }
 
@@ -926,8 +949,11 @@ fn row_at(rows: &[TraceRow], t: u64) -> Option<usize> {
 /// when the rebuild shows an accepted value at some time within the
 /// column's slack either way (a step function shifted by at most the
 /// slack). Game events of the kinds in [`COMPARED_EVENTS`] must appear in
-/// the other trace within the event slack, in both directions. Reference
-/// rows past the end of the rebuild trace are counted, not compared.
+/// the other trace within the event slack, in both directions (the kinds in
+/// [`NAME_ONLY_EVENTS`] by name alone). Reference rows past the end of the
+/// rebuild trace are counted, not compared, except that a game event in
+/// them is a divergence: the rebuild trace ended before reaching it (a
+/// level end the rebuild never shows, for example).
 pub fn compare(rebuild: &[TraceRow], reference: &[TraceRow], tol: &Tolerances) -> Comparison {
     let columns: Vec<(usize, Column, ColumnTolerance)> = COLUMNS
         .iter()
@@ -961,9 +987,26 @@ pub fn compare(rebuild: &[TraceRow], reference: &[TraceRow], tol: &Tolerances) -
         }
     };
 
+    let events_slot = columns
+        .iter()
+        .position(|(_, c, _)| c.group == Group::Events);
     for (ri, r) in reference.iter().enumerate() {
         let Some(k0) = row_at(rebuild, r.t_ms) else {
             rows_unmatched += 1;
+            if let Some(slot) = events_slot {
+                for e in compared_events(r) {
+                    per_column[slot].compared += 1;
+                    let d = Divergence {
+                        t_ms: r.t_ms,
+                        column: "events".to_string(),
+                        reference: e.to_string(),
+                        rebuild: "the trace has ended".to_string(),
+                        reference_row: ri,
+                        rebuild_row: rebuild.len().saturating_sub(1),
+                    };
+                    note(slot, &mut per_column[slot], d);
+                }
+            }
             continue;
         };
         rows_compared += 1;
@@ -976,8 +1019,11 @@ pub fn compare(rebuild: &[TraceRow], reference: &[TraceRow], tol: &Tolerances) -
                 let start = t - i64::from(r.dt_ms);
                 for e in compared_events(r) {
                     summary.compared += 1;
-                    let found = rows_meeting(rebuild, start - slack + 1, t + slack)
-                        .any(|k| compared_events(&rebuild[k]).contains(&e));
+                    let found = rows_meeting(rebuild, start - slack + 1, t + slack).any(|k| {
+                        compared_events(&rebuild[k])
+                            .iter()
+                            .any(|b| same_event(b, e))
+                    });
                     if !found {
                         let d = Divergence {
                             t_ms: r.t_ms,
@@ -1028,12 +1074,7 @@ pub fn compare(rebuild: &[TraceRow], reference: &[TraceRow], tol: &Tolerances) -
     }
 
     // Events only the rebuild has, within the time the reference covers.
-    if let (Some(slot), Some(last)) = (
-        columns
-            .iter()
-            .position(|(_, c, _)| c.group == Group::Events),
-        reference.last(),
-    ) {
+    if let (Some(slot), Some(last)) = (events_slot, reference.last()) {
         let slack = i64::from(columns[slot].2.slack_ms);
         for (k, b) in rebuild.iter().enumerate() {
             if b.t_ms > last.t_ms {
@@ -1043,8 +1084,11 @@ pub fn compare(rebuild: &[TraceRow], reference: &[TraceRow], tol: &Tolerances) -
             let start = t - i64::from(b.dt_ms);
             for e in compared_events(b) {
                 per_column[slot].compared += 1;
-                let found = rows_meeting(reference, start - slack + 1, t + slack)
-                    .any(|i| compared_events(&reference[i]).contains(&e));
+                let found = rows_meeting(reference, start - slack + 1, t + slack).any(|i| {
+                    compared_events(&reference[i])
+                        .iter()
+                        .any(|r| same_event(r, e))
+                });
                 if !found {
                     let ri = row_at(reference, b.t_ms).unwrap_or(reference.len() - 1);
                     let d = Divergence {
@@ -1093,17 +1137,8 @@ pub fn report(
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "compared {} reference rows over {} ms{}",
-        cmp.rows_compared,
-        cmp.compared_ms,
-        if cmp.rows_unmatched > 0 {
-            format!(
-                "; {} reference rows run past the end of the rebuild trace",
-                cmp.rows_unmatched
-            )
-        } else {
-            String::new()
-        }
+        "compared {} reference rows over {} ms; {} reference rows run past the end of the rebuild trace",
+        cmp.rows_compared, cmp.compared_ms, cmp.rows_unmatched
     );
     match &cmp.first_divergence {
         None => out.push_str("no divergence\n"),
@@ -1149,4 +1184,102 @@ pub fn report(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A standing row ending at `t_ms`, `dt_ms` long.
+    fn row(tick: u64, t_ms: u64, dt_ms: u32, source: &str) -> TraceRow {
+        TraceRow {
+            tick,
+            t_ms,
+            dt_ms,
+            x: 100,
+            y: 200,
+            frac_x: f64::NAN,
+            frac_y: f64::NAN,
+            state_id: 24,
+            physics_type: 1,
+            cam_x: 100,
+            cam_y: 200,
+            held: 0,
+            pressed: 0,
+            source: source.to_string(),
+            activation: "",
+            health: 100,
+            score: 0,
+            lives: 7,
+            weapon: "pistol",
+            pistol: 10,
+            magic: 5,
+            dynamite: 3,
+            events: String::new(),
+            rng: None,
+        }
+    }
+
+    fn rows(n: u64, source: &str) -> Vec<TraceRow> {
+        (0..n)
+            .map(|k| row(k, (k + 1) * u64::from(TICK_MS), TICK_MS, source))
+            .collect()
+    }
+
+    #[test]
+    fn traces_that_do_not_overlap_never_pass() {
+        let reference = rows(3, "reference");
+        let c = compare(&[], &reference, &Tolerances::exact());
+        assert_eq!((c.rows_compared, c.rows_unmatched), (0, 3));
+        assert!(c.first_divergence.is_none());
+        assert!(!c.passed(), "nothing was compared");
+        let c = compare(&rows(3, "script"), &reference, &Tolerances::exact());
+        assert!(c.passed());
+    }
+
+    #[test]
+    fn the_level_end_is_matched_by_name() {
+        let mut rebuild = rows(10, "script");
+        let mut reference = rows(10, "reference");
+        rebuild[6].events = "level_complete:1500".into();
+        reference[6].events = "level_complete".into();
+        assert!(compare(&rebuild, &reference, &Tolerances::exact()).passed());
+        // Other kinds still compare their values.
+        rebuild[6].events = "checkpoint:10:20".into();
+        reference[6].events = "checkpoint:10:21".into();
+        let d = compare(&rebuild, &reference, &Tolerances::exact())
+            .first_divergence
+            .expect("the checkpoints differ");
+        assert_eq!(
+            (d.column.as_str(), d.reference.as_str()),
+            ("events", "checkpoint:10:21")
+        );
+        assert!(same_event("level_complete", "level_complete:0"));
+        assert!(!same_event("level_complete", "game_over"));
+        assert!(!same_event("claw_died:5", "claw_died:4"));
+    }
+
+    #[test]
+    fn an_event_after_the_rebuild_trace_ends_is_a_divergence() {
+        let rebuild = rows(10, "script");
+        let mut reference = rows(14, "reference");
+        reference[12].events = "level_complete".into();
+        let c = compare(&rebuild, &reference, &Tolerances::feel());
+        assert_eq!((c.rows_compared, c.rows_unmatched), (10, 4));
+        assert!(!c.passed());
+        let d = c.first_divergence.expect("the level end was not reached");
+        assert_eq!(
+            (
+                d.t_ms,
+                d.column.as_str(),
+                d.reference.as_str(),
+                d.rebuild.as_str()
+            ),
+            (13 * 18, "events", "level_complete", "the trace has ended")
+        );
+        assert_eq!(d.rebuild_row, 9);
+        // Rows without events past the end are only counted.
+        reference[12].events.clear();
+        assert!(compare(&rebuild, &reference, &Tolerances::feel()).passed());
+    }
 }

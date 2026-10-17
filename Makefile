@@ -17,12 +17,19 @@ SOUNDFONT_SHA256 := 9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a515268
 SOUNDFONT_FILE := GeneralUser-GS.sf2
 SOUNDFONT_DIR ?= $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/rusty-claw/soundfonts
 
-.PHONY: help check fmt test-install run-viewer run-game bench replay soundfont
+.PHONY: help check fmt test-install compare run-viewer run-game bench replay soundfont
 
 help:
 	@echo "make check                     format check, clippy and all unit tests"
 	@echo "make check-<module>            unit tests of one module (assets, frame, render, sim, game, ...)"
 	@echo "make test-install MODULE=<m>   tests against your own install (needs CLAW_INSTALL)"
+	@echo "make compare REF=<level>/<name> [CLOCK=c18|c60] [STRICT=1]"
+	@echo "                               replay a route of the reference store and compare it with"
+	@echo "                               its reference traces (needs CLAW_INSTALL and CLAW_REFERENCE;"
+	@echo "                               prints the first divergence and a per-column summary for each"
+	@echo "                               trace; fails on a divergence that references.toml does not"
+	@echo "                               list, or comes earlier than listed; STRICT=1 fails on any"
+	@echo "                               divergence; tolerances in tests/acceptance/tolerances/)"
 	@echo "make run-viewer ARGS=...       run the level viewer"
 	@echo "make run-game ARGS=...         run the game"
 	@echo "make bench ARGS=...            run the game with --bench SECONDS in ARGS"
@@ -51,6 +58,21 @@ test-install:
 	if ! ls $$dir/tests/install_*.rs >/dev/null 2>&1; then echo "module '$(MODULE)' has no install tests" >&2; exit 2; fi; \
 	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --test 'install_*'"; \
 	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --test 'install_*'
+
+# Replays $(CLAW_REFERENCE)/$(REF)/route.csv with the tuning and random
+# state its meta.toml names for each clock (or only CLOCK) and compares the
+# game with every reference trace of that clock. It fails on a divergence
+# that tests/acceptance/tolerances/references.toml does not list for that
+# route and clock (or that comes earlier than listed), and with STRICT=1 on
+# any divergence; see tests/acceptance/tests/install_reference.rs.
+compare:
+	@if [ -z "$(CLAW_INSTALL)" ]; then echo "CLAW_INSTALL is not set; point it at your own install" >&2; exit 2; fi
+	@if [ -z "$(CLAW_REFERENCE)" ]; then echo "CLAW_REFERENCE is not set; point it at the reference store" >&2; exit 2; fi
+	@if [ -z "$(REF)" ]; then echo "REF is not set, for example REF=level1/opening" >&2; exit 2; fi
+	@case "$(CLOCK)" in ""|c18|c60) ;; *) echo "CLOCK is c18 or c60" >&2; exit 2;; esac
+	@case "$(STRICT)" in ""|0|1) ;; *) echo "STRICT is 0 or 1" >&2; exit 2;; esac
+	CLAW_INSTALL="$(CLAW_INSTALL)" CLAW_REFERENCE="$(CLAW_REFERENCE)" CLAW_COMPARE_REF="$(REF)" CLAW_COMPARE_CLOCK="$(CLOCK)" CLAW_COMPARE_STRICT="$(STRICT)" \
+		$(CARGO) test --release --locked -p claw-acceptance --test install_reference -- --exact make_compare --nocapture
 
 run-viewer:
 	$(CARGO) run --release --locked -p claw-viewer -- $(ARGS)

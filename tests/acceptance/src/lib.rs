@@ -33,15 +33,23 @@
 //! - `install_custom`: community custom levels load and play, their scripts
 //!   untouched, and names that leave the custom level folder are refused;
 //! - `install_window`: a 640x480 window holds 60 frames per second or more
-//!   (skipped without a display).
+//!   (skipped without a display);
+//! - `install_reference`: every route in `tolerances/references.toml`
+//!   replayed against its reference traces of the same route, in the same
+//!   trace format, read from the folder `CLAW_REFERENCE` names (skipped when
+//!   that is unset): every column stays within its tolerance up to the
+//!   first divergence the file records for it. `make compare
+//!   REF=<level>/<name>` runs one route's comparison and prints it.
 //!
 //! [`play`] holds what the route tests share: a recorded player and the
-//! replay of what it recorded through the game's frame loop.
+//! replay of what it recorded through the game's frame loop. [`reference`]
+//! reads reference stores and compares the game with them.
 //!
 //! GPU tests should run under a shared lock when other GPU work runs on the
 //! machine, for example `flock /path/to/lock make test-install ...`.
 
 pub mod play;
+pub mod reference;
 
 /// Reads `CLAW_INSTALL`, or prints a skip note and returns `None`.
 pub fn install() -> Option<std::path::PathBuf> {

@@ -1,0 +1,6 @@
+# Tick for tick: a run of the original at one 18 ms logic step per frame,
+# against the game with the original speeds (--tuning original) and the
+# shared random stream started from the original's state at the route's
+# time zero. Every compared column is equal at the same time, including
+# the random stream. See README.md.
+base = "exact"

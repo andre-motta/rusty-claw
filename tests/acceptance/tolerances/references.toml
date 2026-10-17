@@ -1,0 +1,48 @@
+# Routes the install test `install_reference` compares with their
+# reference traces (README.md explains the clocks and the files).
+#
+# Each [[compare]] entry names a route in the reference store
+# ($CLAW_REFERENCE/<reference>/), the clock of the reference runs (c18 or
+# c60) and the tolerance file (exact or feel). `known.<column> = <ms>`
+# records the reference time at which a column is already known to leave
+# its tolerance; the test fails when a column leaves it earlier, or when a
+# column with no known divergence leaves it at all. When a known divergence
+# comes later or goes away, the test says so and the entry is tightened.
+
+# The first level's opening, one 18 ms step per frame against the original
+# speeds and the original's random state at time zero. Claw's movement and
+# the camera are equal tick for tick until an officer's sword hits Claw in
+# the game at 16416 ms while in the original it misses him; the random
+# stream differs from the first tick (enemy random draws come in another
+# order; see README.md).
+[[compare]]
+reference = "level1/opening"
+clock = "c18"
+tolerance = "exact"
+known.x = 16452
+known.y = 16434
+known.state_id = 16416
+known.physics_type = 16434
+known.cam_x = 16452
+known.cam_y = 16434
+known.health = 16416
+known.score = 17946
+known.rng = 18
+
+# The same route at 60 frames per second against the default tuning.
+# Claw stays within the feel tolerance until the climb up the ladder,
+# where the game climbs faster than the original (from 11150 ms), and the
+# officer's sword hits Claw in the original at 16384 ms but not in the
+# game.
+[[compare]]
+reference = "level1/opening"
+clock = "c60"
+tolerance = "feel"
+known.x = 16417
+known.y = 11150
+known.state_id = 12750
+known.physics_type = 12750
+known.cam_x = 16417
+known.cam_y = 11150
+known.health = 16384
+known.score = 23050
