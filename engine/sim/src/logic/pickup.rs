@@ -8,10 +8,12 @@
 //!
 //! A placed pickup, on its first logic call, finds its picture in the table
 //! and takes the code, amount and sound from it (the level's own amount is
-//! ignored). It sets the box that touches Claw, may start a sparkling
-//! glitter next to itself and then waits. Claw's side applies the effect
-//! (see [`crate::player::hit`]): it removes health, ammunition and special
-//! pickups itself, and hands treasure and extra lives back with
+//! ignored). It sets the box that touches Claw, starts its animation when it
+//! has none (see [`idle_anim`]), may start a sparkling glitter next to
+//! itself and then waits, advancing its animation by one tick on every
+//! call. Claw's side applies the effect (see [`crate::player::hit`]): it
+//! removes health, ammunition and special pickups itself, and hands
+//! treasure and extra lives back with
 //! [`send_to_hud`], after which they fly for 400 ms toward the score or
 //! lives corner of the view and remove themselves. Taken treasure leaves a
 //! small score number that rises 11 px and disappears.
@@ -25,7 +27,8 @@
 //! can be taken with is the box of the frame it shows when it becomes
 //! collectable. Each call it first acts on what the previous call's move
 //! left (a landing makes it bounce, the fourth bounce over makes it a
-//! pickup), then moves (see [`Goodie`]).
+//! pickup), then moves (see [`Goodie`]). Once it is a pickup it keeps the
+//! spin it has and goes on from the frame it reached.
 //!
 //! The map piece that ends a level shows `GAME_MAPPIECE` on odd levels
 //! other than 13 and `LEVEL_GEM` on the others (see [`map_piece_set`]).
@@ -44,15 +47,15 @@
 //! [`World::boss_defeated`]: super::World::boss_defeated
 //! [`World::release_claw_boss_end`]: super::World::release_claw_boss_end
 //!
-//! A pickup touches Claw with the box of its picture's current frame, as
-//! the level reports it (padded for treasure, special and curse pickups);
-//! when the level does not know the frame it uses a 32 px square instead.
+//! A pickup touches Claw with the box of the frame its picture shows on
+//! its first call, as the level reports it (padded for treasure, special
+//! and curse pickups); when the level does not know the frame it uses a
+//! 32 px square instead. The box stays as it is while the picture cycles.
 //!
 //! [`census`] counts the treasure a level holds, by kind, for the end of
 //! level tally.
 //!
-//! Placed pickups and glitter show a still image instead of cycling
-//! through their set; only a flying goodie spins.
+//! Glitter shows a still image instead of cycling through its set.
 
 use claw_frame::SoundChannel;
 
@@ -168,7 +171,7 @@ pub const IMAGE_SETS: &[&str] = &[
 ];
 
 /// Prefixes of the animations this family may play.
-pub const ANIM_PREFIXES: &[&str] = &["GAME_GLITTER", "GAME_POINTS", "GAME_CYCLE"];
+pub const ANIM_PREFIXES: &[&str] = &["GAME_GLITTER", "GAME_POINTS", "GAME_CYCLE", PICKUP_ANIM];
 
 // ------------------------------------------------------------ the table
 
@@ -747,6 +750,24 @@ pub const GOODIE_BOUNCES: u32 = 4;
 pub const GOODIE_MAX_BOUNCE: f64 = 500.0;
 /// Animation a goodie spins with while it flies.
 pub const GOODIE_ANIM: &str = "GAME_CYCLE100";
+/// Animation a placed coin loops: the next image of its set every 100 ms.
+pub const COIN_ANIM: &str = "GAME_CYCLE100";
+/// Animation every other placed pickup loops: the next image of its set
+/// every 100 ms.
+pub const PICKUP_ANIM: &str = "GAME_POWERUP";
+
+/// The animation a pickup running `logic` with the picture `image_set`
+/// starts on its first call when it has none: [`COIN_ANIM`] for a coin,
+/// [`PICKUP_ANIM`] for anything else. Health, magic and ammunition
+/// pickups always take [`PICKUP_ANIM`].
+pub fn idle_anim(logic: &str, image_set: &str) -> &'static str {
+    match logic {
+        HEALTH | MAGIC | AMMO => PICKUP_ANIM,
+        _ if image_set == "GAME_TREASURE_COINS" => COIN_ANIM,
+        _ => PICKUP_ANIM,
+    }
+}
+
 /// A goodie's movement box is the box of its first picture grown by this
 /// much to the left, up and to the right (not down), px.
 pub const GOODIE_MOVE_GROW: i32 = 10;
@@ -803,6 +824,7 @@ fn pickup_tick(w: &mut World, id: ObjectId) {
         engine_state::DESTROYING => drop_glitter(w, id),
         state::INIT => init_pickup(w, id),
         state::IDLE => {
+            w.advance_anim(id);
             let o = w.objects.get_mut(id).expect("checked");
             if flies(&logic) && o.special_flags & special::FLYING_TO_HUD != 0 {
                 o.state = state::FLIGHT_START;
@@ -814,7 +836,9 @@ fn pickup_tick(w: &mut World, id: ObjectId) {
     }
 }
 
-/// The first call of a pickup: picture, kind, amount, touch box, glitter.
+/// The first call of a pickup: picture, kind, amount, touch box,
+/// animation (kept when it already has one, as a goodie that settles
+/// does), glitter.
 fn init_pickup(w: &mut World, id: ObjectId) {
     let level = w.level_number();
     let picture = picture_box(w, w.objects.get(id).expect("caller checked"));
@@ -849,6 +873,11 @@ fn init_pickup(w: &mut World, id: ObjectId) {
     } else {
         picture
     };
+    let anim = o
+        .anim
+        .animation()
+        .is_none()
+        .then(|| idle_anim(&logic, &o.image_set));
     let smarts = o.record.as_ref().map_or(0, |r| r[17]);
     let code = code_in(&o.image_set, level);
     let glitter = GLITTER_ON
@@ -878,6 +907,9 @@ fn init_pickup(w: &mut World, id: ObjectId) {
         d.points = 100;
     }
     o.state = state::IDLE;
+    if let Some(key) = anim {
+        w.set_anim(id, key);
+    }
     if glitter {
         let g = spawn_glitter(w, id);
         if let Some(o) = w.objects.get_mut(id) {
