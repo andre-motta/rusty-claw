@@ -28,11 +28,12 @@
 //! - [`hit`]: what happens when something touches Claw;
 //! - [`death`]: dying, the death states and the powerup timer;
 //! - [`progress`]: starting a level from a carried state or a save, and
-//!   handing the progress on.
+//!   handing the progress on;
+//! - [`swing`]: hanging from a rope.
 //!
 //! The rows of the hit (31), lift (5000), throw (5001), death-fall (5004),
-//! death (5005) and freeze (5009) states call into those submodules, which
-//! fall back to standing until they are filled in.
+//! death (5005), swing (5007) and freeze (5009) states call into those
+//! submodules, which fall back to standing until they are filled in.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -56,6 +57,7 @@ pub mod hit;
 pub mod progress;
 pub mod special;
 pub mod stats;
+pub mod swing;
 
 pub use stats::{Carry, PlayerStats, SavePos, StartState};
 
@@ -1707,7 +1709,7 @@ pub static STATE_TABLE: [StateRow; 43] = [
         enter_row_on_edge,
         on_edge_tick,
     ),
-    fallback(state::SWING, "Swing"),
+    fallback_via(state::SWING, "Swing", swing::swing_tick),
     fallback(state::BEARHUG, "Bearhug"),
     fallback_via(state::FREEZE, "Freeze", special::freeze_tick),
     unused(5010),

@@ -1,7 +1,7 @@
-//! Enemies: the officer, the soldier and the rat, on shared enemy
-//! behaviour. The punk rat ([`punkrat`]) and Raux ([`raux`]) are declared
-//! but not built yet, and so are the shared human states they and later
-//! human enemies add ([`human`]).
+//! Enemies: the officer, the soldier, the rat, the punk rat ([`punkrat`])
+//! and Raux ([`raux`]), on shared enemy behaviour and the shared human
+//! states ([`human`]). The cutthroat ([`cutthroat`]) and the robber thief
+//! ([`robberthief`]) are declared but not built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -51,6 +51,7 @@ use crate::physics::ptype;
 use crate::tiles::SOLID;
 use crate::tuning::TICK_MS;
 
+pub mod cutthroat;
 pub mod goo;
 pub mod human;
 pub mod lift;
@@ -59,6 +60,7 @@ pub mod officer;
 pub mod punkrat;
 pub mod rat;
 pub mod raux;
+pub mod robberthief;
 pub mod soldier;
 pub mod states;
 
@@ -168,8 +170,9 @@ pub mod field {
 /// runs a state of an existing name reuses its number. New names take
 /// numbers in blocks: 2000-2021 the first level's enemies, 2022-2029 every
 /// boss, 2030-2049 the shared human states, 2050-2059 the punk rat,
-/// 2060-2069 cannons and 2070-2089 Raux; later families take blocks of 20
-/// from 2100. Numbers of a block that no state has yet stay free, so the
+/// 2060-2069 cannons, 2070-2089 Raux and 2100-2119 the third level's
+/// thieves (reserved, no state yet: see [`cutthroat::STATE_BLOCK`]); later
+/// families take blocks of 20 from 2120. Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(i32)]
@@ -727,6 +730,8 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::Rat => Some(&rat::CLASS),
         GameLogic::PunkRat => Some(&punkrat::CLASS),
         GameLogic::Raux => Some(&raux::CLASS),
+        GameLogic::CutThroat => Some(&cutthroat::CLASS),
+        GameLogic::RobberThief => Some(&robberthief::CLASS),
         _ => None,
     }
 }
@@ -759,12 +764,15 @@ pub(crate) fn obj_mut<'a>(w: &'a mut World, id: ObjectId) -> &'a mut Object {
 
 impl ObjectData {
     /// The enemy data this holds: plain enemy data, or the enemy data
-    /// inside a family's own data (the punk rat's and Raux's).
+    /// inside a family's own data (the punk rat's, Raux's and the
+    /// thieves').
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
             ObjectData::PunkRat(d) => Some(&d.enemy),
             ObjectData::Raux(d) => Some(&d.enemy),
+            ObjectData::CutThroat(d) => Some(&d.enemy),
+            ObjectData::RobberThief(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -775,6 +783,8 @@ impl ObjectData {
             ObjectData::Enemy(d) => Some(d),
             ObjectData::PunkRat(d) => Some(&mut d.enemy),
             ObjectData::Raux(d) => Some(&mut d.enemy),
+            ObjectData::CutThroat(d) => Some(&mut d.enemy),
+            ObjectData::RobberThief(d) => Some(&mut d.enemy),
             _ => None,
         }
     }
