@@ -639,31 +639,40 @@ fn the_door_wakes_the_stager_for_claws_first_tick_at_the_target() {
         stage_state::INIT,
         "asleep while Claw is far"
     );
-    let mut door_tick = None;
+    let mut at_door = None;
     for _ in 0..60 {
+        let before = sim.clone();
         sim.step(key_down(&sim, RIGHT));
         if sim.player().unwrap().x >= FAR_STAGER_X {
-            door_tick = Some(sim.tick());
+            at_door = Some(before);
             break;
         }
         assert!(!boss_music(sim.last_audio()));
     }
-    assert!(door_tick.is_some(), "the door moved Claw");
-    // The door's set-up ends its tick: the camera is on Claw, and the
-    // stager woke, asked for the boss music and is armed.
+    let at_door = at_door.expect("the door moved Claw");
+    // The tick that touched the door ended with Claw still at the door and
+    // the stager asleep.
+    assert!(at_door.player().unwrap().x < 1200);
+    assert_eq!(
+        at_door.objects().get(stager).unwrap().state,
+        stage_state::INIT
+    );
+    // The door moved him between that tick and the next: the camera
+    // jumped to him and the stager woke, asked for the boss music and was
+    // armed for his first tick at the target, which walks him on from the
+    // target in the trigger's box, so the trigger fires.
     let o = sim.player().unwrap();
-    assert_eq!(sim.camera().current, (o.x, o.y));
+    assert!(
+        o.x > FAR_STAGER_X + 4 && o.x <= FAR_STAGER_X + 12,
+        "{}",
+        o.x
+    );
+    assert!((sim.camera().current.0 - o.x).abs() <= 12);
+    assert_eq!(sim.camera().current.1, o.y);
     assert!(boss_music(sim.last_audio()));
-    assert_eq!(sim.objects().get(stager).unwrap().state, stage_state::ARMED);
-    let at_door = sim.clone();
-
-    // Claw's first tick at the target: walking in the box, the trigger
-    // fires.
-    sim.step(key_down(&sim, RIGHT));
     let l = look(&sim, stager);
     assert_eq!(l.physics, ptype::WALK);
     assert!(l.checkpoint.is_some());
-    assert!(!boss_music(&l.audio));
 
     // Jump pressed on that tick: the introduction never runs.
     let mut s = at_door.clone();
@@ -685,6 +694,54 @@ fn the_door_wakes_the_stager_for_claws_first_tick_at_the_target() {
     s.step(jump_right());
     assert_eq!(s.boss().fight(), fight::STAGING);
     assert_eq!(s.player().unwrap().state, state::FREEZE);
+}
+
+#[test]
+fn a_fall_into_the_door_lands_before_the_first_tick_at_the_target() {
+    // Claw jumps into the door holding Right: the door turns the jump
+    // into a fall from rest and leaves him there for the rest of the
+    // tick. Between that tick and the next it puts him on the target,
+    // which is on the floor, and runs his logic once with no game time:
+    // nothing moves, but he lands, and with Right held he walks. So his
+    // first tick at the target already walks him on, as the original's
+    // 5 px (23646 to 23651 on the second level).
+    let mut sim = pressing_sim(door_arena(), SimConfig::default());
+    idle(&mut sim, 5);
+    let mut at_door = None;
+    for _ in 0..120 {
+        let before = sim.clone();
+        let o = sim.player().unwrap();
+        let input = if o.x > 1060 && o.physics_type != ptype::JUMP && o.physics_type != ptype::FALL
+        {
+            jump_right()
+        } else {
+            key_down(&sim, RIGHT)
+        };
+        sim.step(input);
+        if sim.player().unwrap().x >= FAR_STAGER_X {
+            at_door = Some(before);
+            break;
+        }
+    }
+    // The tick that touched the door ended with Claw falling from rest at
+    // the door.
+    let mut at_door = at_door.expect("the door moved Claw");
+    let o = at_door.player().unwrap();
+    assert!(o.x < 1300, "still at the door: {}", o.x);
+    assert_eq!((o.state, o.physics_type), (state::FALL, ptype::FALL));
+    // The first tick at the target: landed between the ticks, he walks.
+    at_door.step(key_down(&at_door, RIGHT));
+    let o = at_door.player().unwrap();
+    assert_eq!(o.physics_type, ptype::WALK);
+    assert!(
+        (4..=5).contains(&(o.x - (FAR_STAGER_X + 4))),
+        "walked on from the target: {}",
+        o.x
+    );
+    assert!(
+        checkpoint_in(at_door.last_events()).is_some(),
+        "the trigger fires"
+    );
 }
 
 /// A special pickup giving powerup `code` for `ms`, touching Claw.

@@ -415,6 +415,40 @@ fn moving_ends_at_a_wall() {
 }
 
 #[test]
+fn moving_reaches_its_spot_by_the_exact_position() {
+    // Walking left at 150 px/s (2.7 px a tick) from 3000.32 to the spot
+    // 2997: after one step it is at 2997.62, on the spot's pixel but not
+    // yet past it, so it walks one tick more and goes Home from 2994.92.
+    // (Raux backing off after the second level's fight reached his spot
+    // a tick later than the whole pixel says, as in the original.)
+    let (mut sim, id) = raux_on(&flat_rows());
+    sim.with_world(|w| {
+        let y = w.objects.get(id).unwrap().y;
+        w.objects.get_mut(id).unwrap().x = 3000;
+        let d = enemy::data_mut(w, id).unwrap();
+        d.vx = -150.0;
+        d.carry = (0.32, 0.0);
+        d.moved_to = Some((3000, y));
+        d.human.target_x = 2997;
+        // As if it had just walked here.
+        d.human.pre_move_x = 3003;
+        enemy::set_state(w, id, EnemyState::MoveBack);
+    });
+    sim.step(TickInput::default());
+    assert_eq!(obj(&sim, id).x, 2997);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::MoveBack));
+    sim.step(TickInput::default());
+    assert_eq!(
+        state_of(&sim, id),
+        Some(EnemyState::MoveBack),
+        "on the spot's pixel, not past it"
+    );
+    assert_eq!(obj(&sim, id).x, 2994);
+    sim.step(TickInput::default());
+    assert_ne!(state_of(&sim, id), Some(EnemyState::MoveBack));
+}
+
+#[test]
 fn moving_ends_when_the_enemy_did_not_move() {
     let (mut sim, id) = raux_on(&flat_rows());
     sim.with_world(|w| {

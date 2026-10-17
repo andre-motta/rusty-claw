@@ -175,6 +175,9 @@ struct Runner<'a> {
     input: TickInput,
     tick: u64,
     now_ms: u64,
+    /// Game time Claw's call covers, ms: one tick, 0 for the settle after
+    /// a warp.
+    dt_ms: u32,
     pulse: bool,
     player: Option<ObjectId>,
     /// The ambient manager, recorded when [`Runner::list_spawned`] lists it.
@@ -248,6 +251,7 @@ impl Runner<'_> {
                 out: &mut *self.out,
                 tick: self.tick,
                 now_ms: self.now_ms,
+                dt_ms: self.dt_ms,
                 pulse: self.pulse,
                 view,
                 level_logics: self.cfg.level_logics,
@@ -617,6 +621,7 @@ impl Sim {
                 input: self.claw_input,
                 tick: self.tick,
                 now_ms,
+                dt_ms: TICK_MS,
                 pulse: self.pulse_left == 0,
                 player: self.player,
                 ambient: &mut self.ambient,
@@ -634,13 +639,10 @@ impl Sim {
 
     /// Advances one tick with `input` and returns the snapshot.
     ///
-    /// When a warp moved Claw in the tick's collision pass, the tick ends
-    /// with the warp's own set-up, which takes no game time: the camera
-    /// jumps to him when he is out of its reach ([`Camera::settle`]), the
-    /// objects around his new place wake, and those that never ran run
-    /// their first logic call in list order, as the level's objects do
-    /// while it loads. A trigger or boss waiting there is so ready for
-    /// Claw's first tick at the target.
+    /// When Claw touched a warp in the last tick, he was left at the warp
+    /// for the rest of it and the warp takes him to its target now,
+    /// between the two ticks, with no game time (see
+    /// [`Sim::warp_between_ticks`]).
     ///
     /// After a tick that took one of Claw's lives with lives left, he
     /// respawns before the next tick's logic, taking no game time (see
@@ -655,6 +657,9 @@ impl Sim {
         }
         if std::mem::take(&mut self.respawned) {
             self.out.set_transition(None);
+        }
+        if let Some(target) = self.claw.special.warp_to.take() {
+            self.warp_between_ticks(target);
         }
         self.input = input;
         // A latched key stays latched until a tick finds it up.
@@ -685,9 +690,6 @@ impl Sim {
         self.activation.enter(&mut self.objects, c);
         self.update_pass();
         self.collision_pass();
-        if std::mem::take(&mut self.claw.special.warped) {
-            self.settle_after_warp();
-        }
         let c = self.centres();
         {
             let (mut runner, objects, activation) = self.parts();
@@ -753,6 +755,13 @@ impl Sim {
     /// pressed. An object near both places runs twice (an enemy the first
     /// pass sends Home makes Home's draws in the second and can start its
     /// strike there); one the respawn wakes runs once.
+    ///
+    /// Inferred: the order (objects out of reach put to sleep, a pass, the
+    /// objects around Claw woken, a second pass) is the one that gives the
+    /// original's random draws and positions on the first level's runs
+    /// that lose a life; the original's own order of these steps is not
+    /// known. One run of the second level shows a keg the respawn wakes
+    /// making its first roll a tick later than this order gives.
     fn respawn_between_ticks(&mut self) {
         let Some(id) = self.player else {
             self.claw.respawn_pending = false;
@@ -792,7 +801,38 @@ impl Sim {
         self.respawned = true;
     }
 
-    /// The warp's set-up after it moved Claw (see [`Sim::step`]).
+    /// The warp Claw touched in the last tick, between that tick and the
+    /// next, taking no game time: Claw is put at the target and the
+    /// camera's scripted point is dropped; the camera jumps to him when he
+    /// is out of its reach ([`Camera::settle`]), the objects around his new
+    /// place wake, and those that never ran run their first logic call in
+    /// list order, as the level's objects do while it loads (a trigger or
+    /// boss waiting there is so ready for Claw's first tick at the
+    /// target); then Claw's logic runs once more with no game time, with
+    /// the keys of the last tick held and nothing pressed. Nothing moves in
+    /// that call, but Claw's state follows where he now is: falling onto a
+    /// floor he lands, so a fall into the warp walks on in the first tick
+    /// at the target when a direction is held, while a walk into it stays
+    /// a walk. The objects' own calls in that pass change nothing with no
+    /// game time, so only Claw's runs.
+    fn warp_between_ticks(&mut self, (x, y): (i32, i32)) {
+        let Some(id) = self.player else { return };
+        if let Some(o) = self.objects.get_mut(id) {
+            o.x = x;
+            o.y = y;
+            o.teleported = true;
+        }
+        self.camera_override = None;
+        self.settle_after_warp();
+        self.claw_input.pressed = Buttons::NONE;
+        let (mut runner, objects, _) = self.parts();
+        runner.dt_ms = 0;
+        runner.with_claw(objects, id, player::tick);
+        runner.list_spawned(objects);
+    }
+
+    /// The warp's set-up after it moved Claw (see
+    /// [`Sim::warp_between_ticks`]).
     fn settle_after_warp(&mut self) {
         let followed = self
             .player

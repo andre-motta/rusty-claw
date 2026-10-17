@@ -480,16 +480,20 @@ fn start_move(w: &mut World, id: ObjectId, tx: i32, inside: bool, rightward: boo
 
 /// MoveBack and MoveAhead: Home once it has reached or passed its spot,
 /// when the last movement step ran into a wall, or when it did not move.
+/// The spot is reached by the exact position, fraction included: walking
+/// left onto 23694, an enemy at 23694.12 walks one tick more.
 pub fn move_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     let x = obj(w, id).x;
+    let exact = super::exact_x(w, id);
     let Some((vx, h)) = data(w, id).map(|d| (d.vx, d.human.clone())) else {
         return;
     };
+    let target = f64::from(h.target_x);
     let arrived = if vx < 0.0 {
-        x <= h.target_x
+        exact <= target
     } else {
-        x >= h.target_x
+        exact >= target
     };
     if arrived || h.tile_hit || x == h.pre_move_x {
         go_home(w, id);

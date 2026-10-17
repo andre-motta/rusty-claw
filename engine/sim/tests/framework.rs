@@ -172,8 +172,10 @@ fn image_ranges_and_frame_boxes_reach_the_logics() {
         o.x = 100;
         o.y = 200;
         assert_eq!(w.draw_box(&o), Some(Rect::new(94, 179, 113, 208)));
+        // Mirrored, the picture flips about its anchor pixel: the mirrored
+        // box (87..106) one pixel further left.
         o.draw_flags |= draw_flags::MIRROR;
-        assert_eq!(w.draw_box(&o), Some(Rect::new(87, 179, 106, 208)));
+        assert_eq!(w.draw_box(&o), Some(Rect::new(86, 179, 105, 208)));
     });
 }
 

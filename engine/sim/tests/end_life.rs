@@ -137,10 +137,10 @@ fn ending_a_life_on_a_ladder_falls_from_the_ladder() {
     assert_eq!(c.state, state::DEATH_FALL);
     assert_eq!(c.physics_type, ptype::FALL);
     assert_eq!(c.x, before.0);
-    // He falls off the screen through the floor, then comes back at the
-    // level start (no checkpoint yet).
+    // He hangs there for 750 ms, falls off the screen through the floor,
+    // then comes back at the level start (no checkpoint yet).
     let mut lowest = c.y;
-    for _ in 0..40 {
+    for _ in 0..90 {
         sim.step(TickInput::default());
         lowest = lowest.max(claw(&sim).y);
     }

@@ -20,9 +20,10 @@
 //!    (after the officer's roll);
 //! 5. a pacing enemy is at a limit only when its exact position is: no
 //!    draw in tick 1029, the limit's draw in tick 1030;
-//! 6. a woken enemy first moves for the time it slept, at most 200 ms: the
-//!    officer woken in tick 2552 moves from 1924 to 1900 and is outside
-//!    its window again, so tick 2555 has three draws, not four;
+//! 6. a woken enemy first moves for the whole time it slept, up to the
+//!    24 px step limit: the officer woken in tick 2552 moves from 1924 to
+//!    1900 and is outside its window again, so tick 2555 has three draws,
+//!    not four;
 //! 7. Claw's hit burst draws its y jitter, then its x jitter: the
 //!    officer's strike that hurts Claw in tick 476 (8586 ms, health 90).
 //!

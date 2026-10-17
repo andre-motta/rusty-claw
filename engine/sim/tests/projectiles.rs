@@ -235,11 +235,47 @@ fn a_musket_ball_flies_at_500_px_s_and_mirrors_when_flying_left() {
     };
     let b = launch(&mut sim, spec);
     assert!(obj(&sim, b).unwrap().draw_flags & 0x2 != 0, "mirrored");
-    assert_eq!(obj(&sim, b).unwrap().move_rect, Rect::new(-6, -5, 5, 4));
+    // Its boxes face left too.
+    assert_eq!(obj(&sim, b).unwrap().move_rect, Rect::new(-5, -5, 6, 4));
+    assert_eq!(obj(&sim, b).unwrap().attack_rect, Rect::new(-5, -5, 6, 4));
     for n in 1..=10 {
         step(&mut sim);
         assert_eq!(obj(&sim, b).unwrap().x, 1500 - 9 * n);
     }
+}
+
+#[test]
+fn a_projectile_moves_on_its_own_clock_of_doubles() {
+    // A musket ball at 500 px/s moves 9 px a tick, but each step covers
+    // the game time since its last step as a difference of doubles
+    // (seconds at the step's end), so launched before tick 63 its second
+    // step is a hair under 0.018 s and truncates to 8 px; the third makes
+    // up for it. The cannonball by the second level's ladder lost its
+    // pixel this way.
+    let mut sim = sim();
+    while sim.tick() < 63 {
+        step(&mut sim);
+    }
+    let b = launch(
+        &mut sim,
+        ProjectileSpec {
+            logic: "Bullet",
+            x: 1000,
+            y: 700,
+            z: 300,
+            vx: 500,
+            damage: 10,
+            type_flags: types::ENEMY_SHOT,
+            image_set: "LEVEL_MUSKETBALL",
+            ..ProjectileSpec::default()
+        },
+    );
+    let mut xs = Vec::new();
+    for _ in 0..4 {
+        step(&mut sim);
+        xs.push(obj(&sim, b).unwrap().x);
+    }
+    assert_eq!(xs, [1009, 1017, 1027, 1036]);
 }
 
 #[test]

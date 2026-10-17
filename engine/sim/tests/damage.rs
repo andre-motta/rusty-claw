@@ -449,6 +449,15 @@ fn warps_move_claw_and_may_stay() {
     f.kind = 32;
     f.target = (3000, 899);
     let p = toucher(&mut sim, types::SPECIAL, f, 0);
+    let before = {
+        let o = sim.player().unwrap();
+        (o.x, o.y)
+    };
+    // The tick that touches the warp leaves Claw where he is; the warp
+    // takes him to its target before the next tick.
+    step(&mut sim);
+    let o = sim.player().unwrap();
+    assert_eq!((o.x, o.y), before);
     step(&mut sim);
     let o = sim.player().unwrap();
     assert_eq!((o.x, o.y), (3000, 899));
@@ -601,6 +610,17 @@ fn losing_all_health_falls_out_of_view_then_respawns() {
         loop {
             let (audio, events) = step(&mut sim);
             ticks += 1;
+            // He hangs where he lost his last health for 750 ms (41 ticks
+            // with no logic call) and falls from the 42nd.
+            let o = sim.player().unwrap();
+            if ticks <= 41 {
+                assert_eq!(o.y, y_dead, "held in tick {ticks} after the death");
+                assert!(o.time_delay > 0, "held in tick {ticks} after the death");
+            } else if ticks == 42 {
+                assert_eq!(o.time_delay, 0, "his logic runs again");
+            } else if ticks == 45 {
+                assert!(o.y > y_dead, "falling");
+            }
             if !events.is_empty() {
                 assert_eq!(events, vec![GameEvent::ClawDied { lives_left: 6 }]);
                 assert!(played(&audio, "GAME_CIRCLEFADE"));

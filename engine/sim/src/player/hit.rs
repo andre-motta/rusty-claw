@@ -506,7 +506,9 @@ fn special_pickup(c: &mut Ctx, id: ObjectId) {
 }
 
 /// A warp: a warp taken in a jump turns the jump into a fall; with a
-/// target Claw moves there. The warp stays when its smarts are set.
+/// target Claw moves there at the end of the tick (see
+/// [`super::special::Special::warp_to`]). The warp stays when its smarts
+/// are set.
 fn warp(c: &mut Ctx, id: ObjectId, f: &PickupFields) {
     if c.o.state == state::JUMP {
         if c.p.attacking && JUMP_ATTACKS.contains(&c.p.attack.kind) {
@@ -526,13 +528,9 @@ fn warp(c: &mut Ctx, id: ObjectId, f: &PickupFields) {
         c.p.mover.y.a = c.t.player.gravity;
     }
     if f.target.0 > 0 && f.target.1 > 0 {
-        c.o.x = f.target.0;
-        c.o.y = f.target.1;
-        c.o.teleported = true;
-        *c.camera_override = None;
-        // The simulation wakes the objects around the target before the
-        // next tick.
-        c.p.special.warped = true;
+        // Claw stays here for the rest of the tick; the simulation moves
+        // him to the target between this tick and the next.
+        c.p.special.warp_to = Some(f.target);
     }
     if f.smarts == 0 {
         remove(c, id);

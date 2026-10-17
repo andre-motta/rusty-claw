@@ -14,9 +14,10 @@
 //!    there is gravity, except for a standing enemy, which does not move
 //!    up or down and has no vertical speed. `dt` is the 18 ms tick, except
 //!    on the first step after a gap (an enemy woken after sleeping outside
-//!    its activation window): that step covers the time since the last
-//!    step, at most 200 ms, so a woken walker first makes up the way it
-//!    did not walk while asleep (up to 24 px at the pacing speed).
+//!    its activation window): that step covers the whole time since the
+//!    last step, so a woken walker first makes up the way it did not walk
+//!    while asleep, up to the 24 px step limit (a rat asleep for 3.7 s
+//!    moves 24 px, then stops on its patrol limit).
 //! 4. The new position is clamped to the patrol limits: a walker that
 //!    would cross a limit stops exactly on it.
 //! 5. The object moves there through the tiles and platforms. When the
@@ -39,16 +40,15 @@ use crate::tuning::TICK_MS;
 
 use super::{DeathKind, EnemyData, EnemyState, TICK_S, die, obj, obj_mut, with_data};
 
-/// Largest move per axis in one step, px.
+/// Largest move per axis in one step, px. It is also all that limits the
+/// first step after a gap: that step covers the whole time since the
+/// previous one (after 108 ms asleep a pacing officer first moves 13 px,
+/// after longer sleeps 24 px; a rat woken after 3.744 s moves 24 px and is
+/// held on its patrol limit). The rest of the rule is inferred with it:
+/// the catch-up fires after any gap over one 18 ms tick, not only after a
+/// sleep, and an enemy that has never moved (no time of a last step yet)
+/// covers one 18 ms tick.
 pub const STEP_LIMIT: f64 = 24.0;
-/// Longest time one movement step covers, ms: the first step after a gap
-/// covers the time since the previous step up to this. Inferred from the
-/// first moves of woken enemies (after 108 ms asleep a pacing officer
-/// first moves 13 px, after longer sleeps 24 px). The rest of the rule is
-/// inferred with it: the catch-up fires after any gap over one 18 ms tick,
-/// not only after a sleep, and an enemy that has never moved (no time of a
-/// last step yet) covers one 18 ms tick.
-pub const WAKE_STEP_MAX_MS: u64 = 200;
 /// Depth above the base of an enemy drawn in front of Claw.
 pub const DEPTH_IN_FRONT: i32 = 4000;
 /// Depth above the base of an enemy drawn behind Claw.
@@ -95,14 +95,14 @@ pub fn integrate(w: &mut World, id: ObjectId) {
 }
 
 /// The time the step at `now` covers, s: one tick, or after a gap (the
-/// enemy slept, so no step ran for more than a tick) the time since the
-/// last step, at most [`WAKE_STEP_MAX_MS`]. Records `now` as the time of
-/// the last step.
+/// enemy slept, so no step ran for more than a tick) the whole time since
+/// the last step, which only the [`STEP_LIMIT`] of the move bounds.
+/// Records `now` as the time of the last step.
 fn step_seconds(d: &mut EnemyData, now: u64) -> f64 {
     let since = d.last_move_ms.map_or(0, |t| now.saturating_sub(t));
     d.last_move_ms = Some(now);
     let ms = if since > u64::from(TICK_MS) {
-        since.min(WAKE_STEP_MAX_MS)
+        since
     } else {
         u64::from(TICK_MS)
     };

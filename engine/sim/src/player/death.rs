@@ -5,9 +5,10 @@
 //! Claw dies in two ways:
 //!
 //! - Losing all his health ([`DeathCause::Damage`]): he plays the falling
-//!   death and drops through the floor and out of view (state
-//!   [`state::DEATH_FALL`]), drawn in front of the level. Once he has
-//!   fallen [`DEATH_FALL_DEPTH`] pixels the lives step runs.
+//!   death and, after hanging in the air for [`DEATH_FALL_HOLD_MS`] (his
+//!   logic does not run meanwhile), drops through the floor and out of
+//!   view (state [`state::DEATH_FALL`]), drawn in front of the level. Once
+//!   he has fallen [`DEATH_FALL_DEPTH`] pixels the lives step runs.
 //! - Touching a death tile ([`DeathCause::DeathTile`]): he plays the spike
 //!   death in place (state [`state::DEATH`]) with the death-tile sound, and
 //!   the lives step runs when the animation ends.
@@ -101,6 +102,10 @@ pub const CATNIP_GLITTER_LOGIC: &str = "GlitterMother";
 
 /// Pixels Claw falls after losing all health before the lives step.
 pub const DEATH_FALL_DEPTH: i32 = 800;
+/// How long Claw hangs where he lost his last health before the falling
+/// death starts, ms: his logic waits this long, as any object's does when
+/// its logic is delayed (41 ticks of 18 ms).
+pub const DEATH_FALL_HOLD_MS: u32 = 750;
 /// Gravity of the falling death, px/s².
 pub const DEATH_FALL_GRAVITY: f64 = 2250.0;
 /// Depth Claw is drawn at while he falls to his death: in front of the
@@ -139,9 +144,6 @@ pub mod claw_flags {
     /// stays reserved.
     pub const RESPAWNING: u32 = 0x2000_0000;
 }
-
-const DT: u32 = TICK_MS;
-const DT_S: f64 = TICK_MS as f64 * 0.001;
 
 /// Ticks a transition of `ms` takes: whole ticks, rounded up.
 pub const fn ticks_of(ms: u32) -> u64 {
@@ -195,7 +197,9 @@ fn let_go(c: &mut Ctx) {
     c.o.special_flags &= !(claw_flags::LIVES_COUNTED | claw_flags::RESPAWNING);
 }
 
-/// The falling death: out of reach, in front of the level, from rest.
+/// The falling death: out of reach, in front of the level, from rest,
+/// after a hold of [`DEATH_FALL_HOLD_MS`]. The fractions of a pixel his
+/// last move left are kept, so the fall starts from his exact height.
 fn kill_falling(c: &mut Ctx) {
     let_go(c);
     c.o.state = state::DEATH_FALL;
@@ -210,10 +214,10 @@ fn kill_falling(c: &mut Ctx) {
     }
     c.p.stats.health = 0;
     c.p.fall_height = 0;
-    c.p.mover.zero_carries();
     c.p.mover.x.v = 0.0;
     c.p.mover.y.v = 0.0;
     c.p.mover.y.a = DEATH_FALL_GRAVITY;
+    c.o.time_delay = DEATH_FALL_HOLD_MS;
     set_powerup(c, 0, 0);
 }
 
@@ -244,7 +248,7 @@ pub fn death_fall_tick(c: &mut Ctx) {
         return;
     }
     c.advance_anim();
-    c.p.mover.step(DT_S);
+    c.p.mover.step(c.dt_s());
     let _ = c.p.mover.take_x();
     let dy = c.p.mover.take_y();
     c.o.y += dy;
@@ -313,7 +317,9 @@ fn lives_step(c: &mut Ctx) {
 /// the opening circle is reported for the presentation (see the [module
 /// documentation](self)). [`crate::Sim`] then centres the camera on him,
 /// puts the objects out of its reach to sleep, runs an update pass, wakes
-/// the objects around him and runs a second update pass.
+/// the objects around him and runs a second update pass. Inferred: that
+/// order is the one that follows the original's runs; the original's own
+/// order of these steps is not known.
 pub fn respawn_between_ticks(c: &mut Ctx) {
     c.p.respawn_pending = false;
     let at_level_start = c.p.checkpoint.is_none();
@@ -412,8 +418,9 @@ fn end_glitter(c: &mut Ctx) {
 /// applies its per-tick effect and awards extra lives from the score.
 pub fn powerup_tick(c: &mut Ctx) {
     progress::extra_life_tick(c);
+    let dt = c.dt_ms;
     let s = &mut c.p.stats;
-    s.powerup_ms = s.powerup_ms.saturating_sub(DT);
+    s.powerup_ms = s.powerup_ms.saturating_sub(dt);
     if s.powerup_ms == 0 {
         if s.powerup_kind != 0 {
             set_powerup(c, 0, 0);

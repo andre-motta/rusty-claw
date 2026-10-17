@@ -1,5 +1,6 @@
 //! The motion step shared by every projectile: floating-point position
-//! and velocity integrated over the 18 ms tick, then moved through the tile
+//! and velocity integrated over the time since its previous step (one
+//! 18 ms tick, measured on its own clock), then moved through the tile
 //! physics, with the rebound rules of thrown objects.
 
 use super::ProjectileData;
@@ -70,6 +71,29 @@ impl Motion {
     }
 }
 
+/// The time the motion step of the tick starting at `now_ms` covers, s.
+///
+/// The step reads the game time at the end of the tick in seconds
+/// (`ms * 0.001` in double precision) and covers what has passed since the
+/// clock the projectile keeps, then adds that difference to its clock. The
+/// rounding of those doubles makes some 18 ms steps a hair shorter than
+/// 0.018 s, so a move of exactly 9 px truncates to 8 now and then, as in
+/// the original. The first step covers one tick and starts the clock.
+pub(super) fn step_seconds(d: &mut ProjectileData, now_ms: u64) -> f64 {
+    let now = (now_ms + u64::from(TICK_MS)) as f64 * 0.001;
+    match d.clock_s {
+        Some(prev) => {
+            let dt = now - prev;
+            d.clock_s = Some(prev + dt);
+            dt
+        }
+        None => {
+            d.clock_s = Some(now);
+            STEP_S
+        }
+    }
+}
+
 /// One motion step of `id`, unless it is frozen: integrate, move toward the
 /// whole-pixel position through the tile physics, take back what the
 /// tiles corrected (vertical speed follows the arc to the corrected
@@ -79,7 +103,8 @@ pub(super) fn integrate(w: &mut World, id: ObjectId, d: &mut ProjectileData) {
     if d.frozen {
         return;
     }
-    d.motion.step(STEP_S);
+    let t = step_seconds(d, w.now_ms);
+    d.motion.step(t);
     let (tx, ty) = (d.motion.x as i32, d.motion.y as i32);
     let r = w.physics(id, tx, ty, d.tile_mask);
     let Some(o) = w.objects.get_mut(id) else {
