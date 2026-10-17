@@ -48,7 +48,7 @@ use crate::object::{Object, ObjectId, Rect, draw_flags, flags, types};
 use crate::physics::{self, Collider, Platform, opt, ptype};
 use crate::rng::Rng;
 use crate::tiles::{CLIMB, DEATH};
-use crate::tuning::{PlayAids, TICK_MS, Tuning};
+use crate::tuning::{PlayAids, Tuning};
 
 pub mod attack;
 pub mod death;
@@ -331,6 +331,11 @@ pub struct Ctx<'a> {
     pub tick: u64,
     /// Simulation time at the start of the tick, ms.
     pub now_ms: u64,
+    /// Game time the call covers, ms: one 18 ms tick, or 0 for a call
+    /// that takes no game time (the settle after a warp, see
+    /// [`crate::Sim::step`]). Claw's movement, timers and animation advance
+    /// by it.
+    pub dt_ms: u32,
     /// The tick is a frame pulse tick (see [`World::pulse`]).
     pub pulse: bool,
     /// The logic view in level pixels.
@@ -354,10 +359,17 @@ impl std::fmt::Debug for Ctx<'_> {
     }
 }
 
-const DT: i32 = TICK_MS as i32;
-const DT_S: f64 = TICK_MS as f64 * 0.001;
-
 impl Ctx<'_> {
+    /// [`Ctx::dt_ms`] as a signed number of ms, for the timers.
+    pub fn dt(&self) -> i32 {
+        self.dt_ms as i32
+    }
+
+    /// [`Ctx::dt_ms`] in seconds, for the movement.
+    pub fn dt_s(&self) -> f64 {
+        f64::from(self.dt_ms) * 0.001
+    }
+
     /// Runs `f` with a [`World`] in which Claw's object is back in its
     /// slot, for code that works on any object (spawning, lifting, other
     /// objects' hooks, sounds placed at an object).
@@ -442,7 +454,7 @@ impl Ctx<'_> {
         let e = self
             .o
             .anim
-            .advance_in(TICK_MS, self.o.frame, mirrored, frames);
+            .advance_in(self.dt_ms, self.o.frame, mirrored, frames);
         if let Some(f) = e.frame {
             self.o.frame = f;
         }
@@ -936,7 +948,7 @@ fn stand_update(c: &mut Ctx) {
     if c.p.conveyor_force != 0.0 {
         c.p.mover.zero_carries();
         c.p.mover.x.v = c.p.conveyor_force;
-        c.p.mover.step(DT_S);
+        c.p.mover.step(c.dt_s());
         tx += c.p.mover.take_x();
     }
     let (ex, ey) = c.elevator_delta();
@@ -963,14 +975,14 @@ fn stand_update(c: &mut Ctx) {
         && c.held(Buttons::UP)
         && c.o.physics_type == ptype::STAND
     {
-        c.p.look_up_time = (c.p.look_up_time - DT).max(0);
+        c.p.look_up_time = (c.p.look_up_time - c.dt()).max(0);
         if c.p.look_up_time == 0 {
             enter_look_up(c);
             return;
         }
     }
     if !c.p.attacking && c.p.afk_time > 0 {
-        c.p.afk_time = (c.p.afk_time - DT).max(0);
+        c.p.afk_time = (c.p.afk_time - c.dt()).max(0);
         if c.p.afk_time == 0 {
             c.set_anim("CLAW_IDLE", true);
         }
@@ -987,7 +999,7 @@ fn stand_update(c: &mut Ctx) {
 /// Walk or run one tick in the given direction.
 fn walk_tick(c: &mut Ctx, right: bool) {
     let tp = &c.t.player;
-    c.p.running_time = (c.p.running_time - DT).max(0);
+    c.p.running_time = (c.p.running_time - c.dt()).max(0);
     let (speed, anim_speed) = if c.has_catnip() {
         (tp.walk_speed * CATNIP_WALK_FACTOR, CATNIP_ANIM_SPEED)
     } else if c.p.running_time == 0 {
@@ -999,7 +1011,7 @@ fn walk_tick(c: &mut Ctx, right: bool) {
     let v = if right { speed } else { -speed } + c.p.conveyor_force;
     c.o.speed_x = v as i32;
     c.p.mover.x.v = v;
-    c.p.mover.step(DT_S);
+    c.p.mover.step(c.dt_s());
     let tx = c.o.x + c.p.mover.take_x();
     let (ex, ey) = c.elevator_delta();
     let y = c.o.y;
@@ -1107,10 +1119,10 @@ fn jump_hold_update(c: &mut Ctx) {
 /// and the jump state.
 fn jump_integrate(c: &mut Ctx, vx: f64) {
     c.p.mover.x.v = vx;
-    c.p.mover.step(DT_S);
+    c.p.mover.step(c.dt_s());
     let tx = c.o.x + c.p.mover.take_x();
     let mut ty = c.o.y + c.p.mover.take_y();
-    c.p.jump_time += DT;
+    c.p.jump_time += c.dt();
     if c.p.mover.y.v >= 0.0 {
         c.p.mover.snap_to_y(f64::from(c.p.jump_peak_y));
         ty = c.p.jump_peak_y;
@@ -1184,7 +1196,7 @@ pub fn fall_tick(c: &mut Ctx) {
     attack::select(c);
     let vx = steer(c);
     c.p.mover.x.v = vx;
-    c.p.mover.step(DT_S);
+    c.p.mover.step(c.dt_s());
     let tx = c.o.x + c.p.mover.take_x();
     let ty = c.o.y + c.p.mover.take_y();
     let mask = if c.held(Buttons::UP) {
@@ -1256,7 +1268,7 @@ fn in_place(c: &mut Ctx, mask: u32) {
     if c.p.conveyor_force != 0.0 {
         c.p.mover.zero_carries();
         c.p.mover.x.v = c.p.conveyor_force;
-        c.p.mover.step(DT_S);
+        c.p.mover.step(c.dt_s());
         tx += c.p.mover.take_x();
     }
     let (ex, ey) = c.elevator_delta();
@@ -1268,7 +1280,7 @@ fn in_place(c: &mut Ctx, mask: u32) {
 /// in place.
 pub fn crouch_tick(c: &mut Ctx) {
     attack::select(c);
-    c.p.look_down_time = (c.p.look_down_time - DT).max(0);
+    c.p.look_down_time = (c.p.look_down_time - c.dt()).max(0);
     c.speeds_zero();
     in_place(c, opt::PLATFORMS);
     if c.o.physics_type == ptype::FALL {
@@ -1298,7 +1310,7 @@ pub fn look_up_tick(c: &mut Ctx) {
         jump_update(c);
         return;
     }
-    c.p.look_down_time = (c.p.look_down_time - DT).max(0);
+    c.p.look_down_time = (c.p.look_down_time - c.dt()).max(0);
     in_place(c, opt::PLATFORMS);
     if c.o.physics_type == ptype::FALL {
         begin_fall(c, false);
@@ -1352,7 +1364,7 @@ pub fn climb_tick(c: &mut Ctx) {
     };
     c.o.speed_y = vy as i32;
     c.p.mover.y.v = vy;
-    c.p.mover.step(DT_S);
+    c.p.mover.step(c.dt_s());
     let ty = c.o.y + c.p.mover.take_y();
     let x = c.o.x;
     c.physics(x, ty, 0);
@@ -1736,15 +1748,15 @@ pub fn post_tick(c: &mut Ctx) {
         c.play(attack::TOGGLE_SOUND, claw_frame::SoundChannel::Effect);
     }
     if c.p.stats.invulnerable_ms > 0 {
-        c.p.stats.invulnerable_ms = (c.p.stats.invulnerable_ms - DT).max(0);
+        c.p.stats.invulnerable_ms = (c.p.stats.invulnerable_ms - c.dt()).max(0);
         if c.p.stats.invulnerable_ms == 0 {
             c.o.hit_type_flags |= types::CLAW_SHIELDED;
             c.o.draw_flags &= !draw_flags::FLASH;
         }
     }
     death::powerup_tick(c);
-    c.p.post_climb_lockout_ms = (c.p.post_climb_lockout_ms - DT).max(0);
-    c.p.aux_timer_ms = (c.p.aux_timer_ms - DT).max(0);
+    c.p.post_climb_lockout_ms = (c.p.post_climb_lockout_ms - c.dt()).max(0);
+    c.p.aux_timer_ms = (c.p.aux_timer_ms - c.dt()).max(0);
     if c.o.state != state::DEATH_FALL {
         let r = c.p.clamp;
         c.o.x = c.o.x.clamp(r.left, r.right.max(r.left));

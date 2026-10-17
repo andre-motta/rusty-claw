@@ -353,13 +353,18 @@ fn a_pacing_enemy_is_at_its_limit_only_when_it_stands_exactly_on_it() {
 /// Runs one movement step of the officer at game time `now`, walking at
 /// `vx` from 1600 with its last step at `last`; returns its new x.
 fn step_from(sim: &mut Sim, id: ObjectId, vx: f64, last: Option<u64>) -> i32 {
+    step_from_at(sim, id, 1600, vx, last)
+}
+
+/// [`step_from`], starting from `x`.
+fn step_from_at(sim: &mut Sim, id: ObjectId, x: i32, vx: f64, last: Option<u64>) -> i32 {
     sim.with_world(|w| {
         let now = w.now_ms;
         let y = w.objects.get(id).unwrap().y;
-        w.objects.get_mut(id).unwrap().x = 1600;
+        w.objects.get_mut(id).unwrap().x = x;
         let d = enemy::data_mut(w, id).unwrap();
         d.carry = (0.0, 0.0);
-        d.moved_to = Some((1600, y));
+        d.moved_to = Some((x, y));
         d.vx = vx;
         d.last_move_ms = last.map(|ms| now - ms);
         motion::integrate(w, id);
@@ -368,17 +373,24 @@ fn step_from(sim: &mut Sim, id: ObjectId, vx: f64, last: Option<u64>) -> i32 {
 }
 
 #[test]
-fn a_woken_enemy_first_moves_for_the_time_it_slept_up_to_200_ms() {
+fn a_woken_enemy_first_moves_for_the_whole_time_it_slept_up_to_the_step_limit() {
     let (mut sim, id) = officer_sim();
-    idle(&mut sim, 100);
+    idle(&mut sim, 200);
     // One tick: 60 px/s for 18 ms.
     assert_eq!(step_from(&mut sim, id, 60.0, Some(18)), 1601);
     // The first step: one tick.
     assert_eq!(step_from(&mut sim, id, 60.0, None), 1601);
     // After 108 ms asleep: 120 px/s for 108 ms is 12.96 px.
     assert_eq!(step_from(&mut sim, id, 120.0, Some(108)), 1612);
-    // After a second asleep: 200 ms at most, 12 px at 60 px/s.
-    assert_eq!(step_from(&mut sim, id, 60.0, Some(1000)), 1612);
+    // After 200 ms asleep: 12 px at 60 px/s.
+    assert_eq!(step_from(&mut sim, id, 60.0, Some(200)), 1612);
+    // After a second asleep there is no time cap: 60 px at 60 px/s, held
+    // to the 24 px step limit.
+    assert_eq!(step_from(&mut sim, id, 60.0, Some(1000)), 1624);
+    // A walker 12 px from its patrol limit, asleep for 3744 ms (the woken
+    // rat of the second level at 84 s): the whole sleep is 224 px, the
+    // step limit makes it 24, and the limit stops it there.
+    assert_eq!(step_from_at(&mut sim, id, 1688, 60.0, Some(3744)), 1700);
     // Every step records its time.
     sim.step(TickInput::default());
     let d = enemy::data_of(obj(&sim, id)).unwrap().clone();

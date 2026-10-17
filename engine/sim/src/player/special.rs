@@ -81,12 +81,12 @@ use std::sync::Arc;
 
 use claw_frame::{Buttons, SoundChannel, TickInput};
 
-use super::{Ctx, DT, DT_S, attack, fallback_tick, state};
+use super::{Ctx, attack, fallback_tick, state};
 use crate::logic::world_boss::fight;
 use crate::logic::{self, World};
 use crate::object::{LogicKind, Object, ObjectId, Rect, flags};
 use crate::physics::{opt, ptype};
-use crate::tuning::PlayAids;
+use crate::tuning::{PlayAids, TICK_MS};
 
 /// Speed of the push away from an attacker, px/s.
 pub const KNOCKBACK_SPEED: i32 = 200;
@@ -170,10 +170,12 @@ pub struct SpecialData {
     pub thaw: bool,
     /// The freeze is a boss fight's: it ends when the fight starts.
     pub boss_freeze: bool,
-    /// A warp moved Claw in this tick's collision pass. The simulation
-    /// clears it at the end of that pass, when it wakes and sets up the
-    /// objects around his new place (see [`crate::Sim::step`]).
-    pub warped: bool,
+    /// Where a warp touched in this tick takes Claw. He stays at the warp
+    /// for the rest of the tick; the simulation moves him there between
+    /// this tick and the next, wakes and sets up the objects around his new
+    /// place and runs his logic once with no game time (see
+    /// [`crate::Sim::step`]).
+    pub warp_to: Option<(i32, i32)>,
     /// Claw was let go after a boss's defeat: the next tick takes Left and
     /// Right out of the latched keys, so a direction still held counts at
     /// once (see [`crate::Sim::step`]).
@@ -248,7 +250,7 @@ pub fn hit_tick(c: &mut Ctx) {
     let mut tx = c.o.x + ex;
     let ty = c.o.y + ey;
     if c.advance_anim() == KNOCKBACK_EVENT {
-        tx += c.o.speed_x * DT / 1000;
+        tx += c.o.speed_x * c.dt() / 1000;
     } else {
         c.o.speed_x = 0;
     }
@@ -348,7 +350,7 @@ pub fn lift_tick(c: &mut Ctx) {
     }
     let mut tx = c.o.x;
     if c.advance_anim() != CARRY_STEP_EVENT {
-        c.p.mover.step(DT_S);
+        c.p.mover.step(c.dt_s());
         tx += c.p.mover.take_x();
     }
     let (ex, ey) = c.elevator_delta();
@@ -385,12 +387,12 @@ pub fn lift_tick(c: &mut Ctx) {
         begin_throw(c);
         return;
     }
-    if DT >= c.p.special.lift_ms {
+    if c.dt() >= c.p.special.lift_ms {
         let_go(c, 0);
         restore_move_rect(c);
         super::enter_stand(c);
     } else {
-        c.p.special.lift_ms -= DT;
+        c.p.special.lift_ms -= c.dt();
     }
 }
 
@@ -442,7 +444,7 @@ pub fn throw_tick(c: &mut Ctx) {
     }
     let charging = c.held(Buttons::ATTACK) || c.held(Buttons::LIFT);
     if charging && c.p.special.throw_ms < THROW_CHARGE_MS {
-        c.p.special.throw_ms += DT;
+        c.p.special.throw_ms += c.dt();
         return;
     }
     if c.advance_anim() == THROW_EVENT
@@ -530,9 +532,10 @@ pub fn freeze_tick(c: &mut Ctx) {
         return;
     }
     c.advance_anim();
+    let dt = c.dt();
     let s = &mut c.p.special;
     let timed_out = s.freeze_ms > 0 && {
-        s.freeze_ms = (s.freeze_ms - DT).max(0);
+        s.freeze_ms = (s.freeze_ms - dt).max(0);
         s.freeze_ms == 0
     };
     let fight_on = s.boss_freeze && c.out.boss().fight() == fight::ON;
@@ -664,6 +667,7 @@ impl World<'_> {
                 out: &mut *self.out,
                 tick: self.tick,
                 now_ms: self.now_ms,
+                dt_ms: TICK_MS,
                 pulse: self.pulse,
                 view,
                 level_logics: true,

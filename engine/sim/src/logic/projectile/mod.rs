@@ -16,7 +16,14 @@
 //!   without gravity and are removed on the tick after they touch a wall,
 //!   when they leave their activation window or when they leave the level.
 //!   The magic claw and the sword shots pierce: only walls stop them. The
-//!   magic claw sheds two sparkles a tick and carries a light flare.
+//!   magic claw sheds two sparkles a tick and carries a light flare. A
+//!   musket ball flying left has its boxes turned to face left.
+//! - Every projectile moves on its own clock: each motion step covers the
+//!   game time since its previous step, taken from the step's end in
+//!   seconds and kept as a running sum of double-precision differences,
+//!   so a step of 18 ms is not always exactly 0.018 s (a cannonball at
+//!   500 px/s now and then moves 8 px in a step instead of 9). Its first
+//!   step covers one tick.
 //! - Thrown dynamite flies a ballistic arc under 2000 px/s², chosen so that
 //!   it would land the throw power away at the height it was thrown from,
 //!   and a little steeper. It bounces twice (halving its horizontal speed,
@@ -256,6 +263,10 @@ pub struct ProjectileData {
     pub phase: Phase,
     /// Floating-point position (absolute), velocity and acceleration.
     pub motion: Motion,
+    /// Its own clock, s: the game time at the end of its last motion step,
+    /// kept as a running sum of the steps' lengths (see the motion step);
+    /// `None` before its first step.
+    pub clock_s: Option<f64>,
     /// Motion stopped: lying still, waiting in the ground or exploding.
     pub frozen: bool,
     /// Tile physics result of the last motion step.
@@ -483,6 +494,11 @@ pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
         | Class::Bullet => {
             if spec.vx < 0 {
                 o.draw_flags |= draw_flags::MIRROR;
+                // A musket ball flying left turns its boxes to face left
+                // too: (-6, -5, 5, 4) becomes (-5, -5, 6, 4).
+                if class == Class::Bullet {
+                    o.mirror_rects();
+                }
             }
             if class.is_magic() {
                 o.flags |= flags::NOTIFY_DESTROY;

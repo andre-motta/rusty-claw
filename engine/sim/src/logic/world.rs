@@ -391,11 +391,15 @@ impl World<'_> {
 
     /// The box `o` is drawn in, in level pixels: the box of its current
     /// frame, mirrored and flipped as it is drawn, at its position; `None`
-    /// when the level does not know the frame.
+    /// when the level does not know the frame. A mirrored picture is
+    /// flipped about its anchor pixel, so its box is the mirrored box one
+    /// pixel further left: a soldier facing left whose box reaches the
+    /// view's left edge in the plain mirror does not count as on screen.
     pub fn draw_box(&self, o: &Object) -> Option<Rect> {
         let mut b = self.level.frame_box(&o.image_set, o.frame)?;
         if o.draw_flags & draw_flags::MIRROR != 0 {
-            b = b.mirrored();
+            let m = b.mirrored();
+            b = Rect::new(m.left - 1, m.top, m.right - 1, m.bottom);
         }
         if o.draw_flags & draw_flags::INVERT != 0 {
             b = Rect::new(

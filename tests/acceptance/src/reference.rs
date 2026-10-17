@@ -23,9 +23,11 @@
 //! set to `rng_at_t0` once he stands.
 //!
 //! [`Store::compare_clock`] replays the route in the game with that clock's
-//! tuning and the random state at time zero, keeps stepping with no button
-//! held for as long as the reference runs past the end of the route, and
-//! compares the result with every reference trace of the clock. The route
+//! tuning and the random state at time zero (and, for a later level of one
+//! game, the progress its `# start_...` lines say the game carried in),
+//! keeps stepping with no button held for as long as the reference runs
+//! past the end of the route, and compares the result with every
+//! reference trace of the clock. The route
 //! is driven tick by tick ([`Driver::Ticks`]) or through the game's own
 //! frame loop at a simulated display rate ([`Driver::Session`]); both play
 //! the same game.
@@ -44,10 +46,11 @@ use claw_game::load::{LevelBundle, settle_at};
 use claw_game::session::{script_behaviour, script_switches};
 use claw_game::settings::LevelChoice;
 use claw_sim::input::{DirectiveKind, MenuScreen, ScriptCommand, ScriptTuning};
+use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Comparison, Tolerances, TraceRow};
 use claw_sim::tuning::{FuseClock, TICK_MS};
-use claw_sim::{InputScript, Sim, SimConfig};
+use claw_sim::{Carry, InputScript, Sim, SimConfig, StartState};
 
 /// Rows of each trace shown before a divergence.
 pub const CONTEXT_ROWS: usize = 5;
@@ -453,16 +456,23 @@ impl Driver {
     }
 }
 
-/// The game at a route's time zero: the level just loaded with `cfg`, or,
-/// with `start`, Claw placed at that point and left to settle, then the
-/// random stream set to the seed, as a segment of a level starts.
+/// The game at a route's time zero: the level just loaded with `cfg`
+/// (with the progress `carry` a game brought into it, for a later level of
+/// one game), or, with `start`, Claw placed at that point and left to
+/// settle, then the random stream set to the seed, as a segment of a level
+/// starts.
 pub fn start_game(
     bundle: &LevelBundle,
     cfg: SimConfig,
     start: Option<(i32, i32)>,
+    carry: Option<Carry>,
 ) -> Result<Sim, String> {
     let seed = cfg.seed;
-    let mut sim = Sim::new(bundle.sim_level.clone(), cfg);
+    let mut sim = Sim::with_start(
+        bundle.sim_level.clone(),
+        cfg,
+        StartState { carry, save: None },
+    );
     if sim.rng_state() != seed {
         return Err(format!(
             "loading the level drew from the random stream ({} after the load, seed {seed}), \
@@ -651,7 +661,9 @@ impl Store {
             .unwrap_or(0);
         let cfg = replay_config(run, &route_text);
         let seed = cfg.seed;
-        let sim = start_game(bundle, cfg, run.teleport)?;
+        let carry =
+            parse_start_lines(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?;
+        let sim = start_game(bundle, cfg, run.teleport, carry)?;
         let rebuild = replay_from(sim, &script, &route_text, until, driver)?;
         let traces = references
             .into_iter()

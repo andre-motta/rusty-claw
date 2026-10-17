@@ -421,25 +421,43 @@ fn extra_life_every_500000_points() {
 }
 
 #[test]
-fn end_of_level_reports_the_map_piece_length() {
+fn end_of_level_reports_the_map_piece_length_and_stops_play() {
     let mut sim = sim_of(&[]);
     let mut f = special_pickup(9901, 0);
     f.kind = 31;
     let p = toucher(&mut sim, types::SPECIAL, f, 0);
+    assert!(!sim.level_ended());
     let (audio, events) = step(&mut sim);
     assert_eq!(events, vec![GameEvent::LevelComplete { after_ms: 1520 }]);
     assert!(played(&audio, "GAME_MAPPIECE"));
-    assert!(removed_next(&mut sim, p));
-    // Claw stands still for two ticks while the level ends: Right pressed
-    // in the second is lost, a press after it walks.
+    assert!(sim.level_ended());
+    assert!(
+        sim.objects()
+            .get(p)
+            .is_none_or(|o| o.flags & flags::DESTROY != 0),
+        "the map piece is taken"
+    );
+    // Play stops in that tick, as in the original, which plays the sound
+    // with the game held and then leaves the level: nothing moves and
+    // nothing hurts Claw while the end-of-level screen waits, so the
+    // progress the next level starts with is his at the map piece.
     let x = sim.player().unwrap().x;
-    sim.step(press(RIGHT));
+    let carry = sim.carry();
+    let tick = sim.tick();
+    let e = enemy(&mut sim, 30);
+    for input in [
+        press(RIGHT),
+        hold(RIGHT),
+        TickInput::default(),
+        press(RIGHT),
+    ] {
+        let snap = sim.step(input);
+        assert!(snap.events.is_empty() && snap.audio.is_empty());
+    }
+    assert_eq!(sim.tick(), tick + 4, "the ticks pass");
     assert_eq!(sim.player().unwrap().x, x);
-    sim.step(hold(RIGHT));
-    assert_eq!(sim.player().unwrap().x, x);
-    sim.step(TickInput::default());
-    sim.step(press(RIGHT));
-    assert!(sim.player().unwrap().x > x);
+    assert_eq!(sim.carry(), carry, "the enemy never hurts him");
+    assert!(sim.objects().get(e).is_some());
 }
 
 #[test]
@@ -449,6 +467,15 @@ fn warps_move_claw_and_may_stay() {
     f.kind = 32;
     f.target = (3000, 899);
     let p = toucher(&mut sim, types::SPECIAL, f, 0);
+    let before = {
+        let o = sim.player().unwrap();
+        (o.x, o.y)
+    };
+    // The tick that touches the warp leaves Claw where he is; the warp
+    // takes him to its target before the next tick.
+    step(&mut sim);
+    let o = sim.player().unwrap();
+    assert_eq!((o.x, o.y), before);
     step(&mut sim);
     let o = sim.player().unwrap();
     assert_eq!((o.x, o.y), (3000, 899));
@@ -601,6 +628,17 @@ fn losing_all_health_falls_out_of_view_then_respawns() {
         loop {
             let (audio, events) = step(&mut sim);
             ticks += 1;
+            // He hangs where he lost his last health for 750 ms (41 ticks
+            // with no logic call) and falls from the 42nd.
+            let o = sim.player().unwrap();
+            if ticks <= 41 {
+                assert_eq!(o.y, y_dead, "held in tick {ticks} after the death");
+                assert!(o.time_delay > 0, "held in tick {ticks} after the death");
+            } else if ticks == 42 {
+                assert_eq!(o.time_delay, 0, "his logic runs again");
+            } else if ticks == 45 {
+                assert!(o.y > y_dead, "falling");
+            }
             if !events.is_empty() {
                 assert_eq!(events, vec![GameEvent::ClawDied { lives_left: 6 }]);
                 assert!(played(&audio, "GAME_CIRCLEFADE"));

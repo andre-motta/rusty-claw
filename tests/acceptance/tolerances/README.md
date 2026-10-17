@@ -224,8 +224,8 @@ Fixed in the game, and so no longer listed as differences:
   pass visits next, a glitter draws its delay when the pass reaches it,
   the ambient timers run after the rest of the tick, a pacing enemy is at
   a limit only when its exact position is, a woken enemy first moves for
-  the time it slept (at most 200 ms), and Claw's hit burst draws its y
-  jitter first.
+  the whole time it slept (held only by the 24 px step limit), and Claw's
+  hit burst draws its y jitter first.
 - **Goodies.** An item a crate or an enemy drops spins through its set
   while it flies and becomes collectable with the box of the picture it
   shows then (an edge-on coin is 8 px wide); it moves on an exact
@@ -306,6 +306,49 @@ routes it touches:
   direction ignored until it is released and pressed again. The listed
   routes hold no direction when play starts, and no listed first
   divergence is traced to it so far.
+
+## What the second level's routes show
+
+The stores `level2/bot-original` (`c18`), `level2/bot` and
+`level2/introskip` (`c60`) hold the original's runs of the second level's
+bot routes from before the rules this section lists, `level1/pair-original`
+and `level2/pair-original` a game played from the first level through the
+end-of-level screen into the second, `level2/video-segment` a route
+written down from a recording of a fast run, and the `level2/boss-*`
+stores the stretches of Raux's room from Claw placed by its door.
+
+- **`c18`.** With the rules below the game equals the original on all
+  11083 compared steps of `level2/bot-original` in every column, Raux's
+  introduction, the boss fight's flag, his health and the random stream
+  included, and on every row of `level1/pair-original` and the first
+  level's stores. The route loses the fight in both games, so the bot
+  found the second level's routes again.
+- **The rules.** A woken walker covers the whole time it slept, held only
+  by the 24 px step limit (a rat asleep 3.7 s strikes a step earlier than
+  with the 200 ms cap the first level suggested). The boss room's door
+  leaves Claw where he touched it for the rest of the tick and takes him
+  into the room between two ticks, where his logic runs once with no game
+  time: falling in, he lands there and walks on in the first room tick. A
+  musket ball flying left turns its boxes to face left, a mirrored picture
+  counts as drawn one pixel further left, projectiles move on a clock of
+  double-precision seconds (a 9 px step is now and then 8), the falling
+  death hangs 750 ms before the fall and keeps Claw's fraction of a pixel,
+  and an enemy backing off reaches its spot by its exact position.
+- **The game through the end-of-level screen.** The second level starts
+  from the progress the game carries in, which a route names in its
+  `# start_...` lines. The stored route of `level2/pair-original` names 90
+  health where the game carries 100, so its entry lists health from the
+  first step. The original's enemies make their every-third-tick choices
+  in a phase the end-of-level screen's wall time sets; the reference runs
+  set it to a level start's phase, which the game always uses.
+- **Not traced yet.** The falling death's curve after its hold drifts by a
+  pixel, the respawn's passes make one roll a step early for a keg the
+  respawn wakes, and the boss room's stretches started from a placed Claw
+  part from the random stream in the introduction (the introduction played
+  from the level's start is equal throughout).
+- **`c60`.** The open-loop routes leave the feel tolerance in the jump off
+  the first ladder (the default tuning's ladder jump, as on the first
+  level) and then go other ways.
 
 ## Adding a reference store
 

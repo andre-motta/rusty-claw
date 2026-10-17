@@ -40,9 +40,19 @@ The first level, La Roca, plays from start to finish:
   options, load game, in-game menu, tally and game over, saved games,
   settings written back to the config file, gamepads and rebindable keys.
 
-Every retail level loads and runs. In levels 2 to 14, the objects the first
-level does not have (other enemies, bosses, traps and the like) are drawn
-where the level places them but stand still; see [Known gaps](#known-gaps).
+The second level, the Battlements, plays from start to finish too: the
+punk rats and their little cannons, the tower cannons, enemies falling
+into goo, and Raux, the level's boss, with his introduction (or the
+jump-in that skips it), the boss health bar, his defeat and the gem that
+ends the level. After each level's end-of-level screen the next level
+starts with the progress carried, so the first two levels play as one
+game. Its routes follow the original step for step at one 18 ms step per
+frame (see [Routes and comparing with the original](#routes-and-comparing-with-the-original)).
+
+Every retail level loads and runs. In levels 3 to 14, the objects the
+first two levels do not have (other enemies, bosses, traps and the like)
+are drawn where the level places them but stand still; see
+[Known gaps](#known-gaps).
 
 ## Building on Fedora
 
@@ -359,9 +369,14 @@ made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
 life. Replays, `claw-replay` and the benchmark all follow them.
 
-The routes in `tests/acceptance/routes/` finish the first level:
-`level1.csv` with the default tuning and `level1-original.csv` with the
-original game's speeds. They are written by the search bot, `claw-bot`,
+The routes in `tests/acceptance/routes/` finish the first two levels:
+`level1.csv` and `level2.csv` with the default tuning,
+`level1-original.csv` and `level2-original.csv` with the original game's
+speeds, `level2-introskip.csv` with the jump-in that skips Raux's
+introduction, and `level1-original.level2.csv`, the second level of the
+game `level1-original.csv` starts, which begins with the progress that
+game carries in (its `# start_score = ...` lines, which replays,
+`claw-replay` and the comparison apply). They are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and
 keeps the ones that bring Claw closer to the level's end. Its budget counts
 the positions it tries, not time, so the same arguments always give the
@@ -469,7 +484,7 @@ unless `--uncapped` is given.
 
 ## Known gaps
 
-- Levels 2 to 14: their own enemies, bosses, traps, ropes, conveyor belts
+- Levels 3 to 14: their own enemies, bosses, traps, ropes, conveyor belts
   and other objects do not move or act yet.
 - No movies or cut scenes, and no multiplayer (curses only act in
   multiplayer games, so they vanish in single player as in the original).
@@ -478,7 +493,7 @@ unless `--uncapped` is given.
   wall turn back at walking speed, enemies treat goo like spikes, and a
   magic hit on an enemy shows no lingering flame or frost. The play-test list
   (`tests/acceptance/PLAYTEST.md`) asks about each one a player can see on
-  the first level and names the rest, such as goo, as untested there.
+  the first two levels and names the rest as untested there.
 - The detail setting and the play area size are shown but have no effect
   yet; the game always draws in high detail.
 - One profile, without profile screens.

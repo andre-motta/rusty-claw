@@ -305,8 +305,10 @@ fn install_level2_the_staged_fight_ends_the_level_through_the_gem() {
     }
     let door = door.expect("the boss music with the door");
     let trigger = trigger.unwrap();
-    // The original: the door on step 40, the trigger on step 41.
-    assert_eq!((door, trigger), (40, 41));
+    // The original: the door touched on step 40 takes Claw into the room
+    // before step 41, the first step there, which has the boss music (the
+    // stager woke with the room) and the trigger.
+    assert_eq!((door, trigger), (41, 41));
     let music_before = d.music_cues;
     let raux = sim.boss().current().expect("Raux is built in his room");
     assert_eq!(&*sim.objects().get(raux).unwrap().logic, "Raux");
@@ -517,18 +519,19 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// tolerance, per store and clock; a column not listed must stay within
 /// it, and one listed must not leave it earlier. What they come from:
 ///
-/// - c18, 738 ms (x, y, camera): the door's move shows one tick earlier in
-///   the game's trace; the original moves Claw between two steps, the game
-///   at the end of the door's tick. Every later tick lines up again: the
-///   trigger, the introduction's flag and the jump-in's landing come on
-///   the same steps.
+/// - c18: the door takes Claw into the room between two steps, as in the
+///   original, so his position, the camera, the trigger, the
+///   introduction's flag and the jump-in's landing all come on the
+///   original's steps.
 /// - c18, 774 ms (rng): the enemies' rolls come on frame pulse ticks, and
 ///   the pulse is in another phase after the stretch's start than in the
 ///   original, so Raux draws his first roll a tick earlier. His choices in
 ///   the fight then differ, which is where Claw's state and health leave
 ///   the trace (2214 to 24822 ms), and once a blow pushes Claw back into
 ///   the stager's box after the skip, the introduction runs in the middle
-///   of the fight (32148 ms).
+///   of the fight (28422 ms). Played from the level's start, where the
+///   pulse is in the original's phase, the whole staging and fight follow
+///   the original step for step (the second level's bot route).
 /// - c60 (the default tuning played tick by tick): the first arena tick
 ///   walks 5 px instead of 4, so the trigger's checkpoint is 1 px further
 ///   (667 ms); the camera's pan and the introduction's delays count 18 ms
@@ -542,13 +545,12 @@ const KNOWN: &[Known] = &[
         "boss-intro-normal",
         "c18",
         &[
-            ("x", 738),
-            ("y", 738),
-            ("cam_x", 738),
-            ("cam_y", 738),
             ("rng", 774),
+            ("cam_x", 9882),
+            ("cam_y", 9900),
             ("state_id", 24822),
             ("health", 24822),
+            ("x", 24840),
         ],
     ),
     (
@@ -567,15 +569,14 @@ const KNOWN: &[Known] = &[
         "boss-intro-skip-c18",
         "c18",
         &[
-            ("x", 738),
-            ("y", 738),
-            ("cam_x", 738),
-            ("cam_y", 738),
             ("rng", 774),
             ("state_id", 22428),
             ("health", 22428),
-            ("events", 32130),
-            ("boss_fight", 32148),
+            ("x", 22446),
+            ("cam_x", 22446),
+            ("events", 28404),
+            ("cam_y", 28422),
+            ("boss_fight", 28422),
         ],
     ),
     ("boss-intro-skip", "c60", &[("y", 933), ("cam_y", 933)]),
@@ -583,13 +584,12 @@ const KNOWN: &[Known] = &[
         "boss-intro-skip-late-c18",
         "c18",
         &[
-            ("x", 738),
-            ("y", 738),
-            ("cam_x", 738),
-            ("cam_y", 738),
             ("rng", 774),
+            ("cam_x", 9882),
+            ("cam_y", 9900),
             ("state_id", 24822),
             ("health", 24822),
+            ("x", 24840),
         ],
     ),
     (
@@ -608,14 +608,12 @@ const KNOWN: &[Known] = &[
         "boss-intro-skip-fight-c18",
         "c18",
         &[
-            ("x", 738),
-            ("y", 738),
-            ("cam_x", 738),
-            ("cam_y", 738),
             ("rng", 774),
             ("state_id", 2214),
             ("physics_type", 2214),
             ("health", 2214),
+            ("x", 2232),
+            ("cam_x", 2232),
             ("boss_health", 2736),
         ],
     ),

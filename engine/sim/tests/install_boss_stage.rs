@@ -150,17 +150,27 @@ fn install_level2_stager_box_reaches_31_left_38_right() {
 }
 
 /// The door's tick: Claw walks right from [`START`] (15 empty ticks, then
-/// Right held, as the reference route does) until the door moves him; the
-/// sim is left at the end of that tick.
+/// Right held, as the reference route does) until he touches the door; the
+/// sim is left at the end of that tick, with Claw still at the door: the
+/// door takes him to its target between that tick and the next.
 fn walk_to_the_door(sim: &mut Sim) -> u64 {
     settle_at(sim, START.0, START.1);
     idle(sim, 15);
     for k in 15..200u64 {
+        let before = sim.clone();
         sim.step(key_down(sim, RIGHT));
         let o = sim.player().unwrap();
         if o.x > DOOR.0 + 1000 {
-            assert_eq!((o.x, o.y), TARGET, "the door's target");
-            return k;
+            // The tick after the door's: at the target, walking on.
+            assert!(
+                (TARGET.0..=TARGET.0 + 9).contains(&o.x) && o.y == TARGET.1,
+                "the door's target: {:?}",
+                (o.x, o.y)
+            );
+            *sim = before;
+            let o = sim.player().unwrap();
+            assert!((o.x - DOOR.0).abs() < 200, "at the door: {}", o.x);
+            return k - 1;
         }
     }
     panic!("the door never moved Claw");
@@ -191,18 +201,20 @@ fn install_level2_walking_through_the_door_runs_the_introduction() {
     let Some(level) = level2() else { return };
     let mut sim = Sim::new(level, SimConfig::default());
     let door = walk_to_the_door(&mut sim);
-    // The door's own set-up, which takes no game time, ends its tick: the
-    // stager wakes there, switches to the boss music and is armed for
-    // Claw's first tick at the target.
-    assert!(boss_music(&sim), "the boss music with the door's move");
-    let stager = find(&sim, boss_stage::STAGER);
-    assert_eq!(sim.objects().get(stager).unwrap().state, stage_state::ARMED);
-    assert_eq!(sim.camera().current, TARGET, "the camera jumped to Claw");
-    // His first tick there: still walking, inside the box, and the trigger
-    // fires in its collision pass.
+    assert!(!boss_music(&sim), "no boss music before the door's move");
+    // The door's move between that tick and the next, which takes no game
+    // time: the camera jumps to Claw, the stager wakes there, switches to
+    // the boss music and is armed for Claw's first tick at the target.
+    // That tick: still walking, inside the box, and the trigger fires in
+    // its collision pass.
     sim.step(key_down(&sim, RIGHT));
+    assert!(boss_music(&sim), "the boss music with the door's move");
     let o = sim.player().unwrap();
     let at = (o.x, o.y);
+    assert!(
+        (sim.camera().current.0 - at.0).abs() <= 9,
+        "the camera jumped to Claw"
+    );
     println!(
         "door at route tick {door}, the trigger at {} {at:?} (the original game: the door on \
          step 40, the arena and the trigger on step 41 at (23650, 3947))",
@@ -212,12 +224,12 @@ fn install_level2_walking_through_the_door_runs_the_introduction() {
     assert!((TARGET.0 + 1..=TARGET.0 + 9).contains(&at.0), "{at:?}");
     assert_eq!(at.1, TARGET.1);
     assert_eq!(checkpoint_in(sim.last_events()), Some(at));
-    assert!(!boss_music(&sim), "asked for once");
     assert_eq!(sim.boss().checkpoint_time(), 120_000);
     assert_eq!(sim.claw().checkpoint, Some(at));
     // The next tick: the flag, the freeze and the camera on the boss's
-    // point (no boss is built yet on this level, so no bar and no pan).
+    // point; the music was asked for once.
     sim.step(key_down(&sim, RIGHT));
+    assert!(!boss_music(&sim), "asked for once");
     assert_eq!(sim.boss().fight(), fight::STAGING);
     assert_eq!(sim.player().unwrap().state, state::FREEZE);
     if sim.boss().current().is_none() {

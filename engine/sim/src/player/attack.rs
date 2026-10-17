@@ -95,7 +95,7 @@
 
 use claw_frame::{Buttons, SoundChannel, Weapon};
 
-use super::{Ctx, DT, special, state};
+use super::{Ctx, special, state};
 use crate::anim::AnimPlayer;
 use crate::logic::{self, projectile::ProjectileSpec};
 use crate::object::{ObjectId, Rect, draw_flags, flags, special as special_flags, types};
@@ -972,9 +972,10 @@ fn rewind(c: &mut Ctx, element: usize) {
 /// to the shortest charge), the releasing animation starts.
 fn charge(c: &mut Ctx) {
     let held = c.input.held;
+    let dt = c.dt();
     let a = &mut c.p.attack;
     if held.contains(Buttons::PROJECTILE) || held.contains(Buttons::DYNAMITE) {
-        a.throw_ms += DT;
+        a.throw_ms += dt;
         if a.throw_ms < a.throw_max_ms {
             return;
         }
