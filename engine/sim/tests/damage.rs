@@ -421,25 +421,43 @@ fn extra_life_every_500000_points() {
 }
 
 #[test]
-fn end_of_level_reports_the_map_piece_length() {
+fn end_of_level_reports_the_map_piece_length_and_stops_play() {
     let mut sim = sim_of(&[]);
     let mut f = special_pickup(9901, 0);
     f.kind = 31;
     let p = toucher(&mut sim, types::SPECIAL, f, 0);
+    assert!(!sim.level_ended());
     let (audio, events) = step(&mut sim);
     assert_eq!(events, vec![GameEvent::LevelComplete { after_ms: 1520 }]);
     assert!(played(&audio, "GAME_MAPPIECE"));
-    assert!(removed_next(&mut sim, p));
-    // Claw stands still for two ticks while the level ends: Right pressed
-    // in the second is lost, a press after it walks.
+    assert!(sim.level_ended());
+    assert!(
+        sim.objects()
+            .get(p)
+            .is_none_or(|o| o.flags & flags::DESTROY != 0),
+        "the map piece is taken"
+    );
+    // Play stops in that tick, as in the original, which plays the sound
+    // with the game held and then leaves the level: nothing moves and
+    // nothing hurts Claw while the end-of-level screen waits, so the
+    // progress the next level starts with is his at the map piece.
     let x = sim.player().unwrap().x;
-    sim.step(press(RIGHT));
+    let carry = sim.carry();
+    let tick = sim.tick();
+    let e = enemy(&mut sim, 30);
+    for input in [
+        press(RIGHT),
+        hold(RIGHT),
+        TickInput::default(),
+        press(RIGHT),
+    ] {
+        let snap = sim.step(input);
+        assert!(snap.events.is_empty() && snap.audio.is_empty());
+    }
+    assert_eq!(sim.tick(), tick + 4, "the ticks pass");
     assert_eq!(sim.player().unwrap().x, x);
-    sim.step(hold(RIGHT));
-    assert_eq!(sim.player().unwrap().x, x);
-    sim.step(TickInput::default());
-    sim.step(press(RIGHT));
-    assert!(sim.player().unwrap().x > x);
+    assert_eq!(sim.carry(), carry, "the enemy never hurts him");
+    assert!(sim.objects().get(e).is_some());
 }
 
 #[test]

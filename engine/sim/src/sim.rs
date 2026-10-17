@@ -158,6 +158,9 @@ pub struct Sim {
     /// Claw respawned since the last tick: the death's circles end with
     /// the next tick.
     respawned: bool,
+    /// The level was won in an earlier tick: play has stopped (see
+    /// [`Sim::level_ended`]).
+    ended: bool,
 }
 
 /// What runs an object's logic: everything but the object container and
@@ -485,6 +488,7 @@ impl Sim {
             last_events: Vec::new(),
             end_life: false,
             respawned: false,
+            ended: false,
             level,
         };
         let level = sim.level.clone();
@@ -650,6 +654,15 @@ impl Sim {
     /// attack's end or cancel in the last tick makes Left or Right, when
     /// held, count as pressed in this one ([`Claw::repress_directions`]).
     pub fn step(&mut self, input: TickInput) -> SimSnapshot {
+        if self.ended {
+            // Play stopped with the level's end: the tick passes and
+            // nothing moves.
+            self.input = input;
+            self.tick += 1;
+            self.last_audio.clear();
+            self.last_events.clear();
+            return self.snapshot();
+        }
         // A death's respawn comes between two ticks; its circles are drawn
         // outside game time and are over once a tick runs.
         if self.claw.respawn_pending {
@@ -708,6 +721,9 @@ impl Sim {
         }
         self.tick += 1;
         let (audio, events) = self.out.take_tick();
+        self.ended = events
+            .iter()
+            .any(|e| matches!(e, GameEvent::LevelComplete { .. }));
         self.last_audio = audio;
         self.last_events = events;
         let snapshot = self.snapshot();
@@ -719,6 +735,15 @@ impl Sim {
             }
         }
         snapshot
+    }
+
+    /// True once the level is won (the map piece or the gem is taken):
+    /// play stops in that tick, as the original's does while its
+    /// end-of-level sound plays, so nothing can hurt Claw any more and the
+    /// progress the next level starts with is his at that moment. Later
+    /// ticks pass with nothing moving.
+    pub fn level_ended(&self) -> bool {
+        self.ended
     }
 
     /// True when Claw lost a life with lives left in the last tick and

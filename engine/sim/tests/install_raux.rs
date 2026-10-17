@@ -529,7 +529,7 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   the fight then differ, which is where Claw's state and health leave
 ///   the trace (2214 to 24822 ms), and once a blow pushes Claw back into
 ///   the stager's box after the skip, the introduction runs in the middle
-///   of the fight (32148 ms). Played from the level's start, where the
+///   of the fight (28422 ms). Played from the level's start, where the
 ///   pulse is in the original's phase, the whole staging and fight follow
 ///   the original step for step (the second level's bot route).
 /// - c60 (the default tuning played tick by tick): the first arena tick
@@ -574,9 +574,9 @@ const KNOWN: &[Known] = &[
             ("health", 22428),
             ("x", 22446),
             ("cam_x", 22446),
-            ("events", 32130),
-            ("cam_y", 32148),
-            ("boss_fight", 32148),
+            ("events", 28404),
+            ("cam_y", 28422),
+            ("boss_fight", 28422),
         ],
     ),
     ("boss-intro-skip", "c60", &[("y", 933), ("cam_y", 933)]),
