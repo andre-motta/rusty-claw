@@ -156,7 +156,7 @@ fn walk_to_the_door(sim: &mut Sim) -> u64 {
     settle_at(sim, START.0, START.1);
     idle(sim, 15);
     for k in 15..200u64 {
-        sim.step(key_down(&sim, RIGHT));
+        sim.step(key_down(sim, RIGHT));
         let o = sim.player().unwrap();
         if o.x > DOOR.0 + 1000 {
             assert_eq!((o.x, o.y), TARGET, "the door's target");
