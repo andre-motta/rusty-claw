@@ -36,6 +36,11 @@ use common::*;
 const START: (i32, i32) = (20150, 2091);
 /// Raux's place, standing in his room.
 const RAUX_AT: (i32, i32) = (23970, 3955);
+/// Where the scripted fight below leaves Raux when he falls, on his
+/// room's floor 77 px right of his place. A change here means the fight
+/// played differently (a blow, a step or a jump of his came at another
+/// time), which the gem's flight from wherever he fell would not show.
+const RAUX_FELL_AT: (i32, i32) = (24047, 3955);
 /// The gem's target, from Raux's level record.
 const GEM_TARGET: (i32, i32) = (23935, 3800);
 const ATTACK: u32 = 0x2;
@@ -409,6 +414,11 @@ fn install_level2_the_staged_fight_ends_the_level_through_the_gem() {
     );
     assert!(healths.len() >= 3, "several blows");
     assert!(body.health <= 0);
+    assert_eq!(
+        (body.x, body.y),
+        RAUX_FELL_AT,
+        "Raux falls where the scripted fight left him before"
+    );
     // The bar showed every health he had while he lived.
     assert_eq!(bar[..healths.len() - 1], healths[..healths.len() - 1]);
 
