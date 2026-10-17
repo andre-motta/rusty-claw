@@ -55,7 +55,13 @@
 //! [`census`] counts the treasure a level holds, by kind, for the end of
 //! level tally.
 //!
-//! Glitter shows a still image instead of cycling through its set.
+//! A pickup's glitter ([`GLITTER`]) waits a random 0 to
+//! [`GLITTER_MAX_DELAY_MS`] ms after its first call (one draw of the shared
+//! random stream, made on that call) and then loops its sparkle: the next
+//! image of [`GLITTER_IMAGE`] every 100 ms ([`GLITTER_ANIM`]). The glitter
+//! of the end-of-level pickup sparkles green instead, the next image of
+//! [`END_GLITTER_IMAGE`] every 50 ms ([`END_GLITTER_ANIM`]). A taken
+//! treasure or extra life goes on cycling its picture while it flies.
 
 use claw_frame::SoundChannel;
 
@@ -94,6 +100,18 @@ pub const END_OF_LEVEL_LOGIC: &str = "EndOfLevelPowerup";
 pub const BOUNCING_GOODIE: &str = "BouncingGoodie";
 /// Logic name of the glitter that sparkles next to a pickup.
 pub const GLITTER: &str = "PowerupGlitter";
+/// Picture of a pickup's glitter.
+pub const GLITTER_IMAGE: &str = "GAME_GLITTER";
+/// Loop a pickup's glitter plays: the next image of its set every 100 ms.
+pub const GLITTER_ANIM: &str = "GAME_CYCLE100";
+/// Picture of the end-of-level pickup's glitter.
+pub const END_GLITTER_IMAGE: &str = "GAME_GREENGLITTER";
+/// Loop the end-of-level pickup's glitter plays: the next image of its
+/// set every 50 ms.
+pub const END_GLITTER_ANIM: &str = "GAME_CYCLE50";
+/// Longest wait before a glitter starts to sparkle, ms: each one waits a
+/// random 0 to this many ms after its first call.
+pub const GLITTER_MAX_DELAY_MS: u32 = 250;
 /// Logic name of the score number left by taken treasure.
 pub const POINTS_ICON: &str = "PointsIcon";
 const TREASURE: &str = "TreasurePowerup";
@@ -958,8 +976,9 @@ fn start_flight(w: &mut World, id: ObjectId) {
     }
 }
 
-/// State 9001: one step of the flight; removed when the 400 ms are over
-/// (the step that ends them still moves).
+/// State 9001: one step of the flight, then one tick of its animation
+/// (the picture keeps cycling on the way); removed when the 400 ms are
+/// over (the step that ends them still moves).
 fn fly(w: &mut World, id: ObjectId) {
     let o = w.objects.get_mut(id).expect("caller checked");
     let Some(mut f) = data_mut(o).flight else {
@@ -974,6 +993,7 @@ fn fly(w: &mut World, id: ObjectId) {
     o.x += f.vx * dt / 1000;
     o.y += f.vy * dt / 1000;
     data_mut(o).flight = Some(f);
+    w.advance_anim(id);
 }
 
 // ------------------------------------------------------------ glitter
@@ -993,14 +1013,30 @@ fn spawn_glitter(w: &mut World, owner: ObjectId) -> ObjectId {
     w.spawn(g)
 }
 
+/// A glitter's first call draws its start delay, takes its picture (the
+/// first image of [`GLITTER_IMAGE`], or [`END_GLITTER_IMAGE`] next to the
+/// end-of-level pickup) and starts its loop; the engine then holds it for
+/// the delay. Every later call advances the loop by one tick, as long as
+/// its pickup still owns it.
 fn glitter_tick(w: &mut World, id: ObjectId) {
     let Some(o) = w.objects.get(id) else { return };
     match o.state {
         state::INIT => {
-            let delay = w.rng.below(251);
+            let delay = w.rng.below(GLITTER_MAX_DELAY_MS + 1);
+            let end_of_level = data_of(o)
+                .and_then(|d| d.owner)
+                .and_then(|p| w.objects.get(p))
+                .is_some_and(|p| &*p.logic == END_OF_LEVEL_LOGIC);
+            let (set, anim) = if end_of_level {
+                (END_GLITTER_IMAGE, END_GLITTER_ANIM)
+            } else {
+                (GLITTER_IMAGE, GLITTER_ANIM)
+            };
+            let image_set = runtime_image_set(set);
+            let first = w.image_frames(&image_set).map_or(-1, |(first, _)| first);
             let o = w.objects.get_mut(id).expect("checked");
-            o.image_set = runtime_image_set("GAME_GLITTER");
-            o.frame = -1;
+            o.image_set = image_set;
+            o.frame = first;
             if o.z == 0 {
                 o.z = PICKUP_Z + 1;
                 o.flags |= flags::RESORT;
@@ -1008,6 +1044,11 @@ fn glitter_tick(w: &mut World, id: ObjectId) {
             o.flags |= flags::NO_COLLIDE;
             o.time_delay = delay;
             o.state = state::IDLE;
+            // The end-of-level pickup puts its own loop on its glitter; any
+            // other glitter keeps a loop it already has.
+            if end_of_level || o.anim.animation().is_none() {
+                w.set_anim(id, anim);
+            }
         }
         engine_state::DESTROYING => {}
         _ => {
@@ -1018,7 +1059,9 @@ fn glitter_tick(w: &mut World, id: ObjectId) {
                 .and_then(|p| w.objects.get(p))
                 .and_then(data_of)
                 .is_some_and(|d| d.glitter == Some(id));
-            if !owned {
+            if owned {
+                w.advance_anim(id);
+            } else {
                 w.destroy(id);
             }
         }
