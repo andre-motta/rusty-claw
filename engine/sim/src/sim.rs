@@ -742,7 +742,7 @@ impl Sim {
 
     /// The respawn between ticks (see [`player::death`]): Claw at the
     /// checkpoint, the camera on him at once, the objects around him
-    /// woken, and one update pass.
+    /// woken, and one update pass with the held keys and nothing pressed.
     fn respawn_between_ticks(&mut self) {
         let Some(id) = self.player else {
             self.claw.respawn_pending = false;
@@ -772,6 +772,11 @@ impl Sim {
             activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
         }
         self.activation.enter(&mut self.objects, c);
+        // Inferred: the pass runs with the keys of the tick that took the
+        // life still held but nothing newly pressed, so a press made in
+        // that tick neither makes the respawned Claw jump nor starts a
+        // walk before the next tick's input arrives.
+        self.claw_input.pressed = Buttons::NONE;
         self.update_pass();
         self.respawned = true;
     }

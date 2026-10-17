@@ -561,6 +561,51 @@ fn claw_respawns_between_two_ticks() {
 }
 
 #[test]
+fn a_press_in_the_tick_that_takes_a_life_is_not_seen_by_the_respawned_claw() {
+    for mask in [JUMP, RIGHT, JUMP | RIGHT] {
+        let mut sim = pressing_sim(deadly_level(), SimConfig::default());
+        idle(&mut sim, 3);
+        let start = (sim.player().unwrap().x, sim.player().unwrap().y);
+        sim.step(press(RIGHT));
+        // Walk into the death tiles; in the tick that takes the life, press
+        // `mask` (the dead Claw ignores it).
+        let mut died = false;
+        for _ in 0..400 {
+            let quiet = if sim.player().unwrap().state == state::DEATH {
+                TickInput::default()
+            } else {
+                hold(RIGHT)
+            };
+            let mut probe = sim.clone();
+            let lost = probe
+                .step(quiet)
+                .events
+                .contains(&GameEvent::ClawDied { lives_left: 6 });
+            if lost {
+                let snap = sim.step(press(mask));
+                assert!(
+                    snap.events.contains(&GameEvent::ClawDied { lives_left: 6 }),
+                    "{mask:#x}: the press does not save the life"
+                );
+                died = true;
+                break;
+            }
+            sim.step(quiet);
+        }
+        assert!(died, "{mask:#x}: Claw did not die on the death tiles");
+        assert!(sim.respawn_pending());
+        // The update pass between the ticks runs with the keys still held
+        // but nothing pressed: the respawned Claw stands at the start.
+        assert!(sim.respawn_now());
+        assert_eq!(sim.claw_input().held, Buttons(mask), "{mask:#x}: held");
+        assert_eq!(sim.claw_input().pressed, Buttons::NONE, "{mask:#x}");
+        let o = sim.player().unwrap();
+        assert_eq!((o.x, o.y), start, "{mask:#x}: back at the start");
+        assert_eq!(o.state, state::STAND, "{mask:#x}: standing");
+    }
+}
+
+#[test]
 fn a_presentation_respawns_claw_before_drawing_the_opening_circle() {
     let mut sim = pressing_sim(deadly_level(), SimConfig::default());
     let (start, _) = die(&mut sim);
