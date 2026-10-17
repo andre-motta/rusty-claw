@@ -251,6 +251,12 @@ pub struct ProjectileData {
     pub flare: Option<ObjectId>,
     /// Sparkles shed per flying tick.
     pub sparkles: u32,
+    /// Claw's attack count when he launched it, for his pistol, magic and
+    /// sword shots (0 for any other projectile). Nothing reads it: an
+    /// enemy takes one hit per attack of Claw's through its own record of
+    /// his attack count, so a shot that passes through several enemies
+    /// hits each of them once.
+    pub attack_serial: u32,
 }
 
 /// What to launch.
@@ -284,6 +290,17 @@ pub struct ProjectileSpec {
     pub fuse_ms: Option<u32>,
     /// Strength of a charged throw.
     pub power: i32,
+}
+
+/// Launches `spec` as [`spawn`] does and records Claw's attack count
+/// `serial` in the projectile's data (see
+/// [`ProjectileData::attack_serial`]).
+pub fn spawn_tagged(w: &mut World, spec: ProjectileSpec, serial: u32) -> Option<ObjectId> {
+    let id = spawn(w, spec)?;
+    if let Some(ObjectData::Projectile(d)) = w.objects.get_mut(id).map(|o| &mut o.data) {
+        d.attack_serial = serial;
+    }
+    Some(id)
 }
 
 /// The data of projectile `o`, if it is one.

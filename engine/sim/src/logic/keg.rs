@@ -14,9 +14,16 @@
 //! call. Exploding at once would clear the keg's kind before the enemy's
 //! hit handler reads it: the enemy would take the strike as a hit of no
 //! known kind, doing no damage, and its rule of one hit per attack of
-//! Claw's would then turn the blast away too. A kill of kind
+//! Claw's would then turn the blast away too. Until then the keg is still a
+//! thrown object, so every enemy it overlaps in the pass of the strike
+//! takes the strike once: as for any thrown object, only each enemy's own
+//! record of Claw's attacks limits the hits it takes. A kill of kind
 //! [`KILL_EXPLODE`] (see [`World::kill`]) also sets it off; any other kill
 //! removes it without a blast.
+//!
+//! Kegs rest on the floor at spawn: on its first logic call a keg is put
+//! 32 px higher and then down onto the first floor below it, standing, the
+//! way enemies are placed.
 //!
 //! Exploding plays the blast sound and the keg's explosion animation; when
 //! the animation reaches its blast frame the keg requests one explosion
@@ -27,7 +34,7 @@
 use claw_frame::SoundChannel;
 
 use super::effect::{self, EffectKind};
-use super::{ObjectData, World, sound};
+use super::{ObjectData, World, enemy, sound};
 use crate::level::runtime_image_set;
 use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags, special, types};
 use crate::physics::ptype;
@@ -73,9 +80,13 @@ pub const KILL_EXPLODE: i32 = 2;
 pub const BLAST_EVENT: i32 = 1;
 /// Gravity on a flying keg, px/s/s.
 pub const GRAVITY: f64 = 2000.0;
-/// Box of a keg that shots hit and that lands on floors, relative to its
-/// position (the picture hangs below the position).
+/// Box of a keg that shots hit, relative to its position (the picture
+/// hangs below the position), when the level does not know the keg's
+/// frame; otherwise the box of the level's own frame is used.
 pub const KEG_BOX: Rect = Rect::new(-20, 22, 19, 69);
+/// How far above the bottom of its picture box a keg's feet are, px: a
+/// keg stands, and lands, with its feet on the floor.
+pub const FEET_ABOVE_BOX: i32 = 9;
 /// Where the keg sits while Claw lifts it, relative to him when he faces
 /// right (mirrored when he faces left).
 pub const LIFT_OFFSET: (i32, i32) = (30, -70);
@@ -160,7 +171,7 @@ pub fn tick(w: &mut World, id: ObjectId) {
         return;
     };
     if o.state == state::INIT {
-        init(o);
+        init(w, id);
         return;
     }
     if o.state == engine_state::KILLED {
@@ -190,20 +201,46 @@ pub fn tick(w: &mut World, id: ObjectId) {
     }
 }
 
-fn init(o: &mut Object) {
+/// The box shots hit on keg `o`: the box of its frame in the level, or
+/// [`KEG_BOX`] when the level does not know the frame.
+pub fn hit_box(w: &World, o: &Object) -> Rect {
+    let frame = if o.frame < 0 {
+        w.image_frames(&o.image_set)
+            .map_or(o.frame, |(first, _)| first)
+    } else {
+        o.frame
+    };
+    w.frame_box(&o.image_set, frame).unwrap_or(KEG_BOX)
+}
+
+/// The box a keg with hit box `b` stands and lands with: its bottom is
+/// [`FEET_ABOVE_BOX`] px higher.
+pub const fn move_box(b: Rect) -> Rect {
+    Rect::new(b.left, b.top, b.right, b.bottom - FEET_ABOVE_BOX)
+}
+
+/// First logic call: sets the keg up, and kegs rest on the floor at spawn
+/// (32 px higher, then down onto the first floor below, standing).
+fn init(w: &mut World, id: ObjectId) {
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
     if o.image_set.is_empty() {
         o.image_set = runtime_image_set(IMAGE_SET);
     }
+    let o = w.objects.get(id).expect("checked");
+    let b = hit_box(w, o);
+    let o = w.objects.get_mut(id).expect("checked");
     o.damage = BLAST_DAMAGE;
     o.special_flags |= special::LIFTABLE | LIFT_FROM_CROUCH;
     o.type_flags = types::ENEMY;
     o.hit_type_flags = types::PISTOL_SHOT | types::LEVEL_SHOT;
     o.hit_handler = true;
-    o.hit_rect = KEG_BOX;
-    o.move_rect = KEG_BOX;
-    o.physics_type = ptype::STAND;
+    o.hit_rect = b;
+    o.move_rect = move_box(b);
     *data_mut(o) = KegData::default();
     o.state = state::READY;
+    enemy::drop_to_floor(w, id);
 }
 
 /// `attacker` hit `id`: a pistol shot (which is used up) or a blast sets
@@ -229,7 +266,8 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
 /// strikes that can be hit by thrown objects. The strike's hit on the
 /// enemy follows this call and needs the keg as it is (a thrown object
 /// with its damage), so the keg only stops attacking here, stops where it
-/// is, and explodes at its next logic call.
+/// is, and explodes at its next logic call. Other enemies it overlaps in
+/// the same pass still take its hit as a thrown object.
 pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     let accepts = w
         .objects
@@ -248,12 +286,12 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 /// `carrier` lifted `id`: it stops being hittable and follows the
 /// carrier's lifting frames.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
+    if w.objects.get(id).is_some_and(|o| o.state == state::INIT) {
+        init(w, id);
+    }
     let Some(o) = w.objects.get_mut(id) else {
         return;
     };
-    if o.state == state::INIT {
-        init(o);
-    }
     if data_mut(o).phase == Phase::Exploding {
         return;
     }
@@ -270,12 +308,12 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
 /// enemies as a thrown object, and explodes on the first one it strikes or
 /// when it lands.
 pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
+    if w.objects.get(id).is_some_and(|o| o.state == state::INIT) {
+        init(w, id);
+    }
     let Some(o) = w.objects.get_mut(id) else {
         return;
     };
-    if o.state == state::INIT {
-        init(o);
-    }
     if data_mut(o).phase == Phase::Exploding {
         return;
     }
@@ -284,7 +322,7 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
     o.type_flags = types::THROWN;
     o.attack_type_flags = types::ENEMY;
     o.attack_handler = true;
-    o.attack_rect = KEG_BOX;
+    o.attack_rect = o.hit_rect;
     let d = data_mut(o);
     d.phase = Phase::Thrown;
     d.carrier = None;
@@ -297,12 +335,12 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
 
 /// `id` was put down or let go: it falls and explodes when it lands.
 pub fn dropped(w: &mut World, id: ObjectId) {
+    if w.objects.get(id).is_some_and(|o| o.state == state::INIT) {
+        init(w, id);
+    }
     let Some(o) = w.objects.get_mut(id) else {
         return;
     };
-    if o.state == state::INIT {
-        init(o);
-    }
     if data_mut(o).phase == Phase::Exploding {
         return;
     }

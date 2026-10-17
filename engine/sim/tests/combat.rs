@@ -789,6 +789,95 @@ fn dynamite_power_follows_the_charge() {
     assert_eq!(attack::throw_power(0, 50, 50, true), 0);
 }
 
+/// Claw's attack count recorded by every projectile now in the level, by
+/// creation number.
+fn shot_serials(sim: &Sim, seen: &mut Vec<(u32, &'static str, u32)>) {
+    for (_, o) in sim.objects().all() {
+        if let ObjectData::Projectile(d) = &o.data
+            && let Some(s) = d.spec
+            && !seen.iter().any(|e| e.0 == o.serial)
+        {
+            seen.push((o.serial, s.logic, d.attack_serial));
+        }
+    }
+    seen.sort_by_key(|e| e.0);
+}
+
+#[test]
+fn pistol_and_magic_shots_carry_claws_attack_count() {
+    let mut sim = new_sim(3);
+    set(&mut sim, |w| w.claw.stats.dynamite = 1);
+    let mut seen = Vec::new();
+    let mut counts = Vec::new();
+    for button in [PISTOL, MAGIC, PISTOL, DYNAMITE] {
+        sim.step(press(button));
+        counts.push(sim.claw().attack.serial);
+        for _ in 0..40 {
+            sim.step(TickInput::default());
+            shot_serials(&sim, &mut seen);
+        }
+    }
+    let got: Vec<(&str, u32)> = seen.iter().map(|e| (e.1, e.2)).collect();
+    assert_eq!(
+        got,
+        [
+            ("PistolBullet", counts[0]),
+            ("MagicBullet", counts[1]),
+            ("PistolBullet", counts[2]),
+            ("Dynamite", 0),
+        ]
+    );
+    assert!(counts.windows(2).all(|c| c[1] == c[0].wrapping_add(1)));
+    // A rapid-fire shot counts as an attack of its own.
+    let mut sim = new_sim(3);
+    let mut seen = Vec::new();
+    sim.step(press(PROJECTILE));
+    let first = sim.claw().attack.serial;
+    for _ in 1..element_tick(PISTOL_SHOT, 4) {
+        sim.step(TickInput::default());
+        shot_serials(&sim, &mut seen);
+    }
+    sim.step(press(PROJECTILE));
+    for _ in 0..20 {
+        sim.step(TickInput::default());
+        shot_serials(&sim, &mut seen);
+    }
+    let got: Vec<u32> = seen.iter().map(|e| e.2).collect();
+    assert_eq!(got, [first, first.wrapping_add(1)]);
+}
+
+#[test]
+fn a_magic_shot_through_an_enemy_hits_it_once() {
+    let mut sim = new_sim(3);
+    let (x, y) = (claw(&sim).x, claw(&sim).y);
+    let cid = claw_id(&sim);
+    set(&mut sim, |w| {
+        w.objects.get_mut(cid).unwrap().hit_type_flags = 0;
+        w.claw.stats.invulnerable_ms = 1_000_000;
+    });
+    let officer = sim.spawn(logic::new_object("Officer", x + 160, y, 4000));
+    idle(&mut sim, 2);
+    set(&mut sim, |w| {
+        w.objects.get_mut(officer).unwrap().health = 1000
+    });
+    sim.step(press(MAGIC));
+    let mut hits = 0;
+    for _ in 0..60 {
+        sim.step(TickInput::default());
+        hits += sim
+            .collision_events()
+            .iter()
+            .filter(|e| {
+                matches!(**e, claw_sim::container::CollisionEvent::Hit { attacker, victim }
+                    if victim == officer && sim.objects().get(attacker).is_some_and(|a| a.type_flags != types::PLAYER))
+            })
+            .count();
+    }
+    let health = sim.objects().get(officer).unwrap().health;
+    assert!(hits >= 1, "the shot reached the officer");
+    assert_eq!(health, 1000 - 25, "one hit of the shot's damage");
+}
+
 #[test]
 fn rapid_fire_rewinds_for_another_shot() {
     let mut sim = new_sim(3);
@@ -917,8 +1006,10 @@ fn firing_leaves_the_game_random_stream_alone() {
 /// A powder keg standing on the floor `dx` px in front of Claw.
 fn keg_beside(sim: &mut Sim, dx: i32) -> ObjectId {
     let (x, y) = (claw(sim).x, claw(sim).y);
-    // Claw's feet are 60 px below his position, a keg's 69 px below its.
-    let o = logic::new_object("PowderKeg", x + dx, y + 60 - 69, 4000);
+    // Claw's feet are 60 px below his position; kegs rest on the floor at
+    // spawn.
+    let feet = keg::move_box(keg::KEG_BOX).bottom;
+    let o = logic::new_object("PowderKeg", x + dx, y + 60 - feet, 4000);
     let id = sim.spawn(o);
     sim.step(TickInput::default());
     let o = sim.objects().get(id).expect("keg");
@@ -1050,6 +1141,69 @@ fn a_thrown_keg_kills_the_officer_it_strikes_and_explodes_there() {
 }
 
 #[test]
+fn a_thrown_keg_strikes_every_enemy_it_overlaps_in_that_pass_then_explodes_once() {
+    let mut sim = new_sim(3);
+    let (x, y) = (claw(&sim).x, claw(&sim).y);
+    let cid = claw_id(&sim);
+    set(&mut sim, |w| {
+        w.objects.get_mut(cid).unwrap().hit_type_flags = 0;
+    });
+    // Two officers standing together, both in the keg's way.
+    let a = sim.spawn(logic::new_object("Officer", x + 300, y, 4000));
+    let b = sim.spawn(logic::new_object("Officer", x + 304, y, 4000));
+    let id = keg_beside(&mut sim, 200);
+    idle(&mut sim, 2);
+    for o in [a, b] {
+        set(&mut sim, |w| w.objects.get_mut(o).unwrap().health = 100);
+    }
+    let oy = sim.objects().get(a).unwrap().y;
+    set(&mut sim, |w| {
+        let k = w.objects.get_mut(id).unwrap();
+        k.x = x + 300 - 90;
+        k.y = oy - 60;
+        logic::thrown(w, id, 400, 0);
+    });
+    let mut strikes = Vec::new();
+    let mut blasts = 0;
+    for t in 0..40 {
+        sim.step(TickInput::default());
+        for e in sim.collision_events() {
+            match *e {
+                claw_sim::container::CollisionEvent::Hit { attacker, victim }
+                    if attacker == id && (victim == a || victim == b) =>
+                {
+                    strikes.push((t, victim));
+                }
+                _ => {}
+            }
+        }
+        blasts += sim
+            .objects()
+            .all()
+            .filter(|(_, o)| {
+                matches!(&o.data, ObjectData::Effect(d)
+                    if matches!(d.request, Some(claw_sim::logic::effect::EffectKind::Explosion { source: Some(s), .. }) if s == id))
+            })
+            .count();
+        if sim.objects().get(id).is_none() {
+            break;
+        }
+    }
+    // Each enemy takes the strike once, in the same pass: an enemy's own
+    // record of Claw's attacks is all that limits hits, and the keg is a
+    // thrown object until it explodes at its next logic call.
+    assert_eq!(strikes.len(), 2, "{strikes:?}");
+    assert_eq!(strikes[0].0, strikes[1].0, "the same pass: {strikes:?}");
+    assert_ne!(strikes[0].1, strikes[1].1);
+    assert!(sim.objects().get(id).is_none(), "the keg exploded");
+    assert!(blasts <= 1, "one explosion");
+    for o in [a, b] {
+        let h = sim.objects().get(o).map_or(0, |o| o.health);
+        assert!(h <= 100 - keg::BLAST_DAMAGE, "struck: {h}");
+    }
+}
+
+#[test]
 fn a_hit_while_carrying_drops_the_keg() {
     let mut sim = new_sim(3);
     let id = keg_beside(&mut sim, 40);
@@ -1169,6 +1323,37 @@ fn claw_never_lifts_a_body_killed_by_the_landing_of_a_throw() {
     sim.step(press(LIFT));
     assert_eq!(sim.claw().special.lifted, None);
     assert_ne!(claw(&sim).state, state::LIFT);
+}
+
+#[test]
+fn claw_does_not_target_or_lift_what_is_flagged_for_removal() {
+    for flagged in [false, true] {
+        // An officer's body in reach, flagged for removal before the pass
+        // in which Claw reaches for it (as when it died in goo earlier in
+        // that pass).
+        let mut sim = new_sim(3);
+        let id = officer_body(&mut sim);
+        if flagged {
+            set(&mut sim, |w| w.destroy(id));
+        }
+        sim.step(press(LIFT));
+        if flagged {
+            assert_eq!(sim.claw().special.lifted, None);
+            assert_ne!(claw(&sim).state, state::LIFT, "no lift pose");
+            assert!(sim.objects().get(id).is_none(), "removed");
+        } else {
+            assert_eq!(sim.claw().special.lifted, Some(id), "control");
+        }
+        // The same for a keg.
+        let mut sim = new_sim(3);
+        let id = keg_beside(&mut sim, 40);
+        if flagged {
+            set(&mut sim, |w| w.destroy(id));
+        }
+        sim.step(press(LIFT));
+        let lifted = sim.claw().special.lifted;
+        assert_eq!(lifted, (!flagged).then_some(id), "flagged: {flagged}");
+    }
 }
 
 #[test]
