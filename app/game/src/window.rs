@@ -100,7 +100,8 @@ pub fn pause_sign() -> ScreenSprite {
     ScreenSprite::new(PAUSE_SET, PAUSE_FRAME, Anchor::Center, 0, 0)
 }
 
-/// The screen layer of a game in progress: the status bar, the message on
+/// The screen layer of a game in progress: the status bar (with a small
+/// marker naming the play-test aids that are on, if any), the message on
 /// screen and the screen transition, for each frame drawn.
 ///
 /// Messages age with game time only: by the ticks that run, and not while a
@@ -192,6 +193,13 @@ impl StatusLayer {
     /// `sim` in a presentation of `presentation` game pixels.
     pub fn apply(&mut self, input: &mut FrameInput<'_>, sim: &Sim, presentation: (u32, u32)) {
         input.screen = self.hud.layout(&sim.hud(), presentation, input.time_ms);
+        // A small marker while a play-test aid is on.
+        let aids = sim.config().aids;
+        input.screen.extend(self.hud.aid_marker_layout(
+            aids.invincible,
+            aids.infinite_lives,
+            presentation,
+        ));
         if let Some(c) = self.circles {
             // No game time passes: the frame's time moves on with the
             // circles instead.
@@ -885,6 +893,7 @@ impl App {
             self.settings.mid_air_hit_fix = s.mid_air_hit_fix;
             self.settings.pause_input = s.pause_input;
             self.settings.fuse_clock = s.fuse_clock;
+            self.settings.aids = s.aids;
         }
         let sim = start_sim(
             bundle.sim_level.clone(),

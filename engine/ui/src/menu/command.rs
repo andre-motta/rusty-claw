@@ -164,6 +164,12 @@ pub enum GameplaySetting {
     /// Whether the time the help screen is up reaches a lit dynamite fuse:
     /// as in the original, or frozen like every other screen.
     FuseClock,
+    /// Play-test aid: Claw takes no damage (death tiles still end his
+    /// life). Off by default.
+    Invincible,
+    /// Play-test aid: losing a life never lowers the lives count. Off by
+    /// default.
+    InfiniteLives,
 }
 
 /// A feature this game does not have.

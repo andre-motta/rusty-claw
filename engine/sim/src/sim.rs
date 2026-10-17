@@ -19,7 +19,7 @@ use crate::player::stats::{Carry, PlayerStats, StartState, TREASURE_KINDS};
 use crate::player::{self, Claw, Ctx};
 use crate::registry::{CAMERA_LOGIC, PLAYER_LOGIC, REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
 use crate::rng::Rng;
-use crate::tuning::{FuseClock, TICK_MS, Tuning};
+use crate::tuning::{FuseClock, PlayAids, TICK_MS, Tuning};
 use crate::view::{PlaneGeometry, PlaneView};
 
 /// Simulation settings.
@@ -42,6 +42,9 @@ pub struct SimConfig {
     /// Whether the time a help screen was up reaches the dynamite fuse
     /// (see [`Sim::pass_menu_time`]); the original's way by default.
     pub fuse_clock: FuseClock,
+    /// The play-test aids, both off by default (see [`PlayAids`]). With
+    /// both off the game plays exactly as without them.
+    pub aids: PlayAids,
 }
 
 impl Default for SimConfig {
@@ -88,6 +91,7 @@ impl SimConfig {
             seed: 1,
             level_logics: true,
             fuse_clock: FuseClock::Original,
+            aids: PlayAids::NONE,
         }
     }
 }
@@ -247,6 +251,7 @@ impl Runner<'_> {
                 pulse: self.pulse,
                 view,
                 level_logics: self.cfg.level_logics,
+                aids: self.cfg.aids,
             };
             f(&mut ctx)
         };

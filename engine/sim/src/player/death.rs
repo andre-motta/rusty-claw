@@ -35,7 +35,10 @@
 //! lives left the game reports [`GameEvent::GameOver`] and Claw stays
 //! dead.
 //!
-//! A new game starts with 7 lives, so the 7th death ends it.
+//! A new game starts with 7 lives, so the 7th death ends it. With the
+//! infinite lives aid on ([`crate::tuning::PlayAids::infinite_lives`]) the
+//! lives step takes no life: the death is counted and Claw respawns with
+//! the lives he had.
 //!
 //! Ending a life from the in-game menu ([`end_life`]) is the timer death:
 //! the falling death from wherever Claw is, ladders included.
@@ -274,7 +277,9 @@ pub fn death_tick(c: &mut Ctx) {
 /// per death.
 fn lives_step(c: &mut Ctx) {
     c.o.special_flags |= claw_flags::LIVES_COUNTED;
-    c.p.stats.lives -= 1;
+    if !c.aids.infinite_lives {
+        c.p.stats.lives -= 1;
+    }
     c.p.stats.count_attempt();
     if c.p.stats.lives > 0 {
         c.out.event(GameEvent::ClawDied {

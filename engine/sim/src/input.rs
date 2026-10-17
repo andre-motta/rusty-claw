@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 
 use claw_frame::{Buttons, TickInput};
 
-use crate::tuning::TICK_MS;
+use crate::tuning::{PlayAids, TICK_MS};
 
 /// Length of a tick in microseconds.
 pub const TICK_US: u64 = TICK_MS as u64 * 1000;
@@ -79,11 +79,14 @@ impl InputLatch {
 ///
 /// - Header keys, comment lines naming how the route is meant to be played:
 ///   `# level N`, `# tuning default|original` and `# seed N` (the state of
-///   the shared random stream at time zero). An `=` between the key and the
-///   value is accepted. The words `level`, `tuning` and `seed` are reserved:
-///   a `#` line whose first word is one of them is read as that header key
-///   and must hold a valid value, so a comment never starts with them.
-///   Every other line starting with `#` is a comment.
+///   the shared random stream at time zero), and the play-test aids it was
+///   played with, `# invincible = on|off` and `# infinite_lives = on|off`
+///   (see [`PlayAids`]; off when absent). An `=` between the key and the
+///   value is accepted. The words `level`, `tuning`, `seed`, `invincible`
+///   and `infinite_lives` are reserved: a `#` line whose first word is one
+///   of them is read as that header key and must hold a valid value, so a
+///   comment never starts with them. Every other line starting with `#` is
+///   a comment.
 /// - Directives, lines starting with `@`, which take effect at the tick
 ///   boundary before row `<tick>`:
 ///   - `@<tick> pause <wall_ms> [held=<mask>]`;
@@ -93,6 +96,12 @@ impl InputLatch {
 ///
 /// A directive kind this reader does not know is an error, never skipped, so
 /// a route can never be played differently from how it was written.
+///
+/// A script played with a play-test aid on is not a route: it says nothing
+/// about how the level plays. [`InputScript::parse`] refuses it, so routes,
+/// the bot and the comparisons with reference traces only ever take plain
+/// play; the game's replays read it with [`InputScript::parse_with_aids`]
+/// and play it with the aids it names.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InputScript {
     /// Inputs by tick.
@@ -114,6 +123,9 @@ pub struct ScriptHeader {
     pub tuning: Option<ScriptTuning>,
     /// `# seed N`: the state of the shared random stream at time zero.
     pub seed: Option<u32>,
+    /// `# invincible = on` and `# infinite_lives = on`: the play-test aids
+    /// the script was played with; both off when it names none.
+    pub aids: PlayAids,
 }
 
 /// The movement tuning named by a script's `# tuning` key.
@@ -391,13 +403,32 @@ fn parse_mask(s: &str) -> Option<u32> {
     }
 }
 
+/// The message of [`InputScript::parse`] refusing a script played with
+/// `aids` on.
+pub fn aids_refusal(aids: PlayAids) -> String {
+    let names: Vec<String> = aids.names().iter().map(|n| format!("{n} = on")).collect();
+    format!(
+        "the script was played with a play-test aid on ({}); routes, the bot and comparisons \
+         with reference traces take plain play only (replay it in the game, or with \
+         claw-replay without --compare)",
+        names.join(", ")
+    )
+}
+
 /// Header key names.
-const HEADER_KEYS: [&str; 3] = ["level", "tuning", "seed"];
+const HEADER_KEYS: [&str; 5] = [
+    "level",
+    "tuning",
+    "seed",
+    PlayAids::NAMES[0],
+    PlayAids::NAMES[1],
+];
 
 impl ScriptHeader {
     /// Reads a `#` comment line into the header if it is a header key:
     /// `Ok(true)` when it was one, `Ok(false)` for a plain comment.
-    fn read(&mut self, comment: &str) -> Result<bool, String> {
+    /// `aids_seen` marks the aid keys ([`PlayAids::NAMES`]) read so far.
+    fn read(&mut self, comment: &str, aids_seen: &mut [bool; 2]) -> Result<bool, String> {
         let mut words = comment.split_whitespace();
         let Some(key) = words.next() else {
             return Ok(false);
@@ -426,6 +457,21 @@ impl ScriptHeader {
             return Err(format!("header key {key} needs exactly one value"));
         };
         let dup = || format!("header key {key} is given twice");
+        if let Some(i) = PlayAids::NAMES.iter().position(|n| *n == key) {
+            if aids_seen[i] {
+                return Err(dup());
+            }
+            aids_seen[i] = true;
+            let on = match value {
+                "on" => true,
+                "off" => false,
+                _ => return Err(format!("bad {key} {value:?} in header, expected on or off")),
+            };
+            if let Some(switch) = self.aids.switch_mut(key) {
+                *switch = on;
+            }
+            return Ok(true);
+        }
         match key {
             "level" => {
                 if self.level.is_some() {
@@ -471,19 +517,51 @@ impl ScriptHeader {
         if let Some(seed) = self.seed {
             out.push_str(&format!("# seed {seed}\n"));
         }
+        for name in self.aids.names() {
+            out.push_str(&format!("# {name} = on\n"));
+        }
         out
     }
 }
 
 impl InputScript {
-    /// Parses the text form described on [`InputScript`]. Ticks must start
-    /// at 0 and increase by one; directives may sit anywhere, but name a
-    /// tick no greater than the number of rows.
+    /// Parses a route: the text form described on [`InputScript`], played
+    /// with no play-test aid. Ticks must start at 0 and increase by one;
+    /// directives may sit anywhere, but name a tick no greater than the
+    /// number of rows.
+    ///
+    /// A script that names an aid on (`# invincible = on`,
+    /// `# infinite_lives = on`) is refused: routes, the bot and the
+    /// comparisons with reference traces take plain play only. The game's
+    /// replays read such a recording with [`InputScript::parse_with_aids`].
     pub fn parse(text: &str) -> Result<InputScript, ScriptError> {
+        let (script, line) = InputScript::read_text(text)?;
+        if let Some(line) = line {
+            return Err(ScriptError {
+                line,
+                message: aids_refusal(script.header.aids),
+            });
+        }
+        Ok(script)
+    }
+
+    /// Parses the text form described on [`InputScript`] like
+    /// [`InputScript::parse`], also when the script was played with a
+    /// play-test aid on ([`ScriptHeader::aids`] then names it): for
+    /// replaying a recording as it was played.
+    pub fn parse_with_aids(text: &str) -> Result<InputScript, ScriptError> {
+        InputScript::read_text(text).map(|(script, _)| script)
+    }
+
+    /// Parses the text form; with the script, the line of the first header
+    /// key that turns an aid on, if any.
+    fn read_text(text: &str) -> Result<(InputScript, Option<usize>), ScriptError> {
         let mut ticks = Vec::new();
         let mut header = ScriptHeader::default();
         let mut directives: Vec<(usize, Directive)> = Vec::new();
         let mut header_seen = false;
+        let mut aids_seen = [false; 2];
+        let mut aid_line = None;
         for (i, raw) in text.lines().enumerate() {
             let line = raw.trim();
             let err = |message: String| ScriptError {
@@ -494,7 +572,11 @@ impl InputScript {
                 continue;
             }
             if let Some(comment) = line.strip_prefix('#') {
-                header.read(comment).map_err(err)?;
+                let aids = header.aids;
+                header.read(comment, &mut aids_seen).map_err(err)?;
+                if header.aids != aids && header.aids.any() {
+                    aid_line.get_or_insert(i + 1);
+                }
                 continue;
             }
             if line.starts_with('@') {
@@ -538,11 +620,12 @@ impl InputScript {
         }
         // Stable: directives of one tick keep their written order.
         directives.sort_by_key(|(_, d)| d.tick);
-        Ok(InputScript {
+        let script = InputScript {
             ticks,
             header,
             directives: directives.into_iter().map(|(_, d)| d).collect(),
-        })
+        };
+        Ok((script, aid_line))
     }
 
     /// A script from held masks per tick; pressed is the rising edge.

@@ -442,6 +442,51 @@ fn text_is_centred_with_its_top_at_110() {
     assert_eq!(h.message_layout().len(), 2);
 }
 
+#[test]
+fn the_aid_marker_names_the_aids_in_the_bottom_left_corner() {
+    let (_, art) = art();
+    assert!(hud::marker_lines(false, false).is_empty());
+    assert_eq!(hud::marker_lines(true, false), ["INVINCIBLE"]);
+    assert_eq!(hud::marker_lines(false, true), ["INFINITE LIVES"]);
+    assert_eq!(
+        hud::marker_lines(true, true),
+        ["INVINCIBLE", "INFINITE LIVES"]
+    );
+    let mut h = Hud::new(art.clone());
+    assert!(
+        h.aid_marker_layout(false, false, (640, 480)).is_empty(),
+        "nothing with both aids off"
+    );
+    // Glyphs 10 px high with their hotspot in the middle: a glyph whose box
+    // ends on the row 6 px above the bottom edge has its hotspot at -11.
+    // 'I' (9) is 8 px wide, 'N' (14) 8, 'V' (22) 6.
+    let one = h.aid_marker_layout(true, false, (640, 480));
+    assert_eq!(one.len(), "INVINCIBLE".len());
+    assert_eq!(
+        pieces(&one[..3]),
+        vec![
+            piece(hud::FONT, 9, Anchor::BottomLeft, 6 + 4, -11),
+            piece(hud::FONT, 14, Anchor::BottomLeft, 6 + 8 + 4, -11),
+            piece(hud::FONT, 22, Anchor::BottomLeft, 6 + 16 + 3, -11),
+        ]
+    );
+    // Two lines: the first one line (10 px and a 2 px gap) higher; the
+    // space between the words takes its width but draws nothing.
+    let two = h.aid_marker_layout(true, true, (640, 480));
+    assert_eq!(two.len(), "INVINCIBLE".len() + "INFINITELIVES".len());
+    assert!(two[..10].iter().all(|p| p.y == -23), "{two:?}");
+    assert!(two[10..].iter().all(|p| p.y == -11), "{two:?}");
+    assert_eq!(two[10].x, 6 + 4, "each line starts at the left margin");
+    // Kept in the centred 4:3 area with the status bar.
+    h.placement = Placement { safe_area: true };
+    let kept = h.aid_marker_layout(true, false, (854, 480));
+    assert_eq!(kept[0].x, 6 + 4 + 107);
+    assert_eq!(
+        hud::marker_layout(&art, &["I"], (854, 480), Placement::default())[0].x,
+        6 + 4
+    );
+}
+
 const SIZES: [(u32, u32); 5] = [
     (640, 480),
     (1920, 1080),

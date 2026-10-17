@@ -892,9 +892,13 @@ impl Recorder {
         let n = ticks.len();
         let mut directives = session.directives();
         directives.retain(|d| d.tick <= n);
+        // The play-test aids the level was played with, so a replay plays
+        // with them.
+        let mut header = session.header();
+        header.aids = session.sim().config().aids;
         InputScript {
             ticks,
-            header: session.header(),
+            header,
             directives,
         }
     }

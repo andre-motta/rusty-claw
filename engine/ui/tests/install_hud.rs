@@ -163,6 +163,37 @@ fn pieces_sit_where_the_original_puts_them() {
 }
 
 #[test]
+fn the_aid_marker_stays_clear_of_the_boss_bar_and_inside_the_picture() {
+    let Some(l1) = level1() else { return };
+    let art = &l1.art;
+    let bar = art.boss_bar.expect("the boss bar frame");
+    for size in [(640u32, 480u32), (854, 480), (1708, 480)] {
+        let (w, h) = (size.0 as i32, size.1 as i32);
+        // The boss bar's box, its hotspot at ((W - 1) / 2 + 1, H - 33).
+        let (bx, by) = ((w - 1) / 2 + 1, h - hud::BOSS_BAR_RISE);
+        let bar_left = bx - (bar.width >> 1) as i32 + bar.offset_x;
+        let bar_top = by - (bar.height >> 1) as i32 + bar.offset_y;
+        let lines = hud::marker_lines(true, true);
+        let sprites = hud::marker_layout(art, &lines, size, hud::Placement::default());
+        assert_eq!(sprites.len(), "INVINCIBLEINFINITELIVES".len());
+        for s in &sprites {
+            let f = art.glyphs[s.frame as usize].expect("the glyph");
+            let left = s.x - (f.width >> 1) as i32 + f.offset_x;
+            let top = (h - 1) + s.y - (f.height >> 1) as i32 + f.offset_y;
+            let (right, bottom) = (left + f.width as i32, top + f.height as i32);
+            assert!(
+                left >= 0 && top >= 0 && bottom < h,
+                "{size:?}: {s:?} in the picture"
+            );
+            assert!(
+                right <= bar_left || bottom <= bar_top,
+                "{size:?}: {s:?} clear of the boss bar at {bar_left},{bar_top}"
+            );
+        }
+    }
+}
+
+#[test]
 fn level1_draws_with_the_bar_on_the_gpu() {
     let Some(mut l1) = level1() else { return };
     let gpu = Gpu::headless().expect("a Vulkan GPU");

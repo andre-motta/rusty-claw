@@ -54,6 +54,13 @@
 //! [`BOSS_BAND_EMPTY`]): pieces 7 px high and 1, 2, 4 ... 128 px wide, so
 //! each part of the band takes at most eight of them.
 //!
+//! While a play-test aid is on, a small marker in the game's bitmap font
+//! names it in the picture's bottom-left corner, one line per aid
+//! (`INVINCIBLE`, `INFINITE LIVES`), the last line [`MARKER_MARGIN`]
+//! pixels above the bottom edge and every line [`MARKER_MARGIN`] pixels
+//! from the left edge (of the centred 4:3 area when the status bar is
+//! kept there). It stays clear of the boss's health bar.
+//!
 //! Messages ("Your game has been saved") are one line of the game's bitmap
 //! font, centred on the picture's centre column with its top 110 pixels
 //! below the top edge. One message shows at a time; a new one replaces it
@@ -174,6 +181,28 @@ pub const DEFAULT_STOPWATCH_STEP_MS: u32 = 100;
 
 /// Top of the message line below the picture's top edge.
 pub const MESSAGE_TOP: i32 = 110;
+
+/// The marker line of the invincibility aid.
+pub const MARKER_INVINCIBLE: &str = "INVINCIBLE";
+/// The marker line of the infinite lives aid.
+pub const MARKER_INFINITE_LIVES: &str = "INFINITE LIVES";
+/// Distance of the aid marker from the picture's left and bottom edges.
+pub const MARKER_MARGIN: i32 = 6;
+/// Gap between the aid marker's lines.
+pub const MARKER_LINE_GAP: i32 = 2;
+
+/// The aid marker's lines for the aids that are on, top to bottom; empty
+/// with both off.
+pub fn marker_lines(invincible: bool, infinite_lives: bool) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if invincible {
+        out.push(MARKER_INVINCIBLE);
+    }
+    if infinite_lives {
+        out.push(MARKER_INFINITE_LIVES);
+    }
+    out
+}
 
 /// Highest frame number of the bitmap font.
 pub const FONT_GLYPHS: i32 = 54;
@@ -778,6 +807,50 @@ pub fn text_layout(art: &HudArt, text: &str) -> Vec<ScreenSprite> {
     out
 }
 
+/// `lines` of the bitmap font in the picture's bottom-left corner, left
+/// aligned, the last line [`MARKER_MARGIN`] pixels above the bottom edge
+/// and each line [`MARKER_LINE_GAP`] pixels above the next (lines as tall
+/// as the font's tallest glyph). Each glyph's box ends on its line's bottom
+/// row and advances the line by its own width.
+pub fn marker_layout(
+    art: &HudArt,
+    lines: &[&str],
+    presentation: (u32, u32),
+    placement: Placement,
+) -> Vec<ScreenSprite> {
+    let (l, _) = placement.insets(presentation);
+    let height = art
+        .glyphs
+        .iter()
+        .flatten()
+        .map(|f| f.height as i32)
+        .max()
+        .unwrap_or(0);
+    let n = lines.len() as i32;
+    let mut out = Vec::new();
+    for (k, text) in lines.iter().enumerate() {
+        let below = n - 1 - k as i32;
+        let bottom = -(MARKER_MARGIN + below * (height + MARKER_LINE_GAP));
+        let mut pen = l + MARKER_MARGIN;
+        for c in text.chars() {
+            let g = glyph(c);
+            let f = art
+                .glyphs
+                .get(g as usize)
+                .copied()
+                .flatten()
+                .unwrap_or_default();
+            if f.width > 0 && g != 0 {
+                let x = pen + (f.width >> 1) as i32 - f.offset_x;
+                let y = bottom - f.height as i32 + (f.height >> 1) as i32 - f.offset_y;
+                out.push(sprite(FONT, g, Anchor::BottomLeft, x, y));
+            }
+            pen += f.width as i32;
+        }
+    }
+    out
+}
+
 /// The message on screen, if any.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Messages {
@@ -886,6 +959,19 @@ impl Hud {
             time_ms - since,
             self.placement,
         )
+    }
+
+    /// The aid marker for the play-test aids that are on (see
+    /// [`marker_lines`] and [`marker_layout`]), placed like the status bar;
+    /// empty with both off.
+    pub fn aid_marker_layout(
+        &self,
+        invincible: bool,
+        infinite_lives: bool,
+        presentation: (u32, u32),
+    ) -> Vec<ScreenSprite> {
+        let lines = marker_lines(invincible, infinite_lives);
+        marker_layout(&self.art, &lines, presentation, self.placement)
     }
 
     /// The message on screen as sprites (empty when there is none).

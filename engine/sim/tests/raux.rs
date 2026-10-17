@@ -28,6 +28,7 @@ use claw_sim::physics::ptype;
 use claw_sim::player::attack::kind as attack_kind;
 use claw_sim::player::state as claw_state;
 use claw_sim::rng::Rng;
+use claw_sim::tuning::PlayAids;
 use claw_sim::{GameLogic, Sim, SimConfig, SimLevel};
 use common::*;
 
@@ -96,8 +97,9 @@ const SOUNDS: [(&str, u32); 9] = [
 const LIMITS: (i32, i32) = (2700, 3300);
 
 /// The flat floor of the common helpers (feet rest on 959) with Raux at
-/// x = 3000 between `LIMITS`, every object awake.
-fn arena(seed: u32) -> Sim {
+/// x = 3000 between `LIMITS`, every object awake, played with the
+/// play-test aids `aids`.
+fn arena_with(seed: u32, aids: PlayAids) -> Sim {
     let mut level = flat_level();
     for a in raux_anims() {
         level.animations.insert(a.key.clone(), a);
@@ -113,16 +115,17 @@ fn arena(seed: u32) -> Sim {
     o.record[17] = 7;
     o.record[18] = 33;
     level.objects = vec![o];
-    sim_of(level, seed)
+    sim_with_aids(level, seed, aids)
 }
 
-fn sim_of(level: SimLevel, seed: u32) -> Sim {
+fn sim_with_aids(level: SimLevel, seed: u32, aids: PlayAids) -> Sim {
     let (w, h) = (level.map.width() as u32, level.map.height() as u32);
     Sim::new(
         level,
         SimConfig {
             seed,
             activation: ActivationConfig::widened((2 * w, 2 * h)),
+            aids,
             ..SimConfig::default()
         },
     )
@@ -165,7 +168,12 @@ fn cues(sim: &Sim) -> Vec<String> {
 /// The arena with Claw `dx` px from Raux (standing, tough), fight flag
 /// as given, after `ticks` ticks.
 fn with_claw(seed: u32, dx: i32, flag: u8, ticks: usize) -> (Sim, ObjectId) {
-    let mut sim = arena(seed);
+    with_claw_aided(seed, dx, flag, ticks, PlayAids::NONE)
+}
+
+/// [`with_claw`] played with the play-test aids `aids`.
+fn with_claw_aided(seed: u32, dx: i32, flag: u8, ticks: usize, aids: PlayAids) -> (Sim, ObjectId) {
+    let mut sim = arena_with(seed, aids);
     let id = raux_id(&sim);
     sim.teleport_player(3000 + dx, 899);
     sim.with_world(|w| {
@@ -179,7 +187,12 @@ fn with_claw(seed: u32, dx: i32, flag: u8, ticks: usize) -> (Sim, ObjectId) {
 /// Raux in the fight with Claw `dx` px away, past his start-up, put at
 /// Home, standing still and free.
 fn in_fight(dx: i32) -> (Sim, ObjectId) {
-    let (mut sim, id) = with_claw(3, dx, fight::ON, 3);
+    in_fight_aided(dx, PlayAids::NONE)
+}
+
+/// [`in_fight`] played with the play-test aids `aids`.
+fn in_fight_aided(dx: i32, aids: PlayAids) -> (Sim, ObjectId) {
+    let (mut sim, id) = with_claw_aided(3, dx, fight::ON, 3, aids);
     assert_ne!(state_of(&sim, id), Some(EnemyState::Startup));
     sim.with_world(|w| {
         enemy::go_home(w, id);
@@ -532,6 +545,30 @@ fn the_strike_lands_once_with_its_box_and_damage_and_ends_with_its_animation() {
     // Two more elements of 100 ms (6 ticks each), then Home.
     assert_eq!(n, 23, "{n} ticks");
     assert_eq!(sim.stats().health, claw_health - 5, "5 damage to Claw");
+}
+
+#[test]
+fn the_strike_does_nothing_to_an_invincible_claw() {
+    let invincible = PlayAids {
+        invincible: true,
+        ..PlayAids::NONE
+    };
+    let (mut sim, id) = in_fight_aided(80, invincible);
+    sim.with_world(|w| enemy::enter_strike(w, id));
+    let before = sim.stats().health;
+    let mut landed = false;
+    let mut n = 0;
+    while state_of(&sim, id) == Some(EnemyState::Strike) {
+        sim.step(TickInput::default());
+        n += 1;
+        landed |= obj(&sim, id).attack_rect == raux::STRIKE.mirrored();
+        let claw = sim.player().unwrap();
+        assert_ne!(claw.state, claw_state::HIT, "tick {n}: no hit reaction");
+        assert_eq!(sim.stats().invulnerable_ms, 0, "tick {n}: no window");
+        assert!(n < 40);
+    }
+    assert!(landed, "the strike box came on");
+    assert_eq!(sim.stats().health, before, "no damage");
 }
 
 // ----------------------------------------------------------------------

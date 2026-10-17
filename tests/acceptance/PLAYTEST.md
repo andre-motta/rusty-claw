@@ -4,6 +4,10 @@ Play the first level with `rusty-claw --install PATH` (title, main menu, new
 game). Note only what fails: the line, what happened instead, and where.
 Where a line says "as in the original", compare with the original game.
 
+For hard levels, the play-test aids (`--invincible`, `--infinite-lives`, or
+the Gameplay page) let you reach and repeat any part of a level; a run with
+an aid on says nothing about how hard the level is.
+
 1. Strike an officer standing, crouching and in the air: each blow lands when the sword or fist reaches him, he flinches and slides back, and he dies as quickly as in the original.
 2. Let an officer strike you: one hit sound and pain line, a short push back, then a moment in which he cannot hurt you again.
 3. Stand at range from a soldier: he aims and fires a musket ball (10 health), and clubs you up close; the pistol and the sword kill him.

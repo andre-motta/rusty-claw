@@ -20,6 +20,7 @@ use claw_game::settings::{LevelChoice, Settings};
 use claw_game::{Session, load_level, replay_headless};
 use claw_sim::input::{MenuScreen, ScriptCommand};
 use claw_sim::trace::{self, TraceRow};
+use claw_sim::tuning::PlayAids;
 use claw_sim::{
     Carry, Directive, DirectiveKind, InputScript, Sim, SimConfig, SimLevel, StartState, TileMap,
 };
@@ -628,4 +629,87 @@ fn install_replay_on_the_command_line_plays_a_later_level_from_its_start() {
     let (ok, err, text) = run(&["--level", "1"]);
     assert!(!ok && text.is_none(), "{err}");
     assert!(err.contains("level 2"), "{err}");
+}
+
+#[test]
+fn a_level_played_with_aids_says_so_and_replays_with_them() {
+    let both = PlayAids {
+        invincible: true,
+        infinite_lives: true,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut rec = GameRecording::new(dir.path().join("game.csv"));
+    let cfg = SimConfig {
+        aids: both,
+        ..SimConfig::default()
+    };
+    let sim = start_sim(level(), cfg, StartState::default(), None);
+    let (live, path) = record_level(&mut rec, sim, 1, StartState::default(), None, 60.0);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.lines().any(|l| l == "# invincible = on"), "{text}");
+    assert!(text.lines().any(|l| l == "# infinite_lives = on"), "{text}");
+    // Never a route.
+    let e = InputScript::parse(&text).unwrap_err();
+    assert!(e.message.contains("play-test aid"), "{e}");
+    // A replay plays it with them.
+    let r = LevelRecording::read(&path).unwrap();
+    assert_eq!(r.script.header.aids, both);
+    let mut settings = Settings::new("/i", LevelChoice::Retail(1));
+    settings.follow_recording(&r).unwrap();
+    assert_eq!(settings.aids, both);
+    assert_eq!(settings.sim_config((640, 480)).aids, both);
+    let cfg = r.sim_config(SimConfig::default());
+    assert_eq!(cfg.aids, both);
+    let sim = start_sim(level(), cfg, r.start.clone(), None);
+    let rows = replay_trace(sim, r.script.clone(), settings.pause_input, 60.0);
+    assert_eq!(rows_of(&rows), live);
+    // Recorded again, the replay keeps them.
+    let again = Recorder::new();
+    let sim = start_sim(
+        level(),
+        r.sim_config(SimConfig::default()),
+        r.start.clone(),
+        None,
+    );
+    let mut session = Session::new(sim).with_replay(r.script.clone());
+    session.set_before_tick(again.hook());
+    while session.replaying() {
+        session.frame(Duration::from_millis(18));
+    }
+    assert_eq!(again.script(&session).header.aids, both);
+}
+
+#[test]
+fn a_level_played_without_aids_has_no_aid_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut rec = GameRecording::new(dir.path().join("game.csv"));
+    let sim = start_sim(level(), SimConfig::default(), StartState::default(), None);
+    let (_, path) = record_level(&mut rec, sim, 1, StartState::default(), None, 60.0);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(!text.contains("invincible") && !text.contains("infinite_lives"));
+    let r = LevelRecording::read(&path).unwrap();
+    assert_eq!(r.script.header.aids, PlayAids::NONE);
+    assert_eq!(InputScript::parse(&text).unwrap(), r.script, "a route");
+    // One aid alone, through the single-file recording.
+    let invincible = PlayAids {
+        invincible: true,
+        ..PlayAids::NONE
+    };
+    let cfg = SimConfig {
+        aids: invincible,
+        ..SimConfig::default()
+    };
+    let mut session = Session::new(Sim::new(level(), cfg));
+    let recorder = Recorder::new();
+    session.set_before_tick(recorder.hook());
+    for _ in 0..20 {
+        session.frame(Duration::from_millis(18));
+    }
+    let path = dir.path().join("one.csv");
+    save_recording(&recorder, &session, &path).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.lines().any(|l| l == "# invincible = on"), "{text}");
+    assert!(!text.contains("infinite_lives"), "{text}");
+    let r = LevelRecording::parse(&text).unwrap();
+    assert_eq!(r.sim_config(SimConfig::default()).aids, invincible);
 }

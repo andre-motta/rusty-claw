@@ -4,6 +4,7 @@
 //! rusty-claw --install PATH [--level N | --custom FILE.WWD] [--res WxH]
 //!            [--fullscreen] [--aspect fill|centered|4:3] [--scale fit|integer]
 //!            [--widen-activation] [--mid-air-hit-fix on|off]
+//!            [--invincible] [--infinite-lives]
 //!            [--vsync on|off] [--fps-cap N | --uncapped]
 //!            [--no-interp] [--no-audio] [--record FILE.csv]
 //!            [--replay FILE.csv [--trace OUT.csv] [--render-hz HZ]]
@@ -26,6 +27,12 @@
 //! script's header names (`# tuning default|original`, `# seed N`), and
 //! plays its pauses, menus and commands (`@` lines) where they were
 //! recorded.
+//!
+//! The play-test aids `--invincible` (Claw takes no damage; death tiles and
+//! pits still end his life) and `--infinite-lives` (a death never costs a
+//! life) are on for that run only. A recording made with an aid on names
+//! it in its header (`# invincible = on`, `# infinite_lives = on`) and a
+//! replay plays it with that aid, as does `--bench-route`.
 //!
 //! A replay plays the level its recording names (`# level N`) from the
 //! start it was recorded with: a later level of a recorded game starts
@@ -75,6 +82,15 @@ How a run starts:
   --replay FILE.csv, --bench SECONDS one level without menus, as before
   --bench-route FILE.csv --headless  benchmark along a route from the level's
                                      start until its end
+
+Play-test aids, off by default, for trying out hard levels:
+  --invincible                       Claw takes no damage (death tiles and pits
+                                     still end his life)
+  --infinite-lives                   a death never lowers the lives count
+They are also on the Gameplay page (Options, Gameplay) and in the config file;
+on the command line they apply to that run only. A run with an aid on says
+nothing about how hard a level is: recordings name the aids, and routes, the
+bot and comparisons with reference traces refuse them.
 
 Saved games are kept in $XDG_DATA_HOME/rusty-claw/saves/default/ (by default
 ~/.local/share/rusty-claw/saves/default/). Options changed in the menus are

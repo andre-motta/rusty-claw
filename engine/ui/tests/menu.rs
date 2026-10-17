@@ -892,7 +892,7 @@ fn in_game_confirmations_show_their_question() {
 }
 
 #[test]
-fn the_gameplay_page_lists_its_three_switches_magnified_in_both_menus() {
+fn the_gameplay_page_lists_its_five_switches_magnified_in_both_menus() {
     for (root, kind) in [
         (main_menu(), MenuKind::Main),
         (in_game_menu(), MenuKind::InGame),
@@ -907,6 +907,8 @@ fn the_gameplay_page_lists_its_three_switches_magnified_in_both_menus() {
             ("MID AIR HIT JUMP FIX OFF", GameplaySetting::MidAirHitFix),
             ("PAUSE INPUT RELEASE ALL", GameplaySetting::PauseInput),
             ("FUSE CLOCK ORIGINAL", GameplaySetting::FuseClock),
+            ("INVINCIBLE OFF", GameplaySetting::Invincible),
+            ("INFINITE LIVES OFF", GameplaySetting::InfiniteLives),
         ] {
             n.tree.add_text(page, text, MenuCommand::Gameplay(g));
         }
@@ -920,7 +922,7 @@ fn the_gameplay_page_lists_its_three_switches_magnified_in_both_menus() {
         };
         let (top, bottom) = band.unwrap();
         let entries = n.entries().to_vec();
-        assert_eq!(entries.len(), 4, "{kind:?}");
+        assert_eq!(entries.len(), 6, "{kind:?}");
         let cells: Vec<tree::Cell> = entries.iter().map(|&k| n.tree.items[k].cell).collect();
         for &k in &entries {
             assert_eq!(n.tree.items[k].zoom, 2, "{kind:?}: twice the size");

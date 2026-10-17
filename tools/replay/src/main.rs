@@ -7,7 +7,7 @@
 //!             [--trace OUT.csv] [--tuning default|original] [--seed N]
 //!             [--res WxH] [--aspect pillarbox|frozen|widened]
 //!             [--start X,Y] [--logics on|off] [--mid-air-hit-fix on|off]
-//!             [--expect-complete]
+//!             [--invincible] [--infinite-lives] [--expect-complete]
 //!             [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
 //! ```
 //!
@@ -17,6 +17,12 @@
 //! `--level`, `--tuning`, `--seed` and `--mid-air-hit-fix` when those are
 //! not given; a flag given on the command line wins. Without either the
 //! mid-air hit jump fix is off, as in the original.
+//!
+//! A recording the game made with a play-test aid on names it in its
+//! header (`# invincible = on`, `# infinite_lives = on`) and replays with
+//! it; `--invincible` and `--infinite-lives` turn an aid on as the game's
+//! flags of the same names do. A run with an aid on is not plain play, so
+//! `--compare` refuses it.
 //!
 //! The script's `@` directive lines are played at their tick boundaries: a
 //! command (`end_life`) takes effect before its tick, and a pause or a menu
@@ -63,12 +69,13 @@ use claw_sim::claw_frame::{AspectPolicy, GameEvent, ViewConfig};
 use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Tolerances, TraceRow};
+use claw_sim::tuning::PlayAids;
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel};
 
 const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FILE.WWD] \
 --script ROUTE.csv [--trace OUT.csv] [--tuning default|original] [--seed N] [--res WxH] \
 [--aspect pillarbox|frozen|widened] [--start X,Y] [--logics on|off] \
-[--mid-air-hit-fix on|off] [--expect-complete] \
+[--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--expect-complete] \
 [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]";
 
 /// The key of the mid-air hit jump fix in a script's comment line.
@@ -90,6 +97,7 @@ struct Args {
     start: Option<(i32, i32)>,
     logics: Option<bool>,
     mid_air_hit_fix: Option<bool>,
+    aids: PlayAids,
     tuning: Option<ScriptTuning>,
     expect_complete: bool,
     compare: Option<PathBuf>,
@@ -105,6 +113,14 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         }
         if flag == "--expect-complete" {
             a.expect_complete = true;
+            continue;
+        }
+        if flag == "--invincible" {
+            a.aids.invincible = true;
+            continue;
+        }
+        if flag == "--infinite-lives" {
+            a.aids.infinite_lives = true;
             continue;
         }
         let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -227,9 +243,23 @@ fn run(args: Args) -> Result<Outcome, String> {
     let tolerances = args.tolerance.as_deref().map(load_tolerances).transpose()?;
     let text = std::fs::read_to_string(&script_path)
         .map_err(|e| format!("reading {}: {e}", script_path.display()))?;
-    let script =
-        InputScript::parse(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
+    let script = InputScript::parse_with_aids(&text)
+        .map_err(|e| format!("{}: {e}", script_path.display()))?;
     let header = script.header;
+    let aids = args.aids.union(header.aids);
+    if args.compare.is_some() && aids.any() {
+        let names: Vec<String> = aids.names().iter().map(|n| format!("{n} = on")).collect();
+        return Err(format!(
+            "--compare takes plain play only, and this run has a play-test aid on ({}; from {}): \
+             a run with an aid says nothing about the game's own play",
+            names.join(", "),
+            if header.aids.any() {
+                "the script's header"
+            } else {
+                "the command line"
+            }
+        ));
+    }
     let fix = args
         .mid_air_hit_fix
         .or(script_behaviour(&text))
@@ -287,6 +317,7 @@ fn run(args: Args) -> Result<Outcome, String> {
         cfg.level_logics = on;
     }
     cfg.tuning.behaviour.fix_double_jump = fix;
+    cfg.aids = aids;
     let mut sim = Sim::new(sim_level, cfg);
     if let Some((x, y)) = args.start {
         settle_at(&mut sim, x, y);
@@ -318,6 +349,12 @@ fn run(args: Args) -> Result<Outcome, String> {
     let d = sim.diagnostics();
     let unknown: usize = d.unknown_logics.values().sum();
     let inert: usize = d.inert_logics.values().sum();
+    if aids.any() {
+        eprintln!(
+            "claw-replay: play-test aids on: {}",
+            aids.names().join(", ")
+        );
+    }
     eprintln!(
         "claw-replay: {} ticks, {} directives ({} commands), tuning {}, seed {}, mid-air hit fix {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}",
         rows.len(),
@@ -500,6 +537,69 @@ mod tests {
             "the last line counts"
         );
         assert_eq!(script_behaviour("# level 1\ntick,a,b\n"), None);
+    }
+
+    #[test]
+    fn the_aids_come_from_the_flags_or_the_script() {
+        let a = args("--install /i --script s.csv --invincible").unwrap();
+        assert!(a.aids.invincible && !a.aids.infinite_lives);
+        let a = args("--install /i --script s.csv --infinite-lives --invincible").unwrap();
+        assert_eq!(
+            a.aids,
+            PlayAids {
+                invincible: true,
+                infinite_lives: true
+            }
+        );
+        assert_eq!(
+            args("--install /i --script s.csv").unwrap().aids,
+            PlayAids::NONE
+        );
+    }
+
+    /// Writes `text` as a script in a fresh folder and runs `extra`
+    /// arguments on it, with an install that does not exist.
+    fn run_script(name: &str, text: &str, extra: &str) -> String {
+        let dir =
+            std::env::temp_dir().join(format!("claw-replay-aids-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("route.csv");
+        std::fs::write(&script, text).unwrap();
+        let mut a = args(&format!(
+            "--install {} --level 1 --script {} {extra}",
+            dir.join("no-install").display(),
+            script.display()
+        ))
+        .unwrap();
+        a.script = Some(script);
+        let e = run(a).unwrap_err();
+        std::fs::remove_dir_all(&dir).unwrap();
+        e
+    }
+
+    #[test]
+    fn a_recording_with_an_aid_replays_but_is_never_compared() {
+        let aided = "# invincible = on\ntick,held_mask,pressed_mask\n0,0,0\n";
+        // Read and replayed: the run stops at the missing install.
+        let e = run_script("replay", aided, "");
+        assert!(e.contains("opening install"), "{e}");
+        // Compared: refused before anything is loaded.
+        let e = run_script("compare", aided, "--compare ref.csv --tolerance exact");
+        assert!(e.contains("plain play only"), "{e}");
+        assert!(e.contains("invincible = on"), "{e}");
+        assert!(e.contains("header"), "{e}");
+        // An aid from the command line is refused the same way.
+        let plain = "tick,held_mask,pressed_mask\n0,0,0\n";
+        let e = run_script(
+            "flag",
+            plain,
+            "--infinite-lives --compare ref.csv --tolerance exact",
+        );
+        assert!(e.contains("infinite_lives = on"), "{e}");
+        assert!(e.contains("command line"), "{e}");
+        // Plain play is compared as before (here it stops at the install).
+        let e = run_script("plain", plain, "--compare ref.csv --tolerance exact");
+        assert!(e.contains("opening install"), "{e}");
     }
 
     #[test]

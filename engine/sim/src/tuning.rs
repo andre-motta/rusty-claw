@@ -229,6 +229,77 @@ pub struct Behaviour {
     pub fix_double_jump: bool,
 }
 
+/// Play-test aids: help for trying out the hard parts of a level, both off
+/// by default.
+///
+/// They change how the game plays, so a run with an aid on says nothing
+/// about how hard a level is: recordings name the aids that were on (see
+/// [`crate::input::ScriptHeader::aids`]), and routes, the bot and the
+/// comparisons with reference traces take plain play only.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct PlayAids {
+    /// Claw takes no damage: enemies, shots, the level's hazards,
+    /// explosions and bosses leave his health alone, and he never goes into
+    /// the hurt reaction or is knocked back, so he moves as he does when
+    /// nothing touches him. What would have hurt him passes through him.
+    /// Death tiles and pits still end his life.
+    pub invincible: bool,
+    /// Losing a life never lowers the lives count: play goes on from the
+    /// last checkpoint.
+    pub infinite_lives: bool,
+}
+
+impl PlayAids {
+    /// Both aids off.
+    pub const NONE: PlayAids = PlayAids {
+        invincible: false,
+        infinite_lives: false,
+    };
+
+    /// The name of the invincibility aid in settings and recordings.
+    pub const INVINCIBLE: &'static str = "invincible";
+
+    /// The name of the infinite lives aid in settings and recordings.
+    pub const INFINITE_LIVES: &'static str = "infinite_lives";
+
+    /// Both names, invincibility first.
+    pub const NAMES: [&'static str; 2] = [PlayAids::INVINCIBLE, PlayAids::INFINITE_LIVES];
+
+    /// True when any aid is on.
+    pub fn any(self) -> bool {
+        self.invincible || self.infinite_lives
+    }
+
+    /// The aids on in either `self` or `other`.
+    pub fn union(self, other: PlayAids) -> PlayAids {
+        PlayAids {
+            invincible: self.invincible || other.invincible,
+            infinite_lives: self.infinite_lives || other.infinite_lives,
+        }
+    }
+
+    /// The names of the aids that are on, invincibility first.
+    pub fn names(self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.invincible {
+            out.push(PlayAids::INVINCIBLE);
+        }
+        if self.infinite_lives {
+            out.push(PlayAids::INFINITE_LIVES);
+        }
+        out
+    }
+
+    /// The aid named `name`, as a mutable switch.
+    pub fn switch_mut(&mut self, name: &str) -> Option<&mut bool> {
+        match name {
+            PlayAids::INVINCIBLE => Some(&mut self.invincible),
+            PlayAids::INFINITE_LIVES => Some(&mut self.infinite_lives),
+            _ => None,
+        }
+    }
+}
+
 /// Whether the time a help screen was up reaches the dynamite fuse (see
 /// [`crate::Sim::pass_menu_time`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]

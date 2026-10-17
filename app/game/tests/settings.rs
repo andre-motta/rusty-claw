@@ -734,3 +734,69 @@ fn a_replay_follows_the_tuning_and_seed_of_its_script() {
     fresh.follow_header(&bare.header);
     assert_eq!(fresh.sim_config((1280, 960)), plain);
 }
+
+#[test]
+fn the_play_test_aids_are_settings_off_by_default_and_off_for_replays() {
+    use claw_sim::tuning::PlayAids;
+    let resolve = |text: &str, args: &[&str]| {
+        let file = ConfigFile::parse(text, "test").unwrap();
+        file.check().unwrap();
+        let mut argv = vec!["x", "--install", "/i"];
+        argv.extend_from_slice(args);
+        Settings::resolve(&Args::try_parse_from(argv).unwrap(), Some(&file)).unwrap()
+    };
+    let aids = |s: &Settings| s.sim_config((1280, 960)).aids;
+    let both = PlayAids {
+        invincible: true,
+        infinite_lives: true,
+    };
+    // Off by default; from the file; written back as on or off.
+    let s = resolve("", &[]);
+    assert_eq!((s.aids, aids(&s)), (PlayAids::NONE, PlayAids::NONE));
+    assert_eq!(s.config_value("invincible").as_deref(), Some("off"));
+    assert_eq!(s.config_value("infinite_lives").as_deref(), Some("off"));
+    let s = resolve("invincible = on\ninfinite_lives = on\n", &[]);
+    assert_eq!(aids(&s), both);
+    assert_eq!(s.config_value("invincible").as_deref(), Some("on"));
+    assert!(
+        ConfigFile::parse("invincible = maybe\n", "test")
+            .unwrap()
+            .check()
+            .is_err()
+    );
+    // A flag turns an aid on for the run, and is not written back.
+    let s = resolve("", &["--invincible"]);
+    assert!(s.aids.invincible && !s.aids.infinite_lives);
+    assert!(
+        s.write_back_values(&["invincible", "infinite_lives"])
+            == [("infinite_lives".to_string(), "off".to_string())]
+    );
+    let s = resolve("", &["--infinite-lives", "--invincible"]);
+    assert_eq!(aids(&s), both);
+    assert!(
+        s.write_back_values(&["invincible", "infinite_lives"])
+            .is_empty()
+    );
+    // Replays and benchmarks ignore the file; the command line still counts.
+    for mode in [
+        &["--replay", "r.csv"][..],
+        &["--replay", "r.csv", "--trace", "t.csv"],
+        &["--bench", "5"],
+        &["--bench", "5", "--headless"],
+    ] {
+        let s = resolve("invincible = on\ninfinite_lives = on\n", mode);
+        assert_eq!(aids(&s), PlayAids::NONE, "{mode:?}");
+        let mut on: Vec<&str> = mode.to_vec();
+        on.push("--invincible");
+        assert!(resolve("", &on).aids.invincible, "{mode:?}");
+    }
+    // A replay plays with the aids its header names, with those of the
+    // command line.
+    let header = |text: &str| claw_sim::InputScript::parse_with_aids(text).unwrap().header;
+    let mut s = resolve("", &["--replay", "r.csv", "--infinite-lives"]);
+    s.follow_header(&header("# invincible = on\n0,0,0\n"));
+    assert_eq!(aids(&s), both);
+    let mut s = resolve("invincible = on\n", &["--replay", "r.csv"]);
+    s.follow_header(&header("0,0,0\n"));
+    assert_eq!(aids(&s), PlayAids::NONE);
+}

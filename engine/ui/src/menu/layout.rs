@@ -100,8 +100,7 @@ pub fn main_band(page: Page) -> Option<(i32, i32)> {
         Page::QuitConfirm => (294, 368),
         Page::LoadEntries { .. } => (220, 368),
         Page::SaveInfo => (319, 356),
-        Page::Video => (190, 440),
-        Page::Gameplay => (220, 368),
+        Page::Video | Page::Gameplay => (190, 440),
         Page::Controls => (70, 440),
         _ => return None,
     })
@@ -114,8 +113,7 @@ pub fn in_game_band(page: Page) -> Option<(i32, i32)> {
         Page::Root | Page::Audio => (c - 95, c + 95),
         Page::EndLifeConfirm | Page::EndGameConfirm => (c + 38 - 10, c + 95),
         Page::Options | Page::Display => (c - 76, c + 76),
-        Page::Video => (c - 110, c + 120),
-        Page::Gameplay => (c - 70, c + 70),
+        Page::Video | Page::Gameplay => (c - 110, c + 120),
         Page::Controls => (70, 440),
         _ => return None,
     })
