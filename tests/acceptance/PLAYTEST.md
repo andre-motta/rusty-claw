@@ -21,7 +21,7 @@ an aid on says nothing about how hard the level is.
 11. Fall onto spikes after a checkpoint: Claw dies there, the circle closes, he comes back at the last flag with full health and one life fewer, and the pegs and elevators behind him are back in place.
 12. Lose every life: the game over screen fades in, then the main menu.
 13. Touch a save point, end the game from the in-game menu, then load that save point: Claw starts there with the same score, lives and ammunition.
-14. Take the map piece: the music stops, the map and the treasure tally count up what you collected against what the level holds, then the main menu shows level 2 open.
+14. Take the map piece: the music stops, the map and the treasure tally count up what you collected against what the level holds, then the second level starts with your score, lives, health and ammunition (the main menu shows level 2 open too).
 15. At 3840x2160 (`--res 3840x2160 --fullscreen`): the status bar is sharp and sits at the screen's corners; nothing in the play area blurs or shimmers while scrolling.
 16. On an ultrawide display (or `--res 5120x1440`): the status bar sits at the outer edges (centred in the 4:3 area with the status bar video option), enemies in the extra width stay still until Claw comes near.
 17. Listen to a fight: hits, shots and speech are clear over the music, no sound cuts out in a busy moment, and sounds to the left or right of Claw come from that side.
@@ -40,7 +40,7 @@ an aid on says nothing about how hard the level is.
 30. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
 31. Watch a rat walk into a wall: it stays against the wall for good, its walk playing on the spot, until it throws a bomb at Claw, as in the original.
 32. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
-33. Not on level 1, so not checked here: enemies stepping into goo (they take it like spikes), springboards (Claw's jump height, and enemies on them do not launch), loot carried through a warp, and enemies on moving elevators (they stay put).
+33. On level 2, knock an officer or a soldier into a goo pool: it is gone at once, as on spikes (line 4 of the LEVEL2 section). Not checked before the fourth level: springboards (Claw's jump height, and enemies on them do not launch); not checked yet: loot carried through a warp, and enemies on moving elevators (they stay put).
 
 ## Milestone 3, slice 0 (LEVEL1)
 
@@ -86,18 +86,25 @@ the checkpoint as soon as the circles are over, free to move at once.
 14. Turn the front layer off in the options: the level's front tiles (the foreground in front of Claw) disappear while objects still draw. Quit and start the game again: the front layer is still off. Turn it back on.
 15. Start LEVEL1 and LEVEL2 (`--level 2`): every powder keg stands on the floor when the level starts, none floats above it or sinks into it.
 
-## Milestone 3, slice 1: LEVEL2 early
+## Milestone 3, LEVEL2
 
 Failures only, as above: note the line, what happened instead, and where.
-Start the second level with `make run-game ARGS="--install PATH --level 2"`.
-The boss at the end is not built yet: stop before his room.
+Start the second level with `make run-game ARGS="--install PATH --level 2"`,
+or play on from the first level.
+
+Known differences from the original on LEVEL2, not to report (listed with
+their reasons in `tests/acceptance/tolerances/references.toml`):
+
+- After the end-of-level screen the original's enemies make the choices
+  they make every third tick in a phase the wall clock sets; the game
+  starts every level in the phase a fresh start gives.
+- Claw's falling death drifts by a pixel from the original's mid-fall.
 
 1. Every powder keg stands on the floor when the level starts; none floats above it or sinks into it.
-2. Walk up to the forts beside the stone towers: each punk rat paces a short beat behind its little cannon, squeaks now and then, and every four seconds or so strikes at the back of its beat; its cannon fires a ball as the strike ends and the rat recoils, as in the original.
-3. A punk rat never hurts you by touch, and any blow (sword, kick, pistol, dynamite, magic) kills it at once; its body flies off, it drops nothing, and its cannon stays on the ledge and never fires again. A pistol shot that kills it flies on.
-4. With the invisibility power-up running, punk rats pace without striking.
-5. The tower cannons fire a ball every three seconds, whether or not you are near, with their shot sound; climbing the ladder between a fort and its tower, the balls of the rats (from the left) and of the tower (from the right) cross at alternating heights, as in the original.
-6. A cannonball flies straight, costs you 10 health (also while you still flash from another hit), passes through enemies and kegs without harming them, and disappears at the first wall.
-7. Throw an officer or a soldier into a goo pool (or knock one in): it drops its loot, plays the goo sound and is gone at once, never seen standing in the goo; a rat dropped in sinks without a sound.
-8. The goo surface pictures over the pools are drawn in front of Claw and the enemies, so whatever falls in disappears behind the goo.
-9. The arrow signs that point the way cycle through their pictures, about ten a second.
+2. The punk rats by the stone towers pace behind their little cannons and strike every four seconds or so; each strike fires the cannon, a ball that costs you 10 health. Any blow kills a rat at once and its cannon falls silent.
+3. The tower cannons fire a ball every three seconds, whether or not you are near; on the ladder between a fort and its tower the rats' and the tower's balls cross at alternating heights, as in the original.
+4. Throw or knock an officer or a soldier into a goo pool: it drops its loot, plays the goo sound and is gone at once; a rat dropped in sinks without a sound. Goo is drawn in front of whatever falls in.
+5. Walk into Raux's room: the boss music starts, Claw stands frozen while the camera visits Raux, both speak, the banner drops and leaves, and both move again together, as in the original. The boss meter shows full and falls with every blow that lands; Raux's defeat throws the gem, and taking it ends the level on the amulet screen with the gem set in its socket, then the third level starts.
+6. Jump on the first moment in Raux's room (the jump-in): no introduction, Claw is never frozen, and Raux stands idle in his start-up pose while you stand beside him; swinging at him from close range wakes him and he fights normally, as in the original.
+7. On LEVEL2, throw dynamite and open help (F1) for about 2 s: the stick goes off at once on closing, as on LEVEL1. Get hit in mid-air by a soldier's ball or a cannonball and jump on the first tick after landing: Claw jumps again, as in the original.
+8. Play the first level and go on into the second in one sitting (new game): the score, lives, health and ammunition carry over, and the second level plays to Raux's defeat and the third level's start without a stall.
