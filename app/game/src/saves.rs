@@ -127,6 +127,92 @@ fn join_counts(c: &[u32; TREASURE_KINDS]) -> String {
     c.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
 }
 
+/// The keys of the progress a level starts with, in the order a save
+/// writes them.
+pub const CARRY_KEYS: [&str; 8] = [
+    "score",
+    "health",
+    "lives",
+    "pistol",
+    "magic",
+    "dynamite",
+    "weapon",
+    "treasure_game",
+];
+
+/// `carry` as the (key, value) pairs a save writes, in [`CARRY_KEYS`]
+/// order.
+pub fn carry_fields(carry: &Carry) -> Vec<(&'static str, String)> {
+    let c = carry;
+    vec![
+        ("score", c.score.to_string()),
+        ("health", c.health.to_string()),
+        ("lives", c.lives.to_string()),
+        ("pistol", c.pistol.to_string()),
+        ("magic", c.magic.to_string()),
+        ("dynamite", c.dynamite.to_string()),
+        ("weapon", weapon_name(c.weapon).to_string()),
+        ("treasure_game", join_counts(&c.treasure_game)),
+    ]
+}
+
+/// The progress named by (key, value) pairs in a save's form: every key of
+/// [`CARRY_KEYS`] must be there with a value in range; other keys are
+/// left alone.
+pub fn carry_from_fields(fields: &[(&str, &str)]) -> Result<Carry, SaveError> {
+    let bad = |why: String| SaveError::Unreadable(why);
+    let get = |k: &str| -> Result<&str, SaveError> {
+        fields
+            .iter()
+            .find(|(f, _)| *f == k)
+            .map(|(_, v)| *v)
+            .ok_or_else(|| bad(format!("{k} is missing")))
+    };
+    let int = |k: &str, range: std::ops::RangeInclusive<i64>| -> Result<i64, SaveError> {
+        let v = get(k)?;
+        match v.parse::<i64>() {
+            Ok(n) if range.contains(&n) => Ok(n),
+            _ => Err(bad(format!("bad {k} {v:?}"))),
+        }
+    };
+    let i32_range = i64::from(i32::MIN)..=i64::from(i32::MAX);
+    let weapon = match get("weapon")? {
+        "pistol" => Weapon::Pistol,
+        "magic" => Weapon::Magic,
+        "dynamite" => Weapon::Dynamite,
+        w => return Err(bad(format!("bad weapon {w:?}"))),
+    };
+    Ok(Carry {
+        score: int("score", 0..=i64::from(u32::MAX))? as u32,
+        health: int("health", i32_range.clone())? as i32,
+        lives: int("lives", i32_range.clone())? as i32,
+        pistol: int("pistol", i32_range.clone())? as i32,
+        magic: int("magic", i32_range.clone())? as i32,
+        dynamite: int("dynamite", i32_range)? as i32,
+        weapon,
+        treasure_game: counts(fields, "treasure_game")?,
+    })
+}
+
+/// The nine treasure counts of key `k` in (key, value) pairs.
+fn counts(fields: &[(&str, &str)], k: &str) -> Result<[u32; TREASURE_KINDS], SaveError> {
+    let bad = |why: String| SaveError::Unreadable(why);
+    let v = fields
+        .iter()
+        .find(|(f, _)| *f == k)
+        .map(|(_, v)| *v)
+        .ok_or_else(|| bad(format!("{k} is missing")))?;
+    let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+    if parts.len() != TREASURE_KINDS {
+        return Err(bad(format!("{k} needs {TREASURE_KINDS} counts")));
+    }
+    let mut out = [0u32; TREASURE_KINDS];
+    for (o, p) in out.iter_mut().zip(parts) {
+        *o = p.parse().map_err(|_| bad(format!("bad {k} {v:?}")))?;
+    }
+    Ok(out)
+}
+
 /// Why a save file could not be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SaveError {
@@ -282,44 +368,17 @@ impl SaveRecord {
                 _ => Err(bad(format!("bad {k} {v:?}"))),
             }
         };
-        let counts = |k: &str| -> Result<[u32; TREASURE_KINDS], SaveError> {
-            let v = get(k)?;
-            let parts: Vec<&str> = v.split(',').map(str::trim).collect();
-            if parts.len() != TREASURE_KINDS {
-                return Err(bad(format!("{k} needs {TREASURE_KINDS} counts")));
-            }
-            let mut out = [0u32; TREASURE_KINDS];
-            for (o, p) in out.iter_mut().zip(parts) {
-                *o = p.parse().map_err(|_| bad(format!("bad {k} {v:?}")))?;
-            }
-            Ok(out)
-        };
         let level = get("level")?.to_string();
         check_level_name(&level).map_err(|e| bad(e.to_string()))?;
         let i32_range = i64::from(i32::MIN)..=i64::from(i32::MAX);
-        let weapon = match get("weapon")? {
-            "pistol" => Weapon::Pistol,
-            "magic" => Weapon::Magic,
-            "dynamite" => Weapon::Dynamite,
-            w => return Err(bad(format!("bad weapon {w:?}"))),
-        };
         Ok(SaveRecord {
             version: int("version", 1..=i64::from(SAVE_VERSION))? as u32,
             level,
             slot: int("slot", 1..=3)? as u8,
             x: int("x", i32_range.clone())? as i32,
-            y: int("y", i32_range.clone())? as i32,
-            carry: Carry {
-                score: int("score", 0..=i64::from(u32::MAX))? as u32,
-                health: int("health", i32_range.clone())? as i32,
-                lives: int("lives", i32_range.clone())? as i32,
-                pistol: int("pistol", i32_range.clone())? as i32,
-                magic: int("magic", i32_range.clone())? as i32,
-                dynamite: int("dynamite", i32_range)? as i32,
-                weapon,
-                treasure_game: counts("treasure_game")?,
-            },
-            treasure_level: counts("treasure_level")?,
+            y: int("y", i32_range)? as i32,
+            carry: carry_from_fields(fields)?,
+            treasure_level: counts(fields, "treasure_level")?,
         })
     }
 }

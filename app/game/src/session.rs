@@ -78,21 +78,46 @@
 //! - release all: every key is released when play stops (the caller does
 //!   it, see [`crate::pause::Pauses::apply`]) and the key events while it
 //!   is stopped count in the first tick.
+//!
+//! # Recordings across levels
+//!
+//! A game that goes from one level to the next is recorded level by level
+//! ([`GameRecording`]): each level gets its own input script, from that
+//! level's first tick (its time zero) to its last, written when the level
+//! is left. The first level goes to the file asked for, `<stem>.csv`, and
+//! each later one to `<stem>.level<N>.csv` for retail level N
+//! (`<stem>.custom.csv` for a community custom level), with `-2`, `-3`, ...
+//! after the level number when the game plays a level again
+//! ([`level_recording_path`]). Each file names its level (`# level N`),
+//! the seed and the movement tuning it was played with (`# seed`,
+//! `# tuning`, the latter when the tuning is one of the named ones), and
+//! says how the level started when it did not start with a new game's
+//! values: the progress carried in, as `# start_score = 25000` and so on
+//! with the saved games' keys, and the save point it was loaded from
+//! (`# start_slot`, `# start_x`, `# start_y`); see [`start_comments`].
+//! [`LevelRecording`] reads a file back, and replaying each file in turn
+//! from its level's start plays the same game, each level ending with the
+//! progress the next one starts with. Older recordings have none of these
+//! lines and play from a new game's values, as before.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
 use claw_frame::step::{MAX_FRAME_US, TICK_US};
 use claw_frame::{AudioCue, Buttons, FrameDriver, GameEvent, InterpolatedFrame, TickInput};
-use claw_sim::input::{MenuScreen, ScriptCommand};
+use claw_sim::input::{MenuScreen, ScriptCommand, ScriptTuning};
 use claw_sim::trace::TraceRow;
 use claw_sim::tuning::FuseClock;
-use claw_sim::{Directive, DirectiveKind, InputLatch, InputScript, ScriptHeader, Sim};
+use claw_sim::{
+    Directive, DirectiveKind, InputLatch, InputScript, SavePos, ScriptHeader, Sim, SimConfig,
+    StartState,
+};
 
 use crate::input::Recorder;
 use crate::pause::PauseInput;
+use crate::saves::{CARRY_KEYS, carry_fields, carry_from_fields};
 
 /// What one frame did.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -944,6 +969,343 @@ pub fn save_recording(recorder: &Recorder, session: &Session, path: &Path) -> Re
     Ok(script.ticks.len())
 }
 
+/// The prefix of the comment lines that say how a level's recording
+/// started (see [`start_comments`]).
+pub const START_PREFIX: &str = "start_";
+
+/// The keys of the save point a level's recording started from, after
+/// [`START_PREFIX`].
+const START_SAVE_KEYS: [&str; 3] = ["slot", "x", "y"];
+
+/// The comment lines that say how a level started, each ending in a line
+/// end: none for a new game's values; the carried progress with the saved
+/// games' keys (`# start_score = 25000`, `# start_health = 85`, ...,
+/// `# start_treasure_game = 10, 2, 0, 0, 0, 0, 0, 0, 0`) when progress was
+/// carried in, and the save point (`# start_slot`, `# start_x`,
+/// `# start_y`) when the level was loaded from one.
+pub fn start_comments(start: &StartState) -> String {
+    let mut out = String::new();
+    if let Some(c) = &start.carry {
+        for (k, v) in carry_fields(c) {
+            out.push_str(&format!("# {START_PREFIX}{k} = {v}\n"));
+        }
+    }
+    if let Some(p) = start.save {
+        for (k, v) in START_SAVE_KEYS.iter().zip([i32::from(p.slot), p.x, p.y]) {
+            out.push_str(&format!("# {START_PREFIX}{k} = {v}\n"));
+        }
+    }
+    out
+}
+
+/// How the level of recording `text` started, from its start lines (see
+/// [`start_comments`]; the last line of a key counts): a new game's values
+/// when it has none. A start that names only part of the progress or of
+/// the save point, or a value out of range, is an error, so a recording
+/// never plays from a start it was not made with.
+pub fn script_start(text: &str) -> Result<StartState> {
+    let mut fields: Vec<(&str, &str)> = Vec::new();
+    for l in text.lines() {
+        let Some((k, v)) = l.trim().strip_prefix('#').and_then(|r| r.split_once('=')) else {
+            continue;
+        };
+        let Some(k) = k.trim().strip_prefix(START_PREFIX) else {
+            continue;
+        };
+        let v = v.trim();
+        fields.retain(|(f, _)| *f != k);
+        fields.push((k, v));
+    }
+    if let Some((k, _)) = fields
+        .iter()
+        .find(|(k, _)| !CARRY_KEYS.contains(k) && !START_SAVE_KEYS.contains(k))
+    {
+        anyhow::bail!("unknown start line {START_PREFIX}{k}");
+    }
+    let has = |keys: &[&str]| fields.iter().any(|(k, _)| keys.contains(k));
+    let carry = if has(&CARRY_KEYS) {
+        Some(carry_from_fields(&fields).context("the recording's start")?)
+    } else {
+        None
+    };
+    let save = if has(&START_SAVE_KEYS) {
+        let get = |k: &str| -> Result<i32> {
+            let v = fields
+                .iter()
+                .find(|(f, _)| *f == k)
+                .map(|(_, v)| *v)
+                .with_context(|| format!("the recording's start has no {START_PREFIX}{k}"))?;
+            v.parse()
+                .with_context(|| format!("bad {START_PREFIX}{k} {v:?} in the recording"))
+        };
+        let slot = get("slot")?;
+        let slot = u8::try_from(slot)
+            .ok()
+            .filter(|s| crate::saves::SLOTS.contains(s))
+            .with_context(|| format!("bad {START_PREFIX}slot {slot} in the recording"))?;
+        Some(SavePos {
+            slot,
+            x: get("x")?,
+            y: get("y")?,
+        })
+    } else {
+        None
+    };
+    Ok(StartState { carry, save })
+}
+
+/// The text of a level's recording: the behaviour lines (see
+/// [`recording_text`]), the start lines (see [`start_comments`]), then
+/// `script` with its `# level` header naming `level` when it names none.
+pub fn level_recording_text(
+    script: &InputScript,
+    fix: bool,
+    pause_input: PauseInput,
+    fuse_clock: FuseClock,
+    level: Option<u32>,
+    start: &StartState,
+) -> String {
+    let mut script = script.clone();
+    if script.header.level.is_none() {
+        script.header.level = level;
+    }
+    format!(
+        "{}\n{}\n{}{}",
+        behaviour_comment(fix),
+        switch_comments(pause_input, fuse_clock),
+        start_comments(start),
+        script.to_csv()
+    )
+}
+
+/// The file the recording of a level goes to in a game recorded to
+/// `base`, after the files `taken` so far: `base` itself for the first
+/// level, then `<stem>.level<N>.<ext>` for retail level N (or
+/// `<stem>.custom.<ext>`), with `-2`, `-3`, ... added when that name is
+/// taken already. The extension is `base`'s, `csv` when it has none.
+pub fn level_recording_path(base: &Path, level: Option<u32>, taken: &[PathBuf]) -> PathBuf {
+    if taken.is_empty() {
+        return base.to_path_buf();
+    }
+    let stem = base
+        .file_stem()
+        .map_or_else(|| "recording".into(), |s| s.to_string_lossy().into_owned());
+    let ext = base
+        .extension()
+        .map_or_else(|| "csv".into(), |e| e.to_string_lossy().into_owned());
+    let label = match level {
+        Some(n) => format!("level{n}"),
+        None => "custom".to_string(),
+    };
+    let mut k = 1;
+    loop {
+        let name = if k == 1 {
+            format!("{stem}.{label}.{ext}")
+        } else {
+            format!("{stem}.{label}-{k}.{ext}")
+        };
+        let path = base.with_file_name(name);
+        if !taken.contains(&path) && path != base {
+            return path;
+        }
+        k += 1;
+    }
+}
+
+/// The level files of a game recorded to `base` that exist, in the order
+/// a straight game plays them: `base` first, then the later levels by
+/// level number and repeat (see [`level_recording_path`]).
+pub fn recorded_game_files(base: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if base.is_file() {
+        out.push(base.to_path_buf());
+    }
+    let stem = base
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = base
+        .extension()
+        .map_or_else(|| "csv".into(), |e| e.to_string_lossy().into_owned());
+    let dir = match base.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let mut later: Vec<((u32, u32), PathBuf)> = Vec::new();
+    let prefix = format!("{stem}.level");
+    let suffix = format!(".{ext}");
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(mid) = name
+                .strip_prefix(&prefix)
+                .and_then(|r| r.strip_suffix(&suffix))
+            else {
+                continue;
+            };
+            let (n, k) = match mid.split_once('-') {
+                Some((n, k)) => (n.parse::<u32>(), k.parse::<u32>()),
+                None => (mid.parse::<u32>(), Ok(1)),
+            };
+            if let (Ok(n), Ok(k)) = (n, k)
+                && k >= 1
+            {
+                later.push(((n, k), base.with_file_name(&name)));
+            }
+        }
+    }
+    later.sort();
+    out.extend(later.into_iter().map(|(_, p)| p));
+    out
+}
+
+/// Records every level a game plays, each into its own file (see
+/// [Recordings across levels](self#recordings-across-levels)).
+#[derive(Debug)]
+pub struct GameRecording {
+    base: PathBuf,
+    written: Vec<PathBuf>,
+    current: Option<(Recorder, Option<u32>, StartState)>,
+}
+
+impl GameRecording {
+    /// A game recorded to `base` and the files after it.
+    pub fn new(base: impl Into<PathBuf>) -> GameRecording {
+        GameRecording {
+            base: base.into(),
+            written: Vec::new(),
+            current: None,
+        }
+    }
+
+    /// Starts recording the level `session` plays from its first tick:
+    /// retail level `level` (`None` for a community custom level) started
+    /// from `start`. Call [`GameRecording::finish`] for the level before.
+    pub fn start(&mut self, session: &mut Session, level: Option<u32>, start: StartState) {
+        let recorder = Recorder::new();
+        session.set_before_tick(recorder.hook());
+        self.current = Some((recorder, level, start));
+    }
+
+    /// True while a level is being recorded.
+    pub fn recording(&self) -> bool {
+        self.current.is_some()
+    }
+
+    /// Writes what was recorded of the level `session` played to its file
+    /// (see [`level_recording_path`]); returns the file and the ticks
+    /// written, or `None` when no level is being recorded.
+    pub fn finish(&mut self, session: &Session) -> Option<Result<(PathBuf, usize)>> {
+        let (recorder, level, start) = self.current.take()?;
+        let path = level_recording_path(&self.base, level, &self.written);
+        self.written.push(path.clone());
+        let mut script = recorder.script(session);
+        let cfg = session.sim().config();
+        // The seed and the movement tuning the level was played with, so a
+        // replay plays it with them whatever its settings.
+        let h = &mut script.header;
+        h.seed.get_or_insert(cfg.seed);
+        if h.tuning.is_none() {
+            h.tuning = [ScriptTuning::Default, ScriptTuning::Original]
+                .into_iter()
+                .find(|t| {
+                    let mut named = t.tuning();
+                    named.behaviour = cfg.tuning.behaviour;
+                    named == cfg.tuning
+                });
+        }
+        let text = level_recording_text(
+            &script,
+            cfg.tuning.behaviour.fix_double_jump,
+            session.pause_input(),
+            cfg.fuse_clock,
+            level,
+            &start,
+        );
+        Some(
+            std::fs::write(&path, text)
+                .with_context(|| format!("writing the recording {}", path.display()))
+                .map(|()| (path, script.ticks.len())),
+        )
+    }
+
+    /// The files written so far, in order.
+    pub fn written(&self) -> &[PathBuf] {
+        &self.written
+    }
+}
+
+/// A level's recording read back from its file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LevelRecording {
+    /// The input of each tick, with its pauses, menus, commands and
+    /// header keys.
+    pub script: InputScript,
+    /// The mid-air hit jump fix it was played with, when it says.
+    pub fix: Option<bool>,
+    /// The pause and screen switches it was played with, where it says.
+    pub switches: ScriptSwitches,
+    /// How the level started.
+    pub start: StartState,
+}
+
+impl LevelRecording {
+    /// Reads a recording's text.
+    pub fn parse(text: &str) -> Result<LevelRecording> {
+        Ok(LevelRecording {
+            script: InputScript::parse(text).context("the recording's input")?,
+            fix: script_behaviour(text),
+            switches: script_switches(text),
+            start: script_start(text)?,
+        })
+    }
+
+    /// Reads a recording's file.
+    pub fn read(path: &Path) -> Result<LevelRecording> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading the recording {}", path.display()))?;
+        LevelRecording::parse(&text).with_context(|| format!("the recording {}", path.display()))
+    }
+
+    /// The level it names (`# level N`).
+    pub fn level(&self) -> Option<u32> {
+        self.script.header.level
+    }
+
+    /// `cfg` as the recording was played: its movement tuning and seed
+    /// when its header names them, the mid-air hit jump fix (off when it
+    /// does not say) and the fuse clock (the original's when it does not
+    /// say).
+    pub fn sim_config(&self, mut cfg: SimConfig) -> SimConfig {
+        if let Some(t) = self.script.header.tuning {
+            cfg.tuning = t.tuning();
+        }
+        if let Some(seed) = self.script.header.seed {
+            cfg.seed = seed;
+        }
+        cfg.tuning.behaviour.fix_double_jump = self.fix.unwrap_or(false);
+        cfg.fuse_clock = self.switches.fuse_clock.unwrap_or(FuseClock::Original);
+        cfg
+    }
+
+    /// Replays the recording on `sim` (the level made with
+    /// [`LevelRecording::sim_config`] and [`LevelRecording::start`]) from
+    /// its first tick to its last, with the pause rule it was played with,
+    /// recording a trace; returns the session after its last row, having
+    /// run exactly one tick per row. Frames last one tick each, so no frame
+    /// runs past the last row; the ticks are the same at any display rate.
+    pub fn replay(&self, sim: Sim) -> Session {
+        let mut session = Session::new(sim)
+            .with_pause_input(self.switches.pause_input.unwrap_or(PauseInput::Original))
+            .with_replay(self.script.clone());
+        session.record_trace();
+        while session.replaying() {
+            session.frame(Duration::from_micros(TICK_US));
+        }
+        session
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1193,5 +1555,107 @@ mod tests {
         let xs: Vec<i32> = session.trace().iter().map(|r| r.x).collect();
         assert_eq!(xs[3], 1500);
         assert_ne!(xs[2], 1500);
+    }
+
+    #[test]
+    fn start_lines_round_trip_and_old_recordings_start_a_new_game() {
+        let carry = claw_sim::Carry {
+            score: 4200,
+            lives: 6,
+            treasure_game: [12, 1, 0, 0, 0, 0, 0, 0, 3],
+            ..claw_sim::Carry::default()
+        };
+        let starts = [
+            StartState::default(),
+            StartState {
+                carry: Some(carry.clone()),
+                save: None,
+            },
+            StartState {
+                carry: Some(carry),
+                save: Some(SavePos {
+                    slot: 2,
+                    x: 5410,
+                    y: 4032,
+                }),
+            },
+        ];
+        for start in starts {
+            let text = level_recording_text(
+                &script(),
+                false,
+                PauseInput::Original,
+                FuseClock::Original,
+                Some(2),
+                &start,
+            );
+            let rec = LevelRecording::parse(&text).unwrap();
+            assert_eq!(rec.start, start);
+            assert_eq!(rec.level(), Some(2));
+            assert_eq!(rec.fix, Some(false));
+            assert_eq!(rec.script.ticks, script().ticks);
+        }
+        assert!(start_comments(&StartState::default()).is_empty());
+        // A recording made before the start lines plays from a new game.
+        let old = recording_text(&script(), false, PauseInput::Original, FuseClock::Original);
+        let rec = LevelRecording::parse(&old).unwrap();
+        assert_eq!(rec.start, StartState::default());
+        assert_eq!(rec.level(), None);
+        // Part of a start is refused, never guessed.
+        for bad in [
+            "# start_score = 10\n",
+            "# start_slot = 1\n# start_x = 5\n",
+            "# start_colour = 3\n",
+            "# start_slot = 9\n# start_x = 5\n# start_y = 6\n",
+        ] {
+            assert!(script_start(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn later_levels_get_files_of_their_own() {
+        let base = Path::new("/r/game.csv");
+        let mut taken = Vec::new();
+        for (level, name) in [
+            (Some(1), "/r/game.csv"),
+            (Some(2), "/r/game.level2.csv"),
+            (Some(3), "/r/game.level3.csv"),
+            (Some(2), "/r/game.level2-2.csv"),
+            (None, "/r/game.custom.csv"),
+            (Some(1), "/r/game.level1.csv"),
+        ] {
+            let p = level_recording_path(base, level, &taken);
+            assert_eq!(p, Path::new(name));
+            taken.push(p);
+        }
+        assert_eq!(
+            level_recording_path(Path::new("rec"), Some(4), &[PathBuf::from("rec")]),
+            Path::new("rec.level4.csv")
+        );
+    }
+
+    #[test]
+    fn the_files_of_a_recorded_game_list_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("g.csv");
+        for name in [
+            "g.csv",
+            "g.level10.csv",
+            "g.level2.csv",
+            "g.level2-2.csv",
+            "g.custom.csv",
+            "other.level3.csv",
+            "g.levelx.csv",
+        ] {
+            std::fs::write(dir.path().join(name), "").unwrap();
+        }
+        let names: Vec<String> = recorded_game_files(&base)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            ["g.csv", "g.level2.csv", "g.level2-2.csv", "g.level10.csv"]
+        );
     }
 }

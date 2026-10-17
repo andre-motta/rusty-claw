@@ -3,7 +3,12 @@
 //! starts at level 1 from the main menu, Claw goes to the level's first
 //! save point, the game is ended and quit; a second run then loads that
 //! save point from the menu and Claw arrives where he was saved, with the
-//! same progress.
+//! same progress. Every retail level loads and plays, its objects whose
+//! behaviour is not built yet drawn but still; and the end-of-level
+//! screens of level 2, a gem level, draw from the install's art with
+//! their sounds found (run under the bench lock and a virtual display
+//! with the other install tests; with `CLAW_MENU_PNG` set to a folder the
+//! pictures are also written there).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -11,21 +16,24 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use claw_assets::Install;
-use claw_frame::GameEvent;
+use claw_frame::{GameEvent, TickInput, ViewConfig};
 use claw_game::flow::{Effect, FADE_MS, Flow, Screen, Start};
 use claw_game::load::{LevelBundle, load_level};
 use claw_game::saves::SaveStore;
 use claw_game::session::Session;
 use claw_game::settings::{LevelChoice, Settings, UserDirs};
-use claw_render::LevelGraphics;
+use claw_render::scene::DEFAULT_MAX_TARGET;
+use claw_render::{LevelGraphics, ScreenBuilder, ScreenScene, cpu};
 use claw_sim::{Carry, Sim, StartState};
 use claw_ui::menu::command::{CommandCatalogue, MenuCommand, MenuKind, Page};
 use claw_ui::menu::draw::FontArt;
 use claw_ui::menu::layout::CANVAS;
 use claw_ui::menu::nav::PRESS_MS;
 use claw_ui::menu::{MenuInput, MenuTree};
-use claw_ui::screens::assets::{MENU_PICTURE, MENU_SCREENS, ScreenAssets};
-use claw_ui::screens::booty::{BootyArt, BootyScreen};
+use claw_ui::screens::assets::{
+    BOOTY_SCREENS, MENU_PICTURE, MENU_SCREENS, ScreenAssets, picture_frame,
+};
+use claw_ui::screens::booty::{self, BootyArt, BootyPhase, BootyScreen, BootyStats};
 use claw_ui::screens::title::TitleScreen;
 use tempfile::TempDir;
 
@@ -487,4 +495,231 @@ fn the_gameplay_page_fits_both_menus_and_applies_to_the_next_game() {
     let nav = game.flow.in_game_menu().unwrap();
     assert_eq!(nav.page(), Page::Gameplay);
     assert_fits(&cells(nav));
+}
+
+#[test]
+fn every_level_loads_and_plays_with_unbuilt_objects_still() {
+    let Some(install) = std::env::var_os("CLAW_INSTALL").map(PathBuf::from) else {
+        eprintln!("skipped: CLAW_INSTALL is not set");
+        return;
+    };
+    let settings = Settings::new(&install, LevelChoice::Retail(1));
+    let carry = Carry {
+        score: 123_400,
+        lives: 5,
+        ..Carry::default()
+    };
+    for n in 1..=14 {
+        let bundle = load_level(&install, &LevelChoice::Retail(n))
+            .unwrap_or_else(|e| panic!("level {n} loads: {e:#}"));
+        let start = StartState {
+            carry: Some(carry.clone()),
+            save: None,
+        };
+        let mut sim = Sim::with_start(
+            bundle.sim_level.clone(),
+            settings.sim_config((640, 480)),
+            start,
+        );
+        assert!(sim.player().is_some(), "level {n}: Claw is placed");
+        assert_eq!(sim.carry(), carry, "level {n}: the carried progress");
+        for _ in 0..200 {
+            sim.step(TickInput::default());
+        }
+        assert!(sim.player().is_some(), "level {n}: Claw still plays");
+        let unknown = &sim.diagnostics().unknown_logics;
+        println!(
+            "LEVEL{n}: {} objects, {} kinds not built yet ({} objects) drawn still",
+            bundle.sim_level.objects.len(),
+            unknown.len(),
+            unknown.values().sum::<usize>()
+        );
+    }
+}
+
+/// `scene` drawn on the CPU at 640x480, as RGBA.
+fn draw(g: &mut LevelGraphics, scene: &ScreenScene, name: &str) -> Vec<u8> {
+    let view = ViewConfig::default().with_render_size(640, 480);
+    let b = ScreenBuilder::new(&view, DEFAULT_MAX_TARGET);
+    let s = b.build(g, scene, 0.0);
+    assert_eq!(
+        s.sprites.len(),
+        scene.sprites.len() + usize::from(scene.background.is_some()),
+        "{name}: every sprite draws"
+    );
+    let c = cpu::compose(g, &s);
+    let rgba = cpu::present(&s, &c);
+    assert_eq!(s.comp.output, (640, 480));
+    if let Some(dir) = std::env::var_os("CLAW_MENU_PNG").map(PathBuf::from) {
+        claw_render::pack::write_png(&dir.join(format!("{name}.png")), 640, 480, &rgba).unwrap();
+    }
+    rgba
+}
+
+/// Pixels that differ between `a` and `b` in the box of `w` x `h` around
+/// (x, y).
+fn changed(a: &[u8], b: &[u8], (x, y): (i32, i32), (w, h): (i32, i32)) -> usize {
+    let mut n = 0;
+    for py in (y - h / 2).max(0)..(y + h / 2).min(480) {
+        for px in (x - w / 2).max(0)..(x + w / 2).min(640) {
+            let i = (py as usize * 640 + px as usize) * 4;
+            if a[i..i + 4] != b[i..i + 4] {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+#[test]
+fn the_level_2_booty_draws_its_gem_from_the_install_with_its_sounds() {
+    let Some(install) = std::env::var_os("CLAW_INSTALL").map(PathBuf::from) else {
+        eprintln!("skipped: CLAW_INSTALL is not set");
+        return;
+    };
+    let assets = ScreenAssets::load(Install::open(&install).unwrap().store().unwrap());
+    // Every sound the level 2 screens play is there, with a length.
+    for key in BootyScreen::sounds(2) {
+        assert!(
+            assets.sound_ms(key).is_some_and(|ms| ms > 0),
+            "the sound {key} is missing"
+        );
+    }
+    // Every gem level's animation is there and names frames of its set.
+    let (_, pal) = assets.picture(MENU_SCREENS, MENU_PICTURE).unwrap();
+    let mut g = LevelGraphics::for_screens(pal, Box::new(assets.images()));
+    for (level, _) in booty::GEM_SPOTS {
+        let frames = booty::gem_frames_from(&assets, level);
+        assert!(!frames.is_empty(), "level {level}: the gem animation");
+        let have = g.frame_numbers(&booty::piece_set(level));
+        for (f, _) in &frames {
+            assert!(have.contains(f), "level {level}: gem frame {f} is missing");
+        }
+    }
+    for set in BootyScreen::image_sets(2) {
+        assert!(!g.frame_numbers(&set).is_empty(), "{set} is missing");
+    }
+    g.preload(BootyScreen::image_sets(2));
+
+    // The screens as the window builds them.
+    let pic = |name: &str, g: &mut LevelGraphics| {
+        let (img, pal) = assets
+            .picture(BOOTY_SCREENS, name)
+            .unwrap_or_else(|| panic!("the picture {name}"));
+        (Some(g.add_image(&picture_frame(&img))), pal)
+    };
+    let art = BootyArt {
+        map: pic(&booty::map_picture(2), &mut g),
+        tally: pic(&booty::tally_picture(2, false), &mut g),
+        sound_ms: assets.sound_ms.clone(),
+        digit_width: g
+            .frame_info(booty::DIGITS, 0)
+            .map_or(12, |f| f.width as i32),
+        total_offsets: (
+            g.frame_info(booty::SYMBOLS, 4)
+                .map_or(60, |f| f.width as i32 / 2 + 14),
+            g.frame_info(booty::SYMBOLS, 5)
+                .map_or(64, |f| f.width as i32 / 2 + 14),
+        ),
+    };
+    let frames = booty::gem_frames_from(&assets, 2);
+    let anim_ms: f64 = frames.iter().map(|(_, ms)| ms).sum();
+    let mut collected = [0; 9];
+    collected[0] = 30;
+    collected[1] = 2;
+    let mut screen = BootyScreen::new(
+        BootyStats {
+            level: 2,
+            custom: false,
+            collected,
+            census: [45, 2, 1, 0, 0, 0, 0, 0, 0],
+            score: 33_000,
+            lives: 6,
+        },
+        art,
+    )
+    .with_gem_frames(frames);
+    let first = screen.take_audio();
+    assert!(
+        first
+            .iter()
+            .any(|a| matches!(a, claw_frame::AudioCue::Play(c) if c.key == booty::AMULET)),
+        "the amulet sound opens the screen"
+    );
+
+    // The amulet with the gem in its socket, against the amulet alone.
+    let at = booty::gem_spot(2);
+    let start = screen.scene();
+    assert_eq!(start.sprites.len(), 1);
+    assert_eq!((start.sprites[0].x, start.sprites[0].y), at);
+    let bare = ScreenScene {
+        sprites: Vec::new(),
+        ..start.clone()
+    };
+    let amulet = draw(&mut g, &bare, "level2_amulet");
+    let opening = draw(&mut g, &start, "level2_gem_start");
+    assert!(
+        changed(&amulet, &opening, at, (48, 52)) > 200,
+        "the gem draws in its socket"
+    );
+    assert_eq!(
+        changed(&amulet, &opening, (100, 400), (100, 100)),
+        0,
+        "and nowhere else"
+    );
+    screen.update(anim_ms / 2.0);
+    let middle = screen.scene();
+    assert!(middle.sprites[0].frame > 0, "the gem animates");
+    draw(&mut g, &middle, "level2_gem_middle");
+    screen.update(anim_ms);
+    let rest = screen.scene();
+    let last = booty::gem_frames_from(&assets, 2).last().unwrap().0;
+    assert_eq!(rest.sprites[0].frame, last, "then rests on its last frame");
+    let rested = draw(&mut g, &rest, "level2_gem_rest");
+    assert!(
+        changed(&amulet, &rested, at, (40, 40)) > 200,
+        "the gem is set"
+    );
+    // The last frame is a patch of the amulet with the gem set in: it lies
+    // over the picture, so its edges match the amulet around it.
+    let info = g.frame_info(&booty::piece_set(2), last).unwrap();
+    let (w, h) = (info.width as i32, info.height as i32);
+    let (l, t) = (at.0 - (w >> 1), at.1 - (h >> 1));
+    let (mut err, mut n) = (0u64, 0u64);
+    for py in t..t + h {
+        for px in l..l + w {
+            let edge = px - l < 4 || l + w - 1 - px < 4 || py - t < 4 || t + h - 1 - py < 4;
+            if edge {
+                let i = (py as usize * 640 + px as usize) * 4;
+                for k in 0..3 {
+                    err += u64::from(amulet[i + k].abs_diff(rested[i + k]));
+                }
+                n += 1;
+            }
+        }
+    }
+    assert!(
+        err / n < 12,
+        "the gem's patch lies over the amulet ({})",
+        err / n
+    );
+    assert!(
+        screen
+            .take_audio()
+            .iter()
+            .any(|a| matches!(a, claw_frame::AudioCue::Play(c) if c.key == booty::GEM)),
+        "the gem sound plays as the animation ends"
+    );
+    // Then Claw's line and the tally.
+    for _ in 0..200 {
+        if screen.phase() != BootyPhase::Map {
+            break;
+        }
+        screen.update(100.0);
+    }
+    assert_eq!(screen.phase(), BootyPhase::Counting);
+    screen.skip();
+    let tally = screen.scene();
+    assert!(tally.sprites.len() > 9);
+    draw(&mut g, &tally, "level2_tally");
 }

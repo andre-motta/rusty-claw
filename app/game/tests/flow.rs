@@ -1,7 +1,8 @@
 //! The game flow without a window: synthetic menus and levels, game events
 //! as the simulation sends them, saves in a temporary folder and options
-//! written to a temporary config file; and the pauses and sounds of play
-//! around the in-game menu, with a silent sound engine.
+//! written to a temporary config file; the pauses and sounds of play
+//! around the in-game menu, with a silent sound engine; and a game
+//! recorded across two levels and replayed.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -11,7 +12,7 @@ use std::time::{Duration, Instant};
 use claw_assets::Palette;
 use claw_assets::ifc::IfcNode;
 use claw_audio::{AudioSettings, AudioStats, Pcm, SoundBank};
-use claw_frame::{AudioCue, GameEvent, SoundChannel, SoundCue, Weapon};
+use claw_frame::{AudioCue, Buttons, GameEvent, SoundChannel, SoundCue, Weapon};
 use claw_game::Session;
 use claw_game::audio::{AudioBridge, ViewInfo};
 use claw_game::flow::{
@@ -20,8 +21,11 @@ use claw_game::flow::{
 use claw_game::keymap::{Keymap, PadMap};
 use claw_game::pause::{PauseInput, Pauses};
 use claw_game::saves::{SaveRecord, SaveStore, retail_level_name};
+use claw_game::session::{GameRecording, LevelRecording, Span, recorded_game_files};
 use claw_game::settings::{LevelChoice, Settings};
+use claw_sim::level::ObjectSpec;
 use claw_sim::logic::checkpoint::{MESSAGE_NOT_SAVED, MESSAGE_SAVED};
+use claw_sim::trace::TraceRow;
 use claw_sim::tuning::FuseClock;
 use claw_sim::{Carry, SavePos, Sim, SimConfig, SimLevel, StartState, TileMap};
 use claw_ui::menu::command::{CommandCatalogue, GameplaySetting, MenuCommand, MenuKind, Page};
@@ -140,13 +144,19 @@ struct Rig {
 
 impl Rig {
     fn new(start: Start, prepare: impl FnOnce(&Path)) -> Rig {
+        Rig::with_level(start, LevelChoice::Retail(1), prepare)
+    }
+
+    /// A rig whose settings name `level` (played at once with
+    /// [`Start::Play`]).
+    fn with_level(start: Start, level: LevelChoice, prepare: impl FnOnce(&Path)) -> Rig {
         let dir = TempDir::new().unwrap();
         let saves = dir.path().join("saves");
         fs::create_dir_all(&saves).unwrap();
         prepare(&saves);
         let config = dir.path().join("config.toml");
         fs::write(&config, CONFIG).unwrap();
-        let mut settings = Settings::new(dir.path().join("install"), LevelChoice::Retail(1));
+        let mut settings = Settings::new(dir.path().join("install"), level);
         settings.config_path = Some(config.clone());
         let store = SaveStore::open(&saves).unwrap();
         let flow = Flow::new(
@@ -289,7 +299,7 @@ fn the_title_leads_to_the_main_menu() {
 }
 
 #[test]
-fn new_game_level_complete_tally_then_the_main_menu_with_level_1_complete() {
+fn new_game_level_complete_tally_then_level_2_with_the_carried_progress() {
     let mut r = Rig::new(Start::Title, |_| {});
     r.reach_main_menu();
     assert!(!r.flow.progress().complete(1));
@@ -336,16 +346,54 @@ fn new_game_level_complete_tally_then_the_main_menu_with_level_1_complete() {
         .expect("LEVEL2 start");
     assert_eq!(rec.carry, carry, "the carried state is produced and kept");
     assert_eq!(rec.save_pos(), None, "a level start, not a save point");
+    drop(store);
     assert!(r.flow.progress().complete(1));
+    let (next, start) = r.flow.next_level().expect("the tally leads on");
+    assert_eq!((next, start), (2, &rec.start_state()));
     // The tally: skip to the tally, finish it, end the hold.
     let booty = r.flow.booty().expect("tally screens");
     assert_eq!(booty.rows().len(), 9);
     for _ in 0..3 {
         r.input(MenuInput::Confirm);
     }
-    r.reach_main_menu();
-    assert_eq!(r.page(), Page::Root);
-    assert_eq!(r.started.len(), 1, "no next level: back to the main menu");
+    // The tally fades out into level 2, started from the saved start.
+    let mut guard = 0;
+    while r.started.len() < 2 {
+        r.update(100.0);
+        guard += 1;
+        assert!(guard < 100, "stuck at {:?}", r.flow.screen());
+    }
+    assert_eq!(r.flow.screen(), Screen::Play);
+    assert_eq!(r.flow.level(), Some(&LevelChoice::Retail(2)));
+    // The synthetic level holds no treasure: a perfect tally, one more
+    // life.
+    let carried = Carry {
+        lives: carry.lives + 1,
+        ..carry.clone()
+    };
+    assert_eq!(
+        r.started[1],
+        (
+            LevelChoice::Retail(2),
+            StartState {
+                carry: Some(carried.clone()),
+                save: None,
+            }
+        )
+    );
+    assert_eq!(r.sim.as_ref().unwrap().carry(), carried, "Claw carries on");
+    assert!(r.flow.booty().is_none() && r.flow.next_level().is_none());
+    assert!(r.flow.in_game_menu().is_some(), "the in-game menu is set");
+    // Level 2 plays and its in-game menu works.
+    r.update(200.0);
+    assert!(r.flow.pause_key());
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::Pause);
+    assert!(r.paused);
+    assert!(r.flow.pause_key());
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::Play);
+    // Level 2 opens in the new game and load lists.
     let nav = r.flow.main_menu().unwrap();
     let new2 = nav.tree.find(MenuCommand::NewGame { level: 2 }).unwrap();
     let load2 = nav
@@ -362,6 +410,160 @@ fn new_game_level_complete_tally_then_the_main_menu_with_level_1_complete() {
         "and its start in the load list"
     );
     assert!(!nav.tree.items[new3].enabled);
+}
+
+/// Wins the level in play and skips through its tally until the flow
+/// leaves it.
+fn win_and_skip_the_tally(r: &mut Rig) {
+    r.events(&[GameEvent::LevelComplete { after_ms: 100 }]);
+    r.update(200.0);
+    assert_eq!(r.flow.screen(), Screen::Booty);
+    for _ in 0..3 {
+        r.input(MenuInput::Confirm);
+    }
+    let mut guard = 0;
+    while r.flow.screen() == Screen::Booty {
+        r.update(100.0);
+        guard += 1;
+        assert!(guard < 100, "stuck at the tally");
+    }
+}
+
+#[test]
+fn the_tally_of_level_14_leads_to_the_main_menu() {
+    let mut r = Rig::with_level(Start::Play, LevelChoice::Retail(14), |_| {});
+    assert_eq!(r.flow.screen(), Screen::Play);
+    r.update(300.0);
+    r.events(&[GameEvent::LevelComplete { after_ms: 100 }]);
+    r.update(200.0);
+    assert_eq!(r.flow.screen(), Screen::Booty);
+    assert_eq!(r.flow.booty().unwrap().level(), 14);
+    assert!(r.flow.next_level().is_none(), "no level after the last");
+    let mut store = SaveStore::open(&r.saves).unwrap();
+    assert!(store.list().unwrap().is_empty(), "no level 15 to save");
+    drop(store);
+    for _ in 0..3 {
+        r.input(MenuInput::Confirm);
+    }
+    r.reach_main_menu();
+    assert_eq!(r.started.len(), 1, "back to the main menu");
+    assert_eq!(r.ended, 1);
+    assert_eq!(r.page(), Page::Root);
+}
+
+#[test]
+fn the_tally_of_level_13_leads_to_level_14() {
+    let mut r = Rig::with_level(Start::Play, LevelChoice::Retail(13), |_| {});
+    r.update(300.0);
+    win_and_skip_the_tally(&mut r);
+    assert_eq!(r.flow.level(), Some(&LevelChoice::Retail(14)));
+    assert_eq!(r.started.len(), 2);
+}
+
+#[test]
+fn a_custom_level_tally_leads_to_the_main_menu() {
+    let mut r = Rig::with_level(Start::Play, LevelChoice::Custom("X.WWD".into()), |_| {});
+    r.update(300.0);
+    r.events(&[GameEvent::LevelComplete { after_ms: 100 }]);
+    r.update(200.0);
+    assert_eq!(r.flow.screen(), Screen::Booty);
+    assert!(r.flow.booty().unwrap().phase() == claw_ui::screens::BootyPhase::Counting);
+    assert!(r.flow.next_level().is_none());
+    for _ in 0..3 {
+        r.input(MenuInput::Confirm);
+    }
+    r.reach_main_menu();
+    assert_eq!(r.started.len(), 1);
+}
+
+#[test]
+fn a_perfect_tally_carries_its_extra_life_into_the_next_level_only() {
+    let mut r = Rig::new(Start::Play, |_| {});
+    r.update(300.0);
+    let carry = r.sim.as_ref().unwrap().carry();
+    assert!(carry.lives < 10);
+    // The synthetic level holds no treasure, so every row is complete.
+    win_and_skip_the_tally(&mut r);
+    assert_eq!(r.flow.level(), Some(&LevelChoice::Retail(2)));
+    let start = r.started[1].1.clone();
+    let got = start.carry.expect("progress carried");
+    assert_eq!(got.lives, carry.lives + 1, "the perfect tally's life");
+    assert_eq!(
+        Carry {
+            lives: carry.lives,
+            ..got
+        },
+        carry
+    );
+    let mut store = SaveStore::open(&r.saves).unwrap();
+    let rec = store.read("LEVEL2", START_SLOT).unwrap().unwrap();
+    assert_eq!(rec.carry, carry, "the saved start has no extra life");
+}
+
+#[test]
+fn saves_and_settings_are_kept_across_the_level_change() {
+    // An earlier game left saves of level 1 and 2 and a level 3 start.
+    let old = |level: &str, slot: u8, score: u32| {
+        SaveRecord::new(
+            level,
+            SavePos {
+                slot,
+                x: if slot == START_SLOT { 0 } else { 100 },
+                y: if slot == START_SLOT { 0 } else { 200 },
+            },
+            Carry {
+                score,
+                ..Carry::default()
+            },
+            [0; 9],
+        )
+    };
+    let earlier = [
+        old("LEVEL1", 1, 10),
+        old("LEVEL1", 2, 20),
+        old("LEVEL2", START_SLOT, 30),
+        old("LEVEL2", 1, 40),
+        old("LEVEL3", START_SLOT, 50),
+    ];
+    let mut r = Rig::new(Start::Title, |dir| {
+        let mut store = SaveStore::open(dir).unwrap();
+        for rec in &earlier {
+            store.write(rec).unwrap();
+        }
+    });
+    let config_before = fs::read_to_string(&r.config).unwrap();
+    r.reach_main_menu();
+    r.choose();
+    r.choose();
+    r.choose(); // a new game of level 1
+    r.update(FADE_MS + 50.0);
+    assert_eq!(r.flow.screen(), Screen::Play);
+    r.update(300.0);
+    let carry = r.sim.as_ref().unwrap().carry();
+    win_and_skip_the_tally(&mut r);
+    assert_eq!(r.flow.level(), Some(&LevelChoice::Retail(2)));
+    r.update(500.0);
+    let mut store = SaveStore::open(&r.saves).unwrap();
+    let list = store.list().unwrap();
+    // Only the level 2 start changed: it now holds this game's progress.
+    for rec in &earlier {
+        let now = list
+            .iter()
+            .find(|x| x.level == rec.level && x.slot == rec.slot)
+            .unwrap_or_else(|| panic!("{} {} is kept", rec.level, rec.slot));
+        if rec.level == "LEVEL2" && rec.slot == START_SLOT {
+            assert_eq!(now.carry, carry);
+        } else {
+            assert_eq!(now, rec, "{} {} is untouched", rec.level, rec.slot);
+        }
+    }
+    assert_eq!(list.len(), earlier.len());
+    // The replaced start is kept as the backup, in the key = value form.
+    let backup = fs::read_to_string(r.saves.join("LEVEL2-3.save.bak")).unwrap();
+    assert_eq!(SaveRecord::parse(&backup).unwrap(), earlier[2]);
+    let text = fs::read_to_string(r.saves.join("LEVEL2-3.save")).unwrap();
+    assert!(text.lines().any(|l| l == "level = LEVEL2"), "{text}");
+    assert_eq!(fs::read_to_string(&r.config).unwrap(), config_before);
 }
 
 #[test]
@@ -1562,4 +1764,279 @@ fn high_detail_stays_on() {
     f.menu_input(MenuInput::Confirm, false); // detail
     f.update(PRESS_MS + 1.0, None, None);
     assert!(f.menu_state().switches.high_detail);
+}
+
+/// A synthetic level of the recorded game: a floor, Claw at x = 500, a
+/// coin and a gold bar on the way right and, on level 1, the map piece
+/// that ends the level further on.
+fn game_level(number: u32) -> SimLevel {
+    let mut rows = vec![".".repeat(80); 15];
+    rows.push("#".repeat(80));
+    rows.push("#".repeat(80));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut l = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (500, 880));
+    let at = |logic: &str, set: &str, x: i32| {
+        let mut o = ObjectSpec::at(logic, x, 930, 0);
+        o.image_set = set.to_string();
+        o.frame = 1;
+        o.record[0] = x;
+        o
+    };
+    l.objects = vec![
+        at("TreasurePowerup", "GAME_TREASURE_COINS", 700),
+        at(
+            "TreasurePowerup",
+            "GAME_TREASURE_GOLDBARS",
+            900 + 100 * number as i32,
+        ),
+    ];
+    if number == 1 {
+        l.objects.push(at("SpecialPowerup", "GAME_MAPPIECE", 1300));
+    }
+    l
+}
+
+/// A game played through the flow on synthetic levels, recorded level by
+/// level as the window records it.
+struct RecordedGame {
+    flow: Flow,
+    session: Option<Session>,
+    recording: GameRecording,
+    /// Per level left: its trace, how it started and the progress at its
+    /// end.
+    levels: Vec<(Vec<TraceRow>, StartState, Carry)>,
+    start: Option<StartState>,
+    base: PathBuf,
+    _dir: TempDir,
+}
+
+impl RecordedGame {
+    fn new() -> RecordedGame {
+        let dir = TempDir::new().unwrap();
+        let mut settings = Settings::new(dir.path().join("install"), LevelChoice::Retail(1));
+        settings.config_path = None;
+        let store = SaveStore::open(dir.path().join("saves")).unwrap();
+        let flow = Flow::new(
+            settings,
+            Some(store),
+            None,
+            FontArt::uniform(8, 10),
+            Start::Play,
+        );
+        let base = dir.path().join("game.csv");
+        let mut g = RecordedGame {
+            flow,
+            session: None,
+            recording: GameRecording::new(&base),
+            levels: Vec::new(),
+            start: None,
+            base,
+            _dir: dir,
+        };
+        g.effects();
+        g
+    }
+
+    /// Leaves the level in play: its recording is written.
+    fn leave(&mut self) {
+        if let Some(s) = self.session.take() {
+            let (path, ticks) = self.recording.finish(&s).unwrap().unwrap();
+            assert_eq!(ticks as u64, s.ticks(), "{}", path.display());
+            let start = self.start.take().unwrap();
+            self.levels
+                .push((s.trace().to_vec(), start, s.sim().carry()));
+        }
+    }
+
+    fn effects(&mut self) {
+        for _ in 0..8 {
+            let effects = self.flow.take_effects();
+            if effects.is_empty() {
+                return;
+            }
+            for e in effects {
+                match e {
+                    Effect::StartLevel { level, start } => {
+                        let n = flow::retail_number(&level).unwrap();
+                        let sim =
+                            Sim::with_start(game_level(n), SimConfig::default(), start.clone());
+                        let mut session = Session::new(sim);
+                        session.record_trace();
+                        self.recording.start(&mut session, Some(n), start.clone());
+                        self.session = Some(session);
+                        self.start = Some(start);
+                        self.flow.set_in_game_menu(Some(in_game_menu()));
+                    }
+                    Effect::EndLevel => self.leave(),
+                    Effect::ShowBooty(stats) => {
+                        let art = BootyArt {
+                            map: (None, Palette::default()),
+                            tally: (None, Palette::default()),
+                            sound_ms: BTreeMap::new(),
+                            digit_width: 12,
+                            total_offsets: (60, 64),
+                        };
+                        self.flow.set_booty(BootyScreen::new(stats, art));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Runs `ms` of frames of about 16.7 ms.
+    fn run(&mut self, ms: f64) {
+        let mut t = 0.0;
+        while t < ms {
+            let dt = 16.667;
+            t += dt;
+            if let Some(session) = self.session.as_mut() {
+                session.frame(Duration::from_secs_f64(dt / 1000.0));
+                let (_, events) = session.drain_outputs();
+                self.flow.play_events(&events, session.sim());
+            }
+            let sim = self.session.as_ref().map(Session::sim);
+            self.flow.update(dt, None, sim);
+            self.effects();
+        }
+    }
+
+    fn key(&mut self, b: Buttons, down: bool) {
+        let s = self.session.as_mut().expect("a level in play");
+        let at = s.stamp(Duration::from_millis(3));
+        s.key(at, b, down);
+    }
+
+    /// The pause key's pause for `ms`, as the window records it.
+    fn pause_for(&mut self, ms: f64) {
+        let s = self.session.as_mut().expect("a level in play");
+        s.open_span(Span::Pause);
+        s.pause();
+        self.run(ms);
+        let s = self.session.as_mut().unwrap();
+        s.resume();
+        s.close_span();
+    }
+}
+
+/// `rows` as CSV with the input source left out (live play says keyboard,
+/// a replay script).
+fn trace_csv(rows: &[TraceRow]) -> String {
+    let rows: Vec<TraceRow> = rows
+        .iter()
+        .cloned()
+        .map(|mut r| {
+            r.source = String::new();
+            r
+        })
+        .collect();
+    claw_sim::trace::to_csv(&rows)
+}
+
+#[test]
+fn a_game_recorded_across_two_levels_replays_the_same_twice() {
+    let mut g = RecordedGame::new();
+    assert_eq!(g.flow.screen(), Screen::Play);
+    // Level 1: walk right, jump, pause a moment, on to the map piece.
+    g.run(200.0);
+    g.key(Buttons::RIGHT, true);
+    g.run(400.0);
+    g.key(Buttons::JUMP, true);
+    g.run(150.0);
+    g.key(Buttons::JUMP, false);
+    g.pause_for(300.0);
+    let mut guard = 0;
+    while g.flow.screen() == Screen::Play && !g.flow.completing() {
+        g.run(18.0);
+        guard += 1;
+        assert!(guard < 1000, "level 1 never ended");
+    }
+    if g.session.is_some() {
+        g.key(Buttons::RIGHT, false);
+    }
+    while g.flow.screen() != Screen::Booty {
+        g.run(100.0);
+    }
+    for _ in 0..3 {
+        g.flow.menu_input(MenuInput::Confirm, false);
+        g.effects();
+    }
+    while g.flow.screen() != Screen::Play {
+        g.run(100.0);
+    }
+    assert_eq!(g.flow.level(), Some(&LevelChoice::Retail(2)));
+    // Level 2: walk right a while and jump; the game is left there.
+    g.run(250.0);
+    g.key(Buttons::RIGHT, true);
+    g.run(700.0);
+    g.key(Buttons::RIGHT, false);
+    g.run(100.0);
+    g.key(Buttons::JUMP, true);
+    g.run(400.0);
+    g.leave();
+    assert_eq!(g.levels.len(), 2);
+
+    // One file per level: the one asked for, then <stem>.level2.csv.
+    let files = recorded_game_files(&g.base);
+    assert_eq!(files, g.recording.written());
+    assert_eq!(
+        files,
+        vec![g.base.clone(), g.base.with_file_name("game.level2.csv")]
+    );
+    let recs: Vec<LevelRecording> = files
+        .iter()
+        .map(|p| LevelRecording::read(p).unwrap())
+        .collect();
+    assert_eq!(recs[0].level(), Some(1));
+    assert_eq!(recs[1].level(), Some(2));
+    assert_eq!(recs[0].start, StartState::default(), "a new game");
+    assert_eq!(recs[1].start, g.levels[1].1, "level 2's carried start");
+    assert!(
+        recs[0]
+            .script
+            .directives()
+            .iter()
+            .any(|d| matches!(d.kind, claw_sim::DirectiveKind::Pause { .. })),
+        "the pause is recorded"
+    );
+    let text = fs::read_to_string(&files[1]).unwrap();
+    assert!(text.lines().any(|l| l == "# level 2"), "{text}");
+    assert!(text.lines().any(|l| l == "# seed 1"), "{text}");
+    assert!(text.lines().any(|l| l == "# tuning default"), "{text}");
+    assert!(text.lines().any(|l| l.starts_with("# start_score = ")));
+
+    // Each level replays from its own start, the same twice and the same
+    // as played; level 1 ends with the progress level 2 starts with.
+    let replay = |rec: &LevelRecording, n: u32| {
+        let sim = Sim::with_start(
+            game_level(n),
+            rec.sim_config(SimConfig::default()),
+            rec.start.clone(),
+        );
+        let s = rec.replay(sim);
+        assert_eq!(s.ticks(), rec.script.ticks.len() as u64);
+        assert_eq!(s.ticks_past_script(), 0);
+        (trace_csv(s.trace()), s.sim().carry())
+    };
+    for (i, rec) in recs.iter().enumerate() {
+        let n = i as u32 + 1;
+        let (first, end) = replay(rec, n);
+        let (second, again) = replay(rec, n);
+        assert_eq!(first, second, "level {n} replays the same twice");
+        assert_eq!(end, again);
+        assert_eq!(first, trace_csv(&g.levels[i].0), "level {n} as played");
+        assert_eq!(end, g.levels[i].2, "level {n} ends as played");
+    }
+    let (level1, end1) = replay(&recs[0], 1);
+    assert!(level1.contains("level_complete"), "level 1 is won");
+    let start2 = recs[1].start.carry.clone().expect("progress carried");
+    assert_eq!(
+        Carry {
+            lives: end1.lives,
+            ..start2.clone()
+        },
+        end1,
+        "level 2 starts with level 1's progress"
+    );
+    assert!((0..=1).contains(&(start2.lives - end1.lives)));
 }
