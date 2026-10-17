@@ -53,7 +53,23 @@
 //! [`World::freeze_claw_now`] instead: at once, during the calling logic,
 //! and until the boss fight flag reaches 2 (see
 //! [`crate::logic::world_boss`]); his own next logic call then sees the
-//! flag and he stands again.
+//! flag and he stands again. A freeze with a time left becomes this
+//! freeze, without the time.
+//!
+//! # Held at the boss's defeat (5010)
+//!
+//! When a boss is defeated, [`World::freeze_claw_boss_end`] puts Claw in
+//! [`BOSS_END`] at once: a state with no handler of its own, so he stays
+//! where and as he is (only the bookkeeping after every handler runs).
+//! [`World::release_claw_boss_end`] lets him go when the gem lands: his
+//! attack ends and he stands. The original also clears Left and Right from
+//! its pressed-key latch there, so that a direction held all along counts
+//! as pressed again; Claw's movement here reads held keys only, so a held
+//! direction moves him at once either way.
+//!
+//! These calls work on Claw's object directly. Called while Claw's own
+//! logic call holds his object (from code that runs inside it without
+//! [`super::Ctx::with_world`]), they do nothing and return false.
 //!
 //! A logic may also start the hit reaction with
 //! [`World::claw_hit_reaction`]. Other requests from logics take effect on
@@ -153,6 +169,10 @@ pub struct SpecialData {
     pub thaw: bool,
     /// The freeze is a boss fight's: it ends when the fight starts.
     pub boss_freeze: bool,
+    /// A warp moved Claw in this tick's collision pass. The simulation
+    /// clears it at the end of that pass, when it wakes and sets up the
+    /// objects around his new place (see [`crate::Sim::step`]).
+    pub warped: bool,
 }
 
 /// Forgets which special state was entered; every cancel of the attack
@@ -460,16 +480,35 @@ fn freeze_now(c: &mut Ctx, ms: i32) {
     s.freeze_ms = ms;
 }
 
+/// Claw's state while he is held at a boss's defeat (see
+/// [`World::freeze_claw_boss_end`]).
+pub const BOSS_END: i32 = 5010;
+
 /// Freezes Claw for a boss fight's introduction: unless he is frozen
 /// already, the attack ends, he stands and faces right; then the freeze
-/// lasts until the boss fight flag reaches 2. True when he was frozen now.
+/// lasts until the boss fight flag reaches 2, also when it was a freeze
+/// with a time left. True when he was frozen now.
 pub fn enter_boss_freeze(c: &mut Ctx) -> bool {
     let already = c.o.state == state::FREEZE && c.p.special.frozen;
     if !already {
         freeze_now(c, 0);
     }
-    c.p.special.boss_freeze = true;
+    let s = &mut c.p.special;
+    s.boss_freeze = true;
+    s.freeze_ms = 0;
     !already
+}
+
+/// Lets Claw go after a boss's defeat (see
+/// [`World::release_claw_boss_end`]): only when he is held in
+/// [`BOSS_END`], his attack ends and he stands. True when he was let go.
+pub fn release_boss_end(c: &mut Ctx) -> bool {
+    if c.o.state != BOSS_END {
+        return false;
+    }
+    attack::cancel(c);
+    super::enter_stand(c);
+    true
 }
 
 /// Frozen (state 5009): the animation plays and nothing else happens until
@@ -548,21 +587,60 @@ impl World<'_> {
     /// already, his attack ends, he stands facing right in the frozen
     /// state, and he stays so until his own logic call sees the boss fight
     /// flag at 2. A request of [`World::freeze_claw`] still waiting is
-    /// taken over. True when he was frozen now; false when there is no
-    /// Claw or he was frozen already.
+    /// taken over, and a freeze with a time left loses it. True when he
+    /// was frozen now; false when there is no Claw, he was frozen already,
+    /// or his own logic call holds his object (see the module
+    /// documentation).
     pub fn freeze_claw_now(&mut self) -> bool {
-        let Some(id) = self.claw_id else {
+        self.with_claw_ctx(enter_boss_freeze).unwrap_or(false)
+    }
+
+    /// Holds Claw at a boss's defeat: his state becomes [`BOSS_END`] at
+    /// once, with no exit from the state he was in, so he stays where and
+    /// as he is (falling or not) until [`World::release_claw_boss_end`].
+    /// The caller decides when (the defeat holds him only while his health
+    /// is above 0). False when there is no Claw or his own logic call holds
+    /// his object.
+    pub fn freeze_claw_boss_end(&mut self) -> bool {
+        let Some(o) = self.claw_object_mut() else {
             return false;
         };
+        o.state = BOSS_END;
+        true
+    }
+
+    /// Lets Claw go after a boss's defeat (see [`release_boss_end`]): only
+    /// when he is held in [`BOSS_END`], his attack ends and he stands
+    /// (standing animation, standing physics, speeds 0). True when he was
+    /// let go.
+    pub fn release_claw_boss_end(&mut self) -> bool {
+        self.with_claw_ctx(release_boss_end).unwrap_or(false)
+    }
+
+    /// Claw's object, unless there is none or his own logic call holds it
+    /// (his slot then holds a stand-in that is not the player).
+    fn claw_object_mut(&mut self) -> Option<&mut Object> {
+        let id = self.claw_id?;
+        self.objects
+            .get_mut(id)
+            .filter(|o| o.kind == LogicKind::Player)
+    }
+
+    /// Runs `f` on Claw's handler context, built around his object taken
+    /// out of the container for the call. None when there is no Claw or
+    /// his own logic call holds his object.
+    fn with_claw_ctx<R>(&mut self, f: impl FnOnce(&mut Ctx) -> R) -> Option<R> {
+        self.claw_object_mut()?;
+        let id = self.claw_id?;
         let platforms = crate::sim::platforms(self.objects);
         let mut held = Object::new(0, 0, 0, 0, Arc::from(""), LogicKind::Inert);
         if !self.objects.swap_payload(id, &mut held) {
-            return false;
+            return None;
         }
-        // The freeze reads no input and never moves the camera.
+        // These calls read no input and never move the camera.
         let mut camera_override = None;
         let view = self.view;
-        let frozen = {
+        let r = {
             let mut c = Ctx {
                 o: &mut held,
                 p: &mut *self.claw,
@@ -583,10 +661,10 @@ impl World<'_> {
                 view,
                 level_logics: true,
             };
-            enter_boss_freeze(&mut c)
+            f(&mut c)
         };
         self.objects.swap_payload(id, &mut held);
-        frozen
+        Some(r)
     }
 
     /// Releases a frozen Claw on his next logic call: he stands again.
@@ -598,5 +676,79 @@ impl World<'_> {
         if frozen {
             self.claw.special.thaw = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logic::world_boss::fight;
+    use crate::tiles::TileMap;
+    use crate::{Sim, SimConfig, SimLevel};
+
+    fn flat_sim() -> Sim {
+        let mut rows = vec![".".repeat(60); 15];
+        rows.push("#".repeat(60));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600));
+        let mut sim = Sim::new(level, SimConfig::default());
+        for _ in 0..30 {
+            sim.step(TickInput::default());
+        }
+        sim
+    }
+
+    /// Runs `f` on a world whose Claw slot holds the stand-in his own
+    /// logic call leaves there while it runs.
+    fn inside_claws_call<R>(sim: &mut Sim, f: impl FnOnce(&mut World) -> R) -> R {
+        sim.with_world(|w| {
+            let id = w.claw_id.unwrap();
+            let mut held = Object::new(0, 0, 0, 0, Arc::from(""), LogicKind::Inert);
+            assert!(w.objects.swap_payload(id, &mut held));
+            let r = f(w);
+            w.objects.swap_payload(id, &mut held);
+            r
+        })
+    }
+
+    #[test]
+    fn the_boss_calls_do_nothing_while_claws_own_call_holds_him() {
+        let mut sim = flat_sim();
+        let before = sim.player().unwrap().clone();
+        let special = sim.claw().special.clone();
+        assert!(!inside_claws_call(&mut sim, |w| w.freeze_claw_now()));
+        assert!(!inside_claws_call(&mut sim, |w| w.freeze_claw_boss_end()));
+        assert!(!inside_claws_call(&mut sim, |w| w.release_claw_boss_end()));
+        let o = sim.player().unwrap();
+        assert_eq!(
+            (o.state, o.x, o.y, o.kind),
+            (before.state, before.x, before.y, LogicKind::Player)
+        );
+        assert_eq!(sim.claw().special, special);
+        // Outside it they work.
+        assert!(sim.with_world(|w| w.freeze_claw_now()));
+        assert_eq!(sim.player().unwrap().state, state::FREEZE);
+        sim.with_world(|w| w.set_boss_fight(fight::ON));
+        sim.step(TickInput::default());
+        assert!(sim.with_world(|w| w.freeze_claw_boss_end()));
+        assert_eq!(sim.player().unwrap().state, BOSS_END);
+        assert!(sim.with_world(|w| w.release_claw_boss_end()));
+        assert_eq!(sim.player().unwrap().state, state::STAND);
+    }
+
+    #[test]
+    fn a_timed_freeze_becomes_the_boss_freeze_without_its_time() {
+        let mut sim = flat_sim();
+        assert!(sim.with_world(|w| w.freeze_claw(500)));
+        sim.step(TickInput::default());
+        assert!(sim.claw().special.freeze_ms > 0);
+        assert!(!sim.with_world(|w| w.freeze_claw_now()), "frozen already");
+        let s = &sim.claw().special;
+        assert!(s.boss_freeze);
+        assert_eq!(s.freeze_ms, 0);
+        for _ in 0..60 {
+            sim.step(TickInput::default());
+        }
+        assert_eq!(sim.player().unwrap().state, state::FREEZE);
     }
 }

@@ -27,7 +27,9 @@
 //! With `--record`, every level played is recorded into its own file, one
 //! after the other as the game goes from level to level (see
 //! [`crate::session::GameRecording`]); each file is written when its level
-//! is left or the window closes.
+//! is left or the window closes, and says how its level started (the
+//! progress carried in, the save point, or the `--start` point). Watching
+//! a recording plays its level from that start.
 //!
 //! The end-of-level screens of a gem level animate the level's gem in its
 //! socket on the amulet, from the level's gem animation.
@@ -51,8 +53,8 @@ use claw_render::{
     Anchor, FrameInput, Gpu, ImageId, LevelGraphics, Offscreen, Renderer, Scene, SceneBuilder,
     ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
 };
+use claw_sim::Sim;
 use claw_sim::input::MenuScreen;
-use claw_sim::{InputScript, Sim};
 use claw_ui::hud::{Hud, HudArt};
 use claw_ui::menu::command::{MenuKind, Page, VideoSetting};
 use claw_ui::menu::decor::{SPARKLE, Sparkles};
@@ -78,12 +80,11 @@ use crate::flow::{self, Effect, Flow, Screen, Start};
 use crate::input::{InputContext, InputRouter, Routed};
 use crate::keymap::{Action, Command};
 use crate::load::{
-    LevelBundle, SHADE_SET, SHADE_SIZE, load_graphics, load_level, new_sim, preload, settle_at,
-    start_override,
+    LevelBundle, SHADE_SET, SHADE_SIZE, load_graphics, load_level, preload, start_override,
 };
 use crate::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, game_key};
 use crate::saves::SaveStore;
-use crate::session::{GameRecording, Session, Span};
+use crate::session::{GameRecording, LevelRecording, Session, Span, start_sim};
 use crate::settings::{Aspect, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
 
 /// The image set of the PAUSE sign (its frame [`PAUSE_FRAME`]), preloaded
@@ -192,8 +193,11 @@ impl StatusLayer {
 pub enum WindowMode {
     /// The game with its menus, straight in the level given.
     Play,
-    /// Play a script, then hand over to the keyboard.
-    Watch(InputScript),
+    /// Play a level's recording from the start it names, then hand over to
+    /// the keyboard. The settings should already follow it
+    /// ([`Settings::follow_recording`]): its level, start point and
+    /// switches.
+    Watch(Box<LevelRecording>),
     /// Run the benchmark route for this many seconds after the warm-up.
     Bench(f64),
 }
@@ -708,9 +712,16 @@ impl App {
             let Some((bundle, mut graphics)) = self.first_level.take() else {
                 bail!("no level to show");
             };
-            let sim = new_sim(
-                &bundle,
+            // A watched recording starts as it was recorded: with the
+            // progress carried in, at its save point or its start point.
+            let start = match &self.mode {
+                WindowMode::Watch(rec) => rec.start.clone(),
+                _ => claw_sim::StartState::default(),
+            };
+            let sim = start_sim(
+                bundle.sim_level.clone(),
                 self.settings.sim_config(first_output),
+                start.clone(),
                 self.settings.start,
             );
             // The benchmark plays the level's combat route, planned on a
@@ -735,16 +746,17 @@ impl App {
                 && !matches!(self.mode, WindowMode::Bench(_))
             {
                 let mut recording = GameRecording::new(path);
-                recording.start(
+                recording.start_from(
                     &mut session,
                     flow::retail_number(&self.settings.level),
-                    claw_sim::StartState::default(),
+                    start,
+                    self.settings.start,
                 );
                 self.recording = Some(recording);
             }
             match &self.mode {
                 WindowMode::Play => {}
-                WindowMode::Watch(script) => session = session.with_replay(script.clone()),
+                WindowMode::Watch(rec) => session = session.with_replay(rec.script.clone()),
                 WindowMode::Bench(seconds) => {
                     let r = bench_route.expect("made for the benchmark");
                     session = session.with_replay(r.script.clone());
@@ -853,14 +865,12 @@ impl App {
             self.settings.pause_input = s.pause_input;
             self.settings.fuse_clock = s.fuse_clock;
         }
-        let mut sim = Sim::with_start(
+        let sim = start_sim(
             bundle.sim_level.clone(),
             self.settings.sim_config(self.first_output),
             start.clone(),
+            at,
         );
-        if let Some((x, y)) = at {
-            settle_at(&mut sim, x, y);
-        }
         self.levels_started += 1;
         announce_widening(&self.settings, self.first_output, &sim);
         self.preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
@@ -873,7 +883,7 @@ impl App {
         if let Some(path) = &self.settings.record {
             self.recording
                 .get_or_insert_with(|| GameRecording::new(path))
-                .start(&mut session, flow::retail_number(choice), start);
+                .start_from(&mut session, flow::retail_number(choice), start, at);
         }
         // The in-game menu, drawn from the level's art.
         let tree = self

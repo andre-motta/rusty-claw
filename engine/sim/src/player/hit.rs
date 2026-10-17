@@ -516,6 +516,9 @@ fn warp(c: &mut Ctx, id: ObjectId, f: &PickupFields) {
         c.o.y = f.target.1;
         c.o.teleported = true;
         *c.camera_override = None;
+        // The simulation wakes the objects around the target before the
+        // next tick.
+        c.p.special.warped = true;
     }
     if f.smarts == 0 {
         remove(c, id);

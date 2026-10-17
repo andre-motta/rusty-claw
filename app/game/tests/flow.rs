@@ -19,9 +19,10 @@ use claw_game::flow::{
     self, Effect, FADE_MS, Flow, MENU_BED, Progress, START_SLOT, Screen, Start, control_row,
 };
 use claw_game::keymap::{Keymap, PadMap};
+use claw_game::load::start_override;
 use claw_game::pause::{PauseInput, Pauses};
 use claw_game::saves::{SaveRecord, SaveStore, retail_level_name};
-use claw_game::session::{GameRecording, LevelRecording, Span, recorded_game_files};
+use claw_game::session::{GameRecording, LevelRecording, Span, recorded_game_files, start_sim};
 use claw_game::settings::{LevelChoice, Settings};
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::checkpoint::{MESSAGE_NOT_SAVED, MESSAGE_SAVED};
@@ -2001,6 +2002,13 @@ fn a_game_recorded_across_two_levels_replays_the_same_twice() {
     );
     let text = fs::read_to_string(&files[1]).unwrap();
     assert!(text.lines().any(|l| l == "# level 2"), "{text}");
+    for (i, f) in files.iter().enumerate() {
+        let id = format!("# game_id = {}", g.recording.id());
+        let part = format!("# game_part = {}", i + 1);
+        let text = fs::read_to_string(f).unwrap();
+        assert!(text.lines().any(|l| l == id), "{text}");
+        assert!(text.lines().any(|l| l == part), "{text}");
+    }
     assert!(text.lines().any(|l| l == "# seed 1"), "{text}");
     assert!(text.lines().any(|l| l == "# tuning default"), "{text}");
     assert!(text.lines().any(|l| l.starts_with("# start_score = ")));
@@ -2039,4 +2047,149 @@ fn a_game_recorded_across_two_levels_replays_the_same_twice() {
         "level 2 starts with level 1's progress"
     );
     assert!((0..=1).contains(&(start2.lives - end1.lives)));
+}
+
+/// A key event a little after the frame under way began.
+fn tap(s: &mut Session, b: Buttons, down: bool) {
+    let at = s.stamp(Duration::from_millis(3));
+    s.key(at, b, down);
+}
+
+/// Plays level `n` from `start`, put at `at` first when given, for a
+/// second and a half of walking and jumping, recorded into `rec`; returns
+/// the session (its level not yet finished) and its trace.
+fn play_recorded(
+    rec: &mut GameRecording,
+    n: u32,
+    start: StartState,
+    at: Option<(i32, i32)>,
+) -> (Session, String) {
+    let sim = start_sim(game_level(n), SimConfig::default(), start.clone(), at);
+    let mut s = Session::new(sim);
+    s.record_trace();
+    rec.start_from(&mut s, Some(n), start, at);
+    let dt = Duration::from_secs_f64(1.0 / 60.0);
+    for f in 0..90 {
+        match f {
+            10 => tap(&mut s, Buttons::RIGHT, true),
+            40 => tap(&mut s, Buttons::JUMP, true),
+            50 => tap(&mut s, Buttons::JUMP, false),
+            80 => tap(&mut s, Buttons::RIGHT, false),
+            _ => {}
+        }
+        s.frame(dt);
+    }
+    let trace = trace_csv(s.trace());
+    (s, trace)
+}
+
+#[test]
+fn a_start_point_is_recorded_and_replayed_from() {
+    let dir = TempDir::new().unwrap();
+    let base = dir.path().join("game.csv");
+    // The window starts the level the command line names at its --start
+    // point.
+    let mut settings = Settings::new(dir.path().join("install"), LevelChoice::Retail(2));
+    settings.start = Some((1200, 900));
+    let start = StartState::default();
+    let at = start_override(&settings, true, &LevelChoice::Retail(2), &start);
+    assert_eq!(at, Some((1200, 900)));
+    let mut rec = GameRecording::new(&base);
+    let (s, live) = play_recorded(&mut rec, 2, start, at);
+    rec.finish(&s).unwrap().unwrap();
+    let text = fs::read_to_string(&base).unwrap();
+    assert!(
+        text.lines().any(|l| l == "# start_at = 1200, 900"),
+        "{text}"
+    );
+
+    let r = LevelRecording::read(&base).unwrap();
+    assert_eq!(r.start_at, Some((1200, 900)));
+    assert_eq!(r.level(), Some(2));
+    let cfg = r.sim_config(SimConfig::default());
+    let replay = || trace_csv(r.replay(r.start_sim(game_level(2), cfg.clone())).trace());
+    assert_eq!(replay(), live, "replayed from the start point");
+    assert_eq!(replay(), live, "the same twice");
+    // From the level's own start it would be another game.
+    let spawn = r.replay(Sim::with_start(game_level(2), cfg.clone(), r.start.clone()));
+    assert_ne!(trace_csv(spawn.trace()), live);
+
+    // A replay's settings take the level and the start point from it.
+    let mut replaying = Settings::new(dir.path().join("install"), LevelChoice::Retail(1));
+    replaying.follow_recording(&r).unwrap();
+    assert_eq!(replaying.level, LevelChoice::Retail(2));
+    assert_eq!(replaying.start, Some((1200, 900)));
+    // A recording made without one plays from the level's own start.
+    let mut plain = GameRecording::new(dir.path().join("plain.csv"));
+    let (s, _) = play_recorded(&mut plain, 2, StartState::default(), None);
+    let (path, _) = plain.finish(&s).unwrap().unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(!text.contains("start_at"), "{text}");
+    assert_eq!(LevelRecording::read(&path).unwrap().start_at, None);
+}
+
+#[test]
+fn recording_a_game_again_lists_only_its_files_and_removes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let base = dir.path().join("game.csv");
+    // A file of the user's own with a name a later level could take.
+    let mine = dir.path().join("game.level4.csv");
+    fs::write(&mine, "my own notes\n").unwrap();
+    let carried = StartState {
+        carry: Some(Carry {
+            score: 500,
+            lives: 4,
+            ..Carry::default()
+        }),
+        save: None,
+    };
+    let record = |levels: &[u32]| -> Vec<PathBuf> {
+        let mut rec = GameRecording::new(&base);
+        for (i, &n) in levels.iter().enumerate() {
+            let start = if i == 0 {
+                StartState::default()
+            } else {
+                carried.clone()
+            };
+            let (s, _) = play_recorded(&mut rec, n, start, None);
+            rec.finish(&s).unwrap().unwrap();
+        }
+        rec.written().to_vec()
+    };
+    let names = |files: &[PathBuf]| -> Vec<String> {
+        files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    };
+
+    let first = record(&[1, 2, 3, 4]);
+    assert_eq!(
+        names(&first),
+        [
+            "game.csv",
+            "game.level2.csv",
+            "game.level3.csv",
+            "game.level4-2.csv"
+        ]
+    );
+    assert_eq!(recorded_game_files(&base), first);
+    assert_eq!(fs::read_to_string(&mine).unwrap(), "my own notes\n");
+    let earlier: Vec<String> = first[1..]
+        .iter()
+        .map(|p| fs::read_to_string(p).unwrap())
+        .collect();
+
+    // A shorter game recorded to the same name: its own files only.
+    let second = record(&[1, 2]);
+    assert_eq!(names(&second), ["game.csv", "game.level2-2.csv"]);
+    assert_eq!(recorded_game_files(&base), second);
+    // Nothing written before is removed or changed, but the file asked for.
+    for (p, text) in first[1..].iter().zip(&earlier) {
+        assert_eq!(&fs::read_to_string(p).unwrap(), text, "{}", p.display());
+    }
+    assert_eq!(fs::read_to_string(&mine).unwrap(), "my own notes\n");
+    let level2 = LevelRecording::read(&second[1]).unwrap();
+    assert_eq!(level2.level(), Some(2));
+    assert_eq!(level2.start, carried);
 }
