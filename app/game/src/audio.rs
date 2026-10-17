@@ -36,7 +36,17 @@
 //! turned on, restarts it. While the game is paused the switch is only
 //! recorded: the resume pauses or restarts the current track when the
 //! switch changed, and otherwise lets the music carry on. The music stops
-//! when the level is won ([`AudioBridge::events`]). Music needs a General
+//! when the level is won ([`AudioBridge::events`]).
+//!
+//! Boss fights: the boss track starts when the game asks for it (as soon
+//! as the stage of a boss level wakes, intro skipped or not) and plays on
+//! through the boss's defeat and the level's end; nothing switches back to
+//! the level track. While the boss fight flag is set (from the
+//! introduction's start, see [`AudioBridge::set_boss_fight`]) a power-up
+//! neither swaps in its track nor, when it ends, the level track: the cues
+//! are dropped, as the game skips its power-up music then. After an intro
+//! skip the flag stays clear, so a power-up swaps the boss track out as
+//! anywhere else in the level. Music needs a General
 //! MIDI SoundFont (see [`claw_audio::music::soundfont`]); without one,
 //! music is off, one message says how to get a bank, and sound effects are
 //! unaffected.
@@ -313,6 +323,8 @@ pub struct AudioBridge {
     music: Option<MusicPlayer>,
     /// Looping sounds started with a handle and not stopped, by handle.
     loops: BTreeMap<u32, PlayRequest>,
+    /// The boss fight flag is set: power-up music is held off.
+    boss_fight: bool,
 }
 
 impl AudioBridge {
@@ -347,6 +359,7 @@ impl AudioBridge {
             font,
             music: None,
             loops: BTreeMap::new(),
+            boss_fight: false,
         }
     }
 
@@ -370,6 +383,7 @@ impl AudioBridge {
     pub fn load_level(&mut self, store: &AssetStore, registries: &Registries) -> BankReport {
         self.engine.stop_all();
         self.loops.clear();
+        self.boss_fight = false;
         let (bank, mut report) = decode_bank(store, registries);
         self.engine.set_bank(bank);
         let t = Instant::now();
@@ -504,6 +518,9 @@ impl AudioBridge {
                     self.engine.stop(*voice);
                 }
                 AudioCue::Music { track: t, looped } => {
+                    if self.holds_off(*t) {
+                        continue;
+                    }
                     if let Some(m) = self.music.as_mut() {
                         m.play(track(*t), *looped);
                     }
@@ -512,6 +529,28 @@ impl AudioBridge {
             }
         }
         self.engine.poll_device();
+    }
+
+    /// Tells the bridge whether the boss fight flag is set (1 or 2): from
+    /// the start of a boss's introduction to the end of the level. Call it
+    /// with the simulation's flag before [`AudioBridge::apply`] passes the
+    /// ticks' cues. While it is set, the power-up track and the level track
+    /// a power-up's end asks for are held off, so the boss track plays on.
+    /// A new level clears it.
+    pub fn set_boss_fight(&mut self, on: bool) {
+        self.boss_fight = on;
+    }
+
+    /// True while the boss fight flag is set (see
+    /// [`AudioBridge::set_boss_fight`]).
+    pub fn is_boss_fight(&self) -> bool {
+        self.boss_fight
+    }
+
+    /// Whether a cue for `t` is dropped: the power-up music (its start and
+    /// the level track at its end) during a boss fight.
+    fn holds_off(&self, t: MusicTrack) -> bool {
+        self.boss_fight && matches!(t, MusicTrack::Powerup | MusicTrack::Level)
     }
 
     /// Acts on the game events that concern sound: the music stops when the
@@ -1075,5 +1114,74 @@ mod tests {
         bridge.play_menu_music();
         assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Chord)));
         assert!(wait(&mut bridge, |b| sounding(b).is_none()));
+    }
+    /// A store with LEVEL2 music: the level track, the boss track and the
+    /// power-up track, all synthetic.
+    fn boss_store() -> (tempfile::TempDir, AssetStore, Registries) {
+        let dir = tempfile::tempdir().unwrap();
+        let put = |rel: &str, data: &[u8]| {
+            let p = dir.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, data).unwrap();
+        };
+        put("LEVEL2/MUSIC/PLAY0.XMI", &track_file(50, 30));
+        put("LEVEL2/MUSIC/BOSS0.XMI", &track_file(55, 30));
+        put("GAME/MUSIC/POWERUP0.XMI", &track_file(72, 30));
+        let mut store = AssetStore::new();
+        store.mount(Source::Dir(dir.path().to_path_buf())).unwrap();
+        let mut registries = Registries::new();
+        for (key, path) in [
+            ("LEVEL", "LEVEL2/MUSIC/PLAY0.XMI"),
+            ("BOSS", "LEVEL2/MUSIC/BOSS0.XMI"),
+            ("POWERUP", "GAME/MUSIC/POWERUP0.XMI"),
+        ] {
+            let id = store.lookup(path).unwrap().unwrap();
+            registries.music.insert(key.into(), id);
+        }
+        (dir, store, registries)
+    }
+
+    #[test]
+    fn the_boss_track_plays_on_and_holds_off_the_power_up_music() {
+        let (_dir, store, reg) = boss_store();
+        let mut bridge =
+            AudioBridge::silent_with_music(AudioSettings::default(), Some(test_bank()));
+        let report = bridge.load_level(&store, &reg);
+        assert_eq!(report.music_tracks, 3, "{report:?}");
+        let sounding = |b: &AudioBridge| b.music().and_then(|m| m.sounding());
+        let cue = |t, looped| AudioCue::Music { track: t, looped };
+        let view = ViewInfo::default();
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Level)));
+
+        // The stage wakes: the boss track, before any introduction.
+        bridge.apply(&[cue(MusicTrack::Boss, true)], &view);
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Boss)));
+        assert!(!bridge.is_boss_fight());
+
+        // The introduction starts: a power-up and its end change nothing.
+        bridge.set_boss_fight(true);
+        bridge.apply(
+            &[cue(MusicTrack::Powerup, true), cue(MusicTrack::Level, true)],
+            &view,
+        );
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Boss)));
+        assert_eq!(bridge.music().unwrap().current(), Some(Track::Boss));
+        // The level is won: the music stops, and the next level clears the
+        // flag.
+        bridge.events(&[GameEvent::LevelComplete { after_ms: 3000 }]);
+        assert!(wait(&mut bridge, |b| sounding(b).is_none()));
+        bridge.load_level(&store, &reg);
+        assert!(!bridge.is_boss_fight());
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Level)));
+
+        // After an intro skip the flag stays clear: a power-up swaps the
+        // boss track out, and its end brings the level track.
+        bridge.apply(&[cue(MusicTrack::Boss, true)], &view);
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Boss)));
+        bridge.apply(&[cue(MusicTrack::Powerup, true)], &view);
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Powerup)));
+        bridge.apply(&[cue(MusicTrack::Level, true)], &view);
+        assert!(wait(&mut bridge, |b| sounding(b) == Some(Track::Level)));
     }
 }
