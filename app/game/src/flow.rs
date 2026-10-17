@@ -23,7 +23,9 @@
 //! | in-game menu | end life, confirmed | play: Claw dies at the next tick |
 //! | in-game menu | end the game, confirmed | main menu |
 //! | play | level complete, after its delay | tally |
-//! | tally | done | main menu, the level marked complete |
+//! | tally of level n below 14 | done | play: level n + 1, progress carried |
+//! | tally of level 14 | done | main menu (the credits come later) |
+//! | tally of a community custom level | done | main menu |
 //! | play | game over | the frozen game fades, then the main menu |
 //!
 //! Saved games: touching a save point writes save point 1 or 2 of the
@@ -32,6 +34,16 @@
 //! is what marks the level complete and opens the next level in the new
 //! game and load lists. Community custom levels are never saved, and their
 //! save points show no game-saved message ([`Flow::hide_messages`]).
+//!
+//! After the tally the game goes straight on to the next level, as the
+//! original does: the next level starts from the start that finishing the
+//! level just saved (whether or not it could be written), with one more
+//! life when the tally was perfect and gave one; that life is not in the
+//! saved start, as in the original. Levels whose objects are not all built
+//! yet load and play with those objects drawn but still. After the last
+//! level the original shows the credits; until they are built, the game
+//! returns to the main menu there. A community custom level ends at the
+//! main menu.
 //!
 //! End life asks for a confirmation; its question is the low-lives one
 //! when Claw has fewer than 2 lives left, since that death ends the game.
@@ -455,6 +467,8 @@ pub struct Flow {
     elapsed: f64,
     told_unsaved: bool,
     effects: Vec<Effect>,
+    /// The level the tally leads to and how it starts.
+    next: Option<(u32, StartState)>,
 }
 
 impl std::fmt::Debug for Flow {
@@ -521,6 +535,7 @@ impl Flow {
             elapsed: 0.0,
             told_unsaved: false,
             effects: Vec::new(),
+            next: None,
         };
         if let Some(tree) = main {
             flow.main = Some(flow.prepare(tree));
@@ -704,6 +719,13 @@ impl Flow {
     /// The end-of-level screens.
     pub fn booty(&self) -> Option<&BootyScreen> {
         self.booty.as_ref()
+    }
+
+    /// The level the tally on screen leads to and how it starts (`None`
+    /// when it leads to the main menu); a perfect tally's extra life is
+    /// added when the tally ends.
+    pub fn next_level(&self) -> Option<(u32, &StartState)> {
+        self.next.as_ref().map(|(n, s)| (*n, s))
     }
 
     /// The game-over fade.
@@ -907,6 +929,7 @@ impl Flow {
                     self.effects.push(Effect::Sound(stop));
                 }
                 self.booty = None;
+                self.next = None;
                 self.game_over = None;
                 if let Some(n) = self.main.as_mut() {
                     n.reset();
@@ -942,6 +965,8 @@ impl Flow {
         self.screen = Screen::Play;
         self.fade = None;
         self.title = None;
+        self.booty = None;
+        self.next = None;
         self.play = Some(Play {
             level: level.clone(),
             checkpoint: None,
@@ -1535,6 +1560,7 @@ impl Flow {
         };
         let number = retail_number(&play.level);
         let custom = matches!(play.level, LevelChoice::Custom(_));
+        self.next = None;
         let stats = match sim {
             Some(sim) => {
                 let s = sim.stats();
@@ -1550,6 +1576,8 @@ impl Flow {
                         [0; claw_sim::player::stats::TREASURE_KINDS],
                     );
                     self.write(&record, n + 1);
+                    // The tally leads to that start, saved or not.
+                    self.next = Some((n + 1, record.start_state()));
                 }
                 BootyStats {
                     level: number.unwrap_or(1),
@@ -1675,8 +1703,8 @@ impl Flow {
                     None => false,
                 };
                 self.drain_booty_audio();
-                if done {
-                    self.fade_to(Pending::Screen(Screen::MainMenu));
+                if done && self.pending.is_none() {
+                    self.after_booty();
                 }
             }
             Screen::GameOver => {
@@ -1692,6 +1720,24 @@ impl Flow {
                 }
             }
             Screen::Help | Screen::Exit => {}
+        }
+    }
+
+    /// The tally ended: the next level, or the main menu after the last
+    /// level and after a community custom level.
+    fn after_booty(&mut self) {
+        match self.next.take() {
+            Some((level, mut start)) => {
+                // A perfect tally's extra life goes with Claw.
+                if self.booty.as_ref().is_some_and(BootyScreen::extra_life)
+                    && let Some(c) = start.carry.as_mut()
+                    && c.lives < claw_ui::screens::booty::MAX_LIVES
+                {
+                    c.lives += 1;
+                }
+                self.fade_to(Pending::Start(LevelChoice::Retail(level), start));
+            }
+            None => self.fade_to(Pending::Screen(Screen::MainMenu)),
         }
     }
 

@@ -24,6 +24,14 @@
 //! are silent; the benchmark reads the keyboard only. The window title
 //! shows Claw's health, score and lives.
 //!
+//! With `--record`, every level played is recorded into its own file, one
+//! after the other as the game goes from level to level (see
+//! [`crate::session::GameRecording`]); each file is written when its level
+//! is left or the window closes.
+//!
+//! The end-of-level screens of a gem level animate the level's gem in its
+//! socket on the amulet, from the level's gem animation.
+//!
 //! With vsync on, waiting for the display paces the frames. Otherwise each
 //! frame first waits for the frame-rate cap (300 frames per second unless
 //! set otherwise), so the game never draws thousands of frames a second.
@@ -67,7 +75,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 use crate::audio::{AudioBridge, ViewInfo};
 use crate::bench::{Combat, PresentDetail, Report, Samples, Summary, WARMUP_S, combat_route};
 use crate::flow::{self, Effect, Flow, Screen, Start};
-use crate::input::{InputContext, InputRouter, Recorder, Routed};
+use crate::input::{InputContext, InputRouter, Routed};
 use crate::keymap::{Action, Command};
 use crate::load::{
     LevelBundle, SHADE_SET, SHADE_SIZE, load_graphics, load_level, new_sim, preload, settle_at,
@@ -75,7 +83,7 @@ use crate::load::{
 };
 use crate::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, game_key};
 use crate::saves::SaveStore;
-use crate::session::{Session, Span};
+use crate::session::{GameRecording, Session, Span};
 use crate::settings::{Aspect, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
 
 /// The image set of the PAUSE sign (its frame [`PAUSE_FRAME`]), preloaded
@@ -330,7 +338,14 @@ impl Screens {
                 half(&mut self.graphics, 5, 64),
             ),
         };
-        BootyScreen::new(stats, art)
+        let gem = booty::gem_frames_from(&self.assets, stats.level);
+        if !stats.custom && booty::gem_animation(stats.level).is_some() && gem.is_empty() {
+            eprintln!(
+                "rusty-claw: the gem animation of level {} was not found",
+                stats.level
+            );
+        }
+        BootyScreen::new(stats, art).with_gem_frames(gem)
     }
 }
 
@@ -489,9 +504,8 @@ struct App {
     flow: Option<Flow>,
     router: InputRouter,
     audio: Option<AudioBridge>,
-    recorder: Option<Recorder>,
-    /// True once the recorder was attached to a session.
-    recorded: bool,
+    /// With `--record`: the recording of every level played.
+    recording: Option<GameRecording>,
     /// Levels started so far.
     levels_started: u32,
     /// The level loaded before the window opened, for the first start.
@@ -717,11 +731,16 @@ impl App {
             let mut session = Session::new(sim).with_pause_input(self.settings.pause_input);
             self.router
                 .set_keep_held(self.settings.pause_input == PauseInput::Original);
-            if self.settings.record.is_some() && !matches!(self.mode, WindowMode::Bench(_)) {
-                let recorder = Recorder::new();
-                session.set_before_tick(recorder.hook());
-                self.recorder = Some(recorder);
-                self.recorded = true;
+            if let Some(path) = &self.settings.record
+                && !matches!(self.mode, WindowMode::Bench(_))
+            {
+                let mut recording = GameRecording::new(path);
+                recording.start(
+                    &mut session,
+                    flow::retail_number(&self.settings.level),
+                    claw_sim::StartState::default(),
+                );
+                self.recording = Some(recording);
             }
             match &self.mode {
                 WindowMode::Play => {}
@@ -837,7 +856,7 @@ impl App {
         let mut sim = Sim::with_start(
             bundle.sim_level.clone(),
             self.settings.sim_config(self.first_output),
-            start,
+            start.clone(),
         );
         if let Some((x, y)) = at {
             settle_at(&mut sim, x, y);
@@ -850,11 +869,11 @@ impl App {
         let mut session = Session::new(sim).with_pause_input(self.settings.pause_input);
         self.router
             .set_keep_held(self.settings.pause_input == PauseInput::Original);
-        if self.settings.record.is_some() && !self.recorded {
-            let recorder = Recorder::new();
-            session.set_before_tick(recorder.hook());
-            self.recorder = Some(recorder);
-            self.recorded = true;
+        // Every level is recorded, each into its own file.
+        if let Some(path) = &self.settings.record {
+            self.recording
+                .get_or_insert_with(|| GameRecording::new(path))
+                .start(&mut session, flow::retail_number(choice), start);
         }
         // The in-game menu, drawn from the level's art.
         let tree = self
@@ -931,13 +950,15 @@ impl App {
         }
     }
 
+    /// Writes the recording of the level in play, if it is recorded.
     fn save_recording(&mut self) {
-        if let (Some(recorder), Some(level), Some(path)) =
-            (self.recorder.take(), &self.level, &self.settings.record)
-        {
-            match crate::session::save_recording(&recorder, &level.session, path) {
-                Ok(n) => eprintln!("rusty-claw: recorded {n} ticks to {}", path.display()),
-                Err(e) => eprintln!("rusty-claw: {e:#}"),
+        if let (Some(recording), Some(level)) = (self.recording.as_mut(), &self.level) {
+            match recording.finish(&level.session) {
+                Some(Ok((path, n))) => {
+                    eprintln!("rusty-claw: recorded {n} ticks to {}", path.display())
+                }
+                Some(Err(e)) => eprintln!("rusty-claw: {e:#}"),
+                None => {}
             }
         }
     }
@@ -1967,8 +1988,7 @@ fn run_app(
         screens,
         flow,
         audio,
-        recorder: None,
-        recorded: false,
+        recording: None,
         levels_started: 0,
         first_level,
         shown: None,

@@ -1,13 +1,14 @@
 //! Saved games: round trip, backups, damaged and newer files kept aside,
-//! level names that cannot leave the folder, and the second-instance lock.
+//! level names that cannot leave the folder, the second-instance lock, and
+//! the carried progress in the saves' key = value form.
 
 use std::fs;
 use std::path::Path;
 
 use claw_frame::Weapon;
 use claw_game::saves::{
-    MAX_SAVE_BYTES, SAVE_VERSION, SaveError, SaveRecord, SaveStore, check_level_name,
-    retail_level_name,
+    CARRY_KEYS, MAX_SAVE_BYTES, SAVE_VERSION, SaveError, SaveRecord, SaveStore, carry_fields,
+    carry_from_fields, check_level_name, retail_level_name,
 };
 use claw_game::settings::{WriteHooks, WriteStep, backup_path};
 use claw_sim::{Carry, SavePos};
@@ -310,4 +311,49 @@ fn a_second_running_game_is_read_only() {
         second.read("LEVEL1", 1).unwrap(),
         Some(record("LEVEL1", 1, 3))
     );
+}
+
+#[test]
+fn the_carried_progress_round_trips_in_the_saves_form() {
+    let r = record("LEVEL2", 3, 31_337);
+    let fields = carry_fields(&r.carry);
+    let keys: Vec<&str> = fields.iter().map(|(k, _)| *k).collect();
+    assert_eq!(keys, CARRY_KEYS);
+    // The same lines a save writes.
+    let text = r.to_text();
+    for (k, v) in &fields {
+        assert!(text.lines().any(|l| l == format!("{k} = {v}")), "{k}");
+    }
+    let pairs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    assert_eq!(carry_from_fields(&pairs), Ok(r.carry.clone()));
+    // Every key is needed, in range.
+    let missing: Vec<(&str, &str)> = pairs
+        .iter()
+        .copied()
+        .filter(|(k, _)| *k != "lives")
+        .collect();
+    assert_eq!(
+        carry_from_fields(&missing),
+        Err(SaveError::Unreadable("lives is missing".into()))
+    );
+    let mut bad = pairs.clone();
+    bad[0].1 = "-1";
+    assert!(carry_from_fields(&bad).is_err());
+}
+
+#[test]
+fn a_save_written_before_the_level_change_still_loads() {
+    // The text an earlier version wrote for a level start.
+    let old = "# rusty-claw saved game\nversion = 1\nlevel = LEVEL2\nslot = 3\nx = 0\ny = 0\n\
+               score = 4200\nhealth = 100\nlives = 7\npistol = 10\nmagic = 5\ndynamite = 3\n\
+               weapon = pistol\ntreasure_game = 12, 1, 0, 0, 0, 0, 0, 0, 0\n\
+               treasure_level = 0, 0, 0, 0, 0, 0, 0, 0, 0\n";
+    let r = SaveRecord::parse(old).unwrap();
+    assert_eq!(r.carry.score, 4200);
+    assert_eq!(r.save_pos(), None);
+    assert_eq!(r.to_text(), old, "written back the same");
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("LEVEL2-3.save"), old).unwrap();
+    let mut store = SaveStore::open(dir.path()).unwrap();
+    assert_eq!(store.read("LEVEL2", 3).unwrap(), Some(r));
 }

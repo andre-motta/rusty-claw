@@ -7,8 +7,17 @@
 //! its place on the map in 2 s while the curling sound plays; on arrival the
 //! curling stops and the impact sound plays. When the impact has finished,
 //! Claw says his line for the level, and when he has finished the tally
-//! follows. On a gem level the amulet sound plays, the gem shows for 2 s,
-//! then Claw's line. Any skip input goes to the tally at once.
+//! follows. Any skip input goes to the tally at once.
+//!
+//! **Gem levels** (2, 4, 6, 8, 10, 12, 13 and 14) show the amulet instead
+//! of the map. The amulet sound plays once at volume 100 as the screen
+//! opens, and the level's gem plays its animation once in its socket
+//! ([`gem_spot`], [`gem_animation`]; [`BootyScreen::with_gem_frames`]
+//! hands the frames over), then rests on its last frame. As the animation
+//! ends the gem sound plays (the amulet-made sound on level 14); when it
+//! has finished Claw says his line, and the tally follows once both his
+//! line and the amulet sound have finished. Without the animation's frames
+//! the gem shows for [`GEM_MS`] instead.
 //!
 //! **Tally.** Nine rows, one per treasure kind `k`, from `k = 8` at the
 //! top (y = 55 + 44 (8 - k)) to `k = 0`. Rows take their turn one at a
@@ -37,9 +46,11 @@
 
 use std::collections::BTreeMap;
 
-use claw_assets::Palette;
+use claw_assets::{Ani, Palette};
 use claw_frame::{AudioCue, SoundChannel, SoundCue};
 use claw_render::{Anchor, ImageId, ScreenScene, ScreenSprite};
+
+use crate::screens::assets::ScreenAssets;
 
 /// Treasure kinds.
 pub const KINDS: usize = 9;
@@ -142,6 +153,10 @@ pub const CURLING: &str = "BOOTY_CURLING1";
 pub const IMPACT: &str = "BOOTY_IMPACT3";
 /// The gem levels' sound.
 pub const AMULET: &str = "BOOTY_AMULET";
+/// The gem's sound as its animation ends.
+pub const GEM: &str = "BOOTY_GEM";
+/// The gem's sound on level 14, where the amulet is made whole.
+pub const AMULET_MADE: &str = "BOOTY_AMMAKE";
 /// Every counting step.
 pub const BOUNCE: &str = "BOOTY_BOUNCE1";
 /// A row that collected everything.
@@ -159,7 +174,7 @@ pub const ICON_FLIGHT_MS: f64 = 300.0;
 pub const HOLD_MS: f64 = 60_000.0;
 /// Map piece flight, ms.
 pub const FLIGHT_MS: f64 = 2000.0;
-/// How long a gem shows, ms.
+/// How long a gem shows when its animation is not known, ms.
 pub const GEM_MS: f64 = 2000.0;
 /// Most lives.
 pub const MAX_LIVES: i32 = 10;
@@ -248,6 +263,75 @@ pub fn tally_picture(level: u32, custom: bool) -> String {
     }
     let kind = if is_map_level(level) { "MAP" } else { "AMULET" };
     format!("{:03}{kind}", 2 * level)
+}
+
+/// Where each gem level's gem animation is drawn (its hotspot), by
+/// level: on its socket of the amulet, so that the animation's last frame,
+/// a patch of the amulet picture with the gem set in, lies exactly over
+/// the picture. On level 14 the last frame is the whole amulet made whole.
+pub const GEM_SPOTS: [(u32, (i32, i32)); 8] = [
+    (2, (364, 164)),
+    (4, (238, 342)),
+    (6, (353, 364)),
+    (8, (212, 261)),
+    (10, (275, 162)),
+    (12, (397, 340)),
+    (13, (284, 368)),
+    (14, (320, 233)),
+];
+
+/// Where `level`'s gem sits on the amulet; the centre of the screen for a
+/// level that has no gem.
+pub fn gem_spot(level: u32) -> (i32, i32) {
+    GEM_SPOTS
+        .iter()
+        .find(|(l, _)| *l == level)
+        .map_or((320, 240), |(_, at)| *at)
+}
+
+/// The animation of `level`'s gem (`BOOTY_GEM<n>`, the blue gem's
+/// `BOOTY_GEMB13` on level 13); `None` on a map level.
+pub fn gem_animation(level: u32) -> Option<String> {
+    if is_map_level(level) || !(1..=14).contains(&level) {
+        None
+    } else if level == 13 {
+        Some("BOOTY_GEMB13".to_string())
+    } else {
+        Some(format!("BOOTY_GEM{level}"))
+    }
+}
+
+/// The sound `level`'s gem makes as its animation ends.
+pub fn gem_sound(level: u32) -> &'static str {
+    if level == 14 { AMULET_MADE } else { GEM }
+}
+
+/// The frames of an animation as the gem plays them: (frame number, ms),
+/// leaving out frames that name no image.
+pub fn gem_frames(ani: &Ani) -> Vec<(i32, f64)> {
+    ani.frames
+        .iter()
+        .filter(|f| f.image_index > 0)
+        .map(|f| (i32::from(f.image_index), f64::from(f.duration_ms())))
+        .collect()
+}
+
+/// The frames of `level`'s gem animation read from `assets`; empty on a
+/// map level or when the animation cannot be read.
+pub fn gem_frames_from(assets: &ScreenAssets, level: u32) -> Vec<(i32, f64)> {
+    let Some(key) = gem_animation(level) else {
+        return Vec::new();
+    };
+    let Some(&id) = assets.registries.anis.get(&key) else {
+        return Vec::new();
+    };
+    assets
+        .store
+        .read(id)
+        .ok()
+        .and_then(|data| Ani::parse(&data).ok())
+        .map(|ani| gem_frames(&ani))
+        .unwrap_or_default()
 }
 
 /// The image set of `level`'s map piece or gem.
@@ -377,6 +461,7 @@ pub struct BootyScreen {
     loop_fade: Option<(f64, f64, f64, f64)>,
     loop_volume: u8,
     audio: Vec<AudioCue>,
+    gem_frames: Vec<(i32, f64)>,
 }
 
 impl BootyScreen {
@@ -421,6 +506,7 @@ impl BootyScreen {
             loop_fade: None,
             loop_volume: 0,
             audio: Vec::new(),
+            gem_frames: Vec::new(),
         };
         if b.phase == BootyPhase::Map {
             if is_map_level(b.stats.level) {
@@ -434,6 +520,21 @@ impl BootyScreen {
             b.start_tally();
         }
         b
+    }
+
+    /// The screens with the frames of the gem's animation, (frame number,
+    /// ms) in order (see [`gem_frames`]); a map level ignores them.
+    pub fn with_gem_frames(mut self, frames: Vec<(i32, f64)>) -> BootyScreen {
+        self.gem_frames = frames
+            .into_iter()
+            .filter(|&(_, ms)| ms.is_finite() && ms > 0.0)
+            .collect();
+        self
+    }
+
+    /// The level whose end the screens show.
+    pub fn level(&self) -> u32 {
+        self.stats.level
     }
 
     /// Where the screen is.
@@ -608,9 +709,18 @@ impl BootyScreen {
         }
     }
 
+    /// How long the gem's animation lasts.
+    fn gem_ms(&self) -> f64 {
+        if self.gem_frames.is_empty() {
+            GEM_MS
+        } else {
+            self.gem_frames.iter().map(|&(_, ms)| ms).sum()
+        }
+    }
+
     fn wait_ms(&self) -> f64 {
         if !is_map_level(self.stats.level) {
-            GEM_MS
+            self.gem_ms()
         } else if self.stats.level == 1 {
             5000.0
         } else {
@@ -633,8 +743,9 @@ impl BootyScreen {
                         self.audio
                             .push(cue(CURLING, 100, false, Some(CURLING_VOICE)));
                     } else {
-                        self.map_step = MapStep::Line;
-                        self.say_line();
+                        self.map_step = MapStep::Impact;
+                        self.audio
+                            .push(cue(gem_sound(self.stats.level), 100, false, None));
                     }
                 }
                 MapStep::Flight => {
@@ -649,7 +760,11 @@ impl BootyScreen {
                     self.map_step = MapStep::Impact;
                 }
                 MapStep::Impact => {
-                    let w = self.sound_ms(IMPACT);
+                    let w = if is_map_level(self.stats.level) {
+                        self.sound_ms(IMPACT)
+                    } else {
+                        self.sound_ms(gem_sound(self.stats.level))
+                    };
                     if self.step_ms < w {
                         return;
                     }
@@ -659,7 +774,13 @@ impl BootyScreen {
                 }
                 MapStep::Line => {
                     let w = self.line().map_or(0.0, |k| self.sound_ms(k));
-                    if self.step_ms < w {
+                    // A gem level also lets the amulet sound end.
+                    let amulet = if is_map_level(self.stats.level) {
+                        0.0
+                    } else {
+                        self.sound_ms(AMULET)
+                    };
+                    if self.step_ms < w || self.elapsed < amulet {
                         return;
                     }
                     self.start_tally();
@@ -738,11 +859,12 @@ impl BootyScreen {
         }
     }
 
-    /// The map piece's position now.
+    /// The map piece's position now; a gem's place on the amulet on a gem
+    /// level.
     pub fn piece_position(&self) -> (i32, i32) {
         let level = self.stats.level;
         if !is_map_level(level) {
-            return (0, 0);
+            return gem_spot(level);
         }
         let ((sx, sy), (ex, ey)) = PIECE_PATHS[(level.div_ceil(2) - 1) as usize];
         match self.map_step {
@@ -756,6 +878,23 @@ impl BootyScreen {
             }
             _ => (ex, ey),
         }
+    }
+
+    /// The gem's frame now: the animation's frame while it plays, then its
+    /// last frame; the set's first frame (-1) without the animation.
+    pub fn gem_frame(&self) -> i32 {
+        let last = self.gem_frames.last().map_or(-1, |&(f, _)| f);
+        if self.map_step != MapStep::Wait {
+            return last;
+        }
+        let mut t = self.step_ms;
+        for &(frame, ms) in &self.gem_frames {
+            if t < ms {
+                return frame;
+            }
+            t -= ms;
+        }
+        last
     }
 
     /// A number whose first digit's hotspot is at (x, y), each next digit
@@ -779,9 +918,14 @@ impl BootyScreen {
         let mut sprites = Vec::new();
         if self.phase == BootyPhase::Map {
             let (x, y) = self.piece_position();
+            let frame = if is_map_level(self.stats.level) {
+                -1
+            } else {
+                self.gem_frame()
+            };
             sprites.push(ScreenSprite::new(
                 &piece_set(self.stats.level),
-                -1,
+                frame,
                 Anchor::TopLeft,
                 x,
                 y,
@@ -888,6 +1032,25 @@ impl BootyScreen {
         v.push(piece_set(level));
         v
     }
+
+    /// Every sound the screens can play for `level`.
+    pub fn sounds(level: u32) -> Vec<&'static str> {
+        let mut v = if is_map_level(level) {
+            vec![MAP_LOOP, CURLING, IMPACT]
+        } else {
+            vec![AMULET, gem_sound(level)]
+        };
+        if let Some(line) = CLAW_LINES.get((level as usize).wrapping_sub(1)) {
+            v.push(line);
+        }
+        for t in &TREASURES {
+            if !v.contains(&t.sound) {
+                v.push(t.sound);
+            }
+        }
+        v.extend([BOUNCE, COMPLETE, PERFECT_SOUND]);
+        v
+    }
 }
 
 /// How long the slide-out takes, ms.
@@ -895,4 +1058,136 @@ pub fn slide_out_ms() -> f64 {
     let rows = 25.0 * 18.0;
     let totals = 25.0 * 16.0 + 25.0 * 75.0;
     f64::max(rows, totals)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stats(level: u32) -> BootyStats {
+        BootyStats {
+            level,
+            custom: false,
+            collected: [0; KINDS],
+            census: [0; KINDS],
+            score: 0,
+            lives: 4,
+        }
+    }
+
+    fn art() -> BootyArt {
+        let mut sound_ms = BTreeMap::new();
+        sound_ms.insert(AMULET.to_string(), 3000);
+        sound_ms.insert(GEM.to_string(), 400);
+        sound_ms.insert(AMULET_MADE.to_string(), 900);
+        sound_ms.insert(CLAW_LINES[1].to_string(), 1000);
+        BootyArt {
+            map: (Some(1), Palette::default()),
+            tally: (Some(2), Palette::default()),
+            sound_ms,
+            digit_width: 12,
+            total_offsets: (60, 64),
+        }
+    }
+
+    fn played(audio: &[AudioCue]) -> Vec<String> {
+        audio
+            .iter()
+            .filter_map(|a| match a {
+                AudioCue::Play(c) => Some(c.key.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn gem_levels_name_their_animation_place_and_sound() {
+        assert_eq!(gem_animation(1), None);
+        assert_eq!(gem_animation(11), None);
+        assert_eq!(gem_animation(2).as_deref(), Some("BOOTY_GEM2"));
+        assert_eq!(gem_animation(13).as_deref(), Some("BOOTY_GEMB13"));
+        assert_eq!(gem_animation(14).as_deref(), Some("BOOTY_GEM14"));
+        assert_eq!(gem_sound(2), GEM);
+        assert_eq!(gem_sound(14), AMULET_MADE);
+        assert_eq!(gem_spot(2), (364, 164));
+        for (level, (x, y)) in GEM_SPOTS {
+            assert!(!is_map_level(level), "{level}");
+            assert!((0..640).contains(&x) && (0..480).contains(&y));
+        }
+        assert_eq!(map_picture(2), "003AMULET");
+        assert_eq!(tally_picture(2, false), "004AMULET");
+        assert_eq!(piece_set(2), "BOOTY_MAPPIECE_LEVEL002");
+        let s = BootyScreen::sounds(2);
+        for k in [AMULET, GEM, CLAW_LINES[1], BOUNCE, "BOOTY_COIN"] {
+            assert!(s.contains(&k), "{k}");
+        }
+        assert!(!s.contains(&MAP_LOOP));
+        assert!(BootyScreen::sounds(1).contains(&IMPACT));
+    }
+
+    #[test]
+    fn the_gem_animates_in_its_socket_then_its_sound_the_line_and_the_tally() {
+        let frames = vec![(1, 25.0), (2, 25.0), (3, 50.0)];
+        let mut b = BootyScreen::new(stats(2), art()).with_gem_frames(frames);
+        assert_eq!(b.level(), 2);
+        assert_eq!(played(&b.take_audio()), vec![AMULET.to_string()]);
+        let scene = b.scene();
+        assert_eq!(scene.background, Some(1));
+        let gem = &scene.sprites[0];
+        assert_eq!(gem.key, "BOOTY_MAPPIECE_LEVEL002");
+        assert_eq!((gem.x, gem.y), (364, 164));
+        assert_eq!(gem.frame, 1);
+        b.update(30.0);
+        assert_eq!(b.gem_frame(), 2);
+        b.update(40.0);
+        assert_eq!(b.gem_frame(), 3);
+        assert!(b.take_audio().is_empty());
+        // The animation ends at 100 ms: the gem rests on its last frame
+        // and its sound plays.
+        b.update(30.0);
+        assert_eq!(b.gem_frame(), 3);
+        assert_eq!(b.scene().sprites[0].frame, 3);
+        assert_eq!(played(&b.take_audio()), vec![GEM.to_string()]);
+        // The gem sound lasts 400 ms, then Claw's line.
+        b.update(399.0);
+        assert!(b.take_audio().is_empty());
+        b.update(1.0);
+        assert_eq!(played(&b.take_audio()), vec![CLAW_LINES[1].to_string()]);
+        // The line lasts 1000 ms, but the amulet sound runs to 3000 ms.
+        b.update(1000.0);
+        assert_eq!(b.phase(), BootyPhase::Map);
+        b.update(1500.0);
+        assert_eq!(b.phase(), BootyPhase::Counting);
+        assert_eq!(b.scene().background, Some(2));
+    }
+
+    #[test]
+    fn without_its_frames_the_gem_shows_for_a_while() {
+        let mut b = BootyScreen::new(stats(14), art());
+        b.take_audio();
+        assert_eq!(b.scene().sprites[0].frame, -1);
+        b.update(GEM_MS - 1.0);
+        assert!(b.take_audio().is_empty());
+        b.update(1.0);
+        assert_eq!(played(&b.take_audio()), vec![AMULET_MADE.to_string()]);
+        // A skip goes to the tally at once.
+        b.skip();
+        assert_eq!(b.phase(), BootyPhase::Counting);
+    }
+
+    #[test]
+    fn gem_frames_leave_out_frames_without_an_image() {
+        let frame = |image_index: i16, duration: i16| claw_assets::AniFrame {
+            image_index,
+            duration,
+            ..Default::default()
+        };
+        let ani = Ani {
+            frames: vec![frame(1, 25), frame(33, 50), frame(0, 0)],
+            ..Ani::default()
+        };
+        assert_eq!(gem_frames(&ani), vec![(1, 25.0), (33, 50.0)]);
+        let b = BootyScreen::new(stats(2), art()).with_gem_frames(vec![(1, 0.0), (2, f64::NAN)]);
+        assert_eq!(b.gem_frame(), -1, "frames of no length are dropped");
+    }
 }
