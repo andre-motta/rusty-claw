@@ -10,12 +10,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use claw_assets::ifc::IfcNode;
+use claw_audio::AudioSettings;
 use claw_frame::{Buttons, SimulatedRefresh};
 use claw_game::Session;
+use claw_game::audio::AudioBridge;
 use claw_game::flow::{Effect, Flow, Screen, Start};
 use claw_game::input::Recorder;
 use claw_game::keymap::Command;
-use claw_game::pause::{GameKey, KeyContext, PauseInput, Pauses, game_key};
+use claw_game::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, game_key};
 use claw_game::session::{
     FUSE_CLOCK_KEY, PAUSE_INPUT_KEY, ScriptSwitches, Span, recording_text, save_recording,
     script_switches, switch_comments,
@@ -249,6 +251,14 @@ fn the_pause_key_pauses_without_a_menu_and_escape_opens_the_menu() {
     assert_eq!(game_key(Command::Quit, ctx(None, free)), GameKey::Quit);
     assert_eq!(game_key(Command::Pause, ctx(None, free)), GameKey::Pause);
     assert_eq!(game_key(Command::Help, ctx(None, free)), GameKey::Nothing);
+    // There is no menu for a gamepad's Start to open: it pauses and goes
+    // on as the pause key does.
+    let pad = |pauses| KeyContext {
+        from_pad: true,
+        ..ctx(None, pauses)
+    };
+    assert_eq!(game_key(Command::Pause, pad(free)), GameKey::Pause);
+    assert_eq!(game_key(Command::Pause, pad(paused)), GameKey::Pause);
 }
 
 fn in_game_menu() -> MenuTree {
@@ -624,6 +634,96 @@ fn the_fuse_burns_through_help_only_and_replays_the_same() {
         Some((Span::Menu(MenuScreen::Help), 2000)),
     );
     assert_eq!(hurt, base);
+}
+
+#[test]
+fn a_replay_watched_with_a_pause_at_a_help_boundary_plays_as_headless() {
+    // The help screen recorded at tick 19 burns the fuse (see above). A
+    // viewer pauses and resumes right at that boundary and pauses again
+    // before the next frame: the resume's tick waits for the recorded
+    // help, so the stick goes off on the same tick as in the headless
+    // replay.
+    let (_, g) = fuse_game(
+        FuseClock::Original,
+        Some((Span::Menu(MenuScreen::Help), 2000)),
+    );
+    let script = g.script();
+    let headless = replay(stick_sim(FuseClock::Original), &script, 60.0);
+    let mut s = Session::new(stick_sim(FuseClock::Original)).with_replay(script.clone());
+    s.record_trace();
+    while s.ticks() < 19 {
+        s.frame(Duration::from_millis(18));
+    }
+    let mut p = Pauses::default();
+    let toggle = |p: &mut Pauses, s: &mut Session, on: bool| {
+        p.user = on;
+        p.apply(Some(s), None, Duration::ZERO);
+        if on {
+            s.open_span(Span::Pause);
+        } else {
+            s.close_span();
+        }
+    };
+    toggle(&mut p, &mut s, true);
+    toggle(&mut p, &mut s, false);
+    toggle(&mut p, &mut s, true);
+    assert_eq!(s.ticks(), 19, "the resume's tick waits for the help");
+    assert!(s.holding());
+    s.frame(Duration::from_millis(500));
+    toggle(&mut p, &mut s, false);
+    while s.replaying() {
+        s.frame(Duration::from_millis(18));
+    }
+    assert_eq!(rows(&s.trace()[..script.ticks.len()]), headless);
+    let hurt = s.trace().iter().position(|r| r.health < 100);
+    assert_eq!(hurt, Some(19 + 8));
+}
+
+#[test]
+fn the_music_stays_paused_after_help_over_a_pause_until_the_pause_key() {
+    let mut audio = AudioBridge::silent(AudioSettings::default());
+    let mut s = Session::new(sim_with(FuseClock::Original));
+    let mut p = Pauses::default();
+    let since = Duration::ZERO;
+    s.frame(Duration::from_millis(18));
+    // The pause key.
+    p.user = true;
+    assert_eq!(
+        p.apply(Some(&mut s), Some(&mut audio), since),
+        Change::Paused
+    );
+    assert!(audio.is_paused());
+    // F1 over the pause: help shows and the pause key's flag stays set
+    // (the window turns the pause into the flag).
+    p.follow(&Effect::PauseGame, Some(&mut s), Some(&mut audio), since);
+    p.user = false;
+    p.flag = true;
+    // Help closes: play runs, the music stays paused.
+    assert_eq!(
+        p.follow(&Effect::ResumeGame, Some(&mut s), Some(&mut audio), since),
+        Change::Resumed
+    );
+    assert!(!s.is_paused());
+    assert!(audio.is_paused(), "the music waits for the pause key");
+    assert_eq!(s.frame(Duration::from_millis(18)).ticks, 1, "play runs");
+    // Another pass of the sounds changes nothing while the flag is set.
+    p.apply(Some(&mut s), Some(&mut audio), since);
+    assert!(audio.is_paused());
+    // The pause key clears the flag: a pause of no time, and the music
+    // carries on.
+    p.flag = false;
+    p.user = true;
+    p.apply(Some(&mut s), Some(&mut audio), since);
+    p.user = false;
+    assert_eq!(
+        p.apply(Some(&mut s), Some(&mut audio), since),
+        Change::Resumed
+    );
+    assert!(!audio.is_paused());
+    // Without a level in play the flag pauses nothing.
+    p.flag = true;
+    p.apply(None, Some(&mut audio), since);
+    assert!(!audio.is_paused());
 }
 
 // ------------------------------------------------------ the stand window

@@ -158,6 +158,12 @@ pub enum GameplaySetting {
     /// The mid-air hit jump fix: no second jump after a hit that ends in
     /// mid-air.
     MidAirHitFix,
+    /// How keys held or pressed across a pause or a screen count when play
+    /// goes on: as in the original, or every key released.
+    PauseInput,
+    /// Whether the time the help screen is up reaches a lit dynamite fuse:
+    /// as in the original, or frozen like every other screen.
+    FuseClock,
 }
 
 /// A feature this game does not have.

@@ -16,8 +16,11 @@
 //! screen. When that help screen closes play runs again although the pause
 //! is still set: Escape stays blocked (and the sign is gone) until the
 //! next press of the Pause key, which ends the pause as any other resume.
+//! The music stays paused all that time (the game's sounds pause with it,
+//! see [`Pauses::flag`]) and carries on where it was at that press.
 //! A gamepad's Start opens the in-game menu, as the original joystick's
-//! menu button does (see [`game_key`]).
+//! menu button does; without menus (watching a script, a benchmark) it
+//! pauses and goes on as the Pause key does (see [`game_key`]).
 //!
 //! Each resume runs exactly one tick at once, then the game goes on in
 //! real time from there (see [`Session::resume`]), so pausing and
@@ -48,8 +51,9 @@ use crate::keymap::Command;
 use crate::session::Session;
 
 /// How keys held or pressed across a pause or a screen count when play
-/// goes on: a behaviour switch, set by `pause_input` in the settings file
-/// or `--pause-input` on the command line and kept in recordings.
+/// goes on: a behaviour switch, set by `pause_input` in the settings file,
+/// `--pause-input` on the command line or the Gameplay page, and kept in
+/// recordings.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PauseInput {
     /// As in the original: no key is released. After the pause key, a key
@@ -95,8 +99,9 @@ pub struct Pauses {
     /// The window is in the background (a benchmark never sets this).
     pub background: bool,
     /// The pause key's flag left set by a help screen opened while paused:
-    /// play runs, but Escape stays blocked until the pause key is pressed
-    /// again. It pauses nothing.
+    /// play runs, but Escape stays blocked and the music stays paused until
+    /// the pause key is pressed again. It does not stop play; for the
+    /// sounds it counts as a pause (see [`Pauses::apply`]).
     pub flag: bool,
 }
 
@@ -139,7 +144,9 @@ impl Pauses {
     /// the level in play afterwards, if any. It follows `e` with the pauses
     /// (see [`Pauses::effect`]), ends the loops of a level left, applies the
     /// pauses when play starts, stops or pauses, restarts the music when
-    /// the in-game menu closes, and plays the flow's sounds. The caller sets
+    /// the in-game menu closes (unless the pause key's flag is still set:
+    /// the music then waits for the pause key, see [`Pauses::flag`]), and
+    /// plays the flow's sounds. The caller sets
     /// the background pause first and restarts its frame clock on
     /// [`Change::Resumed`].
     pub fn follow(
@@ -162,7 +169,9 @@ impl Pauses {
             }
             Effect::ResumeGame => {
                 let change = self.apply(session, audio.as_deref_mut(), since_frame);
-                if let Some(a) = audio {
+                if let Some(a) = audio
+                    && !self.flag
+                {
                     a.restart_music();
                 }
                 change
@@ -188,7 +197,9 @@ impl Pauses {
     /// releasing held buttons at the right moment when the session's
     /// [`PauseInput`] is [`PauseInput::ReleaseAll`] (with the original
     /// default nothing is released). The game's sounds pause only while a
-    /// level is in play.
+    /// level is in play, and stay paused while the pause key's flag is set
+    /// (the music waits for the pause key; the resume that clears the flag
+    /// lets it carry on where it was).
     pub fn apply(
         &self,
         session: Option<&mut Session>,
@@ -212,7 +223,7 @@ impl Pauses {
             }
         }
         if let Some(a) = audio {
-            if paused && in_play {
+            if (paused || self.flag) && in_play {
                 a.pause();
             } else {
                 a.resume();
@@ -267,7 +278,8 @@ pub struct KeyContext {
 ///   goes on while play shows (also without menus); with the flag left by
 ///   help it clears it. Elsewhere it does nothing.
 /// - A gamepad's Start (bound to `pause`) opens the in-game menu as Escape
-///   does, as the original joystick's menu button.
+///   does, as the original joystick's menu button. Without menus there is
+///   no menu to open, so it pauses or goes on as the pause key does.
 /// - F1 (`help`) opens the help screen in play, paused or not, and from
 ///   the in-game menu.
 pub fn game_key(cmd: Command, ctx: KeyContext) -> GameKey {
@@ -275,7 +287,7 @@ pub fn game_key(cmd: Command, ctx: KeyContext) -> GameKey {
     let Some(screen) = ctx.screen else {
         return match cmd {
             Command::Quit => GameKey::Quit,
-            Command::Pause if !ctx.from_pad && !ctx.modifiers => GameKey::Pause,
+            Command::Pause if ctx.from_pad || !ctx.modifiers => GameKey::Pause,
             _ => GameKey::Nothing,
         };
     };

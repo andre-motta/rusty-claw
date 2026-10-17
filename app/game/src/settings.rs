@@ -68,9 +68,9 @@
 //! the random seed its script's header names (`# tuning default|original`,
 //! `# seed N`; see [`Settings::follow_header`]).
 //!
-//! Two more behaviour switches, set in the config file and on the command
-//! line (not yet on the Gameplay page), keep the original's pause and
-//! screens by default (see [`crate::pause`]):
+//! Two more behaviour switches, set in the config file, on the command
+//! line and on the Gameplay page, keep the original's pause and screens by
+//! default (see [`crate::pause`]):
 //! `pause_input` (`--pause-input`) is how keys count across the pause key
 //! and the screens over play (`original`, or `release_all` to release
 //! every key when play stops), and `fuse_clock` (`--fuse-clock`) whether

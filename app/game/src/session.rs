@@ -741,14 +741,18 @@ impl Session {
     }
 
     /// Stops the clock: frames run no ticks until [`Session::resume`]. A
-    /// tick a resume left for the next frame runs first, so every resume
-    /// runs its tick however soon play stops again.
+    /// tick a resume left for the next frame runs first, as a frame of no
+    /// time runs it, so every resume runs its tick however soon play stops
+    /// again. A replayed pause or menu due at that boundary, or still
+    /// holding play, comes first as in any frame: the tick then waits for
+    /// it, so a replay watched with pauses plays the same game as one
+    /// played without them.
     pub fn pause(&mut self) {
         if self.paused {
             return;
         }
         if self.stepping {
-            self.run(0);
+            self.frame(Duration::ZERO);
         }
         self.driver.step_mut().pause();
         self.paused = true;

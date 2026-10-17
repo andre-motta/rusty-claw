@@ -51,12 +51,14 @@
 //! The pause key (see [`crate::pause`]) pauses play without a screen: the
 //! flow stays in play, and the window holds the level.
 //!
-//! The Gameplay page under Options holds the mid-air hit jump fix (off by
-//! default, as in the original). A change there is saved at once and
+//! The Gameplay page under Options holds the behaviour switches: the
+//! mid-air hit jump fix (off by default, as in the original), how keys
+//! count across a pause or a screen (`pause_input`) and whether help
+//! screen time reaches a lit dynamite fuse (`fuse_clock`), both at the
+//! original's behaviour by default (see [`crate::settings`]). Choosing an
+//! entry moves it to its next value. A change there is saved at once and
 //! applies to the next game or level started; the level in play keeps the
-//! behaviour it started with. The pause and screen switches
-//! (`pause_input`, `fuse_clock`) are set in the config file and on the
-//! command line (see [`crate::settings`]).
+//! behaviour it started with.
 //!
 //! Screens fade out over [`FADE_MS`] before the next one, which fades in
 //! over the same time (with the menu's roll-up and unroll sounds).
@@ -65,6 +67,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use claw_frame::{AudioCue, GameEvent, SoundChannel, SoundCue};
 use claw_sim::logic::checkpoint::MESSAGE_SAVED;
+use claw_sim::tuning::FuseClock;
 use claw_sim::{Sim, StartState};
 use claw_ui::menu::command::{
     GameplaySetting, MenuCommand, MenuKind, Page, Slider, Toggle, Unavailable, VideoSetting,
@@ -76,6 +79,7 @@ use winit::keyboard::KeyCode;
 
 use crate::input::{CaptureOutcome, Captured};
 use crate::keymap::{Action, Keymap, PadMap, key_name};
+use crate::pause::PauseInput;
 use crate::saves::{SaveRecord, SaveStore, retail_level_name};
 use crate::settings::{LevelChoice, PAD_DEAD_ZONE_RANGE, Scale, Settings, WINDOW_SIZES};
 
@@ -133,7 +137,11 @@ pub const VIDEO_SETTINGS: [VideoSetting; 8] = [
 ];
 
 /// The Gameplay page's settings in order.
-pub const GAMEPLAY_SETTINGS: [GameplaySetting; 1] = [GameplaySetting::MidAirHitFix];
+pub const GAMEPLAY_SETTINGS: [GameplaySetting; 3] = [
+    GameplaySetting::MidAirHitFix,
+    GameplaySetting::PauseInput,
+    GameplaySetting::FuseClock,
+];
 
 /// What shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -396,14 +404,28 @@ pub fn video_text(v: VideoSetting, settings: &Settings) -> String {
 }
 
 /// The Gameplay page's text of `g` for `settings`. The menu font has no
-/// hyphen, so "mid-air" is written as two words.
+/// hyphen or underscore, so "mid-air" is written as two words and the
+/// settings file's names with spaces (`release_all` is RELEASE ALL).
 pub fn gameplay_text(g: GameplaySetting, settings: &Settings) -> String {
     let on = |b: bool| if b { "ON" } else { "OFF" };
+    let name = |n: &str| n.replace('_', " ").to_ascii_uppercase();
     match g {
         GameplaySetting::MidAirHitFix => {
             format!("MID AIR HIT JUMP FIX {}", on(settings.mid_air_hit_fix))
         }
+        GameplaySetting::PauseInput => {
+            format!("PAUSE INPUT {}", name(settings.pause_input.name()))
+        }
+        GameplaySetting::FuseClock => {
+            format!("FUSE CLOCK {}", name(settings.fuse_clock.name()))
+        }
     }
+}
+
+/// The value after `v` in `all`, back to the first after the last.
+fn next_of<T: Copy + PartialEq>(all: &[T], v: T) -> T {
+    let i = all.iter().position(|&x| x == v).map_or(0, |i| i + 1);
+    all[i % all.len()]
 }
 
 /// The game flow.
@@ -1385,6 +1407,14 @@ impl Flow {
             GameplaySetting::MidAirHitFix => {
                 self.settings.mid_air_hit_fix = !self.settings.mid_air_hit_fix;
                 "mid_air_hit_fix"
+            }
+            GameplaySetting::PauseInput => {
+                self.settings.pause_input = next_of(&PauseInput::ALL, self.settings.pause_input);
+                "pause_input"
+            }
+            GameplaySetting::FuseClock => {
+                self.settings.fuse_clock = next_of(&FuseClock::ALL, self.settings.fuse_clock);
+                "fuse_clock"
             }
         };
         self.persist(&[key]);
