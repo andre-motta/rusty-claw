@@ -169,6 +169,10 @@ pub struct SpecialData {
     pub thaw: bool,
     /// The freeze is a boss fight's: it ends when the fight starts.
     pub boss_freeze: bool,
+    /// A warp moved Claw in this tick's collision pass. The simulation
+    /// clears it at the end of that pass, when it wakes and sets up the
+    /// objects around his new place (see [`crate::Sim::step`]).
+    pub warped: bool,
 }
 
 /// Forgets which special state was entered; every cancel of the attack

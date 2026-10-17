@@ -6,7 +6,7 @@
 mod common;
 
 use claw_sim::claw_frame::output::BossMeter;
-use claw_sim::claw_frame::{AudioCue, GameEvent, MusicTrack, SoundChannel};
+use claw_sim::claw_frame::{AudioCue, Buttons, GameEvent, MusicTrack, SoundChannel};
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::boss_stage::{self, stage_state};
 use claw_sim::logic::world_boss::fight;
@@ -591,4 +591,94 @@ fn the_door_is_a_warp_that_stays() {
     assert!(taken.is_some(), "the door moved Claw");
     assert_eq!(sim.player().unwrap().y, y);
     assert!(sim.objects().get(id).is_some(), "the door stays");
+}
+
+/// Where the door leads in [`door_arena`]: 4 px right of a stager placed
+/// far from the start, as on the second level.
+const FAR_STAGER_X: i32 = 8000;
+
+/// The flat level with a door at x 1150 leading next to a stager (depth
+/// 8000) at [`FAR_STAGER_X`], too far from the start to be awake; Claw
+/// starts at x 1000.
+fn door_arena() -> SimLevel {
+    let y = floor_y();
+    let mut level = flat_level();
+    level.start = (1000, y);
+    let mut door = ObjectSpec::at(boss_stage::WARP, 1150, y, 0);
+    door.record[55] = FAR_STAGER_X + 4;
+    door.record[56] = y;
+    level.objects.push(door);
+    level.objects.push(ObjectSpec::at(
+        boss_stage::STAGER,
+        FAR_STAGER_X,
+        y + 47,
+        8000,
+    ));
+    level
+}
+
+/// Right held, with Jump pressed too.
+fn jump_right() -> TickInput {
+    TickInput {
+        held: Buttons(RIGHT | JUMP),
+        pressed: Buttons(JUMP),
+    }
+}
+
+#[test]
+fn the_door_wakes_the_stager_for_claws_first_tick_at_the_target() {
+    let mut sim = pressing_sim(door_arena(), SimConfig::default());
+    idle(&mut sim, 5);
+    let stager = find(&sim, boss_stage::STAGER).unwrap();
+    assert_eq!(
+        sim.objects().get(stager).unwrap().state,
+        stage_state::INIT,
+        "asleep while Claw is far"
+    );
+    let mut door_tick = None;
+    for _ in 0..60 {
+        sim.step(hold(RIGHT));
+        if sim.player().unwrap().x >= FAR_STAGER_X {
+            door_tick = Some(sim.tick());
+            break;
+        }
+        assert!(!boss_music(sim.last_audio()));
+    }
+    assert!(door_tick.is_some(), "the door moved Claw");
+    // The door's set-up ends its tick: the camera is on Claw, and the
+    // stager woke, asked for the boss music and is armed.
+    let o = sim.player().unwrap();
+    assert_eq!(sim.camera().current, (o.x, o.y));
+    assert!(boss_music(sim.last_audio()));
+    assert_eq!(sim.objects().get(stager).unwrap().state, stage_state::ARMED);
+    let at_door = sim.clone();
+
+    // Claw's first tick at the target: walking in the box, the trigger
+    // fires.
+    sim.step(hold(RIGHT));
+    let l = look(&sim, stager);
+    assert_eq!(l.physics, ptype::WALK);
+    assert!(l.checkpoint.is_some());
+    assert!(!boss_music(&l.audio));
+
+    // Jump pressed on that tick: the introduction never runs.
+    let mut s = at_door.clone();
+    s.step(jump_right());
+    assert_eq!(s.player().unwrap().physics_type, ptype::JUMP);
+    for _ in 0..80 {
+        let l = look(&s, stager);
+        assert_eq!((l.checkpoint, l.flag), (None, fight::NONE));
+        assert_ne!(l.claw_state, state::FREEZE);
+        s.step(hold(RIGHT));
+    }
+    assert!(s.player().unwrap().x > FAR_STAGER_X + 38);
+    assert_eq!(s.objects().get(stager).unwrap().state, stage_state::ARMED);
+
+    // Pressed on the next tick: too late, the introduction runs.
+    let mut s = at_door.clone();
+    s.step(hold(RIGHT));
+    assert!(look(&s, stager).checkpoint.is_some());
+    s.step(jump_right());
+    assert_eq!(s.boss().fight(), fight::STAGING);
+    assert_eq!(s.player().unwrap().state, state::FREEZE);
 }

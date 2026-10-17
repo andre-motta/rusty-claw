@@ -8,6 +8,7 @@ mod common;
 use std::path::PathBuf;
 
 use claw_assets::{Install, LevelData, LevelSource};
+use claw_sim::claw_frame::Buttons;
 use claw_sim::claw_frame::output::BossMeter;
 use claw_sim::claw_frame::{AudioCue, GameEvent, MusicTrack};
 use claw_sim::logic::GameLogic;
@@ -148,59 +149,70 @@ fn install_level2_stager_box_reaches_31_left_38_right() {
     }
 }
 
+/// The door's tick: Claw walks right from [`START`] (15 empty ticks, then
+/// Right held, as the reference route does) until the door moves him; the
+/// sim is left at the end of that tick.
+fn walk_to_the_door(sim: &mut Sim) -> u64 {
+    settle_at(sim, START.0, START.1);
+    idle(sim, 15);
+    for k in 15..200u64 {
+        sim.step(hold(RIGHT));
+        let o = sim.player().unwrap();
+        if o.x > DOOR.0 + 1000 {
+            assert_eq!((o.x, o.y), TARGET, "the door's target");
+            return k;
+        }
+    }
+    panic!("the door never moved Claw");
+}
+
+fn boss_music(sim: &Sim) -> bool {
+    sim.last_audio().iter().any(|c| {
+        matches!(
+            c,
+            AudioCue::Music {
+                track: MusicTrack::Boss,
+                ..
+            }
+        )
+    })
+}
+
+/// Right held, with Jump pressed too.
+fn jump_right() -> TickInput {
+    TickInput {
+        held: Buttons(RIGHT | JUMP),
+        pressed: Buttons(JUMP),
+    }
+}
+
 #[test]
 fn install_level2_walking_through_the_door_runs_the_introduction() {
     let Some(level) = level2() else { return };
     let mut sim = Sim::new(level, SimConfig::default());
-    settle_at(&mut sim, START.0, START.1);
-    // The reference route: 15 empty ticks, then Right held.
-    idle(&mut sim, 15);
-    let mut warp_tick = None;
-    let mut music_tick = None;
-    let mut trigger = None;
-    let mut last = sim.player().map(|o| (o.x, o.y, o.hit_rect));
-    for k in 15..200u64 {
-        sim.step(hold(RIGHT));
-        let o = sim.player().unwrap();
-        if warp_tick.is_none() && o.x > DOOR.0 + 1000 {
-            let d = sim.objects().get(find(&sim, boss_stage::WARP)).unwrap();
-            println!(
-                "door frame {} box {:?}; Claw before the move at {:?}",
-                d.frame, d.attack_rect, last
-            );
-            warp_tick = Some(k);
-            assert_eq!(o.y, TARGET.1);
-        }
-        let boss_music = sim.last_audio().iter().any(|c| {
-            matches!(
-                c,
-                AudioCue::Music {
-                    track: MusicTrack::Boss,
-                    ..
-                }
-            )
-        });
-        if boss_music && music_tick.is_none() {
-            music_tick = Some(k);
-        }
-        let now = Some((o.x, o.y, o.hit_rect));
-        if let Some(p) = checkpoint_in(sim.last_events()) {
-            assert_eq!(o.physics_type, ptype::WALK);
-            assert_eq!(p, (o.x, o.y));
-            trigger = Some((k, p));
-            break;
-        }
-        last = now;
-    }
-    let warp = warp_tick.expect("the door moved Claw");
-    let music = music_tick.expect("the boss music");
-    let (n, at) = trigger.expect("the trigger fired");
+    let door = walk_to_the_door(&mut sim);
+    // The door's own set-up, which takes no game time, ends its tick: the
+    // stager wakes there, switches to the boss music and is armed for
+    // Claw's first tick at the target.
+    assert!(boss_music(&sim), "the boss music with the door's move");
+    let stager = find(&sim, boss_stage::STAGER);
+    assert_eq!(sim.objects().get(stager).unwrap().state, stage_state::ARMED);
+    assert_eq!(sim.camera().current, TARGET, "the camera jumped to Claw");
+    // His first tick there: still walking, inside the box, and the trigger
+    // fires in its collision pass.
+    sim.step(hold(RIGHT));
+    let o = sim.player().unwrap();
+    let at = (o.x, o.y);
     println!(
-        "door at route tick {warp}, boss music at {music}, trigger at {n} {at:?} \
-         (the original game: the door on tick 40, the arena and the trigger on tick 41)"
+        "door at route tick {door}, the trigger at {} {at:?} (the original game: the door on \
+         step 40, the arena and the trigger on step 41 at (23650, 3947))",
+        door + 1
     );
-    assert!(music <= n);
-    assert!((STAGER.0 - 31..=STAGER.0 + 38).contains(&at.0));
+    assert_eq!(o.physics_type, ptype::WALK);
+    assert!((TARGET.0 + 1..=TARGET.0 + 9).contains(&at.0), "{at:?}");
+    assert_eq!(at.1, TARGET.1);
+    assert_eq!(checkpoint_in(sim.last_events()), Some(at));
+    assert!(!boss_music(&sim), "asked for once");
     assert_eq!(sim.boss().checkpoint_time(), 120_000);
     assert_eq!(sim.claw().checkpoint, Some(at));
     // The next tick: the flag, the freeze and the camera on the boss's
@@ -227,4 +239,52 @@ fn install_level2_walking_through_the_door_runs_the_introduction() {
     let on = on.expect("the fight started");
     println!("flag 2 {} ticks after the freeze", on + 1);
     assert_eq!(sim.player().unwrap().state, state::STAND);
+}
+
+#[test]
+fn install_level2_jump_on_the_first_arena_tick_skips_the_introduction() {
+    let Some(level) = level2() else { return };
+    let mut at_door = Sim::new(level, SimConfig::default());
+    let door = walk_to_the_door(&mut at_door);
+
+    // Jump pressed on the first tick at the target: Claw leaves the box in
+    // the air, and nothing of the introduction runs.
+    let mut sim = at_door.clone();
+    sim.step(jump_right());
+    assert_eq!(sim.player().unwrap().physics_type, ptype::JUMP);
+    let mut landed = None;
+    for k in 0..300u64 {
+        assert_eq!(
+            checkpoint_in(sim.last_events()),
+            None,
+            "tick {}",
+            door + 1 + k
+        );
+        if landed.is_none() && sim.player().unwrap().physics_type == ptype::WALK {
+            landed = Some(sim.player().unwrap().x);
+        }
+        sim.step(hold(RIGHT));
+    }
+    let landed = landed.expect("Claw landed");
+    println!("skip: landed walking at x {landed} (the original game: 23790 at c18)");
+    assert!(landed > STAGER.0 + 38, "out of the box");
+    assert_eq!(sim.boss().fight(), fight::NONE);
+    assert_ne!(sim.player().unwrap().state, state::FREEZE);
+    assert_eq!(sim.hud().boss_meter, None);
+    assert_eq!(sim.boss().checkpoint_time(), 0);
+    let stager = find(&sim, boss_stage::STAGER);
+    assert_eq!(
+        sim.objects().get(stager).unwrap().state,
+        stage_state::ARMED,
+        "the trigger stays armed"
+    );
+
+    // Pressed one tick later it is too late: the trigger fired on the first
+    // tick, and the introduction runs.
+    let mut sim = at_door.clone();
+    sim.step(hold(RIGHT));
+    assert!(checkpoint_in(sim.last_events()).is_some());
+    sim.step(jump_right());
+    assert_eq!(sim.boss().fight(), fight::STAGING);
+    assert_eq!(sim.player().unwrap().state, state::FREEZE);
 }

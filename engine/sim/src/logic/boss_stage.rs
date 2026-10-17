@@ -10,14 +10,18 @@
 //! with its picture's box grown by 6 px left and right, 10 px up and 2 px
 //! down. Claw's side does the move (see [`crate::player::hit`]): to the
 //! record's (speed x, speed y), a warp taken in a jump turning into a fall.
-//! A placed BossWarp at depth 0 is drawn at depth 1000.
+//! The move ends with the warp's own set-up, in no game time (see
+//! [`crate::Sim::step`]): the camera jumps to Claw and the objects around
+//! him wake and run their first call, so the stager next to the target is
+//! armed before Claw's first tick there. A placed BossWarp at depth 0 is
+//! drawn at depth 1000.
 //!
 //! # BossStager
 //!
 //! The trigger next to where the warp drops Claw, and the introduction it
 //! plays. On its first call, which comes when it wakes (as soon as Claw is
-//! near), it switches the music to the level's boss track, whatever the
-//! trigger does later. It is hidden, nothing acts on it, and it touches
+//! near; through the door, in the door's set-up), it switches the music to
+//! the level's boss track, whatever the trigger does later. It is hidden, nothing acts on it, and it touches
 //! Claw with the box [`TRIGGER_BOX`] around its position: with Claw's
 //! standing box facing right, Claw's x within 31 px left and 38 px right of
 //! it and his y within 68 px above and 61 px below.
@@ -29,7 +33,8 @@
 //! [`CHECKPOINT_BONUS_MS`] to the checkpoint time, and fires once. This is
 //! the only check on Claw: a jump pressed on his first step in the room
 //! carries him out of the box in the air, so the introduction never runs
-//! (the intro skip). The fight then has no freeze, no health bar and no
+//! (the intro skip). Pressed one tick later it is too late: the trigger
+//! fired on that first tick. The fight then has no freeze, no health bar and no
 //! checkpoint, and the flag stays 0 for the rest of the level.
 //!
 //! The introduction, in the stager's later calls (each step's delay is the

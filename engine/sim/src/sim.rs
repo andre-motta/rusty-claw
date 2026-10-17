@@ -608,6 +608,14 @@ impl Sim {
     }
 
     /// Advances one tick with `input` and returns the snapshot.
+    ///
+    /// When a warp moved Claw in the tick's collision pass, the tick ends
+    /// with the warp's own set-up, which takes no game time: the camera
+    /// jumps to him when he is out of its reach ([`Camera::settle`]), the
+    /// objects around his new place wake, and those that never ran run
+    /// their first logic call in list order, as the level's objects do
+    /// while it loads. A trigger or boss waiting there is so ready for
+    /// Claw's first tick at the target.
     pub fn step(&mut self, input: TickInput) -> SimSnapshot {
         self.input = input;
         // A latched key stays latched until a tick finds it up.
@@ -628,6 +636,9 @@ impl Sim {
         self.activation.enter(&mut self.objects, c);
         self.update_pass();
         self.collision_pass();
+        if std::mem::take(&mut self.claw.special.warped) {
+            self.settle_after_warp();
+        }
         let c = self.centres();
         {
             let (mut runner, objects, activation) = self.parts();
@@ -653,6 +664,29 @@ impl Sim {
             }
         }
         snapshot
+    }
+
+    /// The warp's set-up after it moved Claw (see [`Sim::step`]).
+    fn settle_after_warp(&mut self) {
+        let followed = self
+            .player
+            .and_then(|p| self.objects.get(p))
+            .map(|o| Followed {
+                x: o.x,
+                y: o.y,
+                state: o.state,
+                physics_type: o.physics_type,
+                look_down_time: self.claw.look_down_time,
+            });
+        self.camera.settle(
+            followed.as_ref(),
+            self.camera_override,
+            &self.cfg.tuning.camera,
+        );
+        self.camera_point = self.camera.current;
+        let c = self.centres();
+        self.activation.enter(&mut self.objects, c);
+        self.set_up_pass();
     }
 
     /// Gives up Claw's life now, before any logic of the tick (see
