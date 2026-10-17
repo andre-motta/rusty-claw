@@ -4,6 +4,12 @@
 //! lifts the body with the lift key, carries it and throws it. The body
 //! hurts nobody, dies again as a thrown object that Claw can no longer
 //! lift, and is removed without dropping its loot a second time.
+//!
+//! That the body hurts nobody is checked with a live officer kept in its
+//! path for a few ticks of its flight, in a copy of the game: it takes no
+//! hit from the body. A control copy, in which the body is made able to
+//! hurt, shows the same officer is struck, so the check is not passing
+//! for want of anyone in reach.
 
 use std::collections::BTreeSet;
 
@@ -12,8 +18,9 @@ use claw_acceptance::play::*;
 use claw_game::load_level;
 use claw_game::settings::LevelChoice;
 use claw_sim::container::CollisionEvent;
+use claw_sim::logic;
 use claw_sim::logic::enemy::{self, DeathKind, EnemyState};
-use claw_sim::object::{ObjectId, types};
+use claw_sim::object::{ObjectId, flags, types};
 use claw_sim::player::state;
 use claw_sim::{ObjectData, Sim, SimConfig};
 
@@ -32,6 +39,58 @@ fn loot(p: &Player) -> BTreeSet<ObjectId> {
 
 fn enemy_state(p: &Player, id: ObjectId) -> Option<EnemyState> {
     p.obj(id).and_then(|o| EnemyState::from_id(o.state))
+}
+
+/// Ticks the witness is kept in the flying body's path.
+const WITNESS_TICKS: usize = 6;
+
+/// In a copy of `base`, puts a live officer where the flying `body` is and
+/// keeps it there for [`WITNESS_TICKS`] ticks. With `harmless` false the
+/// body is first made able to hurt (the control). Returns the ticks in
+/// which the officer could be hit by a thrown object and its box met the
+/// body's, and the hits the body made on it.
+fn witness(base: &Player, body: ObjectId, harmless: bool) -> (usize, usize) {
+    let mut p = base.clone();
+    let (x, y) = p.obj(body).map(|o| (o.x, o.y)).expect("the body");
+    let w = p.sim.spawn(logic::new_object("Officer", x, y, 4000));
+    if !harmless {
+        p.sim.with_world(|wd| {
+            wd.objects.get_mut(body).expect("the body").flags &= !flags::HARMLESS;
+        });
+    }
+    let (mut in_reach, mut hits) = (0, 0);
+    for _ in 0..WITNESS_TICKS {
+        let Some((x, y)) = p.obj(body).map(|o| (o.x, o.y)) else {
+            break;
+        };
+        p.sim.with_world(|wd| {
+            if let Some(o) = wd.objects.get_mut(w) {
+                (o.x, o.y) = (x, y);
+            }
+        });
+        p.step(0);
+        hits += p
+            .sim
+            .collision_events()
+            .iter()
+            .filter(|e| {
+                matches!(**e, CollisionEvent::Hit { attacker, victim }
+                    if attacker == body && victim == w)
+            })
+            .count();
+        let (Some(b), Some(v)) = (p.obj(body), p.obj(w)) else {
+            break;
+        };
+        let meet = b.attack_rect.is_set()
+            && v.hit_rect.is_set()
+            && b.attack_rect
+                .translate(b.x, b.y)
+                .overlaps(&v.hit_rect.translate(v.x, v.y));
+        if meet && v.hit_type_flags & types::THROWN != 0 {
+            in_reach += 1;
+        }
+    }
+    (in_reach, hits)
 }
 
 /// Kills the officer placed at `placed` beside Claw, lifts, carries and
@@ -86,6 +145,7 @@ fn lift_and_throw(base: &Player, placed: (i32, i32, i32)) -> bool {
     let mut new_loot = 0;
     let mut struck = Vec::new();
     let mut thrown_type = false;
+    let mut witnessed = false;
     for _ in 0..400 {
         p.step(0);
         for l in loot(&p) {
@@ -100,6 +160,15 @@ fn lift_and_throw(base: &Player, placed: (i32, i32, i32)) -> bool {
             seen.push(s);
         }
         thrown_type |= p.obj(id).is_some_and(|o| o.type_flags == types::THROWN);
+        if s == EnemyState::Thrown && !witnessed {
+            witnessed = true;
+            let (in_reach, hits) = witness(&p, id, true);
+            assert!(in_reach > 0, "{placed:?}: the witness was in reach");
+            assert_eq!(hits, 0, "{placed:?}: the body struck the witness");
+            let (in_reach, hits) = witness(&p, id, false);
+            assert!(in_reach > 0, "{placed:?}: control: in reach");
+            assert!(hits > 0, "{placed:?}: control: a body able to hurt strikes");
+        }
         if s == EnemyState::Dead {
             let o = p.obj(id).unwrap();
             assert_eq!(o.type_flags, types::THROWN, "{placed:?}: not a target");
@@ -112,6 +181,7 @@ fn lift_and_throw(base: &Player, placed: (i32, i32, i32)) -> bool {
     }
     println!("officer body at {placed:?}: {seen:?}");
     assert!(seen.contains(&EnemyState::Thrown), "{placed:?}: {seen:?}");
+    assert!(witnessed, "{placed:?}: the flight was checked");
     assert!(thrown_type, "{placed:?}: flew as a thrown object");
     assert!(p.obj(id).is_none(), "{placed:?}: the body is removed");
     assert!(struck.is_empty(), "{placed:?}: the body struck {struck:?}");

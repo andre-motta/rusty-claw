@@ -625,6 +625,63 @@ fn keg_level(explode_anim: bool) -> SimLevel {
     l
 }
 
+/// The keg of a level with one keg placed at (x, y) on the given rows
+/// (64 px tiles), after its first logic call.
+fn keg_placed_on(rows: &[&str], x: i32, y: i32, boxes: &[(i32, Rect)]) -> Object {
+    let mut l = SimLevel::synthetic(TileMap::from_ascii(64, rows), (100, 100));
+    l.objects = vec![spec("PowderKeg", "LEVEL_POWDERKEG", x, y)];
+    if !boxes.is_empty() {
+        register(&mut l, keg::IMAGE_SET, (1, 1), boxes);
+    }
+    let mut sim = Sim::new(l, SimConfig::default());
+    let k = find(&sim, "PowderKeg")[0];
+    assert_eq!(obj(&sim, k).state, keg::state::INIT);
+    sim.with_world(|w| logic::tick(w, k));
+    obj(&sim, k).clone()
+}
+
+#[test]
+fn kegs_rest_on_the_floor_at_spawn() {
+    let rows = [".....", ".....", ".....", "#####"];
+    let feet = keg::move_box(keg::KEG_BOX).bottom;
+    assert_eq!(feet, keg::KEG_BOX.bottom - keg::FEET_ABOVE_BOX);
+    // Placed in the air, it comes straight down onto the floor (y 192),
+    // standing.
+    for y in [40, 100, 131] {
+        let o = keg_placed_on(&rows, 160, y, &[]);
+        assert_eq!((o.x, o.y + feet), (160, 191), "placed at y {y}");
+        assert_eq!(o.physics_type, ptype::STAND);
+        assert_eq!(o.move_rect, keg::move_box(keg::KEG_BOX));
+        assert_eq!(o.hit_rect, keg::KEG_BOX);
+    }
+    // Placed with its feet up to 32 px inside the floor, it rises onto it.
+    for sunk in [1, 20, 32] {
+        let o = keg_placed_on(&rows, 160, 131 + sunk, &[]);
+        assert_eq!(o.y + feet, 191, "{sunk} px into the floor");
+    }
+    // Deeper than that, its raised feet are still in the floor, which is
+    // then the first floor below them: it ends 33 px up.
+    let o = keg_placed_on(&rows, 160, 131 + 40, &[]);
+    assert_eq!(o.y, 131 + 40 - 33);
+    // A one-way floor carries it too.
+    let rows = [".....", "..=..", ".....", "#####"];
+    let o = keg_placed_on(&rows, 160, 20, &[]);
+    assert_eq!(o.y + feet, 63, "on the one-way floor");
+    // With no floor below, it is left 32 px up.
+    let o = keg_placed_on(&[".....", "....."], 160, 20, &[]);
+    assert_eq!(o.y, -12);
+}
+
+#[test]
+fn a_keg_stands_on_the_box_of_the_levels_own_frame() {
+    let rows = [".....", ".....", ".....", "#####"];
+    let own = Rect::new(-30, 10, 29, 79);
+    let o = keg_placed_on(&rows, 160, 40, &[(1, own)]);
+    assert_eq!(o.hit_rect, own);
+    assert_eq!(o.move_rect, keg::move_box(own));
+    assert_eq!(o.y + own.bottom - keg::FEET_ABOVE_BOX, 191);
+}
+
 fn blast_object(x: i32, y: i32) -> Object {
     let mut o = Object::new(0, x, y, 5000, "Explosion".into(), LogicKind::Inert);
     o.flags = flags::WORLD;
@@ -660,7 +717,9 @@ fn a_keg_hit_by_a_blast_requests_exactly_one_explosion() {
         ticks += 1;
         assert!(ticks < 100);
     }
-    assert_eq!(log.all(), vec![(1205, 905, 20, 50)]);
+    // Placed 10 px above the floor, the keg rests on it (y 899): the blast
+    // is centred 5 px right of and 15 px below that.
+    assert_eq!(log.all(), vec![(1205, 914, 20, 50)]);
 }
 
 #[test]
@@ -774,7 +833,11 @@ fn a_lifted_keg_follows_claw_and_explodes_where_it_lands() {
         start_x,
         o.x
     );
-    assert_eq!(o.y + keg::KEG_BOX.bottom, FLOOR - 1, "landed on the floor");
+    assert_eq!(
+        o.y + keg::move_box(keg::KEG_BOX).bottom,
+        FLOOR - 1,
+        "landed on the floor"
+    );
     log.step(&mut sim, 40, k);
     assert_eq!(log.all().len(), 1);
     assert!(sim.objects().get(k).is_none());

@@ -740,17 +740,27 @@ fn pegs_stop(p: &mut Player, level: &SimLevel, n: &mut Notes) -> String {
     hops.push((Landing::Ground, last.0 + 150, prev_y - right));
     // A small beam search over when to jump: a few landings that worked
     // are kept at each hop, so a landing too late in a peg's cycle for the
-    // next hop is left for another.
+    // next hop is left for another. The landings kept are at least
+    // `SPREAD` ticks of waiting apart, so they meet the next peg at
+    // different points of its cycle (since kegs rest on the floor at
+    // spawn, the route reaches the pegs at a point where the first three
+    // landings in a row on one peg all meet the next one retracted).
+    const SPREAD: usize = 12;
     let mut beam = vec![p.clone()];
     for (i, (to, x, rise)) in hops.iter().enumerate() {
         let mut next = Vec::new();
         for s in &beam {
             let mut found = 0;
+            let mut from = 0;
             for delay in (0..170).step_by(2) {
+                if delay < from {
+                    continue;
+                }
                 let mut q = s.clone();
                 if attempt(&mut q, |q| hop(q, to, *x, *rise, delay)) {
                     next.push(q);
                     found += 1;
+                    from = delay + SPREAD;
                     if found == 3 {
                         break;
                     }

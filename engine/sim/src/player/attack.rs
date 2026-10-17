@@ -599,8 +599,9 @@ fn start_weapon(c: &mut Ctx) {
 /// the distance from Claw's hit box to the near edge of the target's,
 /// counted `TARGET_MARGIN` px closer for a target that is not
 /// [`PUNCHABLE`]. Objects [`TARGET_HEIGHT`] px or more above or below are
-/// skipped, and on equal distances the one earlier in the update order
-/// wins. The gap is negative when the target overlaps Claw's front, and
+/// skipped, and so are objects already flagged for removal this pass (an
+/// enemy that died earlier in the same pass); on equal distances the one
+/// earlier in the update order wins. The gap is negative when the target overlaps Claw's front, and
 /// [`NO_TARGET`] when there is none.
 pub fn find_target(c: &Ctx) -> (Option<ObjectId>, i32) {
     let mut best = NO_TARGET;
@@ -614,6 +615,7 @@ pub fn find_target(c: &Ctx) -> (Option<ObjectId>, i32) {
         }
         let Some(o) = c.objects.get(id) else { continue };
         if (o.type_flags != types::ENEMY && o.type_flags != CURSE_TYPE)
+            || o.flags & flags::DESTROY != 0
             || !o.hit_rect.is_set()
             || (o.y - cy).abs() >= TARGET_HEIGHT
         {
@@ -705,15 +707,19 @@ fn try_lift(c: &mut Ctx) -> bool {
     }
 }
 
-/// True when Claw can lift `target`: it is liftable, no attack runs, Claw
-/// stands or walks, the object is not more than [`LIFT_BEHIND`] px behind
-/// his position (any distance for a punchable one) and their feet are at
-/// most [`LIFT_FEET`] px apart in height.
+/// True when Claw can lift `target`: it is liftable and not flagged for
+/// removal, no attack runs, Claw stands or walks, the object is not more
+/// than [`LIFT_BEHIND`] px behind his position (any distance for a
+/// punchable one) and their feet are at most [`LIFT_FEET`] px apart in
+/// height.
 pub fn can_lift(c: &Ctx, target: ObjectId) -> bool {
     let Some(t) = c.objects.get(target) else {
         return false;
     };
-    if t.special_flags & special_flags::LIFTABLE == 0 || c.p.attacking {
+    if t.special_flags & special_flags::LIFTABLE == 0
+        || t.flags & flags::DESTROY != 0
+        || c.p.attacking
+    {
         return false;
     }
     if c.o.physics_type != ptype::STAND && c.o.physics_type != ptype::WALK {
@@ -1011,9 +1017,15 @@ fn shot_origin(c: &Ctx) -> (i32, i32) {
 }
 
 /// Launches `spec`; mirrors the shot's picture when Claw faces left and
-/// `mirror` asks for it. Returns the shot.
-fn spawn_shot(c: &mut Ctx, spec: ProjectileSpec, mirror: bool) -> Option<ObjectId> {
-    let id = c.with_world(|w| logic::projectile::spawn(w, spec))?;
+/// `mirror` asks for it. A shot that is `tagged` (pistol, magic and sword
+/// shots) carries Claw's attack count. Returns the shot.
+fn spawn_shot(c: &mut Ctx, spec: ProjectileSpec, mirror: bool, tagged: bool) -> Option<ObjectId> {
+    let id = if tagged {
+        let serial = c.p.attack.serial;
+        c.with_world(|w| logic::projectile::spawn_tagged(w, spec, serial))?
+    } else {
+        c.with_world(|w| logic::projectile::spawn(w, spec))?
+    };
     if mirror
         && !c.p.facing_right
         && let Some(o) = c.objects.get_mut(id)
@@ -1066,7 +1078,8 @@ fn launch(c: &mut Ctx) {
             }
         }
     };
-    if spawn_shot(c, spec, weapon == Weapon::Magic).is_none() {
+    let tagged = weapon != Weapon::Dynamite;
+    if spawn_shot(c, spec, weapon == Weapon::Magic, tagged).is_none() {
         return;
     }
     let s = &mut c.p.stats;
@@ -1100,7 +1113,7 @@ fn sword_shot(c: &mut Ctx) {
         owner: Some(c.id),
         ..ProjectileSpec::default()
     };
-    if spawn_shot(c, spec, true).is_some() {
+    if spawn_shot(c, spec, true, true).is_some() {
         c.play(sound, SoundChannel::Effect);
     }
 }
