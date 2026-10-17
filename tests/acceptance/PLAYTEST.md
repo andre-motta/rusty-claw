@@ -37,3 +37,25 @@ Where a line says "as in the original", compare with the original game.
 31. Watch a rat walk into a wall: it turns back and walks away at its usual pace, as in the original.
 32. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
 33. Not on level 1, so not checked here: enemies stepping into goo (they take it like spikes), springboards (Claw's jump height, and enemies on them do not launch), loot carried through a warp, and enemies on moving elevators (they stay put).
+
+## Milestone 3, slice 0 (LEVEL1)
+
+Failures only, as above: note the line, what happened instead, and where.
+`PATH` is your install; `make compare` also needs `CLAW_REFERENCE`, the
+folder with the reference traces of the first level's routes.
+
+1. Watch the bot's run of the first level: `make run-game ARGS="--install PATH --level 1 --replay tests/acceptance/routes/level1.csv"`. Claw goes from the start to the map piece without a death you would not expect, and the level ends.
+2. `CLAW_INSTALL=PATH CLAW_REFERENCE=... make compare REF=level1/bot` ends with "no divergence beyond the known ones"; each divergence it prints is one `tests/acceptance/tolerances/references.toml` lists for that route, with its reason.
+3. In LEVEL1, press Pause: the game freezes with the small PAUSE sign and no menu, and the sounds and music stop. Press Pause again: play goes on and the music carries on where it stopped. Escape does nothing while paused.
+4. Tap Pause twice quickly, several times: each resume advances the game by exactly one tick. Holding Pause steps at the keyboard repeat rate.
+5. Pause, press and hold Jump, then resume: Claw jumps on the first tick. Hold Jump before pausing and keep holding it through the resume: no new jump.
+6. Hold Jump through the in-game menu or help and close it: no jump until Jump is released and pressed again.
+7. Throw dynamite, open help (F1) for about 2 s, close it: the stick goes off at once and its blast reaches Claw about 8 ticks later. With `FUSE CLOCK FROZEN` on the Gameplay page, the stick waits for its full fuse instead. The in-game menu and the pause always freeze the fuse.
+8. Pause, press F1, close help: play runs with no PAUSE sign, sound effects and ambient play, the music stays silent, and Escape is blocked. Press Pause once: the music carries on from where it stopped, sounds playing at that moment are not cut, and Escape works again.
+9. On the Gameplay page, choosing `PAUSE INPUT` switches between `ORIGINAL` and `RELEASE ALL`, and `FUSE CLOCK` between `ORIGINAL` and `FROZEN`. Both are saved to the settings file at once and apply from the next level started. A recording keeps the values it was made with.
+10. Watching a script or running a benchmark (no menus), a gamepad's Start pauses and resumes like the Pause key. In normal play it opens the in-game menu.
+11. Mid-air stand window: hit Claw in the air, then jump on the first tick after landing. With `MID AIR HIT JUMP FIX OFF` (the default), the one-tick window behaves as in the original, and pause stepping can land the jump in it.
+12. With 3 lives, choose end life in the in-game menu and confirm: Claw dies where he stands, falls off the screen and comes back at the last checkpoint with 2 lives. Try it while climbing and while carrying a keg (he lets go of it).
+13. With 1 life, choose end life: the question warns that this ends the game; confirm, and the game over screen follows. Answering no goes back to play with nothing changed.
+14. Turn the front layer off in the options: the level's front tiles (the foreground in front of Claw) disappear while objects still draw. Quit and start the game again: the front layer is still off. Turn it back on.
+15. Start LEVEL1 and LEVEL2 (`--level 2`): every powder keg stands on the floor when the level starts, none floats above it or sinks into it.
