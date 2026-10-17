@@ -13,6 +13,14 @@
 //!   which shows every image of the set in turn for 100 ms each. They do
 //!   not advance in their first call; afterwards each call advances the
 //!   animation by one tick.
+//! - `AniCycle` and `AniCycleNormal` loop like the animated candy (the
+//!   placed animation, else `GAME_CYCLE100`), but keep the depth they
+//!   were placed with, even 0. On the second level they turn the arrow
+//!   signs.
+//! - `GooCoverup` is a still picture of a goo surface laid over a goo
+//!   pool: its first call gives a depth of 0 the default 8010, in front of
+//!   Claw and the enemies, so whatever sinks into the pool disappears
+//!   behind it; later calls do nothing.
 //!
 //! Animations that step through an image set (next, previous, first,
 //! last image) need the set's first and last frame numbers, which the
@@ -35,6 +43,9 @@ pub const NAMES: &[&str] = &[
     "FrontCandy",
     "DoNothing",
     "DoNothingNormal",
+    "AniCycle",
+    "AniCycleNormal",
+    "GooCoverup",
 ];
 
 /// Image sets this family may switch an object to.
@@ -51,6 +62,8 @@ pub const CYCLE_ANIM: &str = "GAME_CYCLE100";
 pub const BEHIND_Z: i32 = 990;
 /// Depth given to a decoration in front of the action placed at depth 0.
 pub const FRONT_Z: i32 = 5100;
+/// Depth given to a goo cover-up placed at depth 0.
+pub const GOO_COVERUP_Z: i32 = 8010;
 
 /// State of a decoration after its first call.
 pub const SET_UP: i32 = 5;
@@ -241,12 +254,17 @@ enum Kind {
     AniCandy { z: i32 },
 }
 
+/// Depth that means "keep the placed depth" for the animated kinds.
+const KEEP_Z: i32 = 0;
+
 fn kind_of(name: &str) -> Kind {
     match name {
         "BehindCandy" => Kind::Candy { z: BEHIND_Z },
         "FrontCandy" => Kind::Candy { z: FRONT_Z },
+        "GooCoverup" => Kind::Candy { z: GOO_COVERUP_Z },
         "BehindAniCandy" => Kind::AniCandy { z: BEHIND_Z },
         "FrontAniCandy" => Kind::AniCandy { z: FRONT_Z },
+        "AniCycle" | "AniCycleNormal" => Kind::AniCandy { z: KEEP_Z },
         _ => Kind::Still,
     }
 }
@@ -276,7 +294,7 @@ pub fn tick(w: &mut World, id: ObjectId) {
         Kind::Still => {}
         Kind::Candy { z } | Kind::AniCandy { z } if o.state != SET_UP => {
             o.state = SET_UP;
-            if o.z == 0 {
+            if o.z == 0 && z != KEEP_Z {
                 o.z = z;
                 o.flags |= flags::RESORT;
             }

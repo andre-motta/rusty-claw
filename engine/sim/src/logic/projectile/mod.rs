@@ -1,4 +1,4 @@
-//! Shots, thrown dynamite and the rat's bombs.
+//! Shots, thrown dynamite, the rat's bombs and cannonballs.
 //!
 //! A projectile is an ordinary object with an attack box and a kind. It
 //! never decides a hit itself: the collision pass finds the overlap and the
@@ -27,6 +27,13 @@
 //!   in the first later tick whose game time is 1250 ms or more after that:
 //!   70 ticks after the throw. Time spent on the help screen can burn it
 //!   down between two ticks (see [`pass_fuse_time`]).
+//! - A cannonball (fired by the cannons) flies straight at its cannon's
+//!   speed, 500 px/s, without gravity, turning its picture and boxes to
+//!   face left when it flies left. It is an enemy shot dealing 10: it
+//!   hurts Claw (and is gone), breaks crates it passes and flies on, and
+//!   cannot hurt powder kegs or enemies; nothing can hit it. It is removed
+//!   on the tick after it touches a wall, when it leaves its activation
+//!   window or when it leaves the level.
 //! - The rat's bomb flies straight when thrown sideways and falls under
 //!   1500 px/s² when dropped. It goes off where it lands or touches a
 //!   wall. A bomb thrown sideways hurts Claw in flight and goes off on him
@@ -57,6 +64,7 @@ use crate::tiles::SOLID;
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &[
     "Bullet",
+    "CannonBall",
     "Dynamite",
     "FireBullet",
     "IceBullet",
@@ -75,6 +83,7 @@ pub const IMAGE_SETS: &[&str] = &[
     "GAME_PROJECTILES_FIRESWORD",
     "GAME_PROJECTILES_ICESWORD",
     "GAME_PROJECTILES_LIGHTNINGSWORD",
+    "LEVEL_CANNONBALL",
     "LEVEL_MUSKETBALL",
     "LEVEL_RATBOMB",
 ];
@@ -86,6 +95,7 @@ pub const ANIM_PREFIXES: &[&str] = &[
     "GAME_FIRESWORD",
     "GAME_ICESWORD",
     "GAME_LIGHTNINGSWORD",
+    "LEVEL_CANNONBALL_",
     "LEVEL_RATBOMB_",
 ];
 
@@ -116,6 +126,11 @@ pub const BURIED_Z: i32 = 8500;
 pub const DYNAMITE_SOUND: &str = "GAME_KEGBOOM";
 /// Sound of an exploding rat bomb.
 pub const RAT_BOMB_SOUND: &str = "GAME_BOMBEXP";
+/// Damage of a cannonball.
+pub const CANNON_BALL_DAMAGE: i32 = 10;
+/// Kinds of object a cannonball can be hit by. It has no hit box, so
+/// nothing reaches it.
+pub const CANNON_BALL_HIT_BY: u32 = 0x2;
 /// How far ahead of a sword shot its flare is kept, px.
 pub const SWORD_FLARE_LEAD: i32 = 20;
 
@@ -138,6 +153,8 @@ pub enum Class {
     Dynamite,
     /// The rat's bomb.
     RatBomb,
+    /// A cannon's ball.
+    CannonBall,
 }
 
 impl Class {
@@ -152,6 +169,7 @@ impl Class {
             "Bullet" => Class::Bullet,
             "Dynamite" => Class::Dynamite,
             "RatBomb" => Class::RatBomb,
+            "CannonBall" => Class::CannonBall,
             _ => return None,
         })
     }
@@ -167,6 +185,7 @@ impl Class {
             Class::Bullet => "LEVEL_MUSKETBALL",
             Class::Dynamite => "GAME_DYNAMITELIT",
             Class::RatBomb => "LEVEL_RATBOMB",
+            Class::CannonBall => "LEVEL_CANNONBALL",
         }
     }
 
@@ -179,6 +198,7 @@ impl Class {
             Class::LightningBullet => Some("GAME_LIGHTNINGSWORD"),
             Class::IceBullet => Some("GAME_ICESWORD"),
             Class::Dynamite => Some("GAME_DYNAMITELIT"),
+            Class::CannonBall => Some("LEVEL_CANNONBALL_FALL"),
             _ => None,
         }
     }
@@ -196,6 +216,7 @@ impl Class {
             Class::Bullet => Rect::new(-6, -5, 5, 4),
             Class::Dynamite => Rect::new(-13, -14, 14, 9),
             Class::RatBomb => Rect::new(-17, 33, 6, 54),
+            Class::CannonBall => Rect::new(-9, -10, 22, 9),
         }
     }
 
@@ -411,8 +432,10 @@ pub fn throw_velocity(power: i32) -> (f64, f64) {
 /// The projectile is set up at once, joins the live list at the end of the
 /// current pass and moves from the next update pass on. Class rules
 /// override the request where the game's own do: dynamite is harmless
-/// until it explodes and takes its speed from `power`, and a rat bomb
-/// always deals [`RAT_BOMB_DAMAGE`] as an enemy shot.
+/// until it explodes and takes its speed from `power`, a rat bomb
+/// always deals [`RAT_BOMB_DAMAGE`] as an enemy shot, and a cannonball is
+/// always an enemy shot drawn from its own set, dealing
+/// [`CANNON_BALL_DAMAGE`] unless asked for more.
 pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
     let Some(class) = Class::from_logic(spec.logic) else {
         Registry::shared().get(spec.logic)?;
@@ -483,6 +506,17 @@ pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
             if w.level.map.attr(spec.x, spec.y + frame_box.bottom) == SOLID {
                 d.frozen = true;
                 o.z = BURIED_Z;
+            }
+        }
+        Class::CannonBall => {
+            o.type_flags = types::ENEMY_SHOT;
+            o.hit_type_flags = CANNON_BALL_HIT_BY;
+            if o.damage == 0 {
+                o.damage = CANNON_BALL_DAMAGE;
+            }
+            if spec.vx < 0 {
+                o.draw_flags |= draw_flags::MIRROR;
+                o.mirror_rects();
             }
         }
         Class::RatBomb => {

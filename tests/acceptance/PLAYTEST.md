@@ -59,3 +59,19 @@ folder with the reference traces of the first level's routes.
 13. With 1 life, choose end life: the question warns that this ends the game; confirm, and the game over screen follows. Answering no goes back to play with nothing changed.
 14. Turn the front layer off in the options: the level's front tiles (the foreground in front of Claw) disappear while objects still draw. Quit and start the game again: the front layer is still off. Turn it back on.
 15. Start LEVEL1 and LEVEL2 (`--level 2`): every powder keg stands on the floor when the level starts, none floats above it or sinks into it.
+
+## Milestone 3, slice 1: LEVEL2 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the second level with `make run-game ARGS="--install PATH --level 2"`.
+The boss at the end is not built yet: stop before his room.
+
+1. Every powder keg stands on the floor when the level starts; none floats above it or sinks into it.
+2. Walk up to the forts beside the stone towers: each punk rat paces a short beat behind its little cannon, squeaks now and then, and every four seconds or so strikes at the back of its beat; its cannon fires a ball as the strike ends and the rat recoils, as in the original.
+3. A punk rat never hurts you by touch, and any blow (sword, kick, pistol, dynamite, magic) kills it at once; its body flies off, it drops nothing, and its cannon stays on the ledge and never fires again. A pistol shot that kills it flies on.
+4. With the invisibility power-up running, punk rats pace without striking.
+5. The tower cannons fire a ball every three seconds, whether or not you are near, with their shot sound; climbing the ladder between a fort and its tower, the balls of the rats (from the left) and of the tower (from the right) cross at alternating heights, as in the original.
+6. A cannonball flies straight, costs you 10 health (also while you still flash from another hit), passes through enemies and kegs without harming them, and disappears at the first wall.
+7. Throw an officer or a soldier into a goo pool (or knock one in): it drops its loot, plays the goo sound and is gone at once, never seen standing in the goo; a rat dropped in sinks without a sound.
+8. The goo surface pictures over the pools are drawn in front of Claw and the enemies, so whatever falls in disappears behind the goo.
+9. The arrow signs that point the way cycle through their pictures, about ten a second.
