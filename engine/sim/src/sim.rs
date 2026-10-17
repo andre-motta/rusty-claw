@@ -137,6 +137,9 @@ pub struct Sim {
     /// time zero set it to the seed.
     set_up_rng: u32,
     events: Vec<CollisionEvent>,
+    /// The level's ambient sound manager, once found (see
+    /// [`Sim::ambient_update`]).
+    ambient: Option<ObjectId>,
     diagnostics: Diagnostics,
     out: Outbox,
     last_audio: Vec<AudioCue>,
@@ -346,7 +349,8 @@ impl Runner<'_> {
         }
     }
 
-    /// Lists the objects spawned during the pass, in spawn order: those
+    /// Lists the objects spawned since the last call, in spawn order (in
+    /// the update pass, right after the logic call that made them): those
     /// already asked to be destroyed are removed instead, and those with
     /// [`flags::RUN_AT_CREATION`] run their logic once at once.
     fn list_spawned(&mut self, objects: &mut Container) {
@@ -452,6 +456,7 @@ impl Sim {
             pulse_left: PULSE_START_MS,
             set_up_rng: LEVEL_LOAD_SEED,
             events: Vec::new(),
+            ambient: None,
             diagnostics: Diagnostics::default(),
             out: Outbox::new(),
             last_audio: Vec::new(),
@@ -632,6 +637,10 @@ impl Sim {
         {
             let (mut runner, objects, activation) = self.parts();
             activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
+        }
+        self.ambient_update();
+        {
+            let (mut runner, objects, _) = self.parts();
             // A line asked for outside Claw's handler, or while his handler
             // did not run, is said in this tick rather than left waiting.
             runner.say_requested(objects);
@@ -675,8 +684,35 @@ impl Sim {
         self.pass(true);
     }
 
+    /// The ambient sound manager's update, once per tick after the rest of
+    /// the tick's logic (the update pass, the collision pass and the leave
+    /// pass): its timed sounds draw from the random stream after every
+    /// draw of those passes. The manager is never in the live list, so the
+    /// update pass does not run it, and it is not run when it is made: a
+    /// timed sound registered while the level loads first counts down in
+    /// the first tick.
+    fn ambient_update(&mut self) {
+        let cached = self
+            .ambient
+            .filter(|&id| logic::sound_object::manager_at(&self.objects, id).is_some());
+        let Some(id) =
+            cached.or_else(|| logic::sound_object::find_manager(&self.objects, self.player))
+        else {
+            return;
+        };
+        self.ambient = Some(id);
+        let (mut runner, objects, _) = self.parts();
+        runner.run(objects, id);
+        runner.list_spawned(objects);
+    }
+
     /// One walk over the live list running the objects' logics; with
     /// `set_up`, only the first call of the level objects not set up yet.
+    ///
+    /// The walk keeps the next object before it runs one, and an object
+    /// made by a logic joins the list at once (by depth): it runs in the
+    /// same walk when it lands after the kept next object, and from the
+    /// next tick when it lands before it.
     fn pass(&mut self, set_up: bool) {
         let mut destroy = Vec::new();
         let mut resort = Vec::new();
@@ -712,6 +748,7 @@ impl Sim {
             };
             if run {
                 runner.run(objects, id);
+                runner.list_spawned(objects);
             }
             if let Some(o) = objects.get(id) {
                 if o.flags & flags::DESTROY != 0 {

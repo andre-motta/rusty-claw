@@ -9,7 +9,7 @@
 //!
 //! The window depends on the object's activation class: 1600x1200 for
 //! enemies, bosses and projectiles, 2560x1920 for elevators and ambient
-//! sounds, 768x576 for pickups, decoration and small hazards. These sizes
+//! sounds, 831x623 for pickups, decoration and small hazards. These sizes
 //! are gameplay rules, not screen sizes, so [`ActivationConfig`] keeps them
 //! fixed for the original 640x480 view and offers three modes:
 //!
@@ -18,10 +18,14 @@
 //!   presentation draws dormant objects in the extra width frozen.
 //! - [`ActivationMode::Widened`]: every window grows by the extra half view
 //!   width, so everything on a wide screen is live, except breakable
-//!   objects, which keep the original window around the centre a 640x480
-//!   view would have; that keeps every crate and keg waking exactly where it
-//!   would in the original. This changes gameplay and is recorded in
-//!   traces.
+//!   objects, which keep a 768x576 window around the centre a 640x480 view
+//!   would have. This changes gameplay and is recorded in traces.
+//!
+//! The small objects' window (class 2) is a measured value: the original
+//! game runs it at 831x623 (half extents 415 x 311), and crates, kegs,
+//! pickups and their glitters wake and sleep by that window. The original
+//! and frozen-edge modes use the measured window; the widened mode keeps
+//! its parameters as they were (768x576 for the small objects).
 
 use crate::container::Container;
 use crate::object::{Object, ObjectId, flags};
@@ -67,6 +71,20 @@ pub const BREAKABLE_LOGICS: [&str; 9] = [
     "BehindStatue",
 ];
 
+/// Off-screen margin of the small objects' window (class 2) in the
+/// original and frozen-edge modes, px: half extents 415 x 311 around the
+/// 640x480 view, a window of 831x623. A measured value: the window the
+/// original game runs while a level plays (768x576, the earlier value, is
+/// [`WIDENED_SMALL_MARGIN`]). With it a crate stack 429 px right of the
+/// first level's start wakes in tick 6 and its two crates roll from tick 8
+/// (the third pulse), as in the original.
+pub const SMALL_MARGIN: (i32, i32) = (95, 71);
+
+/// Off-screen margin of the small objects' window in the widened mode,
+/// px: 768x576 around the 640x480 view. The widened mode keeps it as it
+/// was.
+pub const WIDENED_SMALL_MARGIN: (i32, i32) = (64, 48);
+
 /// Activation parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivationConfig {
@@ -97,14 +115,14 @@ impl Default for ActivationConfig {
 }
 
 impl ActivationConfig {
-    /// The original windows: 1600x1200, 2560x1920 and 768x576 around the
+    /// The original windows: 1600x1200, 2560x1920 and 831x623 around the
     /// 640x480 view.
     pub fn original() -> ActivationConfig {
         ActivationConfig {
             mode: ActivationMode::Original,
             view: (640, 480),
             original_view: (640, 480),
-            margins: [(480, 360), (960, 720), (64, 48)],
+            margins: [(480, 360), (960, 720), SMALL_MARGIN],
             far_margin: (320, 220),
             cells: [(500, 250), (1000, 1000), (250, 125)],
             exceptions: BREAKABLE_LOGICS.iter().map(|s| s.to_string()).collect(),
@@ -128,6 +146,7 @@ impl ActivationConfig {
         ActivationConfig {
             mode: ActivationMode::Widened,
             view: (w, h),
+            margins: [(480, 360), (960, 720), WIDENED_SMALL_MARGIN],
             ..ActivationConfig::original()
         }
     }
