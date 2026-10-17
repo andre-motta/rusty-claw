@@ -25,6 +25,10 @@
 //! with their per-tick roll ([`enemy::pulse_roll`]), a draw from the shared
 //! random stream on every third tick.
 //!
+//! A lying keg is drawn in front of Claw or behind him by where his feet
+//! are, as the enemies are, after each of its calls from the second on
+//! (depth 4020 or 3919).
+//!
 //! Kegs rest on the floor at spawn: on its first logic call a keg is put
 //! 32 px higher and then down onto the first floor below it, standing, the
 //! way enemies are placed.
@@ -76,6 +80,8 @@ pub const BLAST_RADIUS: i32 = 50;
 /// Centre of the explosion relative to the keg (mirrored when it faces
 /// left).
 pub const BLAST_OFFSET: (i32, i32) = (5, 15);
+/// Base of a lying keg's depth (see [`depth_sort`]).
+pub const Z_BASE: i32 = 20;
 /// Screen shake started by the blast, ms.
 pub const BLAST_SHAKE_MS: u32 = 500;
 /// Kind of kill (see [`World::kill`]) that makes a keg explode.
@@ -205,11 +211,35 @@ pub fn tick(w: &mut World, id: ObjectId) {
     }
     let d = data_mut(o);
     match d.phase {
-        Phase::Idle => {}
+        Phase::Idle => depth_sort(w, id),
         Phase::Lifted | Phase::Overhead => carry(w, id),
         Phase::Thrown if d.struck => explode(w, id),
         Phase::Thrown | Phase::Dropped => fly(w, id),
         Phase::Exploding => exploding(w, id),
+    }
+}
+
+/// Drawn in front of Claw when his feet are at or above the keg's, behind
+/// him otherwise, as the enemies are (see [`enemy::motion::DEPTH_IN_FRONT`]),
+/// with the base [`Z_BASE`]: the list is sorted by depth, so a keg behind
+/// Claw runs before him in the update pass.
+fn depth_sort(w: &mut World, id: ObjectId) {
+    let Some(claw_feet) = w.claw_object().map(|c| c.y + c.move_rect.bottom) else {
+        return;
+    };
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    let feet = o.y + o.move_rect.bottom;
+    let z = Z_BASE
+        + if claw_feet <= feet {
+            enemy::motion::DEPTH_IN_FRONT
+        } else {
+            enemy::motion::DEPTH_BEHIND
+        };
+    if o.z != z {
+        o.z = z;
+        o.flags |= flags::RESORT;
     }
 }
 

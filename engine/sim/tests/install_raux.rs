@@ -144,7 +144,14 @@ struct Drawn {
 }
 
 impl Drawn {
+    /// One tick with `i`, its keys pressed in the tick they go down as on
+    /// a keyboard (a walk from standing starts on the press).
     fn step(&mut self, sim: &mut Sim, i: TickInput) {
+        let down = i.held.0 & !sim.input().held.0;
+        let i = TickInput {
+            held: i.held,
+            pressed: Buttons(i.pressed.0 | down),
+        };
         let snap = sim.step(i);
         for r in &snap.renderables {
             if !r.image_set_key.is_empty() && !self.loaded.contains(&r.image_set_key) {
@@ -221,6 +228,26 @@ fn fight_input(s: &Seen, k: u64) -> TickInput {
         }
         _ => TickInput::default(),
     }
+}
+
+/// The ticks from a boss's defeat at `from` until the gem it releases
+/// lands: it flies on the slowest arc to [`GEM_TARGET`] from the tick
+/// after the defeat, one tick of constant acceleration at a time, and
+/// lands in the first tick that finds it moving down below the target.
+fn gem_flight_ticks(from: (i32, i32)) -> u64 {
+    let mut pos = (f64::from(from.0), f64::from(from.1));
+    let mut vel = pickup::end_gem_launch(pos, GEM_TARGET);
+    let dt = 0.018;
+    let g = pickup::END_GEM_GRAVITY;
+    let mut k = 1;
+    while !(vel.1 > 0.0 && pos.1 > f64::from(GEM_TARGET.1)) {
+        pos.0 += vel.0 * dt;
+        pos.1 += vel.1 * dt + 0.5 * g * dt * dt;
+        vel.1 += g * dt;
+        k += 1;
+        assert!(k < 1000);
+    }
+    k
 }
 
 /// The original game's steps of the introduction on this level, counted
@@ -376,7 +403,10 @@ fn install_level2_the_staged_fight_ends_the_level_through_the_gem() {
         }
         k += 1;
     };
-    println!("Raux fell after {k} ticks of the fight: health {healths:?}");
+    println!(
+        "Raux fell after {k} ticks of the fight: health {healths:?} at {:?}",
+        (body.x, body.y)
+    );
     assert!(healths.len() >= 3, "several blows");
     assert!(body.health <= 0);
     // The bar showed every health he had while he lived.
@@ -422,10 +452,12 @@ fn install_level2_the_staged_fight_ends_the_level_through_the_gem() {
          his body went after {gone:?} ticks, the bar after {bar_gone:?}",
         (o.x, o.y)
     );
-    // As in the original: the gem lands 101 ticks after the defeat, 1 px
-    // short of its target; the body leaves after 50 ticks (out of view)
-    // and the bar on the tick after.
-    assert_eq!(k, 101);
+    // As in the original: the gem lands 101 ticks after the defeat when
+    // Raux falls at his place (here, the ticks of the same arc from where
+    // he fell), 1 px short of its target; the body leaves after 50 ticks
+    // (out of view) and the bar on the tick after.
+    assert_eq!(gem_flight_ticks(RAUX_AT), 101);
+    assert_eq!(k, gem_flight_ticks((body.x, body.y)));
     assert_eq!((o.x, o.y), (GEM_TARGET.0 - 1, GEM_TARGET.1));
     assert_eq!((gone, bar_gone), (Some(50), Some(51)));
     assert_eq!(sim.player().unwrap().state, state::STAND);

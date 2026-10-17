@@ -229,7 +229,7 @@ fn catnip_sim(level: claw_sim::SimLevel, tuning: Tuning, catnip: bool) -> Sim {
 fn walk_after(tuning: Tuning, catnip: bool, ms: u64) -> (i32, AnimPlayer) {
     let mut sim = catnip_sim(flat_level(), tuning, catnip);
     for _ in 0..ticks(ms) {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
     }
     let o = sim.player().unwrap();
     assert_eq!(o.state, state::MOVE_RIGHT);
@@ -364,7 +364,7 @@ fn walking_goes_back_to_225_when_catnip_runs_out() {
     let mut sim = catnip_sim(flat_level(), Tuning::original_speeds(), true);
     sim.with_world(|w| w.claw.stats.powerup_ms = 200);
     for _ in 0..5 {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
     }
     assert_eq!(sim.player().unwrap().speed_x, 300);
     for _ in 0..15 {

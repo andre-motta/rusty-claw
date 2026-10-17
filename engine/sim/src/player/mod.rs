@@ -249,6 +249,14 @@ pub struct Claw {
     pub fallback_entries: u32,
     /// Game-wide movement switches.
     pub movement: MovementOverrides,
+    /// An attack ended or was cancelled (every change of state cancels
+    /// it): Left and Right leave the key latch, so on the next tick a
+    /// direction still held counts as pressed again (see
+    /// [`crate::Sim::step`]).
+    pub repress_directions: bool,
+    /// The lives step of a death with lives left has run: Claw respawns
+    /// between this tick and the next (see [`death`]).
+    pub respawn_pending: bool,
 }
 
 impl Default for Claw {
@@ -281,6 +289,8 @@ impl Default for Claw {
             death_tile_hits: 0,
             fallback_entries: 0,
             movement: MovementOverrides::default(),
+            repress_directions: false,
+            respawn_pending: false,
         }
     }
 }
@@ -825,17 +835,23 @@ pub fn attack_holds_input(c: &Ctx) -> bool {
 /// Stand: starts jumps and walks, teeters at ledges, crouches, looks up.
 /// While an attack runs and cannot be interrupted yet, Jump, Left and
 /// Right are ignored and the ledge test comes first.
+///
+/// A walk starts when Right or Left is pressed, not while it is held: a
+/// direction held on comes back as a press on the tick after an attack
+/// ends or any change of state (see [`Claw::repress_directions`]), so a
+/// direction held through a standing attack walks on the tick after the
+/// attack's end.
 pub fn stand_tick(c: &mut Ctx) {
     if !attack_holds_input(c) {
         if c.pressed(Buttons::JUMP) {
             stand_jump_start(c);
             return;
         }
-        if c.held(Buttons::RIGHT) {
+        if c.pressed(Buttons::RIGHT) {
             stand_walk_start(c, true);
             return;
         }
-        if c.held(Buttons::LEFT) {
+        if c.pressed(Buttons::LEFT) {
             stand_walk_start(c, false);
             return;
         }

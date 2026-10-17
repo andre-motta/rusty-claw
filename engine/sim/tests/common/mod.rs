@@ -151,6 +151,16 @@ pub fn hold(mask: u32) -> TickInput {
     }
 }
 
+/// `mask` down as a key is held on a keyboard: pressed in the first tick
+/// it is down (the buttons the last tick did not hold), held after. A walk
+/// from standing starts only on the press of a direction.
+pub fn key_down(sim: &Sim, mask: u32) -> TickInput {
+    TickInput {
+        held: Buttons(mask),
+        pressed: Buttons(mask & !sim.input().held.0),
+    }
+}
+
 // ---------------------------------------------------------------- metrics
 
 /// Least-squares slope of `ys` over `ts`, scaled to per second.

@@ -332,7 +332,7 @@ fn jump(sim: &mut Sim) {
 
 fn face_left(sim: &mut Sim) {
     for _ in 0..3 {
-        sim.step(hold(LEFT));
+        sim.step(key_down(sim, LEFT));
     }
     idle(sim, 2);
     assert!(!sim.claw().facing_right);
