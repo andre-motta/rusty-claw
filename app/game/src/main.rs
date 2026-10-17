@@ -8,6 +8,8 @@
 //!            [--no-interp] [--no-audio] [--record FILE.csv]
 //!            [--replay FILE.csv [--trace OUT.csv] [--render-hz HZ]]
 //!            [--bench SECONDS [--headless] [--render-hz HZ]]
+//!            [--bench-route FILE.csv --headless [--bench SECONDS]
+//!             [--render-hz HZ]]
 //! ```
 //!
 //! With only `--install` (and options), the game starts at the title and
@@ -25,6 +27,14 @@
 //! plays its pauses, menus and commands (`@` lines) where they were
 //! recorded.
 //!
+//! `--bench-route FILE.csv --headless` benchmarks a route instead of the
+//! combat route: the input script plays from the level's start with the
+//! level, tuning, seed and behaviour switches its header names, as a
+//! replay plays it, until its last row has run (or for at most `--bench
+//! SECONDS`), drawn offscreen at `--res`. Its report also says whether any
+//! sprite set was loaded while drawing (a budget: none may be) and gives a
+//! digest of the route's trace, the same on every run.
+//!
 //! A benchmark prints its report as one line of JSON on standard output and
 //! a one-line PASS or FAIL verdict naming each budget on standard error. It
 //! exits with status [`BUDGET_FAILED`] when a measured budget is missed.
@@ -32,9 +42,9 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
-use clap::{CommandFactory, FromArgMatches};
-use claw_game::bench::{Report, run_headless};
+use anyhow::{Context, Result, bail};
+use clap::{Arg, ArgAction, ArgMatches, CommandFactory, FromArgMatches};
+use claw_game::bench::{Report, RouteFile, RouteReport, run_headless, run_headless_route};
 use claw_game::session::script_behaviour;
 use claw_game::settings::{Args, Aspect, Mode, Settings};
 use claw_game::window::{self, WindowMode};
@@ -53,6 +63,8 @@ How a run starts:
                                      straight into that level; Escape, P or
                                      the pad's Start button open the in-game menu
   --replay FILE.csv, --bench SECONDS one level without menus, as before
+  --bench-route FILE.csv --headless  benchmark along a route from the level's
+                                     start until its end
 
 Saved games are kept in $XDG_DATA_HOME/rusty-claw/saves/default/ (by default
 ~/.local/share/rusty-claw/saves/default/). Options changed in the menus are
@@ -65,12 +77,70 @@ enum Outcome {
     Done,
     /// A benchmark finished; the report decides the exit status.
     Bench(Box<Report>),
+    /// A route benchmark finished; its report decides the exit status.
+    RouteBench(Box<RouteReport>),
 }
 
 fn bench_result(report: Report) -> Outcome {
     println!("{}", report.to_json());
     eprintln!("rusty-claw: {}", report.summary());
     Outcome::Bench(Box::new(report))
+}
+
+/// The id of the `--bench-route` option.
+const BENCH_ROUTE: &str = "bench_route";
+
+/// The options the game adds to the settings' own: `--bench-route`, and
+/// `--headless` with it as well as with `--bench`.
+fn command() -> clap::Command {
+    Args::command()
+        .after_help(AFTER_HELP)
+        // The same option without its tie to --bench alone; run() checks
+        // that one of the two is given.
+        .mut_arg("headless", |_| {
+            Arg::new("headless")
+                .long("headless")
+                .action(ArgAction::SetTrue)
+                .help(
+                    "With --bench or --bench-route: render offscreen at --res with a \
+                     simulated display clock instead of in a window, paced to that clock \
+                     unless --uncapped is given",
+                )
+        })
+        .arg(
+            Arg::new(BENCH_ROUTE)
+                .long("bench-route")
+                .value_name("FILE.csv")
+                .value_parser(clap::value_parser!(std::path::PathBuf))
+                .conflicts_with_all(["replay", "record", "trace"])
+                .help(
+                    "Benchmark along a route (an input script) from the level's start \
+                     until its end, offscreen with --headless; --bench SECONDS stops it \
+                     sooner",
+                ),
+        )
+}
+
+/// A route benchmark: the settings follow the route as a replay would,
+/// and the run lasts until the route's end, or `--bench SECONDS`.
+fn bench_route(mut args: Args, path: &std::path::Path) -> Result<Outcome> {
+    if !args.headless {
+        bail!("--bench-route runs offscreen: add --headless");
+    }
+    let cap = args.bench;
+    // The settings of a benchmark (no menus, the behaviour switches at
+    // their defaults unless given), whatever the length.
+    args.bench = Some(cap.unwrap_or(1.0));
+    let mut settings = Settings::from_args(&args)?;
+    let route = RouteFile::read(path)?;
+    route.apply(&mut settings);
+    let Mode::Bench { render_hz, .. } = settings.mode else {
+        bail!("--bench-route is a benchmark");
+    };
+    let report = run_headless_route(&settings, &route, cap, render_hz)?;
+    println!("{}", report.to_json());
+    eprintln!("rusty-claw: {}", report.summary());
+    Ok(Outcome::RouteBench(Box::new(report)))
 }
 
 /// Reads an input script and the mid-air hit jump fix it was recorded
@@ -83,7 +153,13 @@ fn read_script(path: &std::path::Path) -> Result<(InputScript, Option<bool>)> {
     Ok((script, script_behaviour(&text)))
 }
 
-fn run(args: Args) -> Result<Outcome> {
+fn run(args: Args, matches: &ArgMatches) -> Result<Outcome> {
+    if let Some(path) = matches.get_one::<std::path::PathBuf>(BENCH_ROUTE) {
+        return bench_route(args, path);
+    }
+    if args.headless && args.bench.is_none() {
+        bail!("--headless goes with --bench or --bench-route");
+    }
     let mut settings = Settings::from_args(&args)?;
     if settings.widen_activation && settings.aspect != Aspect::Fill {
         eprintln!(
@@ -152,16 +228,20 @@ fn run(args: Args) -> Result<Outcome> {
     }
 }
 
-fn parse_args() -> Args {
-    let matches = Args::command().after_help(AFTER_HELP).get_matches();
-    Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit())
+fn parse_args() -> (Args, ArgMatches) {
+    let matches = command().get_matches();
+    let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    (args, matches)
 }
 
 fn main() -> ExitCode {
-    match run(parse_args()) {
+    let (args, matches) = parse_args();
+    match run(args, &matches) {
         Ok(Outcome::Done) => ExitCode::SUCCESS,
         Ok(Outcome::Bench(report)) if report.passed() => ExitCode::SUCCESS,
         Ok(Outcome::Bench(_)) => ExitCode::from(BUDGET_FAILED),
+        Ok(Outcome::RouteBench(report)) if report.passed() => ExitCode::SUCCESS,
+        Ok(Outcome::RouteBench(_)) => ExitCode::from(BUDGET_FAILED),
         Err(e) => {
             eprintln!("rusty-claw: {e:#}");
             ExitCode::FAILURE
