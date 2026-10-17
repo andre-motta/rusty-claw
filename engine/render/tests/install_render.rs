@@ -395,12 +395,27 @@ fn level1_offscreen_frame_matches_reference() {
             .count(),
         scene.sprites.len()
     );
-    let drawn = scene.sprites.len() - object_sprites(&level).len();
-    assert!(
-        drawn >= status_bar().len(),
-        "status bar pieces missing: {drawn}"
-    );
     let out = renderer.render_offscreen(&l1.graphics, &scene);
+    // The builder leaves out objects off the view, so count the status bar
+    // on a frame that has nothing else.
+    let bar = SceneBuilder::new(&l1.graphics, view(1920, 1080), DEFAULT_MAX_TARGET)
+        .build(
+            &mut l1.graphics,
+            &FrameInput {
+                center: start,
+                sprites: Vec::new(),
+                time_ms: 0.0,
+                fade: None,
+                screen: status_bar(),
+                transition: None,
+            },
+        )
+        .sprites
+        .len();
+    assert!(
+        bar >= status_bar().len(),
+        "status bar pieces missing: {bar}"
+    );
     let mut colors: HashMap<[u8; 3], usize> = HashMap::new();
     for px in out.chunks_exact(4) {
         *colors.entry([px[0], px[1], px[2]]).or_default() += 1;
