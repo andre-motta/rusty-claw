@@ -639,13 +639,20 @@ impl Verdict {
 }
 
 /// Checks `cmp` against `entry`: every column must stay in tolerance up to
-/// its known first divergence (or throughout, when none is known), and
-/// something must have been compared.
+/// its known first divergence (or throughout, when none is known),
+/// something must have been compared, and the game's trace must last as
+/// long as the reference trace.
 pub fn verdict(entry: &Entry, cmp: &Comparison) -> Verdict {
     let mut v = Verdict::default();
     if cmp.rows_compared == 0 {
         v.regressions
             .push("nothing was compared: the traces do not overlap in time".to_string());
+    }
+    if cmp.rows_unmatched > 0 {
+        v.regressions.push(format!(
+            "the game's trace ends before the reference trace: {} reference row(s) unmatched",
+            cmp.rows_unmatched
+        ));
     }
     for s in &cmp.per_column {
         let known = entry.known.get(&s.column).copied();
@@ -863,6 +870,9 @@ traces = ["trace-c60-r1.csv"]
         let mut nothing = cmp(vec![]);
         nothing.rows_compared = 0;
         assert!(!verdict(&entry, &nothing).holds());
+        let mut short = cmp(vec![summary("x", Some(1000)), summary("rng", Some(18))]);
+        short.rows_unmatched = 3;
+        assert!(!verdict(&entry, &short).holds());
     }
 
     #[test]

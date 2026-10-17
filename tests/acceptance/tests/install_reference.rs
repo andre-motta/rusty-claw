@@ -13,9 +13,12 @@
 //! A known divergence that comes later or goes away is reported, so the
 //! entry can be tightened.
 //!
-//! `make compare REF=<level>/<name> [CLOCK=c18|c60]` runs [`make_compare`]:
-//! one route's comparison at each clock its store holds, printed in full,
-//! failing on any divergence.
+//! `make compare REF=<level>/<name> [CLOCK=c18|c60] [STRICT=1]` runs
+//! [`make_compare`]: one route's comparison at each clock its store holds,
+//! printed in full. It fails on a divergence that `references.toml` does not
+//! list for that route and clock, or that comes earlier than listed; a route
+//! and clock with no entry fails on any divergence, and so does every route
+//! with `STRICT=1`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -130,7 +133,9 @@ fn print_clock(store: &Store, result: &ClockResult, tolerance: &str, entry: Opti
 
 /// One route's comparison, for `make compare`: runs only when
 /// `CLAW_COMPARE_REF` names a route (`CLAW_COMPARE_CLOCK` may pick one
-/// clock), prints every report and fails on any divergence.
+/// clock), prints every report and fails on a divergence that the route's
+/// `references.toml` entry does not list (or lists later). With no entry,
+/// or with `CLAW_COMPARE_STRICT=1`, it fails on any divergence.
 #[test]
 fn make_compare() {
     let Some(name) = std::env::var("CLAW_COMPARE_REF")
@@ -153,6 +158,14 @@ fn make_compare() {
         ),
         _ => None,
     };
+    let strict = match std::env::var("CLAW_COMPARE_STRICT") {
+        Ok(s) => match s.as_str() {
+            "" | "0" => false,
+            "1" => true,
+            _ => panic!("CLAW_COMPARE_STRICT is 0 or 1, not {s:?}"),
+        },
+        Err(_) => false,
+    };
     let entries = load_entries().unwrap_or_else(|e| panic!("{e}"));
     let store = Store::open(&root, &name).unwrap_or_else(|e| panic!("{e}"));
     let runs: Vec<_> = store
@@ -167,7 +180,7 @@ fn make_compare() {
     );
     let bundle = load(&install, store.level).unwrap_or_else(|e| panic!("{e}"));
     let mut summaries = Vec::new();
-    let mut diverged = false;
+    let mut failures = Vec::new();
     for run in runs {
         let entry = entries
             .iter()
@@ -181,12 +194,43 @@ fn make_compare() {
             .compare_clock(&bundle, run, &tol)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         print_clock(&store, &result, tolerance.trim_end_matches(".toml"), entry);
-        diverged |= result.traces.iter().any(|t| !t.comparison.passed());
+        for t in &result.traces {
+            let lines = match entry {
+                Some(entry) if !strict => verdict(entry, &t.comparison).regressions,
+                _ if t.comparison.passed() => Vec::new(),
+                _ => vec![t.comparison.first_divergence.as_ref().map_or_else(
+                    || "nothing was compared".to_string(),
+                    |d| {
+                        format!(
+                            "first leaves the tolerance at {} ms in {}",
+                            d.t_ms, d.column
+                        )
+                    },
+                )],
+            };
+            for line in lines {
+                failures.push(format!(
+                    "{} {} ({}): {line}",
+                    name,
+                    run.clock.name(),
+                    t.trace.display()
+                ));
+            }
+        }
         summaries.push(summary_line(&store, &result));
     }
     println!("\n{}", summaries.join("\n"));
+    let rule = if strict {
+        "STRICT=1: any divergence fails"
+    } else {
+        "divergences listed in references.toml are known; any other fails"
+    };
+    if failures.is_empty() {
+        println!("\n{name}: no divergence beyond the known ones ({rule})");
+    }
     assert!(
-        !diverged,
-        "the game leaves the tolerance of a reference trace (reports above)"
+        failures.is_empty(),
+        "the game leaves the tolerance of a reference trace ({rule}):\n  {}",
+        failures.join("\n  ")
     );
 }

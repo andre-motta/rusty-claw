@@ -1137,17 +1137,8 @@ pub fn report(
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "compared {} reference rows over {} ms{}",
-        cmp.rows_compared,
-        cmp.compared_ms,
-        if cmp.rows_unmatched > 0 {
-            format!(
-                "; {} reference rows run past the end of the rebuild trace",
-                cmp.rows_unmatched
-            )
-        } else {
-            String::new()
-        }
+        "compared {} reference rows over {} ms; {} reference rows run past the end of the rebuild trace",
+        cmp.rows_compared, cmp.compared_ms, cmp.rows_unmatched
     );
     match &cmp.first_divergence {
         None => out.push_str("no divergence\n"),

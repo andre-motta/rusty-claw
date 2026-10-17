@@ -10,6 +10,7 @@ route (`level<N>/<name>/` with `route.csv`, `trace-<clock>-r<k>.csv` and
 ```text
 make compare REF=level1/opening              # both clocks
 make compare REF=level1/opening CLOCK=c18    # one clock
+make compare REF=level1/opening STRICT=1     # fail on any divergence
 CLAW_INSTALL=... CLAW_REFERENCE=... make test-install MODULE=acceptance
 ```
 
@@ -17,9 +18,13 @@ CLAW_INSTALL=... CLAW_REFERENCE=... make test-install MODULE=acceptance
 state at the route's time zero that the store names, keeps going with no
 button held while the reference runs on past the route's end, and prints,
 for every reference trace, the first divergence with the rows leading up to
-it and a per-column summary. It fails on any divergence. The install test
-`install_reference` compares every route in `references.toml` and fails
-only when a column leaves its tolerance earlier than the file records.
+it and a per-column summary. It fails on a divergence that
+`references.toml` does not list for that route and clock, or that comes
+earlier than listed, and when the game's trace ends before the reference
+trace; a route and clock with no entry there fails on any divergence.
+`STRICT=1` fails on any divergence, listed or not. The install test
+`install_reference` holds every route in `references.toml` to the same
+rule.
 
 ## The two clocks
 
