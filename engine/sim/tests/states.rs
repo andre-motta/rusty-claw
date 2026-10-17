@@ -13,7 +13,7 @@ use common::*;
 
 #[test]
 fn spawn_uses_the_start_point_and_drops_to_the_floor() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     let o = sim.player().unwrap();
     assert_eq!((o.x, o.y), (1000, 959 - 60));
     assert_eq!(o.state, state::STAND);
@@ -36,7 +36,7 @@ fn spawn_uses_the_start_point_and_drops_to_the_floor() {
 #[test]
 fn start_points_outside_the_plane_are_clamped() {
     let map = TileMap::from_ascii(64, &["....", "....", "####"]);
-    let sim = Sim::new(SimLevel::synthetic(map, (5000, -40)), SimConfig::default());
+    let sim = pressing_sim(SimLevel::synthetic(map, (5000, -40)), SimConfig::default());
     let o = sim.player().unwrap();
     // The centre clamps to the plane (x = 255); the first post-tick step
     // then keeps Claw 50 px inside it.
@@ -52,7 +52,7 @@ fn claw_stays_fifty_pixels_inside_the_plane() {
 
 #[test]
 fn crouch_and_stand_up() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     sim.step(press(DOWN));
     let o = sim.player().unwrap();
     assert_eq!(o.state, state::CROUCH);
@@ -72,7 +72,7 @@ fn crouch_and_stand_up() {
 
 #[test]
 fn look_up_and_jump_from_it() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     for _ in 0..37 {
         sim.step(hold(UP));
     }
@@ -95,7 +95,7 @@ fn ledge_level() -> SimLevel {
 fn standing_over_a_ledge_teeters() {
     // Box (-16..16): at x = 650 only the left edge (634) is over the floor
     // that ends at x = 639.
-    let mut sim = Sim::new(ledge_level(), SimConfig::default());
+    let mut sim = pressing_sim(ledge_level(), SimConfig::default());
     sim.step(TickInput::default());
     assert_eq!(sim.player().unwrap().state, state::STAND);
     let y = sim.player().unwrap().y;
@@ -136,7 +136,7 @@ fn every_state_id_has_a_row() {
 
 #[test]
 fn unused_ids_run_only_the_post_tick_step() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     sim.set_player_state(2);
     sim.step(hold(RIGHT));
     let o = sim.player().unwrap();
@@ -155,7 +155,7 @@ fn later_milestone_states_fall_back_to_stand() {
         state::FREEZE,
         state::HIT,
     ] {
-        let mut sim = Sim::new(flat_level(), SimConfig::default());
+        let mut sim = pressing_sim(flat_level(), SimConfig::default());
         sim.set_player_state(id);
         sim.step(TickInput::default());
         assert_eq!(sim.player().unwrap().state, state::STAND, "state {id}");
@@ -176,7 +176,7 @@ fn fix_config(fix: bool) -> SimConfig {
 }
 
 fn hit_in_mid_air(cfg: SimConfig) -> Sim {
-    let mut sim = Sim::new(flat_level(), cfg);
+    let mut sim = pressing_sim(flat_level(), cfg);
     sim.step(press(JUMP));
     for _ in 0..3 {
         sim.step(hold(JUMP));
@@ -201,7 +201,7 @@ fn hit_ending_in_mid_air_lands_with_the_fix() {
 #[test]
 fn hit_ending_on_the_ground_stands_either_way() {
     for cfg in [SimConfig::default(), fix_config(true)] {
-        let mut sim = Sim::new(flat_level(), cfg);
+        let mut sim = pressing_sim(flat_level(), cfg);
         sim.step(TickInput::default());
         let before = sim.player().unwrap().clone();
         sim.set_player_state(state::HIT);
@@ -226,7 +226,7 @@ fn the_original_mid_air_hit_jump_is_the_default() {
 
 #[test]
 fn respawn_returns_to_the_spawn_point_or_checkpoint() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     for _ in 0..50 {
         sim.step(hold(RIGHT));
     }

@@ -15,15 +15,19 @@
 //! A stack (`BackStackedCrates`, `FrontStackedCrates`) is a hidden spawner
 //! that, when it first runs, builds a column of `Crate` objects 40 px apart,
 //! one per non-zero code among its loot fields, and then removes itself.
+//! A crate of a stack shares the enemies' base: each of its logic calls
+//! starts with their per-tick roll ([`enemy::pulse_roll`]), a draw from
+//! the shared random stream on every third tick.
+//!
 //! Each crate of a stack breaks on any accepted hit and releases its one
 //! item with a random hop; the crates above it then fall 40 px under
 //! gravity onto the one below, with one small bounce when they land fast.
 
 use claw_frame::SoundChannel;
 
-use super::{ObjectData, World, new_object, pickup, sound};
+use super::{ObjectData, World, enemy, new_object, pickup, sound};
 use crate::level::runtime_image_set;
-use crate::object::{Object, ObjectId, Rect, draw_flags, flags, types};
+use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags, types};
 use crate::tuning::TICK_MS;
 
 /// Logic names this family runs.
@@ -367,6 +371,15 @@ fn build_stack(w: &mut World, id: ObjectId) {
 }
 
 fn stacked_tick(w: &mut World, id: ObjectId) {
+    let o = w.objects.get(id).expect("caller checked");
+    if !matches!(
+        o.state,
+        state::INIT | engine_state::DESTROYING | engine_state::SLEEPING
+    ) {
+        // A crate of a stack shares the enemies' base: its calls start
+        // with their per-tick roll.
+        enemy::pulse_roll(w);
+    }
     let o = w.objects.get_mut(id).expect("caller checked");
     match o.state {
         state::INIT => {

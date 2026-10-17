@@ -306,11 +306,13 @@ fn install_traces_are_identical_at_60_144_and_240_hz() {
     }
 }
 
-/// The officer running `logic` placed at `at` on the level.
+/// The object running `logic` placed at `at` on the level (it may have
+/// moved already: the objects live at the start are set up while the level
+/// loads).
 fn object_at(sim: &Sim, logic: &str, at: (i32, i32)) -> ObjectId {
     sim.objects()
         .all()
-        .find(|(_, o)| &*o.logic == logic && (o.x, o.y) == at)
+        .find(|(_, o)| &*o.logic == logic && (o.editor.0, o.editor.1) == at)
         .map(|(id, _)| id)
         .unwrap_or_else(|| panic!("no {logic} at {at:?}"))
 }

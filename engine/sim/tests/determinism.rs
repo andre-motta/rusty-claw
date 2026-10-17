@@ -10,12 +10,12 @@ use claw_sim::rng::Rng;
 use claw_sim::tiles::{SOLID, TileMap};
 use claw_sim::trace::{self, TraceRow};
 use claw_sim::{
-    ActivationConfig, Buttons, InputLatch, InputScript, Sim, SimConfig, SimLevel, TickInput,
+    ActivationConfig, Buttons, InputLatch, InputScript, SimConfig, SimLevel, TickInput,
 };
 use common::*;
 
 fn trace_of(level: SimLevel, cfg: SimConfig, script: &InputScript) -> String {
-    let mut sim = Sim::new(level, cfg);
+    let mut sim = pressing_sim(level, cfg);
     let rows: Vec<TraceRow> = script
         .ticks
         .iter()
@@ -83,7 +83,7 @@ fn two_runs_give_identical_traces() {
 /// rate: each change is seen at the first frame at or after its time and
 /// timestamped with that frame; ticks run when their end has passed.
 fn trace_at_rate(level: SimLevel, script: &InputScript, hz: u64) -> String {
-    let mut sim = Sim::new(level, SimConfig::default());
+    let mut sim = pressing_sim(level, SimConfig::default());
     let mut latch = InputLatch::new();
     let events = script.events();
     let mut next_event = 0;
@@ -123,7 +123,7 @@ fn short_taps_between_frames_still_jump() {
     let mut latch = InputLatch::new();
     latch.event(4_167, Buttons::JUMP, true);
     latch.event(8_333, Buttons::JUMP, false);
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     sim.step(latch.take(0));
     assert_eq!(sim.player().unwrap().state, state::JUMP);
 }
@@ -152,7 +152,7 @@ fn claw_never_enters_solid_and_lands_only_from_above() {
     let mut seen = std::collections::BTreeSet::new();
     let mut ground_landings = 0;
     for seed in 1..=12 {
-        let mut sim = Sim::new(level.clone(), SimConfig::default());
+        let mut sim = pressing_sim(level.clone(), SimConfig::default());
         let mut prev = sim.player().unwrap().clone();
         for (i, input) in random_script(seed, 2500).ticks.into_iter().enumerate() {
             sim.step(input);

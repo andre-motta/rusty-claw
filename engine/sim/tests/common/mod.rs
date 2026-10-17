@@ -118,8 +118,17 @@ pub fn run(sim: &mut Sim, script: &InputScript) -> Vec<Row> {
 
 /// Runs `script` on a fresh simulation of `level`.
 pub fn run_level(level: SimLevel, script: &InputScript) -> Vec<Row> {
-    let mut sim = Sim::new(level, SimConfig::default());
+    let mut sim = pressing_sim(level, SimConfig::default());
     run(&mut sim, script)
+}
+
+/// A fresh simulation of `level` in which keys count from the first tick:
+/// the latch on keys down when play starts is lifted
+/// ([`Sim::unlatch_keys`]), for tests that press from the first tick.
+pub fn pressing_sim(level: SimLevel, cfg: SimConfig) -> Sim {
+    let mut sim = Sim::new(level, cfg);
+    sim.unlatch_keys();
+    sim
 }
 
 pub fn idle(sim: &mut Sim, n: usize) {

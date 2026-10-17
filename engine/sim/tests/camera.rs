@@ -5,7 +5,7 @@ mod common;
 
 use claw_frame::interpolate;
 use claw_sim::player::state;
-use claw_sim::{Sim, SimConfig, TickInput};
+use claw_sim::{SimConfig, TickInput};
 use common::*;
 
 #[test]
@@ -39,7 +39,7 @@ fn follows_claw_without_lag_and_settles_on_stop() {
 
 #[test]
 fn jumps_over_500_px_snap_in_one_tick() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     idle(&mut sim, 30);
     let before = sim.camera().current;
     let (x, y) = {
@@ -124,7 +124,7 @@ fn jumping_moves_the_camera_with_claw() {
 
 #[test]
 fn scripted_point_and_shake() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     idle(&mut sim, 2);
     let start = sim.camera().current;
     sim.set_camera_point(Some((start.0 + 100, start.1)));
@@ -151,7 +151,7 @@ fn scripted_point_and_shake() {
 
 #[test]
 fn snapshot_camera_is_the_view_corner() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     let snap = sim.step(TickInput::default());
     let (cx, cy) = sim.camera().current;
     let r = sim.view().rect;

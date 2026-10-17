@@ -167,8 +167,7 @@ fn track_elevator(x: i32) -> ObjectSpec {
 fn elevator_follows_the_clock_and_turns_at_its_ends() {
     let mut sim = Sim::new(level_with(vec![track_elevator(1160)]), SimConfig::default());
     let id = find(&sim, "Elevator");
-    sim.step(TickInput::default());
-    // The set-up call does not move it.
+    // The set-up call, while the level loads, does not move it.
     assert_eq!(pos(&sim, id), (1160, 700));
     assert_eq!(obj_state(&sim, id), state::RUNNING);
     let o = sim.objects().get(id).unwrap();
@@ -178,7 +177,7 @@ fn elevator_follows_the_clock_and_turns_at_its_ends() {
     let (mut lo, mut hi) = (i32::MAX, i32::MIN);
     let mut turns = 0;
     let mut last_dir = 0;
-    for k in 1..800u64 {
+    for k in 0..800u64 {
         let before = pos(&sim, id).0;
         sim.step(TickInput::default());
         let ms = 18 * (k + 1);
@@ -202,13 +201,14 @@ fn elevator_follows_the_clock_and_turns_at_its_ends() {
     assert_eq!(pos(&sim, id).0, expected_x(18 * 800));
     assert_eq!((lo, hi), (1000, 1161));
     assert!(turns >= 6);
-    // The worked example: ms 36 and 54.
+    // The worked example: ms 18, 36 and 54.
     let mut sim = Sim::new(level_with(vec![track_elevator(1160)]), SimConfig::default());
     let id = find(&sim, "Elevator");
     sim.step(TickInput::default());
+    assert_eq!(pos(&sim, id).0, 1159);
     sim.step(TickInput::default());
     assert_eq!(pos(&sim, id).0, 1156);
-    assert_eq!(sim.objects().get(id).unwrap().platform_move, (-4, 0));
+    assert_eq!(sim.objects().get(id).unwrap().platform_move, (-3, 0));
     sim.step(TickInput::default());
     assert_eq!(pos(&sim, id).0, 1153);
 }
@@ -580,9 +580,10 @@ fn toggles(sim: &mut Sim, id: ObjectId, n: u64) -> Vec<(u64, bool)> {
 
 #[test]
 fn toggle_pegs_follow_their_phases() {
-    // Live from the level start: the clock edge is seen one call late.
+    // Live from the level start: set up while the level loads, so the
+    // clock edge at ms 0 is seen by the first tick's call.
     for (logic, first_off_ms) in [
-        ("TogglePeg2", 54),
+        ("TogglePeg2", 36),
         ("TogglePeg3", 738),
         ("TogglePeg4", 1476),
         ("TogglePeg", 1530),
@@ -614,15 +615,15 @@ fn a_toggle_peg_cycle_takes_its_animation_time() {
             was = now;
         }
     }
-    // Off at ms 54 (tick 2), in the wall 34 ticks later.
-    assert_eq!(edges[0], (2, false));
-    assert_eq!(states[2 + 34], state::IN);
-    assert_eq!(states[2 + 33], state::SLIDING_IN);
+    // Off at ms 36 (tick 1), in the wall 34 ticks later.
+    assert_eq!(edges[0], (1, false));
+    assert_eq!(states[1 + 34], state::IN);
+    assert_eq!(states[1 + 33], state::SLIDING_IN);
     // The clock turns it out again at ms 750: the first call after is
     // tick 41 (ms 756); it is solid again 18 calls later.
     assert_eq!(states[41], state::START);
     assert_eq!(edges[1], (59, true));
-    assert_eq!(&slides[..2], &[2, 42]);
+    assert_eq!(&slides[..2], &[1, 42]);
     // Off again when the clock passes ms 2250: the call at ms 2268 sees it
     // and the next one starts the slide. Then every 3000 ms.
     assert_eq!(edges[2], (126, false));
@@ -690,10 +691,10 @@ fn decorations_loop_and_never_collide() {
             },
         ],
     );
-    let mut sim = Sim::new(with_frames(level, (1, 4)), SimConfig::default());
+    let mut sim = pressing_sim(with_frames(level, (1, 4)), SimConfig::default());
     let torch = find(&sim, "BehindAniCandy");
     let hand = find(&sim, "FrontAniCandy");
-    sim.step(TickInput::default());
+    // Set up while the level loads.
     let o = sim.objects().get(torch).unwrap();
     assert_eq!((o.state, o.z, o.frame), (decor::SET_UP, decor::BEHIND_Z, 2));
     assert_eq!(sim.objects().get(find(&sim, "FrontCandy")).unwrap().z, 5100);

@@ -75,9 +75,10 @@
 //! 500 ms hold. Facing left the speeds and the power are negated. The
 //! pistol's animation can be rewound for rapid fire while it has shots.
 //!
-//! Starting a pistol shot or a dynamite throw with ammunition sometimes
-//! makes Claw say a line; that roll uses the sound-only random stream, so
-//! firing never changes the game's own random draws.
+//! Starting a pistol shot, a magic shot or a dynamite throw with
+//! ammunition sometimes makes Claw say a line; that roll is one draw of
+//! 0..100 from the game's shared random stream, made as the attack starts,
+//! as in the original.
 //!
 //! # Weapons
 //!
@@ -822,7 +823,7 @@ fn start_shot(c: &mut Ctx, s: &Shot) -> bool {
     let anim = if ammo > 0 { s.anim } else { s.empty_anim };
     if ammo > 0
         && let Some((line, percent)) = s.voice
-        && c.sound_rng.below(100) < percent
+        && c.rng.below(100) < percent
     {
         c.say(line, false);
     }

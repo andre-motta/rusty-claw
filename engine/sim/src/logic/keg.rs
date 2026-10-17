@@ -21,6 +21,10 @@
 //! [`KILL_EXPLODE`] (see [`World::kill`]) also sets it off; any other kill
 //! removes it without a blast.
 //!
+//! A keg shares the enemies' base: every logic call after its first starts
+//! with their per-tick roll ([`enemy::pulse_roll`]), a draw from the shared
+//! random stream on every third tick.
+//!
 //! Kegs rest on the floor at spawn: on its first logic call a keg is put
 //! 32 px higher and then down onto the first floor below it, standing, the
 //! way enemies are placed.
@@ -174,6 +178,14 @@ pub fn tick(w: &mut World, id: ObjectId) {
         init(w, id);
         return;
     }
+    if matches!(o.state, engine_state::DESTROYING | engine_state::SLEEPING) {
+        return;
+    }
+    // Every later call starts with the enemies' per-tick roll.
+    enemy::pulse_roll(w);
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
     if o.state == engine_state::KILLED {
         let kind = o.kill_kind;
         o.state = state::READY;

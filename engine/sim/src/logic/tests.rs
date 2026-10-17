@@ -143,7 +143,7 @@ fn spawns_join_the_list_at_the_end_of_the_pass_in_order() {
         SimConfig::default(),
     );
     let spawner_id = find(&sim, "FrontCandy")[0];
-    sim.step(TickInput::default());
+    // The spawner's first call runs while the level loads.
     let log0 = take_log();
     let ids: Vec<ObjectId> = find(&sim, "HitBurst");
     assert_eq!(ids.len(), 3, "the destroyed spawn is gone: {ids:?}");
@@ -152,7 +152,7 @@ fn spawns_join_the_list_at_the_end_of_the_pass_in_order() {
         vec![
             "spawner 0".to_string(),
             format!("spawned {ids:?}"),
-            // Only the child asking to run at creation runs this tick.
+            // Only the child asking to run at creation runs then.
             "child 102 at 0".to_string(),
         ]
     );
@@ -165,10 +165,10 @@ fn spawns_join_the_list_at_the_end_of_the_pass_in_order() {
     assert_eq!(
         take_log(),
         vec![
-            "spawner 1",
-            "child 100 at 1",
-            "child 101 at 1",
-            "child 102 at 1"
+            "spawner 0",
+            "child 100 at 0",
+            "child 101 at 0",
+            "child 102 at 0"
         ]
     );
 }
@@ -281,13 +281,14 @@ fn logics_move_objects_and_keep_their_data() {
     for _ in 0..20 {
         events.extend(sim.step(TickInput::default()).events);
     }
-    assert_eq!(sim.objects().get(lift).unwrap().x, 960);
+    // 21 calls: the first while the level loads, then one per tick.
+    assert_eq!(sim.objects().get(lift).unwrap().x, 963);
     let p = crate::sim::platforms(sim.objects());
     assert_eq!((p[0].id, p[0].move_x, p[0].move_y), (lift, 3, 0));
     assert_eq!(
         sim.objects().get(gem).unwrap().data,
         ObjectData::Pickup(PickupData {
-            drop_code: Some(20),
+            drop_code: Some(21),
             ..PickupData::default()
         })
     );
@@ -301,7 +302,7 @@ fn logics_move_objects_and_keep_their_data() {
 }
 
 fn stopper(w: &mut World, id: ObjectId) {
-    let moved = w.objects.get(id).unwrap().x < 903;
+    let moved = w.objects.get(id).unwrap().x < 906;
     if moved {
         mover(w, id);
     }
@@ -312,13 +313,15 @@ fn a_platform_that_stops_carries_no_one() {
     install(GameLogic::Platform, stopper);
     let mut sim = Sim::new(level(&[("Elevator", 900, 700, 10)]), SimConfig::default());
     let lift = find(&sim, "Elevator")[0];
+    // It moved once while the level loaded, and moves once more.
+    assert_eq!(sim.objects().get(lift).unwrap().x, 903);
     sim.step(TickInput::default());
     let p = crate::sim::platforms(sim.objects());
     assert_eq!((p[0].id, p[0].move_x), (lift, 3));
     sim.step(TickInput::default());
     let p = crate::sim::platforms(sim.objects());
     assert_eq!((p[0].id, p[0].move_x, p[0].move_y), (lift, 0, 0));
-    assert_eq!(sim.objects().get(lift).unwrap().x, 903);
+    assert_eq!(sim.objects().get(lift).unwrap().x, 906);
 }
 
 // --------------------------------------------------------------- hitting
@@ -576,12 +579,14 @@ fn animation_frames_play_their_sounds() {
     assert_eq!(sim.rng(), &game_rng);
     // Both objects are live (the second is outside the view but inside
     // its activation window); the in-view sound plays for the first only.
+    // The first element is applied by the first call, while the level
+    // loads; its sounds go out with the first tick.
     let two = |r: &mut crate::rng::Rng| ["TWO_A", "TWO_B"][r.below(2) as usize].to_string();
     let (a, b) = (two(&mut rng), two(&mut rng));
-    assert_eq!(heard[0], vec!["ONE", "ONE"]);
-    assert_eq!(heard[1], vec![a, b]);
-    assert!(heard[2].is_empty(), "an unregistered name plays nothing");
-    assert_eq!(heard[3], vec!["IN_VIEW"]);
+    assert_eq!(heard[0], vec!["ONE".to_string(), "ONE".to_string(), a, b]);
+    assert!(heard[1].is_empty(), "an unregistered name plays nothing");
+    assert_eq!(heard[2], vec!["IN_VIEW"]);
+    assert_eq!(heard[3], vec!["ONE", "ONE"]);
 }
 
 #[test]
@@ -628,9 +633,10 @@ fn animations_step_within_the_image_set_of_their_object() {
     l.images
         .insert("TEST_CYCLE".into(), ImageFrames::range(2, 4));
     let mut sim = Sim::new(l, SimConfig::default());
-    take_log();
+    // The first call, while the level loads, steps from 3 to 4.
+    assert_eq!(take_log(), vec!["4"]);
     idle(&mut sim, 5);
-    assert_eq!(take_log(), vec!["4", "2", "3", "4", "2"]);
+    assert_eq!(take_log(), vec!["2", "3", "4", "2", "3"]);
 }
 
 #[test]
@@ -658,8 +664,9 @@ fn in_view_frame_sounds_follow_the_draw_box() {
     for _ in 0..4 {
         heard.push(played(&sim.step(TickInput::default()).audio));
     }
-    assert_eq!(heard[0], vec!["ONE", "ONE", "ONE"]);
-    assert_eq!(heard[3], vec!["IN_VIEW", "IN_VIEW"]);
+    // The load's sounds go out with the first tick.
+    assert_eq!(heard[0][..3], ["ONE", "ONE", "ONE"]);
+    assert_eq!(heard[2], vec!["IN_VIEW", "IN_VIEW"]);
 }
 
 fn shaker(w: &mut World, id: ObjectId) {
@@ -698,7 +705,8 @@ fn a_kill_reaches_the_logic_with_its_kind() {
     assert!(sim.with_world(|w| w.kill(id, 2)));
     assert!(!sim.with_world(|w| w.kill(9999, 2)));
     idle(&mut sim, 1);
-    assert_eq!(take_log(), vec!["0 0", "28 2"]);
+    // The calls while the level loads and in the first tick, then the kill.
+    assert_eq!(take_log(), vec!["0 0", "0 0", "28 2"]);
 }
 
 // ------------------------------------------------------------- cloning

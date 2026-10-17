@@ -977,12 +977,16 @@ fn remove_shots(sim: &mut Sim) {
 }
 
 #[test]
-fn firing_leaves_the_game_random_stream_alone() {
-    // Same seed; one run fires everything, the other stands still.
+fn firing_draws_the_line_chance_from_the_game_random_stream() {
+    // Same seed; one run fires everything, the other stands still. Each
+    // attack that starts with ammunition rolls the chance of Claw's line,
+    // one draw of the shared stream as in the original; nothing else in
+    // the firing draws.
     let mut quiet = new_sim(11);
     let mut busy = new_sim(11);
     let mut log = Shots::default();
     let presses = [PROJECTILE, MAGIC, DYNAMITE, TOGGLE, PISTOL, PROJECTILE];
+    let mut extra = Vec::new();
     for p in presses {
         go(&mut busy, &mut log, press(p));
         remove_shots(&mut busy);
@@ -991,14 +995,30 @@ fn firing_leaves_the_game_random_stream_alone() {
             remove_shots(&mut busy);
         }
         idle(&mut quiet, 41);
-        assert_eq!(busy.rng().state(), quiet.rng().state());
+        extra.push(draws_between(quiet.rng().state(), busy.rng().state()));
     }
     assert!(log.len() >= 4, "shots: {}", log.len());
-    // The next blow is the same in both.
-    busy.step(press(ATTACK));
-    quiet.step(press(ATTACK));
-    assert_eq!(busy.claw().attack.kind, quiet.claw().attack.kind);
-    assert_eq!(busy.rng().state(), quiet.rng().state());
+    // The pistol shot and the dynamite throw roll; the magic shot has no
+    // line and toggling the weapon starts no attack; the pistol key and the
+    // projectile key then fire the pistol again.
+    assert_eq!(
+        extra,
+        [Some(1), Some(1), Some(2), Some(2), Some(3), Some(4)],
+        "extra draws of the firing run after each press"
+    );
+}
+
+/// The number of draws of the shared random stream that lead from state
+/// `from` to state `to`, when there are fewer than 1000.
+fn draws_between(from: u32, to: u32) -> Option<u32> {
+    let mut r = Rng::new(from);
+    for n in 0..1000 {
+        if r.state() == to {
+            return Some(n);
+        }
+        r.next_u15();
+    }
+    None
 }
 
 // ------------------------------------------------------------ lift and throw

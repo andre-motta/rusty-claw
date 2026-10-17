@@ -26,9 +26,9 @@
 use super::lift::Carry;
 use super::states::{enter_strike, go_home, human_home_tick, start_pacing};
 use super::{
-    Body, Class, ClassAnims, ClassSounds, EnemyState, HUMAN_HIT_BY, Handler, STARTUP_QUIET_MS,
-    Shot, Timer, build, data, data_mut, face_claw, faces_right, human_fields, human_health, obj,
-    on_screen, rand, say, sees_claw, set_anim, set_anim_now, set_state,
+    Body, Class, ClassAnims, ClassSounds, EnemyState, HUMAN_HIT_BY, Handler, Shot, Timer, build,
+    data, data_mut, face_claw, faces_right, human_fields, human_health, obj, on_screen, rand, say,
+    sees_claw, set_anim, set_anim_now, set_state,
 };
 use crate::logic::World;
 use crate::logic::projectile::{self, ProjectileSpec};
@@ -215,7 +215,7 @@ pub fn go_idle(w: &mut World, id: ObjectId) {
 }
 
 /// Idle: a new stand pose each second; Home when it sees Claw; otherwise,
-/// after four seconds (and not while the level starts), one time in twenty
+/// after four seconds (on a frame pulse tick only), one time in twenty
 /// it starts pacing. Draws: one of 0..2 for a new pose; one of 0..100
 /// once pacing may start.
 pub fn idle_tick(w: &mut World, id: ObjectId) {
@@ -232,7 +232,7 @@ pub fn idle_tick(w: &mut World, id: ObjectId) {
         return;
     }
     let wait = data(w, id).map_or(Timer::default(), |d| d.pace_wait);
-    if wait.done(now) && now >= STARTUP_QUIET_MS && rand(w, 100) < PACE_CHANCE {
+    if wait.done(now) && w.pulse && rand(w, 100) < PACE_CHANCE {
         start_pacing(w, id);
     }
 }

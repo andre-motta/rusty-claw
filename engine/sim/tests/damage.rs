@@ -54,7 +54,7 @@ const POWERUP_LINES: [&str; 4] = [
 const LINE_MS: u32 = 900;
 
 fn sim_of(objects: &[(&str, i32, i32)]) -> Sim {
-    Sim::new(level(objects), SimConfig::default())
+    pressing_sim(level(objects), SimConfig::default())
 }
 
 /// An object of kind `type_flags` with `f`, touching Claw from `dx`
@@ -712,7 +712,7 @@ fn without_level_logics_a_death_tile_is_only_counted() {
         level_logics: false,
         ..SimConfig::default()
     };
-    let mut sim = Sim::new(level(&[]), cfg);
+    let mut sim = pressing_sim(level(&[]), cfg);
     run_until(&mut sim, hold(RIGHT), 300, |s| s.claw().death_tile_hits > 0);
     for _ in 0..120 {
         let snap = sim.step(hold(RIGHT));

@@ -83,7 +83,7 @@ fn tapped_jump_peaks_at_the_base_height_at_any_tuning() {
             tuning,
             ..SimConfig::default()
         };
-        let mut sim = Sim::new(flat_level(), cfg);
+        let mut sim = pressing_sim(flat_level(), cfg);
         let rows = run(&mut sim, &script(&[(JUMP, 18), (0, 1000)]));
         assert_eq!(jump_metrics(&rows).0, 45);
     }
@@ -95,14 +95,14 @@ fn original_speeds_full_hold_reaches_the_same_height() {
         tuning: Tuning::original_speeds(),
         ..SimConfig::default()
     };
-    let mut sim = Sim::new(flat_level(), cfg);
+    let mut sim = pressing_sim(flat_level(), cfg);
     let rows = run(&mut sim, &script(&[(JUMP, 800), (0, 1000)]));
     assert_eq!(jump_metrics(&rows).0, 145);
 }
 
 #[test]
 fn running_jump_goes_higher() {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     let s = script(&[(RIGHT, 1800), (RIGHT | JUMP, 800), (RIGHT, 1000)]);
     let rows = run(&mut sim, &s);
     let start = rows.iter().position(|r| r.state == state::JUMP).unwrap();
@@ -213,7 +213,7 @@ fn catnip_sim(level: claw_sim::SimLevel, tuning: Tuning, catnip: bool) -> Sim {
         tuning,
         ..SimConfig::default()
     };
-    let mut sim = Sim::new(level, cfg);
+    let mut sim = pressing_sim(level, cfg);
     sim.step(claw_sim::TickInput::default());
     if catnip {
         sim.with_world(|w| {
@@ -288,7 +288,7 @@ fn catnip_jump(tuning: Tuning, catnip: bool, hold_ms: u64) -> (i32, i32) {
 
 /// Claw's Y standing on [`flat_level`]'s floor.
 fn flat_level_floor_y() -> i32 {
-    let mut sim = Sim::new(flat_level(), SimConfig::default());
+    let mut sim = pressing_sim(flat_level(), SimConfig::default());
     idle(&mut sim, 5);
     sim.player().unwrap().y
 }

@@ -64,7 +64,7 @@ fn level(objects: Vec<ObjectSpec>) -> SimLevel {
 }
 
 fn sim(objects: Vec<ObjectSpec>) -> Sim {
-    Sim::new(level(objects), SimConfig::default())
+    pressing_sim(level(objects), SimConfig::default())
 }
 
 fn step(sim: &mut Sim, input: TickInput) -> Vec<AudioCue> {
@@ -475,11 +475,18 @@ fn a_spot_loop_follows_distance_and_side_and_stops_when_it_sleeps() {
     let mut stops = 0;
     let mut seen = Vec::new();
     // Walk right past the spot and on until it is out of range.
-    for _ in 0..ticks(5000) {
+    for k in 0..ticks(5000) {
         let cues = step(&mut sim, hold(RIGHT));
         let Some(h) = manager(&sim).voices.get(CHAINS).map(|v| v.handle) else {
             continue;
         };
+        // The spot and the ambient manager are set up while the level
+        // loads, and the loop starts then, from the level's start view:
+        // the first tick also carries that cue, from before the camera
+        // first moved to Claw.
+        if k == 0 {
+            continue;
+        }
         let centre = sound::view_centre(sim.view().rect);
         let want = spot_level_pan(1600, FLOOR_Y, centre.0, centre.1);
         for c in ambient(&cues, h) {
@@ -868,7 +875,7 @@ fn cue_log(sim: &Sim) -> String {
 }
 
 fn log_direct(script: &InputScript) -> String {
-    let mut sim = Sim::new(course(), SimConfig::default());
+    let mut sim = pressing_sim(course(), SimConfig::default());
     let mut log = String::new();
     for &input in &script.ticks {
         sim.step(input);
@@ -882,7 +889,7 @@ fn log_direct(script: &InputScript) -> String {
 /// end has passed. With `jitter`, each frame lasts from half a frame to a
 /// full one.
 fn log_at_rate(script: &InputScript, hz: u64, jitter: bool) -> String {
-    let mut sim = Sim::new(course(), SimConfig::default());
+    let mut sim = pressing_sim(course(), SimConfig::default());
     let mut latch = InputLatch::new();
     let events = script.events();
     let mut rng = Rng::new(hz as u32);
