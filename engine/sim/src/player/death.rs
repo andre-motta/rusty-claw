@@ -20,13 +20,20 @@
 //!
 //! The lives step runs once per death: a life is taken and the death is
 //! counted in [`super::stats::PlayerStats::attempt`], then with lives
-//! left the game reports [`GameEvent::ClawDied`] and closes a circle around
-//! the body ([`CLOSE_MS`], with the circle sound). When it is closed Claw
-//! respawns at the last checkpoint (or the level start) with full health,
-//! the flag sound plays, the screen stays black for [`HOLD_MS`] and a
-//! circle opens on him over [`OPEN_MS`]. Claw stays still and safe until
-//! the circle is open. With no lives left the game reports
-//! [`GameEvent::GameOver`] and Claw stays dead.
+//! left the game reports [`GameEvent::ClawDied`] and the tick ends with
+//! Claw dead. Claw respawns between that tick and the next, taking no game
+//! time ([`respawn_between_ticks`], run by [`crate::Sim::step`] or by
+//! [`crate::Sim::respawn_now`]): he is back at the last checkpoint (or the
+//! level start) with full health, standing, and plays on from the next
+//! tick. The circle that closes around the body ([`CLOSE_MS`], with the
+//! circle sound), the black screen ([`HOLD_MS`]) and the circle that opens
+//! on him ([`OPEN_MS`], with the flag sound at the level start) are drawn
+//! by the presentation between the two ticks, outside game time: the
+//! simulation reports them as its screen transition (the closing circle
+//! from the lives step, the opening one from the respawn, gone at the
+//! next tick), so recordings and traces have no ticks for them. With no
+//! lives left the game reports [`GameEvent::GameOver`] and Claw stays
+//! dead.
 //!
 //! A new game starts with 7 lives, so the 7th death ends it.
 //!
@@ -97,7 +104,8 @@ pub const DEATH_FALL_GRAVITY: f64 = 2250.0;
 /// level.
 pub const DEATH_FALL_Z: i32 = 8500;
 
-/// Length of the circle closing on Claw's body, ms.
+/// Length of the circle closing on Claw's body, ms (drawn outside game
+/// time).
 pub const CLOSE_MS: u32 = 1250;
 /// Black screen between the closing and the opening circle, ms.
 pub const HOLD_MS: u32 = 500;
@@ -124,7 +132,8 @@ pub const TILE_DEATH_ANIM: &str = "CLAW_SPIKEDEATH";
 pub mod claw_flags {
     /// The lives step of the current death has run.
     pub const LIVES_COUNTED: u32 = 0x4000_0000;
-    /// Respawned, waiting for the opening circle to end.
+    /// No longer set: the respawn takes no game time. Kept so the bit
+    /// stays reserved.
     pub const RESPAWNING: u32 = 0x2000_0000;
 }
 
@@ -227,7 +236,8 @@ pub fn death_fall_tick(c: &mut Ctx) {
         return;
     }
     if c.o.special_flags & claw_flags::LIVES_COUNTED != 0 {
-        after_lives_step(c);
+        // The body stays where it is until the respawn between ticks (with
+        // no lives left, for good).
         return;
     }
     c.advance_anim();
@@ -249,7 +259,8 @@ pub fn death_tick(c: &mut Ctx) {
         return;
     }
     if c.o.special_flags & claw_flags::LIVES_COUNTED != 0 {
-        after_lives_step(c);
+        // The body stays where it is until the respawn between ticks (with
+        // no lives left, for good).
         return;
     }
     c.advance_anim();
@@ -258,8 +269,9 @@ pub fn death_tick(c: &mut Ctx) {
     }
 }
 
-/// Takes a life and counts the death in the attempt counter, then starts
-/// the respawn or ends the game. Runs once per death.
+/// Takes a life and counts the death in the attempt counter, then asks for
+/// the respawn between this tick and the next or ends the game. Runs once
+/// per death.
 fn lives_step(c: &mut Ctx) {
     c.o.special_flags |= claw_flags::LIVES_COUNTED;
     c.p.stats.lives -= 1;
@@ -285,28 +297,19 @@ fn lives_step(c: &mut Ctx) {
                 y: f64::from(c.o.y + CLOSE_CENTRE.1),
             },
         }));
+        c.p.respawn_pending = true;
     } else {
         c.out.event(GameEvent::GameOver);
     }
 }
 
-/// After the lives step: the body stays where it is; once the closing
-/// circle is over Claw respawns.
-fn after_lives_step(c: &mut Ctx) {
-    let Some(t) = c.out.transition() else {
-        return;
-    };
-    if t.kind == TransitionKind::Circle
-        && t.closing
-        && c.tick >= t.start_tick + ticks_of(t.duration_ms)
-    {
-        respawn_after_death(c);
-    }
-}
-
-/// Puts Claw back at the checkpoint and opens the circle on him; he is
-/// frozen and safe until it is open.
-fn respawn_after_death(c: &mut Ctx) {
+/// The respawn after the lives step, between two ticks: Claw is back at
+/// the checkpoint (or the level start) with full health, standing, and
+/// the opening circle is reported for the presentation (see the [module
+/// documentation](self)). [`crate::Sim`] then centres the camera and the
+/// activation on him and runs one update pass.
+pub fn respawn_between_ticks(c: &mut Ctx) {
+    c.p.respawn_pending = false;
     let at_level_start = c.p.checkpoint.is_none();
     transition(c, state::RESPAWN);
     c.o.flags |= flags::RESORT;
@@ -314,39 +317,18 @@ fn respawn_after_death(c: &mut Ctx) {
     if at_level_start {
         c.play(FLAG_SOUND, SoundChannel::Effect);
     }
-    c.o.special_flags &= !claw_flags::LIVES_COUNTED;
-    c.o.special_flags |= claw_flags::RESPAWNING;
-    c.o.flags |= flags::SAFE;
-    let hold = ticks_of(HOLD_MS);
-    let open = ticks_of(OPEN_MS);
-    c.o.time_delay = (hold + open) as u32 * TICK_MS;
+    c.o.special_flags &= !(claw_flags::LIVES_COUNTED | claw_flags::RESPAWNING);
+    c.o.time_delay = 0;
     c.out.set_transition(Some(ScreenTransition {
         kind: TransitionKind::Circle,
         closing: false,
-        start_tick: c.tick + hold,
+        start_tick: c.tick,
         duration_ms: OPEN_MS,
         center: Point {
             x: f64::from(c.o.x),
             y: f64::from(c.o.y - OPEN_CENTRE_RISE),
         },
     }));
-}
-
-/// Ends the respawn once the opening circle is over: Claw can be hit
-/// again.
-fn respawn_tick(c: &mut Ctx) {
-    if c.o.special_flags & claw_flags::RESPAWNING == 0 {
-        return;
-    }
-    let open = match c.out.transition() {
-        Some(t) if !t.closing => c.tick >= t.start_tick + ticks_of(t.duration_ms),
-        _ => true,
-    };
-    if open {
-        c.out.set_transition(None);
-        c.o.special_flags &= !claw_flags::RESPAWNING;
-        c.o.flags &= !flags::SAFE;
-    }
 }
 
 /// Starts powerup `kind` for `ms` milliseconds, or ends the running one
@@ -421,10 +403,8 @@ fn end_glitter(c: &mut Ctx) {
 }
 
 /// Runs after every state handler: counts the running powerup down and
-/// applies its per-tick effect, awards extra lives from the score and ends
-/// a finished respawn.
+/// applies its per-tick effect and awards extra lives from the score.
 pub fn powerup_tick(c: &mut Ctx) {
-    respawn_tick(c);
     progress::extra_life_tick(c);
     let s = &mut c.p.stats;
     s.powerup_ms = s.powerup_ms.saturating_sub(DT);

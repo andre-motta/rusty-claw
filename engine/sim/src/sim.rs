@@ -151,6 +151,9 @@ pub struct Sim {
     /// [`Sim::end_life`] was called: Claw dies at the start of the next
     /// tick.
     end_life: bool,
+    /// Claw respawned since the last tick: the death's circles end with
+    /// the next tick.
+    respawned: bool,
 }
 
 /// What runs an object's logic: everything but the object container and
@@ -472,6 +475,7 @@ impl Sim {
             last_audio: Vec::new(),
             last_events: Vec::new(),
             end_life: false,
+            respawned: false,
             level,
         };
         let level = sim.level.clone();
@@ -632,7 +636,21 @@ impl Sim {
     /// their first logic call in list order, as the level's objects do
     /// while it loads. A trigger or boss waiting there is so ready for
     /// Claw's first tick at the target.
+    ///
+    /// After a tick that took one of Claw's lives with lives left, he
+    /// respawns before the next tick's logic, taking no game time (see
+    /// [`Sim::respawn_now`]), unless a presentation already did it. An
+    /// attack's end or cancel in the last tick makes Left or Right, when
+    /// held, count as pressed in this one ([`Claw::repress_directions`]).
     pub fn step(&mut self, input: TickInput) -> SimSnapshot {
+        // A death's respawn comes between two ticks; its circles are drawn
+        // outside game time and are over once a tick runs.
+        if self.claw.respawn_pending {
+            self.respawn_between_ticks();
+        }
+        if std::mem::take(&mut self.respawned) {
+            self.out.set_transition(None);
+        }
         self.input = input;
         // A latched key stays latched until a tick finds it up.
         self.latched = Buttons(self.latched.0 & input.held.0);
@@ -644,6 +662,12 @@ impl Sim {
             held: Buttons(input.held.0 & !self.latched.0),
             pressed: Buttons(input.pressed.0 & !self.latched.0),
         };
+        // An attack's end or cancel in the last tick (or between the ticks)
+        // took Left and Right off the latch: held, they are pressed again.
+        if std::mem::take(&mut self.claw.repress_directions) {
+            let dirs = self.claw_input.held.0 & (Buttons::LEFT.0 | Buttons::RIGHT.0);
+            self.claw_input.pressed = Buttons(self.claw_input.pressed.0 | dirs);
+        }
         self.pulse_left = match self.pulse_left {
             0 => PULSE_MS,
             left if left <= TICK_MS => 0,
@@ -688,6 +712,73 @@ impl Sim {
             }
         }
         snapshot
+    }
+
+    /// True when Claw lost a life with lives left in the last tick and
+    /// respawns before the next one (see [`Sim::respawn_now`]).
+    pub fn respawn_pending(&self) -> bool {
+        self.claw.respawn_pending
+    }
+
+    /// Runs the respawn [`Sim::respawn_pending`] waits for now, between two
+    /// ticks, as the next [`Sim::step`] would before its tick: Claw is back
+    /// at the checkpoint, the camera and the activation are centred on him
+    /// and one update pass runs, all without game time. The sound cues and
+    /// events it makes become [`Sim::last_audio`] and [`Sim::last_events`]
+    /// (and so the snapshot's), and the screen transition is the opening
+    /// circle until the next tick. A presentation calls it when its
+    /// closing circle is over, to draw the opening circle on the respawned
+    /// Claw. False when no respawn was pending.
+    pub fn respawn_now(&mut self) -> bool {
+        if !self.claw.respawn_pending {
+            return false;
+        }
+        self.respawn_between_ticks();
+        let (audio, events) = self.out.take_tick();
+        self.last_audio = audio;
+        self.last_events = events;
+        true
+    }
+
+    /// The respawn between ticks (see [`player::death`]): Claw at the
+    /// checkpoint, the camera on him at once, the objects around him
+    /// woken, and one update pass with the held keys and nothing pressed.
+    fn respawn_between_ticks(&mut self) {
+        let Some(id) = self.player else {
+            self.claw.respawn_pending = false;
+            return;
+        };
+        {
+            let (mut runner, objects, _) = self.parts();
+            runner.with_claw(objects, id, player::death::respawn_between_ticks);
+            runner.list_spawned(objects);
+        }
+        let followed = self.objects.get(id).map(|o| Followed {
+            x: o.x,
+            y: o.y,
+            state: o.state,
+            physics_type: o.physics_type,
+            look_down_time: self.claw.look_down_time,
+        });
+        self.camera.settle(
+            followed.as_ref(),
+            self.camera_override,
+            &self.cfg.tuning.camera,
+        );
+        self.camera_point = self.camera.current;
+        let c = self.centres();
+        {
+            let (mut runner, objects, activation) = self.parts();
+            activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
+        }
+        self.activation.enter(&mut self.objects, c);
+        // Inferred: the pass runs with the keys of the tick that took the
+        // life still held but nothing newly pressed, so a press made in
+        // that tick neither makes the respawned Claw jump nor starts a
+        // walk before the next tick's input arrives.
+        self.claw_input.pressed = Buttons::NONE;
+        self.update_pass();
+        self.respawned = true;
     }
 
     /// The warp's set-up after it moved Claw (see [`Sim::step`]).

@@ -191,7 +191,7 @@ fn the_introduction_freezes_pans_speaks_and_thaws_at_its_ticks() {
     // Walk right into the box and keep the key held all along.
     let mut n = None;
     for _ in 0..200 {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
         let l = look(&sim, stager);
         let fired = l.checkpoint.is_some();
         trace.push(l);
@@ -202,7 +202,7 @@ fn the_introduction_freezes_pans_speaks_and_thaws_at_its_ticks() {
     }
     let n = n.expect("the trigger fired");
     for _ in 0..700 {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
         trace.push(look(&sim, stager));
     }
     let at = |k: usize| &trace[n + k];
@@ -314,7 +314,7 @@ fn the_camera_pans_to_the_boss_and_back_at_the_point_and_follow_speeds() {
     let (mut sim, boss, _) = arena_sim(150, 8000);
     let boss_x = sim.objects().get(boss).unwrap().x;
     while sim.boss().fight() == fight::NONE {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
     }
     let mut xs = vec![sim.camera().current.0];
     for _ in 0..260 {
@@ -401,12 +401,12 @@ fn a_jump_on_the_first_tick_in_the_box_skips_the_introduction() {
     // Jump pressed on that first tick: his logic runs before the collision
     // pass and he is already in the air.
     let mut s = sim.clone();
-    s.step(hold(RIGHT));
+    s.step(key_down(&s, RIGHT));
     s.teleport_player(STAGER_X + 4, y);
     s.step(press(RIGHT | JUMP));
     assert_eq!(s.player().unwrap().physics_type, ptype::JUMP);
     for _ in 0..80 {
-        s.step(hold(RIGHT));
+        s.step(key_down(&s, RIGHT));
         let l = look(&s, stager);
         assert_eq!(l.checkpoint, None);
         assert_eq!(l.flag, fight::NONE);
@@ -436,9 +436,9 @@ fn a_jump_on_the_first_tick_in_the_box_skips_the_introduction() {
 
     // One tick late is too late: the trigger fired on the first tick.
     let mut s = sim.clone();
-    s.step(hold(RIGHT));
+    s.step(key_down(&s, RIGHT));
     s.teleport_player(STAGER_X + 4, y);
-    s.step(hold(RIGHT));
+    s.step(key_down(&s, RIGHT));
     assert!(look(&s, stager).checkpoint.is_some());
     s.step(press(RIGHT | JUMP));
     assert_eq!(s.boss().fight(), fight::STAGING);
@@ -450,7 +450,7 @@ fn a_stager_below_claws_depth_freezes_him_before_his_own_logic() {
     let (mut sim, _, stager) = arena_sim(150, 1000);
     let mut last_x = sim.player().unwrap().x;
     loop {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
         if look(&sim, stager).checkpoint.is_some() {
             break;
         }
@@ -458,7 +458,7 @@ fn a_stager_below_claws_depth_freezes_him_before_his_own_logic() {
     }
     let trig_x = sim.player().unwrap().x;
     assert!(trig_x > last_x);
-    sim.step(hold(RIGHT));
+    sim.step(key_down(&sim, RIGHT));
     // The stager ran first in this tick: Claw did not move again.
     assert_eq!(sim.player().unwrap().state, state::FREEZE);
     assert_eq!(sim.player().unwrap().x, trig_x);
@@ -473,7 +473,7 @@ fn a_stager_below_claws_depth_freezes_him_before_his_own_logic() {
 fn the_meter_falls_with_the_boss_and_goes_the_tick_after_he_is_gone() {
     let (mut sim, boss, _) = arena_sim(150, 8000);
     while sim.boss().fight() == fight::NONE {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
     }
     let meter = find(&sim, boss_stage::METER).expect("the meter");
     assert!(sim.objects().get(meter).unwrap().is_listed());
@@ -508,7 +508,7 @@ fn the_meter_falls_with_the_boss_and_goes_the_tick_after_he_is_gone() {
 fn the_meter_stays_while_claw_walks_far_from_where_it_was_made() {
     let (mut sim, boss, _) = arena_sim(150, 8000);
     while sim.boss().fight() != fight::ON {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
     }
     for _ in 0..400 {
         sim.step(hold(LEFT));
@@ -527,15 +527,15 @@ fn the_meter_stays_while_claw_walks_far_from_where_it_was_made() {
 fn freeze_and_release_at_the_boss_end() {
     let (mut sim, _, _) = arena_sim(600, 8000);
     // Walking right with an attack: held at once, as he is.
-    sim.step(hold(RIGHT));
-    sim.step(hold(RIGHT));
+    sim.step(key_down(&sim, RIGHT));
+    sim.step(key_down(&sim, RIGHT));
     let before = sim.player().unwrap().clone();
     assert!(sim.with_world(|w| w.freeze_claw_boss_end()));
     let o = sim.player().unwrap();
     assert_eq!(o.state, BOSS_END);
     assert_eq!(o.physics_type, before.physics_type);
     for _ in 0..30 {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
         sim.step(press(JUMP));
     }
     assert_eq!(sim.player().unwrap().state, BOSS_END);
@@ -545,8 +545,8 @@ fn freeze_and_release_at_the_boss_end() {
     let o = sim.player().unwrap();
     assert_eq!((o.state, o.physics_type), (state::STAND, ptype::STAND));
     assert!(!sim.with_world(|w| w.release_claw_boss_end()), "only once");
-    sim.step(hold(RIGHT));
-    sim.step(hold(RIGHT));
+    sim.step(key_down(&sim, RIGHT));
+    sim.step(key_down(&sim, RIGHT));
     assert!(sim.player().unwrap().x > before.x);
 }
 
@@ -586,7 +586,7 @@ fn the_door_is_a_warp_that_stays() {
     assert_eq!(o.image_set, boss_stage::WARP_FALLBACK_IMAGE, "no art here");
     let mut taken = None;
     for k in 0..60 {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
         if sim.player().unwrap().x >= 5000 {
             taken = Some(k);
             break;
@@ -641,7 +641,7 @@ fn the_door_wakes_the_stager_for_claws_first_tick_at_the_target() {
     );
     let mut door_tick = None;
     for _ in 0..60 {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
         if sim.player().unwrap().x >= FAR_STAGER_X {
             door_tick = Some(sim.tick());
             break;
@@ -659,7 +659,7 @@ fn the_door_wakes_the_stager_for_claws_first_tick_at_the_target() {
 
     // Claw's first tick at the target: walking in the box, the trigger
     // fires.
-    sim.step(hold(RIGHT));
+    sim.step(key_down(&sim, RIGHT));
     let l = look(&sim, stager);
     assert_eq!(l.physics, ptype::WALK);
     assert!(l.checkpoint.is_some());
@@ -673,14 +673,14 @@ fn the_door_wakes_the_stager_for_claws_first_tick_at_the_target() {
         let l = look(&s, stager);
         assert_eq!((l.checkpoint, l.flag), (None, fight::NONE));
         assert_ne!(l.claw_state, state::FREEZE);
-        s.step(hold(RIGHT));
+        s.step(key_down(&s, RIGHT));
     }
     assert!(s.player().unwrap().x > FAR_STAGER_X + 38);
     assert_eq!(s.objects().get(stager).unwrap().state, stage_state::ARMED);
 
     // Pressed on the next tick: too late, the introduction runs.
     let mut s = at_door.clone();
-    s.step(hold(RIGHT));
+    s.step(key_down(&s, RIGHT));
     assert!(look(&s, stager).checkpoint.is_some());
     s.step(jump_right());
     assert_eq!(s.boss().fight(), fight::STAGING);
@@ -738,7 +738,7 @@ fn a_powerup_leaves_the_boss_music_alone_while_the_flag_is_set() {
     // During the introduction and the fight: no music change at all.
     let (mut sim, _, _) = arena_sim(150, 8000);
     while sim.boss().fight() == fight::NONE {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
     }
     assert_eq!(powerup_music(&mut sim), vec![]);
     while sim.boss().fight() != fight::ON {

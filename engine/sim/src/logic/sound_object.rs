@@ -60,7 +60,6 @@ use super::{GameLogic, ObjectData, World};
 use crate::container::Container;
 use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, engine_state, flags};
 use crate::rng::Rng;
-use crate::tuning::TICK_MS;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &[
@@ -816,8 +815,11 @@ fn manager_tick(w: &mut World, id: ObjectId) {
             .retain(|e| e.owner.is_none_or(|o| objects.get(o).is_some()));
         let listener = sound::view_centre(w.view);
         let now = w.now_ms;
+        // A save in this tick restarted the frame clock: the timers count
+        // no time.
+        let frame_ms = w.out.frame_ms();
         for e in &mut m.entries {
-            e.update(listener, now, w.rng);
+            e.update(listener, now, frame_ms, w.rng);
         }
         for e in &mut m.entries {
             e.run_fade(now);
@@ -887,8 +889,9 @@ impl AmbientEntry {
         }
     }
 
-    /// One update with the listener at `listener`.
-    fn update(&mut self, listener: (i32, i32), now: u64, rng: &mut Rng) {
+    /// One update with the listener at `listener`; a timed entry's timer
+    /// counts `frame_ms` down.
+    fn update(&mut self, listener: (i32, i32), now: u64, frame_ms: u32, rng: &mut Rng) {
         let full = ambient_volume(100, self.percent);
         match self.kind {
             AmbientKind::Area { area, extra } => {
@@ -920,7 +923,7 @@ impl AmbientEntry {
                     on_phase = false;
                     self.fade_out(now);
                 } else {
-                    timer_ms = timer_ms.saturating_sub(TICK_MS as i32);
+                    timer_ms = timer_ms.saturating_sub(frame_ms as i32);
                     if timer_ms <= 0 {
                         on_phase = !on_phase;
                         if on_phase {

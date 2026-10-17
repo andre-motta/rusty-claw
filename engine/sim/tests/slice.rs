@@ -353,7 +353,7 @@ fn crouching_and_jumping_swipes() {
 fn facing_left_mirrors_the_attack_box() {
     let mut sim = sim_with(arena(Vec::new()), seed_for(kind::SWIPE));
     for _ in 0..3 {
-        sim.step(hold(LEFT));
+        sim.step(key_down(&sim, LEFT));
     }
     sim.step(TickInput::default());
     assert!(!sim.claw().facing_right);
@@ -372,7 +372,7 @@ fn facing_left_mirrors_the_attack_box() {
 fn walking_into_an_attack_stops_the_walk() {
     let mut sim = sim_with(arena(Vec::new()), seed_for(kind::SWIPE));
     for _ in 0..5 {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
     }
     assert_eq!(claw(&sim).state, state::MOVE_RIGHT);
     let x = claw(&sim).x;

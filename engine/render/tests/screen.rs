@@ -214,6 +214,49 @@ fn circle_masks_at_every_size() {
 }
 
 #[test]
+fn a_transition_drawn_between_ticks_is_timed_by_the_presentation() {
+    // A death's circles are drawn while no game time passes: the frame
+    // stays at the tick of the death (here tick 5388, at 97002 ms) and the
+    // presentation says how far in the circle is.
+    let mut g = screen_graphics();
+    let v = view(640, 480);
+    let mut b = SceneBuilder::new(&g, v, DEFAULT_MAX_TARGET);
+    let comp = *b.composition();
+    let (pw, ph) = comp.presentation;
+    let k = comp.scale;
+    let (cx, cy) = ((pw / 2) as i32, 240);
+    let n = circle_steps(cx, cy, (pw, ph));
+    let frame_ms = 5389.0 * f64::from(TICK_MS);
+    // The simulation's transition started at the tick of the death.
+    let close = closing(5388, 1250, (1000.0, 400.0));
+    let mut at = |t: &ScreenTransition, elapsed: f64| {
+        let (t, time) = screen::transition_at(t, frame_ms, elapsed);
+        assert_eq!(t.start_tick, 5389);
+        assert_eq!(time, frame_ms + elapsed);
+        let mut f = screen_only(Vec::new());
+        f.time_ms = time;
+        f.transition = Some(t);
+        b.build(&mut g, &f).mask
+    };
+    assert_eq!(at(&close, 0.0), Some(circle_mask(cx, cy, n, k)));
+    assert_eq!(at(&close, 625.0), Some(circle_mask(cx, cy, n - n / 2, k)));
+    assert_eq!(at(&close, 1250.0), Some(Mask::Black));
+    let open = ScreenTransition {
+        closing: false,
+        duration_ms: 1000,
+        ..close
+    };
+    assert_eq!(at(&open, -500.0), Some(Mask::Black), "the black screen");
+    assert_eq!(at(&open, 500.0), Some(circle_mask(cx, cy, n / 2, k)));
+    assert_eq!(at(&open, 1000.0), None);
+    // A frame between ticks starts the transition at the earlier tick.
+    let (t, time) = screen::transition_at(&close, frame_ms + 9.0, 100.0);
+    assert_eq!((t.start_tick, time), (5389, frame_ms + 100.0));
+    let (t, time) = screen::transition_at(&close, 0.0, 10.0);
+    assert_eq!((t.start_tick, time), (0, 10.0));
+}
+
+#[test]
 fn the_mask_covers_the_world_and_the_screen_layer() {
     let mut g = graphics(None);
     let mut b = SceneBuilder::new(&g, view(640, 480), DEFAULT_MAX_TARGET);

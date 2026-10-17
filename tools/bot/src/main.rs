@@ -30,7 +30,9 @@
 //! route, which lead the new one. When the prefix changed its held mask
 //! less than two ticks before T, the new part first keeps that mask for
 //! the ticks missing. The other route's `# level`, `# tuning` and
-//! `# seed` lines, when it has them, must match the arguments.
+//! `# seed` lines, when it has them, must match the arguments. Without
+//! `--hints`, the new route's header names the other route's hints file,
+//! since its leading ticks were found with those waypoints.
 //! `--start X,Y` plans a segment: Claw is placed at (X, Y) in the
 //! level-start world and the game runs with nothing held until he and the
 //! camera are at rest; the random stream is then set to the seed and the
@@ -262,6 +264,16 @@ fn read_hints(path: &Path) -> Result<Vec<(i32, i32)>, String> {
     Ok(out)
 }
 
+/// The hints name a route's header records: the stem of the `--hints`
+/// file, or else the hints of the route it continues, whose leading ticks
+/// were found with them.
+fn route_hints(hints: Option<&Path>, prefix_hints: Option<String>) -> Option<String> {
+    hints
+        .and_then(|p| p.file_stem())
+        .map(|s| s.to_string_lossy().into_owned())
+        .or(prefix_hints)
+}
+
 /// Checks that the header keys a continued route states (level, tuning and
 /// seed) are the ones the search runs with: a prefix played in another
 /// game would lead a route that does not play as found.
@@ -328,10 +340,12 @@ fn run(a: Args) -> Result<bool, String> {
     let mut start = start_sim(sim_level, a.tuning, a.seed, a.start, carry.as_ref());
 
     let mut prefix = InputScript::default();
+    let mut prefix_hints = None;
     if let (Some(path), Some(t)) = (&a.from_route, a.from_tick) {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("reading {}: {e}", path.display()))?;
         let script = InputScript::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        prefix_hints = Header::parse(&text).hints;
         prefix_matches(&script.header, level_no, a.tuning, a.seed)
             .map_err(|e| format!("{}: {e}", path.display()))?;
         if t > script.ticks.len() {
@@ -413,11 +427,7 @@ fn run(a: Args) -> Result<bool, String> {
         tuning: a.tuning,
         seed: a.seed,
         mid_air_hit_fix: false,
-        hints: a
-            .hints
-            .as_ref()
-            .and_then(|p| p.file_stem())
-            .map(|s| s.to_string_lossy().into_owned()),
+        hints: route_hints(a.hints.as_deref(), prefix_hints),
         start: a.start,
         carry: carry.clone(),
     };
@@ -490,6 +500,17 @@ mod tests {
 
     fn args(s: &str) -> Result<Args, String> {
         parse_args(s.split_whitespace().map(String::from))
+    }
+
+    #[test]
+    fn a_continued_route_names_the_hints_of_the_route_it_continues() {
+        let prefix = Header::parse("# level 2\n# tuning default\n# hints level2\n").hints;
+        assert_eq!(route_hints(None, prefix.clone()), Some("level2".into()));
+        assert_eq!(
+            route_hints(Some(Path::new("tools/bot/hints/other.txt")), prefix),
+            Some("other".into())
+        );
+        assert_eq!(route_hints(None, None), None);
     }
 
     #[test]

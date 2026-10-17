@@ -52,7 +52,8 @@ fn a_running_blow_holds_the_standing_input_until_it_can_be_interrupted() {
     assert_eq!(claw_state(&sim), state::STAND);
     let x = sim.player().unwrap().x;
     force_attack(&mut sim, false);
-    for _ in 0..5 {
+    sim.step(press(RIGHT));
+    for _ in 0..4 {
         sim.step(hold(RIGHT));
     }
     sim.step(press(JUMP));
@@ -60,10 +61,15 @@ fn a_running_blow_holds_the_standing_input_until_it_can_be_interrupted() {
     assert_eq!(claw_state(&sim), state::STAND, "no walk or jump starts");
     assert_eq!(sim.player().unwrap().x, x, "Claw does not move");
     assert!(sim.claw().attacking, "the blow is not cancelled");
-    // Once the active part is over, input is read again: the walk starts
-    // and ends the blow.
+    // Once the active part is over, input is read again, but a walk starts
+    // only on a press: Right held from before does not start it.
     force_attack(&mut sim, true);
     sim.step(hold(RIGHT));
+    assert_eq!(claw_state(&sim), state::STAND);
+    assert!(sim.claw().attacking);
+    // A press does, and ends the blow.
+    sim.step(TickInput::default());
+    sim.step(press(RIGHT));
     assert_eq!(claw_state(&sim), state::MOVE_RIGHT);
     assert!(!sim.claw().attacking);
 }
@@ -72,7 +78,7 @@ fn a_running_blow_holds_the_standing_input_until_it_can_be_interrupted() {
 fn without_a_blow_the_standing_input_is_read_as_before() {
     let mut sim = Sim::new(flat_level(), SimConfig::default());
     idle(&mut sim, 30);
-    sim.step(hold(RIGHT));
+    sim.step(press(RIGHT));
     assert_eq!(claw_state(&sim), state::MOVE_RIGHT);
 }
 
@@ -109,7 +115,7 @@ fn holding_right_and_attack_through_a_blow_lets_it_strike() {
     let mut sim = Sim::new(level, SimConfig::default());
     idle(&mut sim, 30);
     for _ in 0..5 {
-        sim.step(hold(RIGHT));
+        sim.step(key_down(&sim, RIGHT));
     }
     assert_eq!(claw_state(&sim), state::MOVE_RIGHT);
     sim.step(TickInput {
