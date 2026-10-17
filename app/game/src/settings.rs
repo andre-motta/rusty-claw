@@ -66,7 +66,10 @@
 //! [`crate::session::script_behaviour`]), so a recorded route plays the
 //! same on every machine. A replay also plays with the movement tuning and
 //! the random seed its script's header names (`# tuning default|original`,
-//! `# seed N`; see [`Settings::follow_header`]).
+//! `# seed N`; see [`Settings::follow_header`]), on the level it names
+//! (`# level N`) and from the start it names: the progress carried in, the
+//! save point and the start point it was recorded with (see
+//! [`Settings::follow_recording`]).
 //!
 //! Two more behaviour switches, set in the config file, on the command
 //! line and on the Gameplay page, keep the original's pause and screens by
@@ -278,7 +281,8 @@ pub struct Args {
     #[arg(long, value_name = "X,Y", value_parser = parse_point)]
     pub start: Option<(i32, i32)>,
     /// Play a recorded input script (columns `tick,held_mask,pressed_mask`,
-    /// one row per 18 ms tick); in a window unless `--trace` is given.
+    /// one row per 18 ms tick) on the level and from the start it names;
+    /// in a window unless `--trace` is given.
     #[arg(long, value_name = "FILE.csv")]
     pub replay: Option<PathBuf>,
     /// With `--replay`: run without a window and write one trace row per
@@ -704,6 +708,60 @@ impl Settings {
         if header.seed.is_some() {
             self.seed = header.seed;
         }
+    }
+
+    /// Plays level recording `rec` as it was recorded: its level
+    /// (`# level N`) and its start point (`# start_at`), the mid-air hit
+    /// jump fix and the pause and screen switches its lines name unless the
+    /// command line set them, and the tuning and seed its header names. Its
+    /// carried progress and save point are the replay's to apply (see
+    /// [`crate::session::LevelRecording::start_sim`]).
+    ///
+    /// A recording never plays from a start it was not made with: a level
+    /// on the command line other than the one it names, or a `--start`
+    /// point other than the one it names or with its save point, is an
+    /// error. A recording that names no level plays the settings' level,
+    /// and one that names no start point keeps a `--start` point, as
+    /// before.
+    pub fn follow_recording(&mut self, rec: &crate::session::LevelRecording) -> Result<()> {
+        if let Some(n) = rec.level() {
+            let named = LevelChoice::Retail(n);
+            if self.from_command_line.contains("level") && self.level != named {
+                let given = match &self.level {
+                    LevelChoice::Retail(m) => format!("--level {m}"),
+                    LevelChoice::Custom(name) => format!("--custom {name}"),
+                };
+                bail!("the recording plays level {n} (its `# level {n}` line), not {given}");
+            }
+            self.level = named;
+        }
+        match (rec.start_at, self.start) {
+            (Some(at), Some(given)) if at != given => bail!(
+                "the recording starts Claw at {},{} (its `# start_at` line), not --start {},{}",
+                at.0,
+                at.1,
+                given.0,
+                given.1
+            ),
+            (Some(at), _) => self.start = Some(at),
+            (None, Some(_)) if rec.start.save.is_some() => {
+                bail!("the recording starts at a save point; --start cannot move Claw from it")
+            }
+            (None, _) => {}
+        }
+        self.follow_script(rec.fix);
+        self.follow_header(&rec.script.header);
+        if let Some(p) = rec.switches.pause_input
+            && !self.from_command_line.contains("pause_input")
+        {
+            self.pause_input = p;
+        }
+        if let Some(f) = rec.switches.fuse_clock
+            && !self.from_command_line.contains("fuse_clock")
+        {
+            self.fuse_clock = f;
+        }
+        Ok(())
     }
 
     /// The view for an output of `size` pixels: the original 640x480 game

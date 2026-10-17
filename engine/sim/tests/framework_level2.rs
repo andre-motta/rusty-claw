@@ -78,11 +78,13 @@ fn every_name_belongs_to_one_family() {
 
 #[test]
 fn declared_families_stay_inert_placeholders_until_built() {
-    let names: Vec<&str> = DECLARED
-        .iter()
+    // The families not built yet (each one leaves this list as it is built).
+    let unbuilt = DECLARED.iter().filter(|(g, _)| !logic::built(*g));
+    let names: Vec<&str> = unbuilt
+        .clone()
         .flat_map(|(_, n)| n.iter().copied())
         .collect();
-    for (g, list) in DECLARED {
+    for &(g, list) in unbuilt {
         assert!(!logic::built(g), "{g:?} is not built yet");
         for &n in list {
             assert_eq!(logic::runs(n), None, "{n}");
@@ -556,7 +558,9 @@ fn install_level2_declared_families_load_as_reported_placeholders() {
     ] {
         let placed = level.objects.iter().filter(|o| o.logic == name).count();
         assert!(placed > 0, "LEVEL2 places {name}");
-        assert_eq!(d.inert_logics.get(name), Some(&placed), "{name}");
+        // Reported until its family is built.
+        let reported = logic::runs(name).is_none().then_some(&placed);
+        assert_eq!(d.inert_logics.get(name), reported, "{name}");
     }
     assert_eq!(sim.boss(), &logic::BossState::default());
 }

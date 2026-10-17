@@ -355,21 +355,26 @@ fn respawn_tick(c: &mut Ctx) {
 /// The same powerup again adds `ms` to its time, up to
 /// [`POWERUP_MAX_MS`]. A different one replaces it: the old one's effect
 /// ends, the new one starts and asks for its voice line, and the music switches to
-/// the powerup tune. Ending a powerup brings the level music back.
+/// the powerup tune. Ending a powerup brings the level music back. While
+/// the boss fight flag is set (from a boss introduction's start, see
+/// [`crate::logic::world_boss`]) the music is left alone, so the boss
+/// track plays on.
 pub fn set_powerup(c: &mut Ctx, kind: u32, ms: u32) {
     let current = c.p.stats.powerup_kind;
-    if kind != 0 && ms != 0 {
-        if kind != current {
+    if c.out.boss.fight() == crate::logic::world_boss::fight::NONE {
+        if kind != 0 && ms != 0 {
+            if kind != current {
+                c.out.cue(AudioCue::Music {
+                    track: MusicTrack::Powerup,
+                    looped: true,
+                });
+            }
+        } else if current != 0 {
             c.out.cue(AudioCue::Music {
-                track: MusicTrack::Powerup,
+                track: MusicTrack::Level,
                 looped: true,
             });
         }
-    } else if current != 0 {
-        c.out.cue(AudioCue::Music {
-            track: MusicTrack::Level,
-            looped: true,
-        });
     }
     if kind == current {
         c.p.stats.powerup_ms = c.p.stats.powerup_ms.saturating_add(ms).min(POWERUP_MAX_MS);

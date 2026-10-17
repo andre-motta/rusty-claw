@@ -27,13 +27,23 @@
 //! plays its pauses, menus and commands (`@` lines) where they were
 //! recorded.
 //!
+//! A replay plays the level its recording names (`# level N`) from the
+//! start it was recorded with: a later level of a recorded game starts
+//! with the progress carried into it, at the save point it was loaded
+//! from, or at the `--start` point it was played from (its `# start_` lines).
+//! A command line that names another level or another start point is
+//! refused rather than replaying the recording from a start it was not
+//! made with.
+//!
 //! `--bench-route FILE.csv --headless` benchmarks a route instead of the
 //! combat route: the input script plays from the level's start with the
 //! level, tuning, seed and behaviour switches its header names, as a
 //! replay plays it, until its last row has run (or for at most `--bench
 //! SECONDS`), drawn offscreen at `--res`. Its report also says whether any
 //! sprite set was loaded while drawing (a budget: none may be) and gives a
-//! digest of the route's trace, the same on every run.
+//! digest of the route's trace, the same on every run. A route that
+//! starts from carried progress or a save point is refused: the benchmark
+//! plays from the level's own start (or the start point the route names).
 //!
 //! A benchmark prints its report as one line of JSON on standard output and
 //! a one-line PASS or FAIL verdict naming each budget on standard error. It
@@ -45,11 +55,11 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use clap::{Arg, ArgAction, ArgMatches, CommandFactory, FromArgMatches};
 use claw_game::bench::{Report, RouteFile, RouteReport, run_headless, run_headless_route};
-use claw_game::session::script_behaviour;
+use claw_game::session::{LevelRecording, replay_trace, start_sim};
 use claw_game::settings::{Args, Aspect, Mode, Settings};
 use claw_game::window::{self, WindowMode};
-use claw_game::{load_graphics, load_level, replay_headless};
-use claw_sim::InputScript;
+use claw_game::{load_graphics, load_level};
+use claw_sim::StartState;
 
 /// Exit status of a benchmark that missed a measured budget.
 pub const BUDGET_FAILED: u8 = 3;
@@ -134,6 +144,29 @@ fn bench_route(mut args: Args, path: &std::path::Path) -> Result<Outcome> {
     let mut settings = Settings::from_args(&args)?;
     let route = RouteFile::read(path)?;
     route.apply(&mut settings);
+    // The benchmark starts at the level's start, or at a start point.
+    let start =
+        LevelRecording::parse(&route.text).with_context(|| format!("route {}", route.name))?;
+    if start.start != StartState::default() {
+        bail!(
+            "route {} starts {}, which --bench-route cannot apply: it plays from the level's \
+             own start; play it with --replay instead",
+            route.name,
+            start_note(&start)
+        );
+    }
+    match (start.start_at, settings.start) {
+        (Some(at), Some(given)) if at != given => bail!(
+            "route {} starts Claw at {},{} (its `# start_at` line), not --start {},{}",
+            route.name,
+            at.0,
+            at.1,
+            given.0,
+            given.1
+        ),
+        (Some(at), _) => settings.start = Some(at),
+        (None, _) => {}
+    }
     let Mode::Bench { render_hz, .. } = settings.mode else {
         bail!("--bench-route is a benchmark");
     };
@@ -143,14 +176,41 @@ fn bench_route(mut args: Args, path: &std::path::Path) -> Result<Outcome> {
     Ok(Outcome::RouteBench(Box::new(report)))
 }
 
-/// Reads an input script and the mid-air hit jump fix it was recorded
-/// with, if it says.
-fn read_script(path: &std::path::Path) -> Result<(InputScript, Option<bool>)> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading input script {}", path.display()))?;
-    let script =
-        InputScript::parse(&text).with_context(|| format!("input script {}", path.display()))?;
-    Ok((script, script_behaviour(&text)))
+/// How recording `rec` starts, in words: "with carried progress (score
+/// 25000, 4 lives)", "at save point 2", "at 750,895", or a new game's
+/// values at the level's start.
+fn start_note(rec: &LevelRecording) -> String {
+    let mut parts = Vec::new();
+    if let Some(c) = &rec.start.carry {
+        parts.push(format!(
+            "with carried progress (score {}, {} lives)",
+            c.score, c.lives
+        ));
+    }
+    if let Some(p) = rec.start.save {
+        parts.push(format!("at save point {} ({},{})", p.slot, p.x, p.y));
+    }
+    if let Some((x, y)) = rec.start_at {
+        parts.push(format!("at {x},{y}"));
+    }
+    if parts.is_empty() {
+        "from a new game at the level's start".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+/// Reads a recording for a replay and makes `settings` play it as it was
+/// recorded (see [`Settings::follow_recording`]).
+fn read_recording(settings: &mut Settings, path: &std::path::Path) -> Result<LevelRecording> {
+    let rec = LevelRecording::read(path)?;
+    settings
+        .follow_recording(&rec)
+        .with_context(|| format!("replaying {}", path.display()))?;
+    if rec.has_start() {
+        eprintln!("rusty-claw: {} starts {}", path.display(), start_note(&rec));
+    }
+    Ok(rec)
 }
 
 fn run(args: Args, matches: &ArgMatches) -> Result<Outcome> {
@@ -174,11 +234,15 @@ fn run(args: Args, matches: &ArgMatches) -> Result<Outcome> {
             trace: Some(out),
             render_hz,
         } => {
-            let (script, recorded) = read_script(&script)?;
-            settings.follow_script(recorded);
-            settings.follow_header(&script.header);
+            let rec = read_recording(&mut settings, &script)?;
             let bundle = load_level(&settings.install, &settings.level)?;
-            let rows = replay_headless(&bundle, &settings, script, render_hz, None);
+            let sim = start_sim(
+                bundle.sim_level.clone(),
+                settings.sim_config(settings.res),
+                rec.start,
+                settings.start,
+            );
+            let rows = replay_trace(sim, rec.script, settings.pause_input, render_hz);
             std::fs::write(&out, claw_sim::trace::to_csv(&rows))
                 .with_context(|| format!("writing {}", out.display()))?;
             eprintln!(
@@ -207,10 +271,7 @@ fn run(args: Args, matches: &ArgMatches) -> Result<Outcome> {
         mode => {
             let window_mode = match mode {
                 Mode::Replay { script, .. } => {
-                    let (script, recorded) = read_script(&script)?;
-                    settings.follow_script(recorded);
-                    settings.follow_header(&script.header);
-                    WindowMode::Watch(script)
+                    WindowMode::Watch(Box::new(read_recording(&mut settings, &script)?))
                 }
                 Mode::Bench { seconds, .. } => WindowMode::Bench(seconds),
                 Mode::Play => WindowMode::Play,

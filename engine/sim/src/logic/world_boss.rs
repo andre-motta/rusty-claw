@@ -15,11 +15,15 @@
 //!   point Claw's own code sets;
 //! - the boss's health bar and name banner in the status bar
 //!   ([`World::set_boss_meter`], [`World::set_boss_banner`]);
-//! - the boss's defeat ([`World::boss_defeated`]).
+//! - the boss's defeat ([`World::boss_defeated`]);
+//! - the time the introduction's trigger adds to the checkpoint time
+//!   ([`World::add_checkpoint_time`]).
 //!
 //! Claw can also be frozen at once for the introduction
 //! ([`World::freeze_claw_now`], in [`crate::player::special`]): he stands
-//! still until the flag reaches 2.
+//! still until the flag reaches 2. When the boss is defeated he is held
+//! still ([`World::freeze_claw_boss_end`]) until the gem lets him go
+//! ([`World::release_claw_boss_end`]).
 //!
 //! Everything here starts cleared when a level loads. The state lives in
 //! the tick's [`Outbox`](super::Outbox), so Claw's code sees it too
@@ -56,6 +60,8 @@ pub struct BossState {
     pub(crate) camera: Option<Option<(i32, i32)>>,
     /// The boss whose defeat was reported first.
     pub(crate) defeated: Option<ObjectId>,
+    /// Time added to the checkpoint time in this level, ms.
+    pub(crate) checkpoint_time: i32,
 }
 
 impl BossState {
@@ -83,6 +89,12 @@ impl BossState {
     /// [`World::boss_defeated`]).
     pub fn defeated(&self) -> Option<ObjectId> {
         self.defeated
+    }
+
+    /// Time added to the checkpoint time in this level, ms (see
+    /// [`World::add_checkpoint_time`]).
+    pub fn checkpoint_time(&self) -> i32 {
+        self.checkpoint_time
     }
 
     /// Takes the change of the scripted camera point asked for since the
@@ -145,6 +157,21 @@ impl World<'_> {
     /// Sets the checkpoint Claw respawns at.
     pub fn set_checkpoint(&mut self, x: i32, y: i32) {
         self.claw.checkpoint = Some((x, y));
+    }
+
+    /// Adds `ms` to the checkpoint time, as the boss introduction's
+    /// trigger does (120 s). The time feeds a countdown that runs only in
+    /// levels that place a checkpoint timer object; this build has no such
+    /// countdown yet, so the time is only kept (see
+    /// [`BossState::checkpoint_time`]).
+    pub fn add_checkpoint_time(&mut self, ms: i32) {
+        let t = &mut self.out.boss.checkpoint_time;
+        *t = t.saturating_add(ms);
+    }
+
+    /// Time added to the checkpoint time in this level, ms.
+    pub fn checkpoint_time(&self) -> i32 {
+        self.out.boss.checkpoint_time
     }
 
     /// The boss `id` was defeated. Only the first call of a level counts;

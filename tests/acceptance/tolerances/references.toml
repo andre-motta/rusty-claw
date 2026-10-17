@@ -14,11 +14,15 @@
 #
 # Every entry records the first divergences the game gives today against
 # the routes as stored: keys down when play starts count only once
-# released and pressed again, the level's objects draw from the random
-# stream in the original's order (set up while the level loads, the
-# enemies' per-tick roll every third step), and Claw climbs up at 220 px/s
-# with the default tuning. The entries are replaced once the original has
-# played the new routes.
+# released and pressed again, the level's objects are set up while the
+# level loads so their first draws come in the original's order, and
+# Claw climbs up at 220 px/s with the default tuning.
+#
+# The last two entries (`level1/bot-original-v2` and `level1/bot-v2`) are
+# the original's runs of the routes in tests/acceptance/routes/ as they
+# are now, and are the ones to read first. The entries before them hold
+# runs of earlier routes and stay as further checks; they are never
+# replaced, only tightened.
 
 # The first level's opening, one 18 ms step per frame against the original
 # speeds and the original's random state at time zero. The random stream
@@ -202,3 +206,56 @@ known.health = 14814
 known.score = 12024
 known.events = 19188
 known.lives = 27702
+
+# The bot's route of the first level as it is now
+# (tests/acceptance/routes/level1-original.csv, original speeds), one
+# 18 ms step per frame from the original's random state at time zero.
+# Claw's position, state and the camera are equal tick for tick until
+# 8586 ms. The random stream is equal until 162 ms: every third step the
+# original draws more numbers than the game (three against one at
+# 162 ms), so the enemies' choices come from other values. At 8586 ms an officer's sword hits Claw in the original
+# (health 90) and misses him in the game, and the route goes another way
+# from there: it finishes the level in the game, while the original ends
+# at 2774,4730 with the level unfinished. These entries stay until the
+# game draws as many numbers per step as the original.
+[[compare]]
+reference = "level1/bot-original-v2"
+clock = "c18"
+tolerance = "exact"
+known.rng = 162
+known.state_id = 8586
+known.physics_type = 8586
+known.health = 8586
+known.x = 8604
+known.cam_x = 8604
+known.y = 8622
+known.cam_y = 8622
+known.events = 9162
+known.score = 10242
+known.pistol = 51642
+
+# The bot's route as it is now (tests/acceptance/routes/level1.csv,
+# default tuning) at 60 frames per second. A route played without looking
+# at the game is compared for feel stretch by stretch here and need not
+# finish the level: the 16 and 17 ms frames against the game's 18 ms
+# ticks move Claw by a few pixels and a frame or two (the first fall off
+# the start step is 26 px apart at 684 ms, within two ticks of timing).
+# These add up until the game reaches the ladder near 2.8 s about 45 ms
+# after the original, jumps off it about 35 ms later, and is 20 px lower
+# in that jump at 3217 ms, beyond the two ticks of timing the feel
+# tolerance allows. From there the two runs go different ways: the game
+# finishes the level, the original ends against the wall right of the
+# start (1814,4794).
+[[compare]]
+reference = "level1/bot-v2"
+clock = "c60"
+tolerance = "feel"
+known.y = 3217
+known.cam_y = 3217
+known.state_id = 3784
+known.physics_type = 3784
+known.x = 3867
+known.cam_x = 3867
+known.score = 4300
+known.events = 7560
+known.health = 39784
