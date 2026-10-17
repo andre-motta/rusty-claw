@@ -219,3 +219,101 @@ fn a_hit_on_the_ground_stands_either_way() {
         assert_eq!((o.state, o.y), (state::STAND, 899), "fix {fix:?}");
     }
 }
+
+// ------------------------------------------------------- the stand window
+
+/// The flat level with Claw's two hurt animations at the game's own
+/// timing (150 ms, then 200 ms and the end), settled.
+fn settled_with_hurt_animations() -> Sim {
+    let mut level = flat_level();
+    for key in ["CLAW_DAMAGE1", "CLAW_DAMAGE2"] {
+        let a = claw_sim::anim::Animation::once(key, &[(1, 150), (2, 200)]);
+        level
+            .animations
+            .insert(a.key.clone(), std::sync::Arc::new(a));
+    }
+    let mut sim = Sim::new(level, SimConfig::default());
+    idle(&mut sim, 30);
+    sim
+}
+
+/// Jumps, an enemy's shot hits Claw while he rises, and `input(t)` is
+/// played on tick `t` counted from the hit tick (0) on. Returns Claw's
+/// (state, y) after each tick from the hit tick on.
+fn after_a_hit_in_the_air(input: impl Fn(u64) -> TickInput) -> Vec<(i32, i32)> {
+    let mut sim = settled_with_hurt_animations();
+    sim.step(press(JUMP));
+    for _ in 0..4 {
+        sim.step(hold(JUMP));
+    }
+    let (x, y) = sim.player().map(|o| (o.x, o.y)).unwrap();
+    let health = sim.stats().health;
+    launch(&mut sim, musket_ball(x + 5, y));
+    let mut hit = None;
+    let mut rows = Vec::new();
+    for _ in 0..60 {
+        let t = hit.map_or(0, |h: u64| sim.tick() - h);
+        let tick_input = if hit.is_some() {
+            input(t)
+        } else {
+            TickInput::default()
+        };
+        let n = sim.tick();
+        sim.step(tick_input);
+        if hit.is_none() && sim.stats().health < health {
+            hit = Some(n);
+        }
+        if hit.is_some() {
+            let o = sim.player().unwrap();
+            rows.push((o.state, o.y));
+        }
+    }
+    assert!(hit.is_some(), "the shot hit");
+    rows
+}
+
+fn press_on(at: u64) -> impl Fn(u64) -> TickInput {
+    move |t| {
+        if t == at {
+            press(JUMP)
+        } else {
+            TickInput::default()
+        }
+    }
+}
+
+#[test]
+fn a_hit_in_mid_air_holds_claw_22_ticks_then_one_tick_takes_a_jump() {
+    // Without a press: Hit for ticks h..h+21 (396 ms) at his height,
+    // Stand on h+22, and the fall from h+23.
+    let rows = after_a_hit_in_the_air(|_| TickInput::default());
+    let y = rows[0].1;
+    for (t, &(s, ry)) in rows.iter().enumerate().take(22) {
+        assert_eq!((s, ry), (state::HIT, y), "tick h+{t}");
+    }
+    assert_eq!(22 * 18, 396, "the hit holds 396 ms");
+    assert_eq!(rows[22], (state::STAND, y), "standing in mid-air on h+22");
+    assert_eq!(rows[23].0, state::FALL, "falling from h+23");
+    // The window is the one tick h+23 (18 ms): a press there starts a full
+    // jump from the hover height.
+    let rows = after_a_hit_in_the_air(press_on(23));
+    assert_eq!(rows[23].0, state::JUMP, "a jump on h+23");
+    assert!(rows[24].1 < rows[23].1, "rising");
+    assert!(rows[30].1 < y - 40, "a full jump: {:?}", &rows[23..31]);
+    // A press on any other tick nearby does not launch.
+    for at in (19..=22).chain(24..=26) {
+        let rows = after_a_hit_in_the_air(press_on(at));
+        assert!(
+            rows.iter().all(|&(s, _)| s != state::JUMP),
+            "a press on h+{at} launched"
+        );
+    }
+    // Nothing buffers a press: one on h+22 still held on h+23 is no press
+    // there.
+    let rows = after_a_hit_in_the_air(|t| match t {
+        22 => press(JUMP),
+        23.. => hold(JUMP),
+        _ => TickInput::default(),
+    });
+    assert!(rows.iter().all(|&(s, _)| s != state::JUMP));
+}

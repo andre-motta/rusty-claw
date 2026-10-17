@@ -19,7 +19,7 @@ use crate::player::stats::{Carry, PlayerStats, StartState, TREASURE_KINDS};
 use crate::player::{self, Claw, Ctx};
 use crate::registry::{CAMERA_LOGIC, PLAYER_LOGIC, REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
 use crate::rng::Rng;
-use crate::tuning::{TICK_MS, Tuning};
+use crate::tuning::{FuseClock, TICK_MS, Tuning};
 use crate::view::{PlaneGeometry, PlaneView};
 
 /// Simulation settings.
@@ -37,6 +37,9 @@ pub struct SimConfig {
     /// inert placeholder and collisions run no handler, as in the first
     /// playable version; the movement calibration replays use that.
     pub level_logics: bool,
+    /// Whether the time a help screen was up reaches the dynamite fuse
+    /// (see [`Sim::pass_menu_time`]); the original's way by default.
+    pub fuse_clock: FuseClock,
 }
 
 impl Default for SimConfig {
@@ -82,6 +85,7 @@ impl SimConfig {
             tuning: Tuning::default(),
             seed: 1,
             level_logics: true,
+            fuse_clock: FuseClock::Original,
         }
     }
 }
@@ -898,6 +902,32 @@ impl Sim {
     /// True when [`Sim::end_life`] waits for the next tick.
     pub fn end_life_pending(&self) -> bool {
         self.end_life
+    }
+
+    /// Lets `ms` of a help screen's time reach the dynamite fuse, at the
+    /// boundary before the next tick, when play comes back from the help
+    /// screen (with [`SimConfig::fuse_clock`] at its original default).
+    ///
+    /// The game time then counts as the game time of the last tick run
+    /// plus `ms`, for the fuse only: every lit stick of dynamite whose fuse
+    /// has burnt by then goes off at once, as if it had gone off in the
+    /// last tick before the screen (its blast hurts in the 8th tick after
+    /// the screen, against the 9th after a stick that goes off in a tick).
+    /// Nothing else sees that time and the game time stays as it was; no
+    /// other object runs and nothing is drawn from the random stream. With
+    /// [`FuseClock::Frozen`] it does nothing, and the pause and the
+    /// in-game menu never call it: their time never reaches play.
+    pub fn pass_menu_time(&mut self, ms: u32) {
+        if self.cfg.fuse_clock == FuseClock::Frozen || ms == 0 {
+            return;
+        }
+        let at = self.tick.saturating_sub(1) * u64::from(TICK_MS) + u64::from(ms);
+        let (mut runner, objects, _) = self.parts();
+        {
+            let mut w = runner.world(objects);
+            logic::projectile::pass_fuse_time(&mut w, at);
+        }
+        runner.list_spawned(objects);
     }
 
     /// Moves Claw to (x, y) at once (tools and tests); the move is drawn
