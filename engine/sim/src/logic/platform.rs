@@ -490,8 +490,11 @@ fn clock_tick(w: &mut World, id: ObjectId, d: &mut PlatformData) {
             // Woken after a sleep, or set up away from where the clock puts
             // it, the elevator jumps there: it is drawn at its new place at
             // once instead of sweeping across. The set-up call does not
-            // move, so the first move covers two ticks of the clock.
-            let woken = d.last_tick.is_some_and(|t| t.wrapping_add(1) != tick);
+            // move, so the first move covers two ticks of the clock. (The
+            // set-up of an elevator live at the level start runs while the
+            // level loads, in no tick: only the move test applies to the
+            // first move after a set-up.)
+            let woken = !d.fresh && d.last_tick.is_some_and(|t| t.wrapping_add(1) != tick);
             let jumped = d.fresh
                 && (o.platform_move.0.unsigned_abs() > 2 * clock_step(&d.x)
                     || o.platform_move.1.unsigned_abs() > 2 * clock_step(&d.y));

@@ -139,7 +139,10 @@ pub fn route(seconds: f64) -> InputScript {
     cycle.extend([(down, 60), (0, 20), (up, 60), (0, 20), (jump, 1), (0, 40)]);
     let per_cycle: usize = cycle.iter().map(|&(_, n)| n).sum();
     let want = (seconds.max(0.0) * 1000.0 / 18.0).ceil() as usize + 1;
+    // Every key starts up: a key already down when play starts counts only
+    // once released, so the first tick holds nothing.
     let mut held = Vec::with_capacity(want + per_cycle);
+    held.push(0);
     while held.len() < want {
         for &(mask, n) in &cycle {
             held.extend(std::iter::repeat_n(mask, n));
@@ -269,6 +272,9 @@ pub fn combat_route(sim: &Sim, seconds: f64, here: bool) -> BenchRoute {
     if !here {
         plan.teleport(start.0, start.1);
     }
+    // Every key starts up: a key already down when play starts counts only
+    // once released, so the first tick holds nothing.
+    plan.step(0);
     let foes: Vec<(i32, i32, i32)> = enemies
         .into_iter()
         .filter(|e| e.0 >= start.0 - 100)

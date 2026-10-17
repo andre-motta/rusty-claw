@@ -927,6 +927,16 @@ fn a_sword_shot_leaves_once_per_swing() {
         assert_eq!(claw(&sim).anim.key(), Some("CLAW_POWERUPSWIPE"));
         // The 1 ms frame is shorter than a tick and still sends the shot.
         assert!(played(&sim, sound), "{sound}");
+        // Unlike pistol and magic shots, it does not carry Claw's attack
+        // count.
+        let mut serials = Vec::new();
+        shot_serials(&sim, &mut serials);
+        assert_eq!(
+            serials.iter().map(|e| (e.1, e.2)).collect::<Vec<_>>(),
+            [(logic, 0)],
+            "{logic}"
+        );
+        assert_ne!(sim.claw().attack.serial, 0);
         wait(&mut sim, &mut log, 30);
         assert_eq!(log.len(), 1, "{logic}: one shot per swing");
         let s = log.spec(0);
@@ -977,12 +987,16 @@ fn remove_shots(sim: &mut Sim) {
 }
 
 #[test]
-fn firing_leaves_the_game_random_stream_alone() {
-    // Same seed; one run fires everything, the other stands still.
+fn firing_draws_the_line_chance_from_the_game_random_stream() {
+    // Same seed; one run fires everything, the other stands still. Each
+    // attack that starts with ammunition rolls the chance of Claw's line,
+    // one draw of the shared stream as in the original; nothing else in
+    // the firing draws.
     let mut quiet = new_sim(11);
     let mut busy = new_sim(11);
     let mut log = Shots::default();
     let presses = [PROJECTILE, MAGIC, DYNAMITE, TOGGLE, PISTOL, PROJECTILE];
+    let mut extra = Vec::new();
     for p in presses {
         go(&mut busy, &mut log, press(p));
         remove_shots(&mut busy);
@@ -991,14 +1005,30 @@ fn firing_leaves_the_game_random_stream_alone() {
             remove_shots(&mut busy);
         }
         idle(&mut quiet, 41);
-        assert_eq!(busy.rng().state(), quiet.rng().state());
+        extra.push(draws_between(quiet.rng().state(), busy.rng().state()));
     }
     assert!(log.len() >= 4, "shots: {}", log.len());
-    // The next blow is the same in both.
-    busy.step(press(ATTACK));
-    quiet.step(press(ATTACK));
-    assert_eq!(busy.claw().attack.kind, quiet.claw().attack.kind);
-    assert_eq!(busy.rng().state(), quiet.rng().state());
+    // The pistol shot and the dynamite throw roll; the magic shot has no
+    // line and toggling the weapon starts no attack; the pistol key and the
+    // projectile key then fire the pistol again.
+    assert_eq!(
+        extra,
+        [Some(1), Some(1), Some(2), Some(2), Some(3), Some(4)],
+        "extra draws of the firing run after each press"
+    );
+}
+
+/// The number of draws of the shared random stream that lead from state
+/// `from` to state `to`, when there are fewer than 1000.
+fn draws_between(from: u32, to: u32) -> Option<u32> {
+    let mut r = Rng::new(from);
+    for n in 0..1000 {
+        if r.state() == to {
+            return Some(n);
+        }
+        r.next_u15();
+    }
+    None
 }
 
 // ------------------------------------------------------------ lift and throw
@@ -1164,7 +1194,8 @@ fn a_thrown_keg_strikes_every_enemy_it_overlaps_in_that_pass_then_explodes_once(
         logic::thrown(w, id, 400, 0);
     });
     let mut strikes = Vec::new();
-    let mut blasts = 0;
+    // Each explosion object counts once, however many ticks it lasts.
+    let mut blasts = std::collections::BTreeSet::new();
     for t in 0..40 {
         sim.step(TickInput::default());
         for e in sim.collision_events() {
@@ -1177,14 +1208,15 @@ fn a_thrown_keg_strikes_every_enemy_it_overlaps_in_that_pass_then_explodes_once(
                 _ => {}
             }
         }
-        blasts += sim
-            .objects()
-            .all()
-            .filter(|(_, o)| {
-                matches!(&o.data, ObjectData::Effect(d)
-                    if matches!(d.request, Some(claw_sim::logic::effect::EffectKind::Explosion { source: Some(s), .. }) if s == id))
-            })
-            .count();
+        blasts.extend(
+            sim.objects()
+                .all()
+                .filter(|(_, o)| {
+                    matches!(&o.data, ObjectData::Effect(d)
+                        if matches!(d.request, Some(claw_sim::logic::effect::EffectKind::Explosion { source: Some(s), .. }) if s == id))
+                })
+                .map(|(e, _)| e),
+        );
         if sim.objects().get(id).is_none() {
             break;
         }
@@ -1196,7 +1228,7 @@ fn a_thrown_keg_strikes_every_enemy_it_overlaps_in_that_pass_then_explodes_once(
     assert_eq!(strikes[0].0, strikes[1].0, "the same pass: {strikes:?}");
     assert_ne!(strikes[0].1, strikes[1].1);
     assert!(sim.objects().get(id).is_none(), "the keg exploded");
-    assert!(blasts <= 1, "one explosion");
+    assert_eq!(blasts.len(), 1, "one explosion: {blasts:?}");
     for o in [a, b] {
         let h = sim.objects().get(o).map_or(0, |o| o.health);
         assert!(h <= 100 - keg::BLAST_DAMAGE, "struck: {h}");

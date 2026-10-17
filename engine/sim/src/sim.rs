@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use claw_frame::{
-    AspectPolicy, AudioCue, DrawMode, GameEvent, HudState, Point, PowerupHud, Renderable,
+    AspectPolicy, AudioCue, Buttons, DrawMode, GameEvent, HudState, Point, PowerupHud, Renderable,
     SimSnapshot, TickInput, ViewConfig,
 };
 
@@ -31,7 +31,9 @@ pub struct SimConfig {
     pub activation: ActivationConfig,
     /// Tuning data.
     pub tuning: Tuning,
-    /// Seed of the game's random stream.
+    /// State of the game's shared random stream at time zero, when the
+    /// first tick starts (the level's objects are set up before that from
+    /// [`LEVEL_LOAD_SEED`]).
     pub seed: u32,
     /// Run the level objects' logics. Off, every level object stays an
     /// inert placeholder and collisions run no handler, as in the first
@@ -123,6 +125,17 @@ pub struct Sim {
     sound_rng: Rng,
     tick: u64,
     input: TickInput,
+    /// Keys that count as already pressed: neither held nor pressed for
+    /// Claw until released at a tick (see [`Sim::latch_keys`]).
+    latched: Buttons,
+    /// The input Claw's logic sees this tick: [`Sim::input`] without the
+    /// latched keys.
+    claw_input: TickInput,
+    /// The frame pulse countdown, ms (see [`PULSE_MS`]).
+    pulse_left: u32,
+    /// The state the level's set-up left the random stream in, before
+    /// time zero set it to the seed.
+    set_up_rng: u32,
     events: Vec<CollisionEvent>,
     diagnostics: Diagnostics,
     out: Outbox,
@@ -148,6 +161,7 @@ struct Runner<'a> {
     input: TickInput,
     tick: u64,
     now_ms: u64,
+    pulse: bool,
     player: Option<ObjectId>,
 }
 
@@ -179,6 +193,7 @@ impl Runner<'_> {
             tuning: &self.cfg.tuning,
             tick: self.tick,
             now_ms: self.now_ms,
+            pulse: self.pulse,
             view,
             out: &mut *self.out,
         }
@@ -217,6 +232,7 @@ impl Runner<'_> {
                 out: &mut *self.out,
                 tick: self.tick,
                 now_ms: self.now_ms,
+                pulse: self.pulse,
                 view,
                 level_logics: self.cfg.level_logics,
             };
@@ -335,6 +351,20 @@ impl Runner<'_> {
     }
 }
 
+/// State the shared random stream is set to when a level starts loading;
+/// the level's objects are set up from it. Time zero then starts from
+/// [`SimConfig::seed`].
+pub const LEVEL_LOAD_SEED: u32 = 0x1_B3CF;
+
+/// Period of the frame pulse, ms: a countdown fed the 18 ms of each tick
+/// that reaches 0 on every third tick. Enemies make their per-tick roll and
+/// a few random choices only on a pulse tick.
+pub const PULSE_MS: u32 = 33;
+
+/// The frame pulse countdown when play starts, ms: the first pulse comes in
+/// the sixth tick (the tick ending at 108 ms), then every third tick.
+pub const PULSE_START_MS: u32 = 100;
+
 /// Seed of the sound-only random stream of a level: it depends on the
 /// game seed and the level number only, so it restarts with each level.
 pub fn sound_seed(seed: u32, level_number: u32) -> u32 {
@@ -374,14 +404,17 @@ fn unset_if_empty(r: Rect) -> Rect {
 impl Sim {
     /// Loads `level`: places the level objects dormant, creates Claw (who
     /// starts at the main plane's view centre, seeded with the level's
-    /// start point, dropped onto the floor below) and the camera, and wakes
-    /// the objects around the start.
+    /// start point, dropped onto the floor below) and the camera, wakes
+    /// the objects around the start and runs their first logic call (their
+    /// set-up), drawing from the shared random stream started at
+    /// [`LEVEL_LOAD_SEED`]. The stream is then set to [`SimConfig::seed`]
+    /// for time zero. Every key starts latched (see [`Sim::latch_keys`]).
     pub fn new(level: impl Into<Arc<SimLevel>>, cfg: SimConfig) -> Sim {
         let level: Arc<SimLevel> = level.into();
         let plane = level.plane();
         let activation = Activation::new(cfg.activation.clone(), plane);
         let mut sim = Sim {
-            rng: Rng::new(cfg.seed),
+            rng: Rng::new(LEVEL_LOAD_SEED),
             sound_rng: Rng::new(sound_seed(cfg.seed, level.number)),
             cfg,
             registry: Registry::standard(),
@@ -395,6 +428,10 @@ impl Sim {
             camera_override: None,
             tick: 0,
             input: TickInput::default(),
+            latched: Buttons(u32::MAX),
+            claw_input: TickInput::default(),
+            pulse_left: PULSE_START_MS,
+            set_up_rng: LEVEL_LOAD_SEED,
             events: Vec::new(),
             diagnostics: Diagnostics::default(),
             out: Outbox::new(),
@@ -431,6 +468,12 @@ impl Sim {
         sim.activation.wake_always_active(&mut sim.objects);
         let c = sim.centres();
         sim.activation.enter(&mut sim.objects, c);
+        // The objects around the start are set up while the level loads,
+        // in list order, so their set-up draws come before time zero and
+        // their first update in the first tick.
+        sim.set_up_pass();
+        sim.set_up_rng = sim.rng.state();
+        sim.rng = Rng::new(sim.cfg.seed);
         sim
     }
 
@@ -528,9 +571,10 @@ impl Sim {
                 rng: &mut self.rng,
                 sound_rng: &mut self.sound_rng,
                 out: &mut self.out,
-                input: self.input,
+                input: self.claw_input,
                 tick: self.tick,
                 now_ms,
+                pulse: self.pulse_left == 0,
                 player: self.player,
             },
             &mut self.objects,
@@ -547,6 +591,17 @@ impl Sim {
     /// Advances one tick with `input` and returns the snapshot.
     pub fn step(&mut self, input: TickInput) -> SimSnapshot {
         self.input = input;
+        // A latched key stays latched until a tick finds it up.
+        self.latched = Buttons(self.latched.0 & input.held.0);
+        self.claw_input = TickInput {
+            held: Buttons(input.held.0 & !self.latched.0),
+            pressed: Buttons(input.pressed.0 & !self.latched.0),
+        };
+        self.pulse_left = match self.pulse_left {
+            0 => PULSE_MS,
+            left if left <= TICK_MS => 0,
+            left => left - TICK_MS,
+        };
         if std::mem::take(&mut self.end_life) {
             self.apply_end_life();
         }
@@ -591,6 +646,19 @@ impl Sim {
     }
 
     fn update_pass(&mut self) {
+        self.pass(false);
+    }
+
+    /// The level load's set-up: the first logic call of every level object
+    /// in the live list that has not had one, in list order, before time
+    /// zero.
+    fn set_up_pass(&mut self) {
+        self.pass(true);
+    }
+
+    /// One walk over the live list running the objects' logics; with
+    /// `set_up`, only the first call of the level objects not set up yet.
+    fn pass(&mut self, set_up: bool) {
         let mut destroy = Vec::new();
         let mut resort = Vec::new();
         let (mut runner, objects, _) = self.parts();
@@ -601,6 +669,12 @@ impl Sim {
                 let Some(o) = objects.get_mut(id) else {
                     continue;
                 };
+                if set_up
+                    && !(matches!(o.kind, LogicKind::Game(_))
+                        && o.state == crate::object::engine_state::INIT)
+                {
+                    continue;
+                }
                 // Only the move made in this turn is published, so a platform
                 // that stops or skips a tick stops carrying its riders.
                 o.platform_move = (0, 0);
@@ -839,9 +913,42 @@ impl Sim {
         &self.diagnostics
     }
 
-    /// The input of the last tick.
+    /// The input of the last tick, as given to [`Sim::step`].
     pub fn input(&self) -> TickInput {
         self.input
+    }
+
+    /// The input Claw's logic saw in the last tick: [`Sim::input`] without
+    /// the latched keys (see [`Sim::latch_keys`]).
+    pub fn claw_input(&self) -> TickInput {
+        self.claw_input
+    }
+
+    /// Every key down at the next tick counts as already pressed: it is
+    /// neither held nor pressed for Claw until a tick finds it released, and
+    /// counts again from its next press. Play starts this way (a key held
+    /// when the level starts does nothing until it is released and pressed
+    /// again), and so does the return from a screen over play.
+    pub fn latch_keys(&mut self) {
+        self.latched = Buttons(u32::MAX);
+    }
+
+    /// The keys latched now (all bits set after [`Sim::latch_keys`], until
+    /// the next tick clears the ones that are up).
+    pub fn latched(&self) -> Buttons {
+        self.latched
+    }
+
+    /// Lifts the latch: keys down at the next tick count at once, as if
+    /// none had been down when play started (tools and tests that press
+    /// from the first tick).
+    pub fn unlatch_keys(&mut self) {
+        self.latched = Buttons::NONE;
+    }
+
+    /// True when the last tick was a frame pulse tick (see [`PULSE_MS`]).
+    pub fn pulse(&self) -> bool {
+        self.pulse_left == 0
     }
 
     /// The random stream.
@@ -853,6 +960,22 @@ impl Sim {
     /// next tick starts from. Traces record it in their `rng` column.
     pub fn rng_state(&self) -> u32 {
         self.rng.state()
+    }
+
+    /// The state the level's set-up left the shared random stream in:
+    /// [`LEVEL_LOAD_SEED`] advanced by every draw the objects made while
+    /// the level loaded. In the original this is the stream's state at
+    /// time zero; [`SimConfig::seed`] sets the state the first tick
+    /// starts from instead.
+    pub fn rng_after_set_up(&self) -> u32 {
+        self.set_up_rng
+    }
+
+    /// Sets the state of the shared random stream (tools that start a
+    /// stretch of play at a settled point, as the reference runs of a
+    /// segment do: the stream is set at the segment's time zero).
+    pub fn set_rng_state(&mut self, state: u32) {
+        self.rng = Rng::new(state);
     }
 
     /// The sound-only random stream.

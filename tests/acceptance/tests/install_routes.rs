@@ -16,6 +16,10 @@
 //!   (nothing moves him but the input);
 //! - every change of the held buttons comes at least 2 ticks after the
 //!   previous one, so a 60 Hz display never drops a press;
+//! - nothing is held in the first tick (keys down when play starts count
+//!   only once released and pressed again), and a first-level route
+//!   starts from the random state the reference runs of that level start
+//!   from ([`LEVEL1_SEED`]);
 //! - the same route stepped in the bot's own configuration gives the same
 //!   digests, so what the bot found is what the game plays.
 
@@ -35,6 +39,11 @@ const MIN_SPACING: usize = 2;
 
 /// Largest move of Claw in one tick that input alone can make, px.
 const MAX_STEP_PX: i32 = 48;
+
+/// The state of the shared random stream at time zero in the reference
+/// runs of the first level: the level-load state advanced by the six draws
+/// of the level's set-up.
+const LEVEL1_SEED: u32 = 4_105_512_405;
 
 /// The route header keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +141,13 @@ fn install_routes_win_the_same_way_every_time() {
             Vec::<usize>::new(),
             "{name}: held-button changes closer than {MIN_SPACING} ticks"
         );
+        assert_eq!(
+            script.ticks[0].held.0, 0,
+            "{name}: the first press comes after the first tick"
+        );
+        if h.level == 1 {
+            assert_eq!(h.seed, LEVEL1_SEED, "{name}: the reference runs' seed");
+        }
 
         // The game as the game builds it, with the route's header.
         let choice = LevelChoice::Retail(h.level);

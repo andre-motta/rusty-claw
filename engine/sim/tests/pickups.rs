@@ -439,12 +439,13 @@ fn a_stack_builds_its_crates_and_goes() {
         )]),
         SimConfig::default(),
     );
-    let spawner = find(&sim, "BackStackedCrates")[0];
-    step(&mut sim, 2);
+    // The spawner builds its crates while the level loads and removes
+    // itself.
     assert!(
-        sim.objects().get(spawner).is_none(),
+        find(&sim, "BackStackedCrates").is_empty(),
         "the spawner removes itself"
     );
+    step(&mut sim, 2);
     let ids = stack_crates(&sim);
     assert_eq!(ids.len(), 3);
     for (i, &id) in ids.iter().enumerate() {
@@ -633,10 +634,10 @@ fn keg_placed_on(rows: &[&str], x: i32, y: i32, boxes: &[(i32, Rect)]) -> Object
     if !boxes.is_empty() {
         register(&mut l, keg::IMAGE_SET, (1, 1), boxes);
     }
-    let mut sim = Sim::new(l, SimConfig::default());
+    // Its first logic call runs while the level loads.
+    let sim = Sim::new(l, SimConfig::default());
     let k = find(&sim, "PowderKeg")[0];
-    assert_eq!(obj(&sim, k).state, keg::state::INIT);
-    sim.with_world(|w| logic::tick(w, k));
+    assert_ne!(obj(&sim, k).state, keg::state::INIT);
     obj(&sim, k).clone()
 }
 
@@ -902,14 +903,19 @@ fn every_curse_of_the_first_level_does_nothing_in_single_player() {
         .enumerate()
         .map(|(i, s)| spec("CursePowerup", s, 1100 + 40 * i as i32, 930))
         .collect();
-    let mut sim = Sim::new(level(objects), SimConfig::default());
-    let ids = find(&sim, "CursePowerup");
-    assert_eq!(ids.len(), 5);
+    let l = level(objects);
+    assert_eq!(
+        l.objects
+            .iter()
+            .filter(|o| o.logic == "CursePowerup")
+            .count(),
+        5
+    );
+    let mut sim = Sim::new(l, SimConfig::default());
+    // Removed on their first call, while the level loads.
+    assert!(find(&sim, "CursePowerup").is_empty());
     let snap = sim.step(TickInput::default());
     let snap2 = sim.step(TickInput::default());
-    for id in ids {
-        assert!(sim.objects().get(id).is_none(), "removed on its first call");
-    }
     for s in [&snap, &snap2] {
         assert!(
             s.renderables

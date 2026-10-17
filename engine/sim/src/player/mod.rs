@@ -321,6 +321,8 @@ pub struct Ctx<'a> {
     pub tick: u64,
     /// Simulation time at the start of the tick, ms.
     pub now_ms: u64,
+    /// The tick is a frame pulse tick (see [`World::pulse`]).
+    pub pulse: bool,
     /// The logic view in level pixels.
     pub view: Rect,
     /// The level objects run their logics
@@ -360,6 +362,7 @@ impl Ctx<'_> {
                 tuning: self.t,
                 tick: self.tick,
                 now_ms: self.now_ms,
+                pulse: self.pulse,
                 view: self.view,
                 out: &mut *self.out,
             };

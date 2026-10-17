@@ -47,11 +47,13 @@
 //! [`Session::directives`] lists every directive given or played so far;
 //! the recorder writes them into the recording. A pause or menu changes
 //! nothing in the game itself: play stops and goes on where it stopped,
-//! with the input the ticks after it were recorded with. The one exception
-//! is the help screen: with the fuse clock at its original default
-//! ([`claw_sim::tuning::FuseClock`]) the time it was up reaches the
-//! dynamite fuse at the boundary after it ([`Sim::pass_menu_time`]), live
-//! and replayed alike.
+//! with the input the ticks after it were recorded with. There are two
+//! exceptions, live and replayed alike: with the fuse clock at its original
+//! default ([`claw_sim::tuning::FuseClock`]) the time the help screen was up
+//! reaches the dynamite fuse at the boundary after it
+//! ([`Sim::pass_menu_time`]), and with the original rule for keys (see
+//! below) the keys down when a screen closes count as already pressed
+//! ([`Sim::latch_keys`]).
 //!
 //! # Going on after a pause or a screen
 //!
@@ -67,11 +69,12 @@
 //! - original (the default): nothing is released when play stops, and the
 //!   key events while it is stopped are not taken one by one. After a
 //!   pause, the keys down at the resume are held and those not held on the
-//!   last tick before the pause are pressed; after a screen, the keys down
-//!   are held and none is pressed, so a key held on counts as pressed only
-//!   once released and pressed again. The window tells the session which
-//!   keys are down ([`Session::sync_keys`]), since a screen takes the keys
-//!   while it is up.
+//!   last tick before the pause are pressed; after a screen, every key down
+//!   counts as already pressed ([`Sim::latch_keys`]): Claw sees it neither
+//!   held nor pressed until it is released and pressed again, as when play
+//!   starts. The window tells the session which keys are down
+//!   ([`Session::sync_keys`]), since a screen takes the keys while it is
+//!   up.
 //! - release all: every key is released when play stops (the caller does
 //!   it, see [`crate::pause::Pauses::apply`]) and the key events while it
 //!   is stopped count in the first tick.
@@ -258,6 +261,9 @@ pub struct Session {
     /// The help screen time the replayed hold in progress passes to the
     /// fuse when it ends.
     hold_menu_ms: Option<u32>,
+    /// The replayed hold in progress is a screen: with the original rule
+    /// the keys down when it ends count as already pressed.
+    hold_screen: bool,
     /// How keys count across a pause or a screen.
     pause_input: PauseInput,
     /// Buttons down right now, as the key events and
@@ -305,6 +311,7 @@ impl Session {
             live_span: None,
             hold_us: None,
             hold_menu_ms: None,
+            hold_screen: false,
             pause_input: PauseInput::default(),
             down: Buttons::NONE,
             stepping: false,
@@ -608,6 +615,10 @@ impl Session {
                 if let Some(ms) = self.hold_menu_ms.take() {
                     self.sim.pass_menu_time(ms);
                 }
+                if std::mem::take(&mut self.hold_screen) && self.pause_input == PauseInput::Original
+                {
+                    self.sim.latch_keys();
+                }
             }
             if self.start_due() {
                 continue;
@@ -652,10 +663,12 @@ impl Session {
                 }
             };
             let menu_ms = menu_time(&next.kind);
+            let screen = matches!(next.kind, DirectiveKind::Menu { .. });
             d.log.push(next);
             if let Some(us) = hold {
                 self.hold_us = Some(us);
                 self.hold_menu_ms = menu_ms;
+                self.hold_screen = screen;
                 return true;
             }
         }
@@ -786,8 +799,13 @@ impl Session {
                 // Pressed: down now and not held on the last tick before
                 // the pause.
                 Span::Pause => Buttons(held.0 & !self.sim.input().held.0),
-                // After a screen every key down counts as pressed already.
-                Span::Menu(_) => Buttons::NONE,
+                // After a screen every key down counts as pressed already:
+                // Claw sees it neither held nor pressed until it is
+                // released at a tick.
+                Span::Menu(_) => {
+                    self.sim.latch_keys();
+                    Buttons::NONE
+                }
             };
             self.resume_input = Some(TickInput { held, pressed });
             // The key events while stopped are not taken one by one: the

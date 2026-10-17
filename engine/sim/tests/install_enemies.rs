@@ -117,8 +117,8 @@ fn install_every_enemy_starts_on_the_ground() {
     assert_eq!(count.get("Officer"), Some(&26));
     assert_eq!(count.get("Soldier"), Some(&16));
     assert_eq!(count.get("Rat"), Some(&12));
-    let mut sim = Sim::new(level.clone(), all_awake(&level));
-    sim.step(TickInput::default());
+    // Built while the level loads.
+    let sim = Sim::new(level.clone(), all_awake(&level));
     let mut bad = Vec::new();
     for (logic, x, y, z) in &records {
         let id = enemy_from(&sim, *x, *y, *z).expect("the enemy exists");

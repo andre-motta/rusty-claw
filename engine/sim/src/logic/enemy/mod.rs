@@ -9,9 +9,9 @@
 //!
 //! Each logic call after the first runs, in order:
 //!
-//! 1. the pre-tick ([`pre_tick`]): one draw of 0..=1000 from the random
-//!    stream (kept so the stream stays in step with the game; nothing
-//!    reads it), which side Claw is on and, unless Claw is invisible, the
+//! 1. the pre-tick ([`pre_tick`]): on a frame pulse tick (every third
+//!    tick), one draw of 0..=1000 from the random stream (kept so the
+//!    stream stays in step with the game; nothing reads it), which side Claw is on and, unless Claw is invisible, the
 //!    range mode ([`range_mode`]); human enemies then refresh their
 //!    liftable flag and contact box, notice Claw leaving range, become
 //!    stationary on a platform and check for a narrow ledge; each class may
@@ -115,10 +115,6 @@ pub const ICE_DEATH_ANIM: &str = "GAME_ICEDEATH";
 
 /// The powerup code that hides Claw from enemies.
 pub const INVISIBILITY_POWERUP: u32 = 0x26B7;
-
-/// Time after the level starts during which enemies skip their per-tick
-/// draw and a few random choices, ms.
-pub const STARTUP_QUIET_MS: u64 = 100;
 
 /// Time Claw must stay out of range, on screen, before the mode says so,
 /// ms.
@@ -1077,15 +1073,21 @@ pub fn tick(w: &mut World, id: ObjectId, class: &Class) {
     post_tick(w, id, class);
 }
 
+/// The per-tick roll of the shared pre-tick, which the crates of a stack
+/// and powder kegs make too (they share the enemies' base): on a frame
+/// pulse tick (every third tick, see [`World::pulse`]) one draw of
+/// 0..=1000; between pulses no draw and a value no chance is ever below.
+pub fn pulse_roll(w: &mut World) -> i32 {
+    if w.pulse { rand(w, 1001) } else { 0x1FFF_FFFF }
+}
+
 /// The shared pre-tick: the per-tick draw, the side and range mode, and,
 /// for human enemies, the human steps (see the module documentation).
-/// Draws: one of 0..=1000, skipped while the level starts.
+/// Draws: one of 0..=1000, on a frame pulse tick only (every third tick,
+/// see [`World::pulse`]); between pulses the roll holds a value no chance
+/// is ever below.
 pub fn pre_tick(w: &mut World, id: ObjectId, class: &Class) {
-    let roll = if w.now_ms < STARTUP_QUIET_MS {
-        0x1FFF_FFFF
-    } else {
-        rand(w, 1001)
-    };
+    let roll = pulse_roll(w);
     let (ex, ey) = {
         let o = obj(w, id);
         (o.x, o.y)

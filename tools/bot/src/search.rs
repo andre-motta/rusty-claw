@@ -15,7 +15,30 @@
 //!
 //! Waypoints split the search into segments: a hint point reached, or a
 //! checkpoint touched well ahead of where the segment started, becomes the
-//! root of a fresh search, and everything before it is dropped.
+//! root of a fresh search. The segment it ended is set aside: when the new
+//! segment runs out of states (its root was a dead end), the search goes
+//! back to the segment before and carries on there without that root.
+//!
+//! A fresh game starts with [`MIN_SPACING`] idle ticks: keys already down
+//! when play starts count only once released and pressed again, so the
+//! route's first press comes after tick 0, even played a tick early. With [`SearchConfig::land_gap`] set, a jump is
+//! never pressed within that many ticks of a landing: at 60 frames per
+//! second the original may land a frame from where the game does, and a
+//! press on its landing frame is lost.
+//!
+//! With [`SearchConfig::fragile_cost`] set, each child is also played
+//! with its timing shifted by a tick (it starts a tick late, and each
+//! change of the held mask inside it comes a tick early or late) and with
+//! the shared random stream a draw or two further on (so the enemies
+//! decide otherwise). Besides, every move is also played in two shadow
+//! games that follow the route from a slightly different start (see
+//! [`Shadow`]): a tick ahead, and with the random stream a draw further
+//! on. When a variant or a shadow dies, loses more health or ends
+//! somewhere else (another floor, another phase, or more than
+//! [`FRAGILE_PX`] away), the child is fragile and costs that much more,
+//! and the shadow starts again from the child. Routes then keep to moves
+//! with room to spare, so they still play the same when the timing slips
+//! by a tick somewhere before.
 //!
 //! The search is deterministic. Its budget counts expanded nodes, never
 //! time; ties go by a hash of the seed and the node's state; and the
@@ -67,7 +90,8 @@ pub struct SearchConfig {
     /// Threads that play the children of a node (1 plays them in turn).
     /// The result does not depend on it.
     pub threads: usize,
-    /// Games kept in memory at most, besides the segment root.
+    /// Games kept in memory at most, besides the segment root (a node's
+    /// shadows count as games of their own).
     pub cached_sims: usize,
     /// A safety stop: give up after this much wall time. It ends the
     /// search with a failure, never with a different route.
@@ -93,6 +117,15 @@ pub struct SearchConfig {
     /// [`MIN_SPACING`], the route found first holds it for the ticks
     /// missing, so the spacing holds across the join.
     pub start_held_for: usize,
+    /// Fewest ticks between a press of jump and a landing of Claw, either
+    /// way round (0: no rule). A child that breaks it is dropped.
+    pub land_gap: u64,
+    /// Priority cost of a fragile child, px (0: children are not checked
+    /// for fragility).
+    pub fragile_cost: i64,
+    /// With the fragility check on, also play every move in the shadow
+    /// games (see [`Shadow`]).
+    pub shadows: bool,
 }
 
 impl Default for SearchConfig {
@@ -113,6 +146,89 @@ impl Default for SearchConfig {
             log_every: 0,
             start_held: 0,
             start_held_for: usize::MAX,
+            land_gap: 0,
+            fragile_cost: 0,
+            shadows: true,
+        }
+    }
+}
+
+/// How far across the end of a child played with shifted timing may be from
+/// its end as found, px, before the child counts as fragile.
+pub const FRAGILE_PX: i32 = 32;
+
+/// How far up or down, px.
+pub const FRAGILE_DY: i32 = 16;
+
+/// A shadow game: the route played from a slightly different start, to
+/// see whether a move still works when what came before went a little
+/// differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shadow {
+    /// One tick ahead: the last held mask kept for one more tick, so Claw
+    /// is a tick further along and the level's clock, its enemies and the
+    /// random stream are a tick on.
+    Ahead,
+    /// The shared random stream one draw further on, so the enemies decide
+    /// otherwise.
+    Draw,
+}
+
+/// The shadow games every move is also played in.
+pub const SHADOWS: [Shadow; 2] = [Shadow::Ahead, Shadow::Draw];
+
+impl Shadow {
+    /// `main` started over as this shadow; `last` is the mask it held last.
+    fn start(self, main: &Sim, last: u32) -> Sim {
+        let mut sim = main.clone();
+        match self {
+            Shadow::Ahead => {
+                sim.step(input(last, last));
+            }
+            Shadow::Draw => {
+                let mut r = claw_sim::rng::Rng::new(sim.rng_state());
+                r.next_u15();
+                sim.set_rng_state(r.state());
+            }
+        }
+        sim
+    }
+}
+
+/// The games of a node: the route as found and its shadows (none when the
+/// fragility check is off).
+#[derive(Debug, Clone)]
+struct Worlds {
+    main: Sim,
+    shadows: Vec<Sim>,
+}
+
+impl Worlds {
+    /// `main` with fresh shadows when `shadows` is set.
+    fn new(main: Sim, last: u32, shadows: bool) -> Worlds {
+        let shadows = if shadows {
+            SHADOWS.iter().map(|s| s.start(&main, last)).collect()
+        } else {
+            Vec::new()
+        };
+        Worlds { main, shadows }
+    }
+
+    fn step(&mut self, input: TickInput) {
+        self.main.step(input);
+        for s in &mut self.shadows {
+            s.step(input);
+        }
+    }
+
+    /// Starts the shadows of the bits of `reseed` over from the main game.
+    fn reseed(&mut self, reseed: u8, last: u32) {
+        for (i, kind) in SHADOWS.iter().enumerate() {
+            if reseed & (1 << i) != 0
+                && let Some(s) = self.shadows.get_mut(i)
+            {
+                *s = kind.start(&self.main, last);
+            }
         }
     }
 }
@@ -126,12 +242,21 @@ pub struct SearchStats {
     pub generated: u64,
     /// Children dropped because Claw died in them.
     pub deaths_pruned: u64,
+    /// Children dropped because a jump was pressed too close to a landing
+    /// (see [`SearchConfig::land_gap`]).
+    pub landings_pruned: u64,
+    /// Children found fragile (see [`SearchConfig::fragile_cost`]).
+    pub fragile: u64,
+    /// Fragile moves along the route found.
+    pub fragile_on_route: u32,
     /// Children dropped as already seen.
     pub duplicates: u64,
     /// Games rebuilt by stepping from an ancestor.
     pub rebuilt: u64,
     /// Segment roots taken (hints reached and checkpoints passed).
     pub segments: u32,
+    /// Segments given up as dead ends.
+    pub backed_out: u32,
     /// Ticks of the route found (0 without one).
     pub ticks: u64,
     /// Health Claw lost along the route found.
@@ -192,8 +317,14 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
     };
     // Keep the start mask held until it has lasted the spacing, so the
     // first change the search makes is far enough from the last one
-    // before the start.
-    let lead = vec![cfg.start_held; MIN_SPACING.saturating_sub(cfg.start_held_for)];
+    // before the start. A fresh game, whose keys are all latched, idles
+    // for its first ticks, so the first press comes after tick 0 even a
+    // tick early.
+    let mut lead_len = MIN_SPACING.saturating_sub(cfg.start_held_for);
+    if !start.latched().is_empty() && cfg.start_held == 0 {
+        lead_len = lead_len.max(MIN_SPACING);
+    }
+    let lead = vec![cfg.start_held; lead_len];
     let mut start = start.clone();
     for &held in &lead {
         start.step(input(held, cfg.start_held));
@@ -233,8 +364,13 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
         cache: HashMap::new(),
         cache_order: BTreeSet::new(),
         root: 0,
-        root_sim: start.clone(),
+        root_sim: Worlds::new(
+            start.clone(),
+            cfg.start_held,
+            cfg.fragile_cost > 0 && cfg.shadows,
+        ),
         lead,
+        earlier: Vec::new(),
         stats: SearchStats {
             best_distance: UNREACHABLE,
             ..SearchStats::default()
@@ -268,10 +404,23 @@ struct Node {
     action: Option<Action>,
     ticks: u64,
     last: u32,
+    /// Route tick of Claw's last landing and of the last press of jump.
+    timing: Timing,
     lost: i32,
+    /// Fragile children along the path from the start.
+    fragile: u32,
+    /// The shadows started over from this node's game, one bit each.
+    reseed: u8,
     h: u32,
     prio: i64,
     tie: u64,
+}
+
+/// Route ticks of Claw's last landing and of the last press of jump.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Timing {
+    landed: Option<u64>,
+    jumped: Option<u64>,
 }
 
 /// How a child came out.
@@ -279,16 +428,21 @@ struct Node {
 enum Outcome {
     Alive,
     Dead,
+    /// A jump was pressed too close to a landing.
+    TooClose,
     /// The goal was met in the tick of this index within the action.
     Done(usize),
 }
 
 struct Child {
     action: Action,
-    sim: Sim,
+    worlds: Worlds,
+    reseed: u8,
     outcome: Outcome,
     lost: i32,
     last: u32,
+    timing: Timing,
+    fragile: bool,
     checkpoint: bool,
     hint: bool,
 }
@@ -303,14 +457,25 @@ struct Search<'a> {
     nodes: Vec<Node>,
     open: BinaryHeap<OpenEntry>,
     seen: HashSet<u64>,
-    cache: HashMap<u32, Sim>,
+    cache: HashMap<u32, Worlds>,
     cache_order: BTreeSet<(i64, u64, u32)>,
     root: u32,
-    root_sim: Sim,
+    root_sim: Worlds,
     /// Ticks held at [`SearchConfig::start_held`] before the root.
     lead: Vec<u32>,
+    /// The segments set aside by each commit, the latest last.
+    earlier: Vec<Segment>,
     stats: SearchStats,
     began: Instant,
+}
+
+/// A segment of the search set aside when a waypoint started a new one.
+struct Segment {
+    target: usize,
+    open: BinaryHeap<OpenEntry>,
+    seen: HashSet<u64>,
+    root: u32,
+    root_sim: Worlds,
 }
 
 impl Search<'_> {
@@ -321,7 +486,10 @@ impl Search<'_> {
             action: None,
             ticks: self.lead.len() as u64,
             last: self.cfg.start_held,
+            timing: Timing::default(),
             lost: 0,
+            fragile: 0,
+            reseed: 0,
             h,
             prio: 0,
             tie: 0,
@@ -329,7 +497,14 @@ impl Search<'_> {
         self.nodes.push(root);
         self.seen.insert(state_key(start));
         self.open.push(Reverse((0, 0, 0)));
-        while let Some(Reverse((_, _, id))) = self.open.pop() {
+        loop {
+            let Some(Reverse((_, _, id))) = self.open.pop() else {
+                // A dead end: back to the segment before, if any.
+                if !self.back_out() {
+                    break;
+                }
+                continue;
+            };
             if self.stats.expanded >= self.cfg.nodes {
                 return Err(self.failure("the node budget ran out"));
             }
@@ -344,14 +519,18 @@ impl Search<'_> {
             }
             let parent = self.sim_of(id);
             let node = self.nodes[id as usize];
-            let choices = actions::choices(&parent);
-            let children = self.play_children(&parent, node.last, &choices);
+            let choices = actions::choices(&parent.main);
+            let children = self.play_children(&parent, &node, &choices);
             self.keep(id, parent);
             for child in children {
                 self.stats.generated += 1;
                 match child.outcome {
                     Outcome::Dead => {
                         self.stats.deaths_pruned += 1;
+                        continue;
+                    }
+                    Outcome::TooClose => {
+                        self.stats.landings_pruned += 1;
                         continue;
                     }
                     Outcome::Done(_) => return Ok(self.found(id, &child)),
@@ -361,16 +540,19 @@ impl Search<'_> {
                 if ticks > self.cfg.max_ticks {
                     continue;
                 }
-                let key = state_key(&child.sim);
+                let key = state_key(&child.worlds.main);
                 if !self.seen.insert(key) {
                     self.stats.duplicates += 1;
                     continue;
                 }
-                let h = self.distance(&child.sim);
+                let h = self.distance(&child.worlds.main);
                 let lost = node.lost + child.lost;
+                let fragile = node.fragile + u32::from(child.fragile);
+                self.stats.fragile += u64::from(child.fragile);
                 let prio = i64::from(h.min(UNREACHABLE / 2))
                     + self.cfg.tick_cost * ticks as i64
-                    + self.cfg.health_cost * i64::from(lost);
+                    + self.cfg.health_cost * i64::from(lost)
+                    + self.cfg.fragile_cost * i64::from(fragile);
                 let cid = self.nodes.len() as u32;
                 let tie = mix(self.cfg.seed ^ key);
                 self.nodes.push(Node {
@@ -378,55 +560,90 @@ impl Search<'_> {
                     action: Some(child.action),
                     ticks,
                     last: child.last,
+                    timing: child.timing,
                     lost,
+                    fragile,
+                    reseed: child.reseed,
                     h,
                     prio,
                     tie,
                 });
                 if h < self.stats.best_distance {
                     self.stats.best_distance = h;
-                    if let Some(o) = child.sim.player() {
+                    if let Some(o) = child.worlds.main.player() {
                         self.stats.best_at = (o.x, o.y);
                     }
                 }
                 let ahead = self.nodes[self.root as usize].h.saturating_sub(h);
                 let hint = child.hint && self.targets[self.target].point.is_some();
                 if hint || (child.checkpoint && ahead >= self.cfg.checkpoint_progress) {
-                    self.commit(cid, child.sim, hint);
+                    self.commit(cid, child.worlds, hint);
                     break;
                 }
                 self.open.push(Reverse((prio, tie, cid)));
-                self.cache_put(cid, child.sim);
+                self.cache_put(cid, child.worlds);
             }
         }
         Err(self.failure("every reachable state was searched"))
     }
 
     /// Makes `id` the root of a fresh segment; with `hint`, the next
-    /// target becomes the current one.
-    fn commit(&mut self, id: u32, sim: Sim, hint: bool) {
+    /// target becomes the current one. The segment it ends is set aside
+    /// (see [`Search::back_out`]).
+    fn commit(&mut self, id: u32, worlds: Worlds, hint: bool) {
         self.stats.segments += 1;
+        let earlier = Segment {
+            target: self.target,
+            open: std::mem::take(&mut self.open),
+            seen: std::mem::take(&mut self.seen),
+            root: self.root,
+            root_sim: self.root_sim.clone(),
+        };
+        self.earlier.push(earlier);
         if hint && self.target + 1 < self.targets.len() {
             self.target += 1;
         }
-        self.open.clear();
-        self.seen.clear();
         self.cache.clear();
         self.cache_order.clear();
-        self.seen.insert(state_key(&sim));
-        let h = self.distance(&sim);
+        self.seen.insert(state_key(&worlds.main));
+        let h = self.distance(&worlds.main);
         let n = &mut self.nodes[id as usize];
         n.h = h;
         self.root = id;
-        self.root_sim = sim;
+        self.root_sim = worlds;
         self.open.push(Reverse((0, 0, id)));
         if self.cfg.log_every > 0 {
-            let (x, y) = self.root_sim.player().map_or((0, 0), |o| (o.x, o.y));
+            let (x, y) = self.root_sim.main.player().map_or((0, 0), |o| (o.x, o.y));
             eprintln!(
                 "claw-bot: segment {} at ({x}, {y}), tick {}, {h} px to go, {} nodes",
                 self.stats.segments, self.nodes[id as usize].ticks, self.stats.expanded
             );
         }
+    }
+
+    /// Goes back to the segment set aside by the last commit, whose root
+    /// led nowhere; false when there is none. That root stays in the
+    /// segment's seen states, so it is never taken again.
+    fn back_out(&mut self) -> bool {
+        let Some(seg) = self.earlier.pop() else {
+            return false;
+        };
+        self.stats.backed_out += 1;
+        self.target = seg.target;
+        self.open = seg.open;
+        self.seen = seg.seen;
+        self.root = seg.root;
+        self.root_sim = seg.root_sim;
+        self.cache.clear();
+        self.cache_order.clear();
+        if self.cfg.log_every > 0 {
+            eprintln!(
+                "claw-bot: segment {} was a dead end, back to the one before, {} nodes",
+                self.earlier.len() + 1,
+                self.stats.expanded
+            );
+        }
+        true
     }
 
     fn distance(&self, sim: &Sim) -> u32 {
@@ -438,53 +655,58 @@ impl Search<'_> {
             .at(o.x, o.y + o.move_rect.bottom - 2)
     }
 
-    /// The game of node `id`, from the cache or rebuilt from its nearest
-    /// ancestor that has one.
-    fn sim_of(&mut self, id: u32) -> Sim {
+    /// The games of node `id`, from the cache or rebuilt from its nearest
+    /// ancestor that has them.
+    fn sim_of(&mut self, id: u32) -> Worlds {
         if id == self.root {
             return self.root_sim.clone();
         }
-        if let Some(sim) = self.cache.remove(&id) {
+        if let Some(w) = self.cache.remove(&id) {
             let n = self.nodes[id as usize];
             self.cache_order.remove(&(n.prio, n.tie, id));
-            return sim;
+            return w;
         }
         self.stats.rebuilt += 1;
         let mut path = Vec::new();
         let mut cur = id;
         while cur != self.root && !self.cache.contains_key(&cur) {
-            let n = self.nodes[cur as usize];
-            path.push(n.action.expect("a non-root node has an action"));
-            cur = n.parent.expect("a non-root node has a parent");
+            path.push(cur);
+            cur = self.nodes[cur as usize]
+                .parent
+                .expect("a non-root node has a parent");
         }
-        let mut sim = if cur == self.root {
+        let mut w = if cur == self.root {
             self.root_sim.clone()
         } else {
             self.cache[&cur].clone()
         };
         let mut prev = self.nodes[cur as usize].last;
-        for a in path.into_iter().rev() {
-            for held in a.masks() {
-                sim.step(input(held, prev));
+        for n in path.into_iter().rev() {
+            let node = self.nodes[n as usize];
+            for held in node.action.expect("a non-root node has an action").masks() {
+                w.step(input(held, prev));
                 prev = held;
             }
+            w.reseed(node.reseed, prev);
         }
-        sim
+        w
     }
 
     /// Keeps the game of an expanded node, as a base for rebuilding its
     /// descendants.
-    fn keep(&mut self, id: u32, sim: Sim) {
+    fn keep(&mut self, id: u32, worlds: Worlds) {
         if id != self.root {
-            self.cache_put(id, sim);
+            self.cache_put(id, worlds);
         }
     }
 
-    fn cache_put(&mut self, id: u32, sim: Sim) {
+    fn cache_put(&mut self, id: u32, worlds: Worlds) {
         let n = self.nodes[id as usize];
-        self.cache.insert(id, sim);
+        // Each node keeps its shadows too: the budget counts games.
+        let games = 1 + worlds.shadows.len();
+        self.cache.insert(id, worlds);
         self.cache_order.insert((n.prio, n.tie, id));
-        while self.cache.len() > self.cfg.cached_sims {
+        while self.cache.len() > (self.cfg.cached_sims / games).max(1) {
             let Some(worst) = self.cache_order.pop_last() else {
                 break;
             };
@@ -492,14 +714,21 @@ impl Search<'_> {
         }
     }
 
-    fn play_children(&self, parent: &Sim, last: u32, choices: &[Action]) -> Vec<Child> {
+    fn play_children(&self, parent: &Worlds, node: &Node, choices: &[Action]) -> Vec<Child> {
         let threads = self.cfg.threads.max(1).min(choices.len());
+        let from = From {
+            last: node.last,
+            tick: node.ticks,
+            timing: node.timing,
+            land_gap: self.cfg.land_gap,
+            check_fragile: self.cfg.fragile_cost > 0,
+        };
         let goal = &self.goal;
         let point = self.targets[self.target].point;
         if threads <= 1 {
             return choices
                 .iter()
-                .map(|&a| play(parent, last, a, goal, point))
+                .map(|&a| play(parent, from, a, goal, point))
                 .collect();
         }
         let mut slots: Vec<Option<Child>> = (0..choices.len()).map(|_| None).collect();
@@ -512,7 +741,7 @@ impl Search<'_> {
                             .enumerate()
                             .skip(t)
                             .step_by(threads)
-                            .map(|(i, &a)| (i, play(parent, last, a, goal, point)))
+                            .map(|(i, &a)| (i, play(parent, from, a, goal, point)))
                             .collect::<Vec<_>>()
                     })
                 })
@@ -547,6 +776,8 @@ impl Search<'_> {
         };
         self.stats.ticks = held.len() as u64;
         self.stats.health_lost = self.nodes[parent as usize].lost + child.lost;
+        self.stats.fragile_on_route =
+            self.nodes[parent as usize].fragile + u32::from(child.fragile);
         let mut prev = self.cfg.start_held;
         let ticks = held
             .iter()
@@ -611,25 +842,64 @@ pub fn dying(sim: &Sim) -> bool {
         || sim.stats().health <= 0
 }
 
-/// Plays `action` on a copy of `parent`, whose last held mask was `last`.
-fn play(
-    parent: &Sim,
+/// Where a child starts: the parent's last held mask, the route tick of
+/// its first tick, its landing and jump timing, and the gap kept between
+/// them.
+#[derive(Debug, Clone, Copy)]
+struct From {
     last: u32,
+    tick: u64,
+    timing: Timing,
+    land_gap: u64,
+    check_fragile: bool,
+}
+
+/// True when route ticks `a` and `b` are at most `gap` ticks apart (the
+/// rule keeps a press and a landing more than `gap` ticks apart); never
+/// with a gap of 0.
+fn within(a: Option<u64>, b: u64, gap: u64) -> bool {
+    gap > 0 && a.is_some_and(|a| a.abs_diff(b) <= gap)
+}
+
+/// Plays `action` on a copy of the games of `parent`, which start as
+/// `from` says.
+fn play(
+    parents: &Worlds,
+    from: From,
     action: Action,
     goal: &Goal,
     hint: Option<(i32, i32, i32)>,
 ) -> Child {
+    let parent = &parents.main;
     let mut sim = parent.clone();
     let lives = sim.stats().lives;
-    let mut prev = last;
+    let mut prev = from.last;
+    let mut timing = from.timing;
     let mut lost = 0;
     let mut checkpoint = false;
     let mut reached = false;
     let mut outcome = Outcome::Alive;
     for (i, held) in action.masks().into_iter().enumerate() {
+        let tick = from.tick + i as u64;
         let health = sim.stats().health;
+        let airborne = actions::phase(&sim) == actions::Phase::Air;
+        let jump = held & !prev & actions::JUMP != 0;
         sim.step(input(held, prev));
         prev = held;
+        if jump {
+            if within(timing.landed, tick, from.land_gap) {
+                outcome = Outcome::TooClose;
+                break;
+            }
+            timing.jumped = Some(tick);
+        }
+        if airborne && actions::phase(&sim) != actions::Phase::Air {
+            if within(timing.jumped, tick, from.land_gap) {
+                outcome = Outcome::TooClose;
+                break;
+            }
+            timing.landed = Some(tick);
+        }
         lost += (health - sim.stats().health).max(0);
         let mut died = false;
         let mut done = false;
@@ -656,15 +926,106 @@ fn play(
             break;
         }
     }
+    let mut shadows = Vec::with_capacity(parents.shadows.len());
+    let mut reseed = 0u8;
+    if outcome == Outcome::Alive {
+        for (i, (shadow, kind)) in parents.shadows.iter().zip(SHADOWS).enumerate() {
+            match played_on(shadow, from.last, &action.masks(), &sim) {
+                Some(s) => shadows.push(s),
+                None => {
+                    reseed |= 1 << i;
+                    shadows.push(kind.start(&sim, prev));
+                }
+            }
+        }
+    }
+    let fragile = from.check_fragile
+        && outcome == Outcome::Alive
+        && (reseed != 0
+            || shifted(action, from.last)
+                .iter()
+                .any(|masks| !holds_up(parent, from.last, masks, &sim))
+            || (1..=2).any(|draws| {
+                let mut other = parent.clone();
+                let mut r = claw_sim::rng::Rng::new(other.rng_state());
+                for _ in 0..draws {
+                    r.next_u15();
+                }
+                other.set_rng_state(r.state());
+                !holds_up(&other, from.last, &action.masks(), &sim)
+            }));
     Child {
         action,
-        sim,
+        worlds: Worlds { main: sim, shadows },
+        reseed,
         outcome,
         lost,
         last: prev,
+        timing,
+        fragile,
         checkpoint,
         hint: reached,
     }
+}
+
+/// The held masks of `action` with its timing shifted by a tick, after a
+/// tick that held `last`: the action starting a tick late (the mask before
+/// it kept one tick more), and each change inside it a tick early and a
+/// tick late. Every variant is as long as the action.
+fn shifted(action: Action, last: u32) -> Vec<Vec<u32>> {
+    let m = action.masks();
+    let mut out = Vec::new();
+    if m.first().is_some_and(|&f| f != last) {
+        let mut v = vec![last];
+        v.extend_from_slice(&m[1..]);
+        out.push(v);
+    }
+    for c in 1..m.len() {
+        if m[c] != m[c - 1] {
+            let mut early = m.clone();
+            early[c - 1] = m[c];
+            out.push(early);
+            let mut late = m.clone();
+            late[c] = m[c - 1];
+            out.push(late);
+        }
+    }
+    out
+}
+
+/// True when `masks` played from `parent` (whose last mask was `last`)
+/// leave Claw alive, with no less health, and near where `nominal` has
+/// him: in the same phase, within [`FRAGILE_DY`] up or down and
+/// [`FRAGILE_PX`] across.
+fn holds_up(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> bool {
+    played_on(parent, last, masks, nominal).is_some()
+}
+
+/// `masks` played from `parent` as [`holds_up`] plays them: the game
+/// after them when it holds up, else `None`.
+fn played_on(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> Option<Sim> {
+    let mut sim = parent.clone();
+    let lives = sim.stats().lives;
+    let mut prev = last;
+    for &held in masks {
+        sim.step(input(held, prev));
+        prev = held;
+        if dying(&sim) || sim.stats().lives < lives {
+            return None;
+        }
+    }
+    if sim.stats().health < nominal.stats().health {
+        return None;
+    }
+    let near = match (sim.player(), nominal.player()) {
+        (Some(a), Some(b)) => {
+            actions::phase(&sim) == actions::phase(nominal)
+                && (a.y - b.y).abs() <= FRAGILE_DY
+                && (a.x - b.x).abs() <= FRAGILE_PX
+        }
+        _ => false,
+    };
+    near.then_some(sim)
 }
 
 /// The coarse state of a game the search treats as one: Claw's position to

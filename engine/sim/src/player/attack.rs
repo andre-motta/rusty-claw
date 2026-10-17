@@ -75,9 +75,10 @@
 //! 500 ms hold. Facing left the speeds and the power are negated. The
 //! pistol's animation can be rewound for rapid fire while it has shots.
 //!
-//! Starting a pistol shot or a dynamite throw with ammunition sometimes
-//! makes Claw say a line; that roll uses the sound-only random stream, so
-//! firing never changes the game's own random draws.
+//! Starting a pistol shot, a magic shot or a dynamite throw with
+//! ammunition sometimes makes Claw say a line; that roll is one draw of
+//! 0..100 from the game's shared random stream, made as the attack starts,
+//! as in the original.
 //!
 //! # Weapons
 //!
@@ -822,7 +823,7 @@ fn start_shot(c: &mut Ctx, s: &Shot) -> bool {
     let anim = if ammo > 0 { s.anim } else { s.empty_anim };
     if ammo > 0
         && let Some((line, percent)) = s.voice
-        && c.sound_rng.below(100) < percent
+        && c.rng.below(100) < percent
     {
         c.say(line, false);
     }
@@ -1017,8 +1018,8 @@ fn shot_origin(c: &Ctx) -> (i32, i32) {
 }
 
 /// Launches `spec`; mirrors the shot's picture when Claw faces left and
-/// `mirror` asks for it. A shot that is `tagged` (pistol, magic and sword
-/// shots) carries Claw's attack count. Returns the shot.
+/// `mirror` asks for it. A shot that is `tagged` (pistol and magic shots,
+/// as in the original) carries Claw's attack count. Returns the shot.
 fn spawn_shot(c: &mut Ctx, spec: ProjectileSpec, mirror: bool, tagged: bool) -> Option<ObjectId> {
     let id = if tagged {
         let serial = c.p.attack.serial;
@@ -1113,7 +1114,9 @@ fn sword_shot(c: &mut Ctx) {
         owner: Some(c.id),
         ..ProjectileSpec::default()
     };
-    if spawn_shot(c, spec, true, true).is_some() {
+    // Unlike the pistol and magic shots, a sword shot does not carry
+    // Claw's attack count.
+    if spawn_shot(c, spec, true, false).is_some() {
         c.play(sound, SoundChannel::Effect);
     }
 }

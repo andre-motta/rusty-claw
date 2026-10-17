@@ -32,7 +32,8 @@ pub struct PlayerTuning {
     pub run_speed: f64,
     /// Steering speed while jumping or falling; the same feel as walking.
     pub air_speed: f64,
-    /// Climbing speed upwards; covers about 240 px/s.
+    /// Climbing speed upwards; covers about 220 px/s, as the original does
+    /// at 60 frames per second.
     pub climb_up_speed: f64,
     /// Climbing speed downwards; covers about 220 px/s.
     pub climb_down_speed: f64,
@@ -115,7 +116,7 @@ impl Default for PlayerTuning {
             walk_speed: 246.0,
             run_speed: 304.0,
             air_speed: 246.0,
-            climb_up_speed: 203.0,
+            climb_up_speed: 193.5,
             climb_down_speed: 193.5,
             gravity: 2450.0,
             velocity_cap: 1000.0,

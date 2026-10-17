@@ -5,7 +5,8 @@
 //! claw-bot --install PATH --level N --out ROUTE.csv
 //!          [--tuning default|original] [--nodes N] [--budget-min M]
 //!          [--seed S] [--hints FILE] [--from-route FILE --from-tick T]
-//!          [--threads N] [--margin-samples N] [--quiet]
+//!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--threads N]
+//!          [--cache-games N] [--no-shadows] [--margin-samples N] [--quiet]
 //! ```
 //!
 //! The route is an input script (`tick,held_mask,pressed_mask`, one row
@@ -18,7 +19,10 @@
 //! The same arguments always give the same route: the budget counts
 //! expanded nodes, and the thread count only spreads the work.
 //! `--budget-min` is a wall-time safety stop that ends the search with a
-//! failure. `--seed` seeds the game's random stream and breaks ties.
+//! failure. `--seed` is the state of the game's shared random stream at the
+//! route's time zero (a reference trace's `rng_at_t0`), and breaks ties.
+//! Keys down when the level starts count only once released and pressed
+//! again, so a route's first press comes after its first tick.
 //! `--hints` names a file of `x,y` waypoints, one per line, written from
 //! the level's geometry; the file's name is recorded in the header.
 //! `--from-route` starts from the game after the first T ticks of another
@@ -26,6 +30,23 @@
 //! less than two ticks before T, the new part first keeps that mask for
 //! the ticks missing. The other route's `# level`, `# tuning` and
 //! `# seed` lines, when it has them, must match the arguments.
+//! `--start X,Y` plans a segment: Claw is placed at (X, Y) in the
+//! level-start world and the game runs with nothing held until he and the
+//! camera are at rest; the random stream is then set to the seed and the
+//! route starts (`# start X,Y` in its header).
+//! `--land-gap N` keeps every press of jump more than N ticks from a
+//! landing of Claw; it defaults to 2 with the default tuning (played at 60
+//! frames per second, where the original can land a frame from where the
+//! game does and a press on that frame is lost) and 0 with the original
+//! tuning.
+//! `--fragile-cost PX` is what a move costs the search when it fails with
+//! its timing shifted by a tick (it dies or ends elsewhere): the found
+//! route then prefers moves with room to spare. It defaults to
+//! 400; 0 turns the check off, and `--no-shadows` keeps the check to the
+//! moves' own timing (no shadow games). `--cache-games N` is how many games the
+//! search keeps in memory (512 by default; a node with its shadow games
+//! counts three): more is faster and takes more memory, and never changes
+//! the route.
 //!
 //! No route is written whose held mask changes twice less than two ticks
 //! apart.
@@ -45,7 +66,14 @@ use claw_sim::{InputScript, ScriptHeader, Sim, SimLevel};
 
 const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S] [--hints FILE] \
-[--from-route FILE --from-tick T] [--threads N] [--margin-samples N] [--quiet]";
+[--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
+[--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--quiet]";
+
+/// Priority cost of a fragile move, px.
+const DEFAULT_FRAGILE_COST: i64 = 400;
+
+/// Ticks a jump press keeps from a landing with the default tuning.
+const DEFAULT_LAND_GAP: u64 = 2;
 
 #[derive(Debug)]
 struct Args {
@@ -59,7 +87,12 @@ struct Args {
     hints: Option<PathBuf>,
     from_route: Option<PathBuf>,
     from_tick: Option<usize>,
+    start: Option<(i32, i32)>,
+    land_gap: Option<u64>,
+    fragile_cost: i64,
     threads: usize,
+    cache_games: usize,
+    shadows: bool,
     margin_samples: usize,
     quiet: bool,
 }
@@ -77,7 +110,12 @@ impl Default for Args {
             hints: None,
             from_route: None,
             from_tick: None,
+            start: None,
+            land_gap: None,
+            fragile_cost: DEFAULT_FRAGILE_COST,
             threads: 1,
+            cache_games: SearchConfig::default().cached_sims,
+            shadows: true,
             margin_samples: 40,
             quiet: false,
         }
@@ -92,6 +130,10 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         }
         if flag == "--quiet" {
             a.quiet = true;
+            continue;
+        }
+        if flag == "--no-shadows" {
+            a.shadows = false;
             continue;
         }
         let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -116,7 +158,24 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
             "--hints" => a.hints = Some(PathBuf::from(&v)),
             "--from-route" => a.from_route = Some(PathBuf::from(&v)),
             "--from-tick" => a.from_tick = Some(v.parse().map_err(|_| num("tick"))?),
+            "--start" => {
+                a.start = Some(
+                    v.split_once(',')
+                        .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
+                        .ok_or_else(|| num("start point"))?,
+                );
+            }
+            "--land-gap" => a.land_gap = Some(v.parse().map_err(|_| num("landing gap"))?),
+            "--fragile-cost" => {
+                a.fragile_cost = v.parse().map_err(|_| num("fragile cost"))?;
+                if a.fragile_cost < 0 {
+                    return Err(num("fragile cost"));
+                }
+            }
             "--threads" => a.threads = v.parse::<usize>().map_err(|_| num("thread count"))?.max(1),
+            "--cache-games" => {
+                a.cache_games = v.parse::<usize>().map_err(|_| num("game count"))?.max(1)
+            }
             "--margin-samples" => a.margin_samples = v.parse().map_err(|_| num("sample count"))?,
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
@@ -124,7 +183,22 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
     if a.from_route.is_some() != a.from_tick.is_some() {
         return Err(format!("--from-route and --from-tick go together\n{USAGE}"));
     }
+    if a.start.is_some() && a.from_route.is_some() {
+        return Err(format!(
+            "--start and --from-route do not go together\n{USAGE}"
+        ));
+    }
     Ok(a)
+}
+
+/// The game a route starts from: the level start, or with `start` the
+/// segment start (see [`route::settle_at`]).
+fn start_sim(level: SimLevel, tuning: TuningName, seed: u32, start: Option<(i32, i32)>) -> Sim {
+    let mut sim = Sim::new(level, route::sim_config(tuning, seed));
+    if let Some((x, y)) = start {
+        route::settle_at(&mut sim, x, y, seed);
+    }
+    sim
 }
 
 /// Reads a hints file: one `x,y` per line; blank lines and `#` comments
@@ -201,7 +275,7 @@ fn run(a: Args) -> Result<bool, String> {
         .map_err(|e| format!("loading level {level_no}: {e}"))?;
     let sim_level =
         SimLevel::from_level(&level, &store).map_err(|e| format!("preparing level: {e}"))?;
-    let mut start = Sim::new(sim_level, route::sim_config(a.tuning, a.seed));
+    let mut start = start_sim(sim_level, a.tuning, a.seed, a.start);
 
     let mut prefix = InputScript::default();
     if let (Some(path), Some(t)) = (&a.from_route, a.from_tick) {
@@ -244,6 +318,13 @@ fn run(a: Args) -> Result<bool, String> {
         seed: u64::from(a.seed),
         hints,
         threads: a.threads,
+        land_gap: a.land_gap.unwrap_or(match a.tuning {
+            TuningName::Default => DEFAULT_LAND_GAP,
+            TuningName::Original => 0,
+        }),
+        fragile_cost: a.fragile_cost,
+        cached_sims: a.cache_games,
+        shadows: a.shadows,
         wall_limit: a.budget_min.map(|m| Duration::from_secs_f64(m * 60.0)),
         log_every: if a.quiet { 0 } else { 500 },
         ..SearchConfig::default()
@@ -278,11 +359,12 @@ fn run(a: Args) -> Result<bool, String> {
             .as_ref()
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().into_owned()),
+        start: a.start,
     };
     std::fs::write(&out, route::route_csv(&header, &script))
         .map_err(|e| format!("writing {}: {e}", out.display()))?;
 
-    let fresh = Sim::new(start.level().clone(), route::sim_config(a.tuning, a.seed));
+    let fresh = start_sim(start.level().clone(), a.tuning, a.seed, a.start);
     let played = route::play(&fresh, &script, &Goal::LevelComplete);
     if !played.won() {
         return Err("the route found does not win when played from the start".into());
@@ -346,7 +428,18 @@ mod tests {
 
     #[test]
     fn parses_the_documented_arguments() {
-        let a = args("--install /i --level 1 --out r.csv --tuning original --nodes 5000 --budget-min 30 --seed 7 --hints h.txt --from-route p.csv --from-tick 100 --threads 4 --quiet").unwrap();
+        let a = args("--install /i --level 1 --out r.csv --tuning original --nodes 5000 --budget-min 30 --seed 7 --hints h.txt --from-route p.csv --from-tick 100 --land-gap 3 --threads 4 --quiet").unwrap();
+        assert_eq!(a.land_gap, Some(3));
+        assert_eq!(args("--cache-games 1536").map(|a| a.cache_games), Ok(1536));
+        assert!(!args("--no-shadows").unwrap().shadows);
+        assert!(a.shadows);
+        assert_eq!(a.fragile_cost, DEFAULT_FRAGILE_COST);
+        assert_eq!(args("--fragile-cost 0").map(|a| a.fragile_cost), Ok(0));
+        assert!(args("--fragile-cost -1").is_err());
+        let s = args("--install /i --level 1 --out r.csv --start 10355,2051").unwrap();
+        assert_eq!(s.start, Some((10355, 2051)));
+        assert!(args("--start 10").is_err());
+        assert!(args("--start 1,2 --from-route p.csv --from-tick 3").is_err());
         assert_eq!(a.level, Some(1));
         assert_eq!(a.tuning, TuningName::Original);
         assert_eq!(a.nodes, 5000);

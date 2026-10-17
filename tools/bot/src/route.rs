@@ -56,6 +56,33 @@ pub fn sim_config(tuning: TuningName, seed: u32) -> SimConfig {
     }
 }
 
+/// Most ticks [`settle_at`] waits for Claw and the camera to come to rest.
+pub const SETTLE_TICKS: usize = 222;
+
+/// Places Claw at (`x`, `y`) in `sim` and steps it with nothing held until
+/// Claw and the camera have not moved for 10 ticks (at most
+/// [`SETTLE_TICKS`]), then sets the shared random stream to `seed`: the
+/// start of a segment, planned from the level-start world as the
+/// reference runs of a segment start (they place Claw, wait until he
+/// stands, and set the random state at the segment's time zero).
+pub fn settle_at(sim: &mut Sim, x: i32, y: i32, seed: u32) {
+    sim.teleport_player(x, y);
+    let mut still = 0;
+    let mut last = None;
+    for _ in 0..SETTLE_TICKS {
+        sim.step(Default::default());
+        let now = sim
+            .player()
+            .map(|o| (o.x, o.y, o.state, sim.camera().current));
+        still = if now == last { still + 1 } else { 0 };
+        last = now;
+        if still >= 10 {
+            break;
+        }
+    }
+    sim.set_rng_state(seed);
+}
+
 /// What a route header says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
@@ -69,6 +96,9 @@ pub struct Header {
     pub mid_air_hit_fix: bool,
     /// The hints file the search used, if any.
     pub hints: Option<String>,
+    /// Where Claw was placed and settled before the route, when the route
+    /// is a segment (see [`settle_at`]).
+    pub start: Option<(i32, i32)>,
 }
 
 impl Header {
@@ -84,6 +114,9 @@ impl Header {
         if let Some(h) = &self.hints {
             out.push_str(&format!("# hints {h}\n"));
         }
+        if let Some((x, y)) = self.start {
+            out.push_str(&format!("# start {x},{y}\n"));
+        }
         out
     }
 
@@ -97,6 +130,7 @@ impl Header {
             seed: 1,
             mid_air_hit_fix: false,
             hints: None,
+            start: None,
         };
         for line in text.lines() {
             let Some(rest) = line.trim().strip_prefix('#') else {
@@ -115,6 +149,11 @@ impl Header {
                 (Some("tuning"), Some(v)) => h.tuning = TuningName::parse(v).unwrap_or(h.tuning),
                 (Some("seed"), Some(v)) => h.seed = v.parse().unwrap_or(h.seed),
                 (Some("hints"), Some(v)) => h.hints = Some(v.to_string()),
+                (Some("start"), Some(v)) => {
+                    h.start = v
+                        .split_once(',')
+                        .and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?)));
+                }
                 _ => {}
             }
         }
@@ -275,9 +314,13 @@ pub fn report_json(
             "  \"nodes\": {},\n",
             "  \"generated\": {},\n",
             "  \"deaths_pruned\": {},\n",
+            "  \"landings_pruned\": {},\n",
+            "  \"fragile_children\": {},\n",
+            "  \"fragile_on_route\": {},\n",
             "  \"duplicates\": {},\n",
             "  \"rebuilt\": {},\n",
             "  \"segments\": {},\n",
+            "  \"segments_backed_out\": {},\n",
             "  \"ticks\": {},\n",
             "  \"done_at_tick\": {},\n",
             "  \"deaths\": {},\n",
@@ -303,9 +346,13 @@ pub fn report_json(
         stats.expanded,
         stats.generated,
         stats.deaths_pruned,
+        stats.landings_pruned,
+        stats.fragile,
+        stats.fragile_on_route,
         stats.duplicates,
         stats.rebuilt,
         stats.segments,
+        stats.backed_out,
         stats.ticks,
         done_at,
         stats.deaths,
@@ -332,6 +379,7 @@ mod tests {
             seed: 42,
             mid_air_hit_fix: false,
             hints: Some("level3".into()),
+            start: Some((10355, 2051)),
         };
         let s = InputScript::from_held(&[0, 0, 1, 1, 0, 0]);
         let text = route_csv(&h, &s);

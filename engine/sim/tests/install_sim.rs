@@ -364,7 +364,11 @@ fn movement_columns(rows: &[TraceRow]) -> String {
     s
 }
 
+/// The movement digest of `s` played from `start` (or the level start).
+/// The first playable version counted keys down from the first tick, so the
+/// latch on keys down when play starts is lifted.
 fn movement_digest(mut sim: Sim, start: Option<(i32, i32)>, s: &InputScript) -> u64 {
+    sim.unlatch_keys();
     if let Some((x, y)) = start {
         sim.teleport_player(x, y);
         idle(&mut sim, 60);
@@ -397,9 +401,15 @@ fn explore() -> InputScript {
     ])
 }
 
+/// Level logics off, with the first playable version's climbing speed
+/// (up at about 240 px/s; the default now climbs up at 220 px/s, as the
+/// original does at 60 frames per second).
 fn without_logics() -> SimConfig {
+    let mut tuning = claw_sim::Tuning::default();
+    tuning.player.climb_up_speed = 203.0;
     SimConfig {
         level_logics: false,
+        tuning,
         ..SimConfig::default()
     }
 }
@@ -524,12 +534,24 @@ fn install_level1_runs_with_level_logics() {
         "every logic binds: {:?}",
         d.inert_logics
     );
-    let bound = sim
+    assert_eq!(d.dropped_records, 0);
+    // Every placed object runs a family. The objects live at the start
+    // are set up while the level loads, and a few remove themselves then
+    // (a stack of crates once it has built its crates).
+    let placed: Vec<&claw_sim::object::Object> = sim
         .objects()
         .all()
-        .filter(|(_, o)| matches!(o.kind, claw_sim::object::LogicKind::Game(_)))
-        .count();
-    assert_eq!(bound, l.objects.len(), "every placed object runs a family");
+        .filter(|(_, o)| o.record.is_some())
+        .map(|(_, o)| o)
+        .collect();
+    assert!(
+        placed
+            .iter()
+            .all(|o| matches!(o.kind, claw_sim::object::LogicKind::Game(_))),
+        "every placed object runs a family"
+    );
+    let gone = l.objects.len() - placed.len();
+    assert!(gone < 10, "{gone} placed objects gone while loading");
     let inputs = wander(2000);
     let t = std::time::Instant::now();
     let mut ms = Vec::with_capacity(inputs.len());

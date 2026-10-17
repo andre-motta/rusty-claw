@@ -179,6 +179,10 @@ pub struct World<'a> {
     pub tick: u64,
     /// Simulation time at the start of the tick, ms.
     pub now_ms: u64,
+    /// The tick is a frame pulse tick (every third tick, see
+    /// [`crate::sim::PULSE_MS`]): enemies make their per-tick roll and a
+    /// few random choices only then.
+    pub pulse: bool,
     /// The logic view in level pixels: what the player sees.
     pub view: Rect,
     /// Sounds, events and screen effects of the tick.

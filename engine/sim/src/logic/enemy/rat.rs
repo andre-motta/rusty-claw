@@ -17,10 +17,9 @@
 
 use super::states::{move_left, move_right, walk_left_tick, walk_right_tick};
 use super::{
-    Body, Class, ClassAnims, ClassSounds, DeathKind, EnemyFields, EnemyState, Handler,
-    STARTUP_QUIET_MS, Shot, Timer, UNBOUNDED, accept_hit, attacker, build, claw_invisible, data,
-    data_mut, die, face_claw, field, limit, obj, obj_mut, play, rand, record, record_bounds,
-    sees_claw, set_anim, set_state,
+    Body, Class, ClassAnims, ClassSounds, DeathKind, EnemyFields, EnemyState, Handler, Shot, Timer,
+    UNBOUNDED, accept_hit, attacker, build, claw_invisible, data, data_mut, die, face_claw, field,
+    limit, obj, obj_mut, play, rand, record, record_bounds, sees_claw, set_anim, set_state,
 };
 use crate::logic::World;
 use crate::logic::projectile::{self, ProjectileSpec};
@@ -259,7 +258,7 @@ pub fn move_right_tick(w: &mut World, id: ObjectId) {
 
 /// When the rat sees Claw it faces him; then it throws a bomb across at
 /// him when a second has passed since its last one, or else, with Claw
-/// below it less than 40 px across (and the level not just starting), it
+/// below it less than 40 px across (on a frame pulse tick only), it
 /// drops one on him when a draw is below its smarts. True when it started
 /// a throw. Draws: one of 0..100 for a drop only.
 pub fn throw_check(w: &mut World, id: ObjectId) -> bool {
@@ -288,7 +287,7 @@ pub fn throw_check(w: &mut World, id: ObjectId) -> bool {
         start_throw(w, id, THROW_ACROSS_ANIM, shot);
         return true;
     }
-    if (x - cx).abs() < DROP_REACH && cy > y && now >= STARTUP_QUIET_MS && rand(w, 100) < smarts {
+    if (x - cx).abs() < DROP_REACH && cy > y && w.pulse && rand(w, 100) < smarts {
         start_throw(w, id, THROW_DOWN_ANIM, THROW_DOWN);
         return true;
     }

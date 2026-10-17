@@ -1486,6 +1486,28 @@ fn nothing_else_draws_while_claw_stands_idle() {
     assert_eq!(sim.rng().state(), s);
 }
 
+/// True when tick `k` (counted from 0) is a frame pulse tick, the only
+/// ticks on which enemies make their per-tick roll: the pulse countdown
+/// starts at 100 ms when play starts and loses 18 ms a tick, so the first
+/// pulse is the sixth tick, then every third tick.
+fn pulse_tick(k: u64) -> bool {
+    k >= 5 && (k - 5).is_multiple_of(3)
+}
+
+#[test]
+fn the_frame_pulse_comes_every_third_tick_from_the_sixth() {
+    let mut sim = sim_with(arena(vec![]), 5);
+    let mut pulses = Vec::new();
+    for k in 0..30 {
+        sim.step(TickInput::default());
+        assert_eq!(sim.pulse(), pulse_tick(k), "tick {k}");
+        if sim.pulse() {
+            pulses.push(k);
+        }
+    }
+    assert_eq!(pulses, [5, 8, 11, 14, 17, 20, 23, 26, 29]);
+}
+
 /// The officer's go-idle draws: the mutter roll, and which mutter.
 fn officer_go_idle(m: &mut Rng) {
     if m.below(100) < 33 {
@@ -1495,31 +1517,34 @@ fn officer_go_idle(m: &mut Rng) {
 
 #[test]
 fn the_officer_draws_in_the_games_order() {
-    // Built on the first tick, with Claw 300 px away (out of range).
+    // Built while the level loads, with Claw 300 px away (out of range):
+    // the death sound, then going idle, drawn from the level-load state;
+    // time zero then starts from the seed.
     let mut sim = sim_with(arena(vec![record("Officer", 1300, 900)]), 77);
-    let mut m = Rng::new(sim.rng().state());
-    step_draws(&mut sim, &mut m, TickInput::default(), |m| {
-        // Construction: the death sound, then going idle.
-        m.below(100);
-        officer_go_idle(m);
-    });
+    assert_eq!(sim.rng().state(), 77);
+    let mut m = Rng::new(77);
     let id = first(&sim, GameLogic::Officer);
-    // The first tick: no per-tick draw while the level starts, a pose
-    // (its timer has not run yet), and Claw out of range sends it idle
-    // again in the post-tick.
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Idle));
+    // The first tick: no per-tick draw (no pulse yet), a pose (its timer
+    // has not run yet), and Claw out of range sends it idle again in the
+    // post-tick.
     step_draws(&mut sim, &mut m, TickInput::default(), |m| {
         m.below(5);
         officer_go_idle(m);
     });
-    while sim.tick() * 18 < 100 {
+    while !pulse_tick(sim.tick()) {
         step_draws(&mut sim, &mut m, TickInput::default(), |_| {});
     }
-    // Idle out of range: the per-tick draw, a pose each second.
+    // Idle out of range: the per-tick draw on pulse ticks, a pose each
+    // second.
     for _ in 0..40 {
         let t = sim.tick() * 18;
+        let roll = pulse_tick(sim.tick());
         let pose = data(&sim, id).pose.done(t);
         step_draws(&mut sim, &mut m, TickInput::default(), |m| {
-            m.below(1001);
+            if roll {
+                m.below(1001);
+            }
             if pose {
                 m.below(5);
             }
@@ -1529,16 +1554,22 @@ fn the_officer_draws_in_the_games_order() {
     // discarded and the taunt roll, and it strikes.
     sim.teleport_player(1230, 899);
     let t = sim.tick() * 18;
+    let roll = pulse_tick(sim.tick());
     let pose = data(&sim, id).pose.done(t);
     step_draws(&mut sim, &mut m, TickInput::default(), |m| {
-        m.below(1001);
+        if roll {
+            m.below(1001);
+        }
         if pose {
             m.below(5);
         }
     });
     assert_eq!(state_of(&sim, id), Some(EnemyState::Home));
+    let roll = pulse_tick(sim.tick());
     step_draws(&mut sim, &mut m, TickInput::default(), |m| {
-        m.below(1001);
+        if roll {
+            m.below(1001);
+        }
         m.next_u15();
         m.below(100);
     });
@@ -1561,12 +1592,14 @@ fn the_soldier_draws_in_the_games_order() {
         ),
         31,
     );
+    // Built while the level loads (no draws); from the first tick on, the
+    // per-tick draw and the pacing roll come on pulse ticks only.
     let mut m = Rng::new(sim.rng().state());
-    step_draws(&mut sim, &mut m, TickInput::default(), |_| {});
     let id = first(&sim, GameLogic::Soldier);
     let mut paced = false;
     for _ in 0..400 {
         let t = sim.tick() * 18;
+        let pulse = pulse_tick(sim.tick());
         if state_of(&sim, id) != Some(EnemyState::Idle) {
             paced = true;
             break;
@@ -1574,13 +1607,13 @@ fn the_soldier_draws_in_the_games_order() {
         let d = data(&sim, id);
         let (pose, wait) = (d.pose.done(t), d.pace_wait.done(t));
         step_draws(&mut sim, &mut m, TickInput::default(), |m| {
-            if t >= 100 {
+            if pulse {
                 m.below(1001);
             }
             if pose {
                 m.below(2);
             }
-            if wait && t >= 100 {
+            if wait && pulse {
                 m.below(100);
             }
         });
@@ -1600,8 +1633,11 @@ fn the_soldier_draws_in_the_games_order() {
     for _ in 0..100 {
         let at_home = state_of(&sim, id) == Some(EnemyState::Home);
         homes += usize::from(at_home);
+        let pulse = pulse_tick(sim.tick());
         step_draws(&mut sim, &mut m, TickInput::default(), |m| {
-            m.below(1001);
+            if pulse {
+                m.below(1001);
+            }
             if at_home {
                 m.next_u15();
             }
@@ -1613,14 +1649,13 @@ fn the_soldier_draws_in_the_games_order() {
 
 #[test]
 fn the_rat_draws_in_the_games_order() {
-    // A walking rat out of sight: one draw per tick.
+    // A walking rat out of sight: one draw on each pulse tick.
     let mut sim = sim_with(arena(vec![bounded("Rat", 3000, 926, 2900, 3100)]), 13);
     let mut m = Rng::new(sim.rng().state());
-    step_draws(&mut sim, &mut m, TickInput::default(), |_| {});
     for _ in 0..200 {
-        let t = sim.tick() * 18;
+        let pulse = pulse_tick(sim.tick());
         step_draws(&mut sim, &mut m, TickInput::default(), |m| {
-            if t >= 100 {
+            if pulse {
                 m.below(1001);
             }
         });
