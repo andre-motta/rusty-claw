@@ -24,7 +24,9 @@
 # the pass reaches it, not when it is made; (4) the ambient sounds' timers
 # run once per tick after the rest of it, from the first tick; (5) a
 # pacing enemy is at a limit only when its exact position is; (6) a woken
-# enemy first moves for the time it slept, at most 200 ms; (7) Claw's hit
+# enemy first moves for the whole time it slept, held only by the 24 px
+# step limit (it was held to 200 ms before the second level's runs showed
+# a rat moving 3.744 s worth); (7) Claw's hit
 # burst draws its y jitter before its x jitter. Ten more rules keep the
 # game in step with the original along whole routes: (8) a goodie (an item
 # a crate or an enemy drops) spins through its set while it flies and is
@@ -47,15 +49,28 @@
 # other way; (19) a goodie's bounce lifts its exact height by 1.0 and
 # keeps the fraction; (20) the respawn runs an update pass, wakes the
 # objects around Claw and runs a second pass, all at the time of the
-# death. The comparison itself takes a reference step of no game time
-# (the original's step of a save, `dt_ms` 0) as the instant at its time,
-# so the save's checkpoint is found in both traces. The rule numbers below
-# refer to this list.
+# death. Seven more came from the second level's runs: (21) a warp (the
+# boss room's door) leaves Claw where he touched it for the rest of the
+# tick and takes him to its target between that tick and the next, where
+# his logic runs once with no game time (a fall into the door lands
+# there, so the first tick in the room walks on); (22) a musket ball
+# flying left has its boxes turned to face left; (23) a mirrored picture
+# counts as drawn one pixel further left (a soldier facing left whose box
+# just touches the view's left edge is not on screen); (24) a projectile
+# moves on its own clock of double-precision seconds, so a 9 px step is
+# now and then 8; (25) the falling death hangs 750 ms where Claw lost his
+# last health before he falls, keeping his fraction of a pixel; (26) an
+# enemy backing off or moving up reaches its spot by its exact position;
+# and (27) a route of a later level of one game starts from the progress
+# its `# start_...` lines carry in. The comparison itself takes a
+# reference step of no game time (the original's step of a save, `dt_ms`
+# 0) as the instant at its time, so the save's checkpoint is found in
+# both traces. The rule numbers below refer to this list.
 #
-# The last two entries (`level1/bot-original-v4` and `level1/bot-v4`) are
-# the original's runs of the routes that were in tests/acceptance/routes/
-# before rules 18 to 20, and are the ones to read first: at one 18 ms step
-# per frame the game equals the original on every compared row of
+# The entries `level1/bot-original-v4` and `level1/bot-v4` are the
+# original's runs of the routes that were in tests/acceptance/routes/
+# before rules 18 to 20, and are the first level's to read first: at one
+# 18 ms step per frame the game equals the original on every compared row of
 # `level1/bot-original-v4`, events included. That route loses a life in
 # the original, as it now does in the game (it was planned while the rat
 # by x 12381 turned away from its wall, before rule 18), so the routes
@@ -68,6 +83,15 @@
 # every compared row, random stream and events included. The other two
 # (`level1/bot-original-delay1` and `level1/bot-original-seg3410`) keep
 # the steps listed in their entries.
+#
+# The entries after them hold the first level's routes found with rules
+# 18 to 20 (`-v5`, equal to the original on every row at `c18`), the first
+# level of the game that goes on into the second level, and the second
+# level: its bot routes, the second level of that game, a route written
+# down from a recording of a fast run, and the stretches of Raux's room.
+# With rules 21 to 26 the second level's `c18` bot route is equal to the
+# original on every compared row (11083 steps, the boss fight, the meter
+# and the random stream included).
 
 # The first level's opening, one 18 ms step per frame against the original
 # speeds and the original's random state at time zero. Equal on every row,
@@ -172,23 +196,25 @@ tolerance = "exact"
 # original. The random stream first differs at 47052 ms (25812 ms before
 # rules 16 and 17), where Claw has stood since his respawn: the game draws
 # one of the two numbers the original draws in the next step a step early
-# (not traced yet). Claw's movement is equal tick for tick until
-# 52452 ms.
+# (not traced yet; a step later, at 47070 ms, since rule 6 lost its time
+# cap). Claw's movement is equal tick for tick until 52452 ms; past it the
+# run goes its own way, where the score now leaves a tick earlier (75762
+# ms) and the life is lost later (71424 ms).
 [[compare]]
 reference = "level1/bot-original-delay1"
 clock = "c18"
 tolerance = "exact"
-known.rng = 47052
+known.rng = 47070
 known.state_id = 52452
 known.physics_type = 54846
 known.x = 52470
 known.cam_x = 52470
-known.y = 69768
-known.cam_y = 70704
+known.y = 70506
+known.cam_y = 71442
 known.health = 52452
-known.score = 75780
-known.events = 70686
-known.lives = 70686
+known.score = 75762
+known.events = 71424
+known.lives = 71424
 
 # The bot's route (default tuning) with one empty row first, at 60 frames
 # per second. At 550 ms the jump key is pressed on the frame Claw lands in
@@ -264,7 +290,8 @@ tolerance = "exact"
 # original ends against the wall right of the start (1814,4794), and the
 # game, with the walk start on the press of a direction (rule 16), is
 # hurt at 22067 ms and loses a life at 30750 ms on its own way (39784 ms
-# and 106 s before).
+# and 106 s before); since rule 6 lost its time cap its pistol ammunition
+# also differs on that way, from 97017 ms.
 [[compare]]
 reference = "level1/bot-v2"
 clock = "c60"
@@ -279,6 +306,7 @@ known.score = 4300
 known.events = 7560
 known.health = 22067
 known.lives = 30750
+known.pistol = 97017
 
 # The bot's route of the first level before rules 8 to 17 (an earlier
 # tests/acceptance/routes/level1-original.csv, original speeds), one 18 ms
@@ -355,3 +383,244 @@ known.cam_x = 3867
 known.score = 4300
 known.events = 7560
 known.health = 39584
+
+# The bot's route of the first level with rules 18 to 20 (the
+# tests/acceptance/routes/level1-original.csv of that time, original
+# speeds), one 18 ms step per frame. Equal on every compared row, the
+# random stream and the events included, with rules 21 to 26 as before
+# them.
+[[compare]]
+reference = "level1/bot-original-v5"
+clock = "c18"
+tolerance = "exact"
+
+# The same search's default-tuning route at 60 frames per second. A fall
+# off the start step lands 6 px further left in the game, within the feel
+# tolerance, where the original's Claw lands on the step's edge and
+# teeters for a frame (700 ms) before the next jump; the runs stay within
+# the position tolerance until the jump that follows peaks lower in the
+# game (3617 ms, the default tuning's jump as for `level1/bot-v4`), then go
+# different ways.
+[[compare]]
+reference = "level1/bot-v5"
+clock = "c60"
+tolerance = "feel"
+known.state_id = 700
+known.physics_type = 1650
+known.y = 3617
+known.cam_y = 3617
+known.x = 4100
+known.cam_x = 4117
+known.score = 8884
+known.events = 16578
+known.health = 38067
+
+# The first level of a game that goes on into the second (the route
+# tests/acceptance/routes/level1-original.csv), played in the original as
+# the first part of that game, one 18 ms step per frame. Equal on every
+# row; the level ends with Claw at full health.
+[[compare]]
+reference = "level1/pair-original"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's route of the second level (original speeds), one 18 ms step
+# per frame, through Raux's room: equal on every compared row (11083
+# steps, 199.5 s), the boss fight's flag, Raux's health, the random stream
+# and the events included, the 2 s past the route's end too. The route
+# loses the fight in both games: it was planned before rule 6 lost its
+# time cap (a rat by x 10858 strikes a step earlier) and before rule 21
+# (the door's move between ticks puts Claw in the room a step later and
+# 5 px further on, where Raux's first blow lands on him). The bot found
+# the route in tests/acceptance/routes/ again from just before the door;
+# the original has not played the new one yet.
+[[compare]]
+reference = "level2/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's route of the second level (default tuning) at 60 frames per
+# second. It leaves the feel tolerance in the jump off the first ladder at
+# 1217 ms (the original's jump peaks 14 px higher, the default tuning's
+# ladder jump as for `level1/bot-v4` at 3217 ms); the runs then go
+# different ways, and on its own way the game's Claw is hurt from 8800 ms
+# and loses a life at 30528 ms. Not required to finish the level.
+[[compare]]
+reference = "level2/bot"
+clock = "c60"
+tolerance = "feel"
+known.y = 1217
+known.cam_y = 1217
+known.state_id = 1884
+known.physics_type = 1884
+known.x = 2284
+known.cam_x = 2284
+known.score = 3750
+known.health = 8800
+known.events = 30528
+known.lives = 30550
+
+# The jump-in variant of that route (the same first 110 s, then the entry
+# into Raux's room that skips his introduction) at 60 frames per second.
+# It leaves the feel tolerance as `level2/bot` does; neither game reaches
+# the room on it.
+[[compare]]
+reference = "level2/introskip"
+clock = "c60"
+tolerance = "feel"
+known.y = 1217
+known.cam_y = 1217
+known.state_id = 1884
+known.physics_type = 1884
+known.x = 2284
+known.cam_x = 2284
+known.score = 3750
+known.health = 8800
+known.events = 30528
+known.lives = 30550
+
+# The second level of a game that started with
+# tests/acceptance/routes/level1-original.csv, played in the original
+# after the first level and its end-of-level screen, one 18 ms step per
+# frame, with the 33 ms frame pulse in the phase a level start gives (the
+# game starts every level in it; after the end-of-level screen the
+# original's phase follows the wall clock). The stored route names a start
+# with 90 health; the original and the game carry 100 out of the first
+# level, and the game starts from the route's lines (rule 27), so health
+# differs from the first step and the game's Claw takes a potion at
+# 44316 ms that the original's leaves. Played from 100 health the game
+# equals the original until 137592 ms, in the falling death after the
+# life lost at 136728 ms: the fall drifts by a pixel (the original's fall
+# after the 750 ms hold is not known yet), and the respawn's passes make
+# one roll a step before the original (138402 ms, a keg the respawn wakes;
+# not traced yet). The route loses five lives in the original; the bot
+# found it again from 100 health and these rules, and the original has
+# not played that yet.
+[[compare]]
+reference = "level2/pair-original"
+clock = "c18"
+tolerance = "exact"
+known.health = 18
+known.rng = 44316
+known.y = 137592
+known.state_id = 139914
+known.physics_type = 139914
+known.x = 139932
+known.cam_x = 139932
+known.cam_y = 140364
+known.score = 140616
+known.lives = 151362
+known.events = 151362
+known.pistol = 155430
+
+# A route written down from a recording of a fast run, from Claw placed by
+# the boss room's door, at 60 frames per second: both games run Raux's
+# introduction (the written-down route keeps the door's fade as game
+# time, so its jump comes long after the first room step). The
+# checkpoint the stager sets is 1 px further on in the game (an event's
+# position is compared exactly; the first room tick walks 5 px instead of
+# 4 at 60 frames per second), and the camera's pan drifts from 1117 ms.
+[[compare]]
+reference = "level2/video-segment"
+clock = "c60"
+tolerance = "feel"
+known.events = 400
+known.cam_x = 1117
+
+# Raux's room from Claw placed by its door, walking in: the introduction,
+# then a fight with no input. One 18 ms step per frame: Claw's position,
+# the trigger, the flag and the introduction's steps are the original's;
+# the random stream first differs at 9396 ms, in the introduction, for a
+# reason not traced yet (the introduction played from the level's start,
+# on the second level's bot route, is equal throughout).
+[[compare]]
+reference = "level2/boss-intro-normal"
+clock = "c18"
+tolerance = "exact"
+known.rng = 9396
+
+# The same at 60 frames per second: the first room tick walks 5 px
+# instead of 4, so the trigger's checkpoint is 1 px further on (667 ms);
+# the camera's pan and the introduction's delays count 18 ms ticks
+# against frames of 16 and 17 ms, so the pan drifts (1500 ms) and the
+# flag reaches 2 about 350 ms later (12200 ms).
+[[compare]]
+reference = "level2/boss-intro-normal"
+clock = "c60"
+tolerance = "feel"
+known.events = 667
+known.cam_x = 1500
+known.boss_fight = 12200
+known.state_id = 12217
+known.health = 30083
+
+# The jump-in entry that skips the introduction, one 18 ms step per frame:
+# the flag stays 0, Raux waits in his start-up state, and Claw lands on
+# the original's step. The random stream first differs at 9396 ms (as for
+# `level2/boss-intro-normal`), and from 24318 ms Raux's choices differ.
+[[compare]]
+reference = "level2/boss-intro-skip-c18"
+clock = "c18"
+tolerance = "exact"
+known.rng = 9396
+known.state_id = 24318
+known.health = 24318
+known.x = 24336
+known.cam_x = 24336
+
+# The jump-in at 60 frames per second: the jump's arc is up to 9 px lower
+# after the timing slack (967 ms), and Claw still lands short of every
+# range box, so Raux stays in his start-up state for the whole run as in
+# the original.
+[[compare]]
+reference = "level2/boss-intro-skip"
+clock = "c60"
+tolerance = "feel"
+known.y = 967
+known.cam_y = 967
+
+# A jump one tick too late to skip the introduction, one 18 ms step per
+# frame: the introduction runs as for `level2/boss-intro-normal`.
+[[compare]]
+reference = "level2/boss-intro-skip-late-c18"
+clock = "c18"
+tolerance = "exact"
+known.rng = 9396
+
+# The same at 60 frames per second, as `level2/boss-intro-normal` there.
+[[compare]]
+reference = "level2/boss-intro-skip-late"
+clock = "c60"
+tolerance = "feel"
+known.events = 667
+known.cam_x = 1500
+known.boss_fight = 12200
+known.state_id = 12217
+known.health = 30083
+
+# The jump-in followed by blows at Raux, one 18 ms step per frame. The
+# random stream first differs at 9396 ms (as above), and Raux's choices
+# then differ: he hits Claw at 9738 ms in the game only.
+[[compare]]
+reference = "level2/boss-intro-skip-fight-c18"
+clock = "c18"
+tolerance = "exact"
+known.rng = 9396
+known.state_id = 9738
+known.health = 9738
+known.x = 9756
+known.cam_x = 9756
+
+# The same at 60 frames per second: the jump-in's arc as above (967 ms),
+# then Raux's choices on 18 ms ticks against frames of 16 and 17 ms (an
+# enemy encounter at 60 frames per second, reported, not gated).
+[[compare]]
+reference = "level2/boss-intro-skip-fight"
+clock = "c60"
+tolerance = "feel"
+known.y = 967
+known.cam_y = 967
+known.state_id = 6400
+known.health = 6400
+known.x = 6467
+known.cam_x = 6467
