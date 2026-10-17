@@ -41,8 +41,25 @@ pub const UP: u32 = Buttons::UP.0;
 /// Down.
 pub const DOWN: u32 = Buttons::DOWN.0;
 
-/// Ticks the jump button is held for, from a tap to a full jump.
+/// Ticks the jump button is held for, from a tap to a full jump, at the
+/// original speeds; see [`jump_holds`] for the game's own tuning.
 pub const JUMP_HOLDS: [usize; 4] = [2, 5, 9, 14];
+
+/// Ticks the jump button is held for in `sim`, from a tap to a full jump:
+/// [`JUMP_HOLDS`], with the full jump held for as many ticks as the
+/// tuning's hold window takes to credit in full (14 at the original
+/// speeds, 15 with the default tuning, which credits 16.7 ms a tick).
+pub fn jump_holds(sim: &Sim) -> [usize; 4] {
+    let p = &sim.config().tuning.player;
+    let full = if p.jump_hold_per_tick_ms > 0.0 {
+        (p.jump_hold_window_ms / p.jump_hold_per_tick_ms).ceil() as usize
+    } else {
+        JUMP_HOLDS[3]
+    };
+    let mut holds = JUMP_HOLDS;
+    holds[3] = full.clamp(JUMP_HOLDS[2] + 1, usize::from(u8::MAX));
+    holds
+}
 
 /// Length of the fight's short wait, ticks.
 pub const SHORT: usize = 3;
@@ -237,6 +254,7 @@ pub fn choices_in(sim: &Sim, arena: &Arena) -> Vec<Action> {
 /// The actions of a boss fight: the walks (the approach), the waits, the
 /// blows, and jumps to leap clear or over.
 fn fight_choices(sim: &Sim) -> Vec<Action> {
+    let holds = jump_holds(sim);
     let mut out = vec![Action::Wait, Action::Left, Action::Right];
     match phase(sim) {
         Phase::Ground => {
@@ -247,7 +265,7 @@ fn fight_choices(sim: &Sim) -> Vec<Action> {
                 Action::Strike { dir: 1 },
             ]);
             for dir in [1i8, -1] {
-                for hold in [JUMP_HOLDS[1], JUMP_HOLDS[3]] {
+                for hold in [holds[1], holds[3]] {
                     out.push(Action::Jump {
                         dir,
                         hold: hold as u8,
@@ -257,7 +275,7 @@ fn fight_choices(sim: &Sim) -> Vec<Action> {
             }
             out.push(Action::Jump {
                 dir: 0,
-                hold: JUMP_HOLDS[3] as u8,
+                hold: holds[3] as u8,
                 up: false,
             });
         }
@@ -269,11 +287,12 @@ fn fight_choices(sim: &Sim) -> Vec<Action> {
 
 /// The actions worth trying in `sim`, in a fixed order.
 pub fn choices(sim: &Sim) -> Vec<Action> {
+    let holds = jump_holds(sim);
     let mut out = vec![Action::Wait, Action::Left, Action::Right];
     match phase(sim) {
         Phase::Ground => {
             for dir in [1i8, -1, 0] {
-                for hold in JUMP_HOLDS {
+                for hold in holds {
                     out.push(Action::Jump {
                         dir,
                         hold: hold as u8,
@@ -285,7 +304,7 @@ pub fn choices(sim: &Sim) -> Vec<Action> {
             for dir in [0i8, 1, -1] {
                 out.push(Action::Jump {
                     dir,
-                    hold: JUMP_HOLDS[3] as u8,
+                    hold: holds[3] as u8,
                     up: true,
                 });
             }
@@ -304,7 +323,7 @@ pub fn choices(sim: &Sim) -> Vec<Action> {
         Phase::Climb => {
             out.extend([Action::Up, Action::Down]);
             for dir in [1i8, -1] {
-                for hold in [JUMP_HOLDS[1], JUMP_HOLDS[3]] {
+                for hold in [holds[1], holds[3]] {
                     out.push(Action::Jump {
                         dir,
                         hold: hold as u8,

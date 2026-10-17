@@ -381,3 +381,42 @@ fn a_boss_fight_without_an_introduction_is_dropped_when_the_route_must_play_it()
     let err = search_report(&start, Goal::LevelComplete, &c).unwrap_err();
     assert_eq!(err.stats.entries_pruned, 0);
 }
+
+#[test]
+fn the_full_jump_of_each_tuning_reaches_the_full_height() {
+    // A held jump rises 145 px at both tunings once the hold window is
+    // credited in full; the default tuning credits 16.7 ms a tick, so its
+    // full jump is held a tick longer.
+    for (tuning, full) in [
+        (route::TuningName::Original, 14),
+        (route::TuningName::Default, 15),
+    ] {
+        let rows = room(30, 10);
+        let mut sim = Sim::new(level(&rows, (5 * 64, 7 * 64)), route::sim_config(tuning, 1));
+        for _ in 0..40 {
+            sim.step(claw_sim::TickInput::default());
+        }
+        let holds = actions::jump_holds(&sim);
+        assert_eq!(holds[3], full, "{tuning:?}");
+        let rise = |hold: usize| {
+            let mut s = sim.clone();
+            let y0 = s.player().unwrap().y;
+            let mut top = y0;
+            let jump = actions::Action::Jump {
+                dir: 0,
+                hold: hold as u8,
+                up: false,
+            };
+            let mut masks = jump.masks();
+            masks.extend(std::iter::repeat_n(0, 40));
+            let script = InputScript::from_held(&masks);
+            for &t in &script.ticks {
+                s.step(t);
+                top = top.min(s.player().unwrap().y);
+            }
+            y0 - top
+        };
+        assert_eq!(rise(full), 145, "{tuning:?}");
+        assert!(rise(full - 1) < 145, "{tuning:?}");
+    }
+}
