@@ -25,6 +25,20 @@
 //! The map piece that ends a level shows `GAME_MAPPIECE` on odd levels
 //! other than 13 and `LEVEL_GEM` on the others (see [`map_piece_set`]).
 //!
+//! A defeated boss releases the level's end as an [`END_GEM`]
+//! ([`spawn_end_gem`], through [`World::boss_defeated`]): the map piece's
+//! picture rises out of him on the slowest arc that reaches its target
+//! under a pull of [`END_GEM_GRAVITY`] px/s/s downwards, with the camera
+//! following it. Each tick the gem first points the camera at where it
+//! is; once it is moving down and below its target's y it lets Claw go
+//! ([`World::release_claw_boss_end`]), gives the camera back and turns,
+//! where it is, into the end-of-level pickup that Claw collects to end the
+//! level. Otherwise it moves for the tick, with exact positions for constant
+//! acceleration, and shows the whole pixels of its position (towards 0).
+//!
+//! [`World::boss_defeated`]: super::World::boss_defeated
+//! [`World::release_claw_boss_end`]: super::World::release_claw_boss_end
+//!
 //! A pickup touches Claw with the box of its picture's current frame, as
 //! the level reports it (padded for treasure, special and curse pickups);
 //! when the level does not know the frame it uses a 32 px square instead.
@@ -51,7 +65,8 @@ pub const NAMES: &[&str] = &[
     BOUNCING_GOODIE,
     "CoinPowerup",
     CURSE,
-    "EndOfLevelPowerup",
+    END_GEM,
+    END_OF_LEVEL_LOGIC,
     "GlitterlessPowerup",
     "GoldPowerup",
     "HealthPowerup",
@@ -63,6 +78,10 @@ pub const NAMES: &[&str] = &[
     TREASURE,
 ];
 
+/// Logic name of the gem a defeated boss releases (see [`spawn_end_gem`]).
+pub const END_GEM: &str = "EndLevelGem";
+/// Logic name of the end-of-level pickup.
+pub const END_OF_LEVEL_LOGIC: &str = "EndOfLevelPowerup";
 /// Logic name of a bouncing goodie.
 pub const BOUNCING_GOODIE: &str = "BouncingGoodie";
 /// Logic name of the glitter that sparkles next to a pickup.
@@ -313,7 +332,7 @@ pub const POWERUPS: [Powerup; POWERUP_CODES] = [
     p(
         S,
         END_OF_LEVEL,
-        "EndOfLevelPowerup",
+        END_OF_LEVEL_LOGIC,
         "GAME_MAPPIECE",
         "GAME_MAGICPOWERUP",
     ),
@@ -552,6 +571,19 @@ pub struct PickupData {
     pub flight: Option<Flight>,
     /// Motion of a bouncing goodie.
     pub goodie: Option<Goodie>,
+    /// Flight of the gem a defeated boss releases.
+    pub gem: Option<EndGem>,
+}
+
+/// The flight of the gem a defeated boss releases (see [`spawn_end_gem`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EndGem {
+    /// Exact position, level pixels.
+    pub pos: (f64, f64),
+    /// Speed, px/s (down is positive).
+    pub vel: (f64, f64),
+    /// Where it heads for.
+    pub target: (i32, i32),
 }
 
 /// A taken pickup's flight to the status bar.
@@ -717,6 +749,7 @@ pub fn tick(w: &mut World, id: ObjectId) {
     let logic = o.logic.clone();
     match &*logic {
         BOUNCING_GOODIE => goodie_tick(w, id),
+        END_GEM => gem_tick(w, id),
         GLITTER => glitter_tick(w, id),
         POINTS_ICON => points_icon_tick(w, id),
         _ => pickup_tick(w, id),
@@ -1205,6 +1238,110 @@ fn bounce(o: &mut Object, g: &mut Goodie) {
     let v = (g.vy * g.vy - 2.0 * g.gravity).max(0.0).sqrt();
     g.vy = (-0.5 * v).max(-GOODIE_MAX_BOUNCE);
     g.rest.1 = 0.0;
+}
+
+// ------------------------------------------------------------ the boss's gem
+
+/// The pull on the gem a defeated boss releases, px/s/s downwards.
+pub const END_GEM_GRAVITY: f64 = 100.0;
+/// The gem is not launched when the speed of its arc would be below this,
+/// px/s.
+pub const END_GEM_MIN_SPEED: f64 = 0.1;
+
+/// The launch speed of the slowest arc from `from` to `to` under
+/// [`END_GEM_GRAVITY`]: with the offset `d`, a flight time
+/// `t = sqrt(2 |d| / g)` and the speed `d / t - (0, g) t / 2`, whose square
+/// is `g |d| + g * (rise)`. Zero when that speed is below
+/// [`END_GEM_MIN_SPEED`].
+pub fn end_gem_launch(from: (f64, f64), to: (i32, i32)) -> (f64, f64) {
+    let d = (f64::from(to.0) - from.0, f64::from(to.1) - from.1);
+    let len = d.0.hypot(d.1);
+    if len == 0.0 {
+        return (0.0, 0.0);
+    }
+    let t = (2.0 * len / END_GEM_GRAVITY).sqrt();
+    let v = (d.0 / t, d.1 / t - END_GEM_GRAVITY * t / 2.0);
+    if v.0.hypot(v.1) < END_GEM_MIN_SPEED {
+        (0.0, 0.0)
+    } else {
+        v
+    }
+}
+
+/// Releases a level's end at (x, y, z), as a defeated boss does: the gem
+/// shows the map piece's picture of the level, touches nothing and stays
+/// awake. With `target` (0, 0) it lets Claw go and becomes the
+/// end-of-level pickup at once; otherwise it is launched on the slowest
+/// arc that reaches `target` (see [`end_gem_launch`]) and moves from the
+/// next tick. Draws nothing.
+pub fn spawn_end_gem(w: &mut World, (x, y, z): (i32, i32, i32), target: (i32, i32)) -> ObjectId {
+    let set = map_piece_set(w.level_number());
+    let mut o = new_object(END_GEM, x, y, z);
+    o.image_set = runtime_image_set(set);
+    o.frame = -1;
+    o.flags |= flags::NO_COLLIDE | flags::ALWAYS_ACTIVE;
+    o.physics_type = ptype::FLY;
+    o.state = state::IDLE;
+    let pos = (f64::from(x), f64::from(y));
+    o.data = ObjectData::Pickup(PickupData {
+        gem: Some(EndGem {
+            pos,
+            vel: end_gem_launch(pos, target),
+            target,
+        }),
+        ..PickupData::default()
+    });
+    let id = w.spawn(o);
+    if target == (0, 0) {
+        land_gem(w, id);
+    }
+    id
+}
+
+/// One tick of the gem: the camera to where it is; once it moves down
+/// below its target's y it lands, otherwise it moves.
+fn gem_tick(w: &mut World, id: ObjectId) {
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    if o.state != state::IDLE {
+        return;
+    }
+    let Some(mut g) = data_mut(o).gem else {
+        return;
+    };
+    let at = (o.x, o.y);
+    w.set_camera_override(Some(at));
+    if g.vel.1 > 0.0 && g.pos.1 > f64::from(g.target.1) {
+        land_gem(w, id);
+        return;
+    }
+    let dt = f64::from(TICK_MS) / 1000.0;
+    g.pos.0 += g.vel.0 * dt;
+    g.pos.1 += g.vel.1 * dt + 0.5 * END_GEM_GRAVITY * dt * dt;
+    g.vel.1 += END_GEM_GRAVITY * dt;
+    let o = w.objects.get_mut(id).expect("checked");
+    o.x = g.pos.0.trunc() as i32;
+    o.y = g.pos.1.trunc() as i32;
+    data_mut(o).gem = Some(g);
+}
+
+/// The gem lands: Claw is let go, the camera is given back, and the gem
+/// becomes the end-of-level pickup where it is, set up at once.
+fn land_gem(w: &mut World, id: ObjectId) {
+    w.release_claw_boss_end();
+    w.set_camera_override(None);
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    o.logic = Registry::shared()
+        .get(END_OF_LEVEL_LOGIC)
+        .map_or_else(|| END_OF_LEVEL_LOGIC.into(), |e| e.name.clone());
+    o.flags &= !flags::NO_COLLIDE;
+    o.physics_type = ptype::STAND;
+    o.state = state::INIT;
+    o.data = ObjectData::Pickup(PickupData::default());
+    pickup_tick(w, id);
 }
 
 // ------------------------------------------------------------ curses and census

@@ -22,11 +22,23 @@
 //! ([`World::current_boss`]) until his body is removed. He waits in
 //! `Startup` until the fight flag says the fight is on
 //! ([`World::boss_fight`]), unless Claw is out of his range on his first
-//! ticks, hits him or makes him dodge. While the boss health bar is shown
-//! he keeps it at his health ([`World::set_boss_meter`]). When Claw
-//! respawns he goes back to where he was placed, with full health. His
+//! ticks, hits him or makes him dodge. The boss health bar, when the
+//! introduction made one, reads his health (he never sets it himself). When
+//! Claw respawns he goes back to where he was placed, with full health. His
 //! death, while Claw is alive, is reported once through
-//! [`World::boss_defeated`].
+//! [`World::boss_defeated`], which holds Claw and releases the gem that
+//! ends the level.
+//!
+//! # After a skipped introduction
+//!
+//! Nothing in him depends on the introduction: with it skipped (see
+//! [`crate::logic::boss_stage`]) the fight flag stays 0, so `Startup` only
+//! ends through the ways every enemy state has. While Claw stays within one
+//! of his range boxes, does not swing at him from close by and sends
+//! nothing at him, he keeps waiting in `Startup`, idle and harmless, for
+//! the rest of the level. Claw outside every box for 500 ms with Raux on
+//! screen sends him idle and into the fight; so do a sword blow, a dodge
+//! and a block.
 //!
 //! State numbers ([`EnemyState`]): one number per state name, so Raux
 //! waits for the fight in the bosses' `Startup` and uses the shared
@@ -55,8 +67,6 @@
 //!
 //! When hit by Claw's sword and not blocking: one of 0..4 for a high
 //! flinch's sound, then the hit burst's; at his death the death's.
-
-use claw_frame::output::BossMeter;
 
 use super::human::{self, BossFields, HumanAnims, HumanCall, HumanData};
 use super::states::{enter_hit, enter_strike, go_home, hit_tick, human_home_tick, start_pacing};
@@ -289,22 +299,15 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 }
 
 /// What follows each logic call: a death seen for the first time (on a
-/// death tile, or a kill by another logic) is reported, and while he is
-/// alive and the health bar is shown it shows his health.
+/// death tile, or a kill by another logic) is reported. He never shows the
+/// health bar himself: the bar the introduction makes reads his health
+/// (see [`crate::logic::boss_stage`]).
 fn after_call(w: &mut World, id: ObjectId) {
     let Some((dead, seen)) = data(w, id).map(|d| (d.dead, boss(d).death_seen)) else {
         return;
     };
     if dead && !seen {
         boss_died(w, id);
-    }
-    if !dead && w.boss_meter().is_some() && w.current_boss() == Some(id) {
-        let full = data(w, id).map_or(HEALTH, |d| boss(d).full_health);
-        let health = obj(w, id).health;
-        w.set_boss_meter(Some(BossMeter {
-            value: health,
-            max: full,
-        }));
     }
 }
 

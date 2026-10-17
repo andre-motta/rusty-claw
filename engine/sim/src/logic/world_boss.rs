@@ -15,7 +15,8 @@
 //!   point Claw's own code sets;
 //! - the boss's health bar and name banner in the status bar
 //!   ([`World::set_boss_meter`], [`World::set_boss_banner`]);
-//! - the boss's defeat ([`World::boss_defeated`]);
+//! - the boss's defeat ([`World::boss_defeated`]), which releases the gem
+//!   that ends the level;
 //! - the time the introduction's trigger adds to the checkpoint time
 //!   ([`World::add_checkpoint_time`]).
 //!
@@ -29,10 +30,14 @@
 //! the tick's [`Outbox`](super::Outbox), so Claw's code sees it too
 //! ([`Outbox::boss`](super::Outbox::boss)).
 
+use claw_frame::SoundChannel;
 use claw_frame::output::BossMeter;
 
-use crate::logic::World;
+use crate::logic::{World, pickup, sound};
 use crate::object::ObjectId;
+
+/// Played as the gem rises out of a defeated boss.
+pub const AMULET_SOUND: &str = "GAME_AMULETRISE";
 
 /// Values of the boss fight flag.
 pub mod fight {
@@ -174,13 +179,30 @@ impl World<'_> {
         self.out.boss.checkpoint_time
     }
 
-    /// The boss `id` was defeated. Only the first call of a level counts;
-    /// it is kept in [`BossState::defeated`]. What the defeat then sets off
-    /// (the gem and the level end) is not built yet.
+    /// The boss `id` was defeated, with Claw alive (the caller checks).
+    /// Only the first call of a level counts; it is kept in
+    /// [`BossState::defeated`] and sets off the level's end, whatever the
+    /// fight flag says (an introduction skipped included):
+    ///
+    /// 1. Claw is held where and as he is ([`World::freeze_claw_boss_end`]);
+    /// 2. the gem rises out of the boss: made at his (x, y) one step above
+    ///    his depth and launched on the slowest arc to the target his level
+    ///    record names (its speed fields), see [`pickup::spawn_end_gem`];
+    /// 3. [`AMULET_SOUND`] plays.
+    ///
+    /// The gem then leads the camera, lets Claw go when it lands and turns
+    /// into the end-of-level pickup he collects. Draws nothing.
     pub fn boss_defeated(&mut self, id: ObjectId) {
-        let boss = &mut self.out.boss;
-        if boss.defeated.is_none() {
-            boss.defeated = Some(id);
+        if self.out.boss.defeated.is_some() {
+            return;
         }
+        self.out.boss.defeated = Some(id);
+        let Some(b) = self.objects.get(id) else {
+            return;
+        };
+        let (at, target) = ((b.x, b.y, b.z + 1), (b.speed_x, b.speed_y));
+        self.freeze_claw_boss_end();
+        pickup::spawn_end_gem(self, at, target);
+        sound::play(self, AMULET_SOUND, SoundChannel::Effect);
     }
 }
