@@ -429,6 +429,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "claw-bot"
+version = "0.1.0"
+dependencies = [
+ "claw-assets",
+ "claw-sim",
+]
+
+[[package]]
 name = "claw-frame"
 version = "0.1.0"
 

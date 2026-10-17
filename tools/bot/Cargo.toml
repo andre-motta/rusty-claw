@@ -1,0 +1,19 @@
+[package]
+name = "claw-bot"
+description = "Searches the headless simulation for input routes that finish a level."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "claw-bot"
+path = "src/main.rs"
+
+[dependencies]
+claw-assets.workspace = true
+claw-sim.workspace = true
+
+[lints]
+workspace = true
