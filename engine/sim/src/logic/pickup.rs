@@ -893,10 +893,14 @@ fn fly(w: &mut World, id: ObjectId) {
 
 // ------------------------------------------------------------ glitter
 
+/// Makes the glitter of pickup `owner`. It is not run when it is made: its
+/// first call, with the draw of its start delay, comes when the update pass
+/// reaches it, in the same pass when it lands after the object the pass
+/// visits next, else in the next tick.
 fn spawn_glitter(w: &mut World, owner: ObjectId) -> ObjectId {
     let (x, y, z) = w.objects.get(owner).map_or((0, 0, 0), |o| (o.x, o.y, o.z));
     let mut g = new_object(GLITTER, x, y, z + 1);
-    g.flags |= flags::RUN_AT_CREATION | flags::NO_COLLIDE;
+    g.flags |= flags::NO_COLLIDE;
     g.data = ObjectData::Pickup(PickupData {
         owner: Some(owner),
         ..PickupData::default()

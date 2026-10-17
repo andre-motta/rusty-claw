@@ -501,8 +501,12 @@ fn manager_mut<'a>(w: &'a mut World, id: ObjectId) -> Option<&'a mut AmbientMana
 }
 
 /// The ambient manager: `cached` when it still is one, else the level's
-/// (see [`find_manager`]), made on first use. It runs after every other
-/// object, from the tick it is made in.
+/// (see [`find_manager`]), made on first use. It is never listed: the
+/// simulation updates it once per tick after the update, collision and
+/// leave passes, from the tick it is made in, and does not run it when it
+/// is made. A timed sound registered while the level loads thus first
+/// counts down in the first tick, and its timer draws come after every
+/// other draw of a tick.
 fn manager(w: &mut World, cached: Option<ObjectId>) -> ObjectId {
     if let Some(id) = cached
         && manager_mut(w, id).is_some()
@@ -520,7 +524,7 @@ fn manager(w: &mut World, cached: Option<ObjectId>) -> ObjectId {
         Arc::from(AMBIENT_MANAGER_LOGIC),
         LogicKind::Game(GameLogic::SoundObject),
     );
-    o.flags = flags::ALWAYS_ACTIVE | flags::NO_COLLIDE | flags::RUN_AT_CREATION;
+    o.flags = flags::ALWAYS_ACTIVE | flags::NO_COLLIDE | flags::UNLISTED;
     o.draw_flags = draw_flags::HIDDEN;
     o.data = ObjectData::Sound(SoundData {
         part: SoundPart::Manager(Box::default()),

@@ -340,8 +340,9 @@ pub fn take_damage_from(c: &mut Ctx, damage: i32, attacker: Option<ObjectId>) {
         c.o.y
     };
     special::enter_hit(c, ax);
-    let jx = c.rng.below(9) as i32 - 4;
+    // The burst's jitter: the y offset is drawn first, then the x.
     let jy = c.rng.below(9) as i32 - 4;
+    let jx = c.rng.below(9) as i32 - 4;
     let (id, z) = (c.id, c.o.z + 1);
     c.with_world(|w| effect::spawn_hit_burst(w, bx + jx, by + jy, z, Some(id), true));
 }

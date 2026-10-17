@@ -813,8 +813,10 @@ fn a_cycling_sign_shows_each_image_for_six_ticks_at_its_own_depth() {
         .insert("LEVEL_ARROWSIGN_RIGHT".into(), ImageFrames::range(1, 3));
     let mut sim = Sim::new(l, SimConfig::default());
     let id = one(&sim, "AniCycle");
-    // Its first call sets it up without advancing.
-    step_until(&mut sim, 10, |s| obj(s, id).state == decor::SET_UP).unwrap();
+    // Its first call sets it up without advancing. The small objects'
+    // window around the start view (half extents 415 x 311) already holds
+    // it, so that call is the level's set-up pass.
+    assert_eq!(obj(&sim, id).state, decor::SET_UP);
     assert_eq!(obj(&sim, id).frame, 1);
     assert_eq!(obj(&sim, id).z, 0, "keeps depth 0");
     let mut seen = Vec::new();

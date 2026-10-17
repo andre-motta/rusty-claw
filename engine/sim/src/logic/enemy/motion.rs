@@ -8,11 +8,15 @@
 //!    all.
 //! 2. One riding a platform moves with it first; one that is not standing
 //!    rides nothing.
-//! 3. Each axis moves by `(v + a dt / 2) dt` for the 18 ms tick, at most
-//!    24 px; the speed then grows by `a dt` (after a capped step, it is
-//!    what the energy of the capped move gives). Across there is no
-//!    acceleration; up and down there is gravity, except for a standing
-//!    enemy, which does not move up or down and has no vertical speed.
+//! 3. Each axis moves by `(v + a dt / 2) dt`, at most 24 px; the speed
+//!    then grows by `a dt` (after a capped step, it is what the energy of
+//!    the capped move gives). Across there is no acceleration; up and down
+//!    there is gravity, except for a standing enemy, which does not move
+//!    up or down and has no vertical speed. `dt` is the 18 ms tick, except
+//!    on the first step after a gap (an enemy woken after sleeping outside
+//!    its activation window): that step covers the time since the last
+//!    step, at most 200 ms, so a woken walker first makes up the way it
+//!    did not walk while asleep (up to 24 px at the pacing speed).
 //! 4. The new position is clamped to the patrol limits: a walker that
 //!    would cross a limit stops exactly on it.
 //! 5. The object moves there through the tiles and platforms. When the
@@ -31,11 +35,20 @@ use crate::logic::World;
 use crate::object::{ObjectId, flags};
 use crate::physics::{self, Collider, opt, ptype, res};
 use crate::tiles::{CLEAR, CLIMB, GROUND, SOLID};
+use crate::tuning::TICK_MS;
 
 use super::{DeathKind, EnemyData, EnemyState, TICK_S, die, obj, obj_mut, with_data};
 
 /// Largest move per axis in one step, px.
 pub const STEP_LIMIT: f64 = 24.0;
+/// Longest time one movement step covers, ms: the first step after a gap
+/// covers the time since the previous step up to this. Inferred from the
+/// first moves of woken enemies (after 108 ms asleep a pacing officer
+/// first moves 13 px, after longer sleeps 24 px). The rest of the rule is
+/// inferred with it: the catch-up fires after any gap over one 18 ms tick,
+/// not only after a sleep, and an enemy that has never moved (no time of a
+/// last step yet) covers one 18 ms tick.
+pub const WAKE_STEP_MAX_MS: u64 = 200;
 /// Depth above the base of an enemy drawn in front of Claw.
 pub const DEPTH_IN_FRONT: i32 = 4000;
 /// Depth above the base of an enemy drawn behind Claw.
@@ -46,7 +59,11 @@ pub const NARROW_REACH: i32 = 49;
 /// Moves one axis at `v` with acceleration `a` for one tick: the move,
 /// capped to [`STEP_LIMIT`], and the speed after it.
 pub fn axis_step(v: &mut f64, a: f64) -> f64 {
-    let dt = TICK_S;
+    axis_step_for(v, a, TICK_S)
+}
+
+/// [`axis_step`] over `dt` seconds.
+pub fn axis_step_for(v: &mut f64, a: f64, dt: f64) -> f64 {
     let d = (*v + 0.5 * a * dt) * dt;
     if d.abs() > STEP_LIMIT {
         let d = STEP_LIMIT.copysign(d);
@@ -77,8 +94,24 @@ pub fn integrate(w: &mut World, id: ObjectId) {
     }
 }
 
+/// The time the step at `now` covers, s: one tick, or after a gap (the
+/// enemy slept, so no step ran for more than a tick) the time since the
+/// last step, at most [`WAKE_STEP_MAX_MS`]. Records `now` as the time of
+/// the last step.
+fn step_seconds(d: &mut EnemyData, now: u64) -> f64 {
+    let since = d.last_move_ms.map_or(0, |t| now.saturating_sub(t));
+    d.last_move_ms = Some(now);
+    let ms = if since > u64::from(TICK_MS) {
+        since.min(WAKE_STEP_MAX_MS)
+    } else {
+        u64::from(TICK_MS)
+    };
+    ms as f64 * 0.001
+}
+
 fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     if d.frozen {
+        d.last_move_ms = Some(w.now_ms);
         return None;
     }
     let (x0, y0, entry, ride) = {
@@ -97,9 +130,10 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     if d.moved_to != Some((x0, y0)) {
         d.carry = (0.0, 0.0);
     }
+    let dt = step_seconds(d, w.now_ms);
     let standing = entry == ptype::STAND;
     let px = clamp_to(
-        f64::from(x0) + d.carry.0 + f64::from(ride.0) + axis_step(&mut d.vx, 0.0),
+        f64::from(x0) + d.carry.0 + f64::from(ride.0) + axis_step_for(&mut d.vx, 0.0, dt),
         d.bounds,
     );
     let tx = px.trunc() as i32;
@@ -110,7 +144,7 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     } else {
         let ay = d.ay;
         let py = clamp_to(
-            f64::from(y0) + d.carry.1 + f64::from(ride.1) + axis_step(&mut d.vy, ay),
+            f64::from(y0) + d.carry.1 + f64::from(ride.1) + axis_step_for(&mut d.vy, ay, dt),
             d.bounds_y,
         );
         (py, py.trunc() as i32)

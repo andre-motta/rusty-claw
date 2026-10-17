@@ -26,8 +26,8 @@ use crate::physics::ptype;
 
 use super::{
     Class, DeathKind, EnemyState, HIT_SOUNDS, Handler, Timer, UNBOUNDED, class_of, data, data_mut,
-    face_claw, facing_rect, field, give_strike_token, human, lift, obj, obj_mut, on_screen, play,
-    rand, sees_claw, set_anim, set_facing, set_state, take_strike_token,
+    exact_x, face_claw, facing_rect, field, give_strike_token, human, lift, obj, obj_mut,
+    on_screen, play, rand, sees_claw, set_anim, set_facing, set_state, take_strike_token,
 };
 use crate::object::flags;
 
@@ -234,11 +234,13 @@ pub fn start_pacing(w: &mut World, id: ObjectId) {
 /// Pace: at the left limit, even odds of going idle or turning right;
 /// then the same at the right limit. A sight-driven enemy goes Home when
 /// it sees Claw; any other goes Home when Claw is in range (modes 0 to
-/// 4). Draws: one of 0..100 per limit reached.
+/// 4). Draws: one of 0..100 per limit reached. A limit is reached when the
+/// exact position (with its carried fraction) equals it, not the whole
+/// pixel alone.
 pub fn pace_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     let (min, max) = bounds(w, id);
-    if obj(w, id).x == min {
+    if exact_x(w, id) == f64::from(min) {
         if rand(w, 100) < 50 {
             go_idle(w, id);
         } else {
@@ -246,7 +248,7 @@ pub fn pace_tick(w: &mut World, id: ObjectId) {
             set_facing(w, id, true);
         }
     }
-    if obj(w, id).x == max {
+    if exact_x(w, id) == f64::from(max) {
         if rand(w, 100) < 50 {
             go_idle(w, id);
         } else {

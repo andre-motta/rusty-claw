@@ -16,75 +16,81 @@
 # the routes as stored: keys down when play starts count only once
 # released and pressed again, the level's objects are set up while the
 # level loads so their first draws come in the original's order, and
-# Claw climbs up at 220 px/s with the default tuning.
+# Claw climbs up at 220 px/s with the default tuning. The random draws
+# follow the original's schedule: (1) the small objects' window (crates,
+# kegs, pickups) is 831x623; (2) an object made in the update pass joins
+# the live list at once and runs in the same pass when it lands after the
+# object the pass visits next; (3) a pickup's glitter draws its delay when
+# the pass reaches it, not when it is made; (4) the ambient sounds' timers
+# run once per tick after the rest of it, from the first tick; (5) a
+# pacing enemy is at a limit only when its exact position is; (6) a woken
+# enemy first moves for the time it slept, at most 200 ms; (7) Claw's hit
+# burst draws its y jitter before its x jitter. The rule numbers below
+# refer to this list.
 #
 # The last two entries (`level1/bot-original-v2` and `level1/bot-v2`) are
-# the original's runs of the routes in tests/acceptance/routes/ as they
-# are now, and are the ones to read first. The entries before them hold
+# the original's runs of the routes that were in tests/acceptance/routes/
+# before the draws took that schedule, and are the ones to read first;
+# the routes were then found again by the bot (with the schedule the
+# officer near the start hits Claw at 8586 ms, as in the original, and the
+# earlier routes no longer win in the game). The entries before them hold
 # runs of earlier routes and stay as further checks; they are never
 # replaced, only tightened.
 
 # The first level's opening, one 18 ms step per frame against the original
 # speeds and the original's random state at time zero. The random stream
-# is equal tick for tick until 2268 ms, where an enemy draw still comes in
-# another order. Claw's movement and the camera are equal until 16776 ms:
-# an officer's sword hits Claw in the game while in the original it
-# misses him (the officer's choices follow the random stream; with the
-# draws in the original's order the strike that hit at 16416 ms is gone,
-# this one is not). After the strike Claw stands nearer the officer, who
-# falls about 400 ms earlier in the game (the score at 17532 ms).
+# first differs at 7506 ms (at 2268 ms before rules 1 to 3), where the
+# game draws one number fewer than the original in a step.
+# Claw's movement, his health and the camera are equal throughout: the
+# officer's strike that hit Claw at 16776 ms only in the game is gone with
+# the draws in the original's order. The officer falls to Claw a little
+# later in the game (the score at 17946 ms).
 [[compare]]
 reference = "level1/opening"
 clock = "c18"
 tolerance = "exact"
-known.x = 16794
-known.y = 22482
-known.state_id = 16776
-known.physics_type = 16776
-known.cam_x = 16794
-known.cam_y = 22482
-known.health = 16776
-known.score = 17532
-known.rng = 2268
+known.score = 17946
+known.rng = 7506
 
 # The same route at 60 frames per second against the default tuning.
 # Claw climbs the ladder as fast as the original (220 px/s) and stays
-# within the feel tolerance until the officer's sword hits Claw in the
-# original at 16384 ms; the game's officer strikes a few ticks later
-# (16470 ms) and then falls to Claw at 18054 ms, while the original's
-# officer goes on striking (its choices follow the random stream, which
-# still differs here).
+# within the feel tolerance until 16934 ms (it was 16384 ms before rules 1
+# to 3): with the draws in the original's order the officer's strikes come
+# as in the original until then, and Claw is hit about 550 ms after it,
+# at 17350 ms (the 60 Hz frames still reach the officer's choices at other
+# moments than the original's frames do). The score stays equal.
 [[compare]]
 reference = "level1/opening"
 clock = "c60"
 tolerance = "feel"
-known.x = 16450
-known.y = 16450
-known.state_id = 16384
-known.physics_type = 16484
-known.cam_x = 16450
-known.cam_y = 16450
-known.health = 16384
-known.score = 18084
+known.x = 17400
+known.y = 22584
+known.state_id = 16934
+known.physics_type = 16934
+known.cam_x = 17400
+known.cam_y = 22584
+known.health = 17350
 
 # The bot's winning route of the first level (original speeds), one 18 ms
 # step per frame. The route presses Right and Jump on its first row; the
 # original and the game alike ignore them until they are released and
-# pressed again, so Claw's movement is equal tick for tick until 27360 ms,
+# pressed again, so Claw's movement is equal tick for tick until 27378 ms,
 # where a standing attack holds Claw longer in the original (the attack's
-# variant is drawn from the random stream, equal until 540 ms).
+# variant is drawn from the random stream, which first differs at
+# 24678 ms; at 540 ms before rule 1 woke the crates near the start in the
+# original's window).
 [[compare]]
 reference = "level1/bot-original"
 clock = "c18"
 tolerance = "exact"
 known.x = 93834
 known.y = 95130
-known.state_id = 27360
-known.physics_type = 27360
+known.state_id = 27378
+known.physics_type = 27378
 known.cam_x = 93834
 known.cam_y = 95130
 known.score = 94014
-known.rng = 540
+known.rng = 24678
 
 # The bot's winning route of the first level (default tuning) at 60 frames
 # per second: Claw stands still until the keys held from the start are
@@ -126,15 +132,16 @@ known.cam_x = 68000
 known.score = 69250
 
 # The same route, one 18 ms step per frame against the original speeds:
-# the random stream is equal until 216 ms, and Claw's movement is equal
-# tick for tick for 54.7 s, until a standing attack holds Claw for 21
-# steps in the original and 8 in the game (the attack's variant is drawn
-# from the random stream). The route's timing follows from there.
+# the random stream first differs at 5346 ms (at 216 ms before rules 1
+# and 2), and Claw's movement is equal tick for tick for 54.7 s, until a
+# standing attack holds Claw for 21 steps in the original and 8 in the
+# game (the attack's variant is drawn from the random stream). The route's
+# timing follows from there.
 [[compare]]
 reference = "level1/video"
 clock = "c18"
 tolerance = "exact"
-known.rng = 216
+known.rng = 5346
 known.state_id = 54774
 known.physics_type = 54774
 known.y = 57726
@@ -144,16 +151,16 @@ known.cam_x = 68094
 known.score = 73242
 
 # The bot's route (original speeds) with one empty row first, so its keys
-# are pressed after play starts. The random stream is equal until 162 ms;
-# the officer's strike that hit Claw at 8568 ms only in the game is gone,
-# and Claw's movement is equal tick for tick until 24858 ms, where a
-# standing attack holds Claw longer in the original (the attack's variant
-# is drawn from the random stream).
+# are pressed after play starts. The random stream first differs at
+# 25812 ms (at 162 ms before rules 1 to 5); the officer's strike that hit
+# Claw at 8568 ms only in the game is gone, and Claw's movement is equal
+# tick for tick until 24858 ms, where a standing attack holds Claw longer
+# in the original (the attack's variant is drawn from the random stream).
 [[compare]]
 reference = "level1/bot-original-delay1"
 clock = "c18"
 tolerance = "exact"
-known.rng = 162
+known.rng = 25812
 known.state_id = 24858
 known.physics_type = 24858
 known.x = 24858
@@ -189,8 +196,11 @@ known.health = 86667
 # the segment's time zero. Claw's movement is equal tick for tick for
 # 13.6 s, until a standing attack holds Claw for 21 steps in the original
 # and 8 in the game (the attack's variant is drawn from the random stream,
-# which differs from the first tick: the original draws nothing in the
-# segment's first tick, the game does).
+# which first differs at 18 ms, the segment's first tick: the original
+# draws nothing there, the game draws one number). The coins an officer drops at
+# 11700 ms fly with speeds drawn from that stream, so Claw takes them at
+# other times: 36 ms before the original since rule 2 (the dropped coins
+# now first move in the tick they are made), 18 ms after it before.
 [[compare]]
 reference = "level1/bot-original-seg3410"
 clock = "c18"
@@ -203,39 +213,43 @@ known.physics_type = 13590
 known.y = 14238
 known.cam_y = 14238
 known.health = 14814
-known.score = 12024
+known.score = 11970
 known.events = 19188
 known.lives = 27702
 
-# The bot's route of the first level as it is now
-# (tests/acceptance/routes/level1-original.csv, original speeds), one
-# 18 ms step per frame from the original's random state at time zero.
-# Claw's position, state and the camera are equal tick for tick until
-# 8586 ms. The random stream is equal until 162 ms: every third step the
-# original draws more numbers than the game (three against one at
-# 162 ms), so the enemies' choices come from other values. At 8586 ms an officer's sword hits Claw in the original
-# (health 90) and misses him in the game, and the route goes another way
-# from there: it finishes the level in the game, while the original ends
-# at 2774,4730 with the level unfinished. These entries stay until the
-# game draws as many numbers per step as the original.
+# The bot's route of the first level before the draws took the original's
+# schedule (the previous tests/acceptance/routes/level1-original.csv,
+# original speeds), one 18 ms step per frame from the original's random
+# state at time zero. The random stream first differs at 51516 ms; until
+# then the game draws the same numbers as the original, step for step: the
+# crates near the start roll from 162 ms (rule 1), the back stacks' crates
+# in the step they wake (rule 2), the glitters and the ambient timers draw
+# in the original's steps (rules 3 and 4), a pacing officer draws at its
+# limit in the original's step (rule 5) and a woken officer leaves its
+# window again at once (rule 6). So an officer's sword hits Claw at
+# 8586 ms in both games (health 90), and Claw's position, state and the
+# camera are equal tick for tick until 51552 ms. At 51516 ms an officer
+# falls in the original (eleven draws in the step: its hit burst, its loot
+# and its death), while in the game it stands and its sword hits Claw at
+# 51552 ms (health 60); the route goes another way from there.
 [[compare]]
 reference = "level1/bot-original-v2"
 clock = "c18"
 tolerance = "exact"
-known.rng = 162
-known.state_id = 8586
-known.physics_type = 8586
-known.health = 8586
-known.x = 8604
-known.cam_x = 8604
-known.y = 8622
-known.cam_y = 8622
-known.events = 9162
-known.score = 10242
+known.rng = 51516
+known.state_id = 51552
+known.physics_type = 51552
+known.health = 51552
+known.x = 52560
+known.cam_x = 52560
+known.y = 51570
+known.cam_y = 51570
+known.score = 51642
 known.pistol = 51642
 
-# The bot's route as it is now (tests/acceptance/routes/level1.csv,
-# default tuning) at 60 frames per second. A route played without looking
+# The bot's route before the draws took the original's schedule (the
+# previous tests/acceptance/routes/level1.csv, default tuning) at 60
+# frames per second. A route played without looking
 # at the game is compared for feel stretch by stretch here and need not
 # finish the level: the 16 and 17 ms frames against the game's 18 ms
 # ticks move Claw by a few pixels and a frame or two (the first fall off
@@ -243,9 +257,11 @@ known.pistol = 51642
 # These add up until the game reaches the ladder near 2.8 s about 45 ms
 # after the original, jumps off it about 35 ms later, and is 20 px lower
 # in that jump at 3217 ms, beyond the two ticks of timing the feel
-# tolerance allows. From there the two runs go different ways: the game
-# finishes the level, the original ends against the wall right of the
-# start (1814,4794).
+# tolerance allows. From there the two runs go different ways: the
+# original ends against the wall right of the start (1814,4794), and the
+# game, which finished the level on this route before, now loses a life
+# at 106 s (with the draws in the original's order, rules 1 to 7, the
+# enemies along its way choose differently).
 [[compare]]
 reference = "level1/bot-v2"
 clock = "c60"
@@ -259,3 +275,4 @@ known.cam_x = 3867
 known.score = 4300
 known.events = 7560
 known.health = 39784
+known.lives = 106000

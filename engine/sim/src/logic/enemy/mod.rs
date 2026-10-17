@@ -479,6 +479,9 @@ pub struct EnemyFields {
     /// Where the last movement step left the object; a move made by
     /// anything else drops the carried fraction.
     pub moved_to: Option<(i32, i32)>,
+    /// Game time of the last movement step, ms (see [`motion`]); `None`
+    /// before the first.
+    pub last_move_ms: Option<u64>,
     /// No movement at all (dead in place, or carried by Claw).
     pub frozen: bool,
     /// Call scheduled for the post-tick.
@@ -559,6 +562,7 @@ impl Default for EnemyFields {
             ay: GRAVITY,
             carry: (0.0, 0.0),
             moved_to: None,
+            last_move_ms: None,
             frozen: false,
             deferred: None,
             token_at: None,
@@ -791,6 +795,18 @@ pub fn with_data<R>(
         o.data = data;
     }
     Some(r)
+}
+
+/// The enemy's exact position across: its x plus the fraction its last
+/// movement step carried, unless something else has moved it since (that
+/// fraction is then dropped and x is exact). Patrol limits are tested
+/// against it: an enemy is at a limit only when it stands exactly on it.
+pub fn exact_x(w: &World, id: ObjectId) -> f64 {
+    let o = obj(w, id);
+    let carry = data(w, id)
+        .filter(|d| d.moved_to == Some((o.x, o.y)))
+        .map_or(0.0, |d| d.carry.0);
+    f64::from(o.x) + carry
 }
 
 /// The enemy's data.

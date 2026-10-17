@@ -28,7 +28,7 @@ fn original_half_extents() {
     let cfg = ActivationConfig::original();
     assert_eq!(cfg.half_extents(0, cfg.view), (800, 600));
     assert_eq!(cfg.half_extents(1, cfg.view), (1280, 960));
-    assert_eq!(cfg.half_extents(2, cfg.view), (384, 288));
+    assert_eq!(cfg.half_extents(2, cfg.view), (415, 311));
 }
 
 #[test]
@@ -83,10 +83,10 @@ fn original_windows_near_both_plane_edges() {
     let cfg = ActivationConfig::original();
     for (point, cx, cy) in [((100, 100), 320, 240), ((6390, 3190), 6080, 2960)] {
         let objs = [
-            object("TreasurePowerup", 2, cx + 384, cy),
-            object("TreasurePowerup", 2, cx + 385, cy),
-            object("TreasurePowerup", 2, cx - 384, cy - 288),
-            object("TreasurePowerup", 2, cx, cy + 289),
+            object("TreasurePowerup", 2, cx + 415, cy),
+            object("TreasurePowerup", 2, cx + 416, cy),
+            object("TreasurePowerup", 2, cx - 415, cy - 311),
+            object("TreasurePowerup", 2, cx, cy + 312),
             object("Officer", 0, cx + 800, cy + 600),
             object("Officer", 0, cx - 801, cy),
             object("Elevator", 1, cx + 1280, cy - 960),
@@ -113,10 +113,11 @@ fn widened_windows_with_breakable_exceptions_near_both_edges() {
             // A pickup: widened window around the wide centre.
             object("TreasurePowerup", 2, wide + dir * 917, 1600),
             object("TreasurePowerup", 2, wide + dir * 918, 1600),
-            // A crate: the original window around the original centre.
-            object("Crate", 2, orig + dir * 384, 1600),
-            object("Crate", 2, orig + dir * 385, 1600),
-            object("PowderKeg", 2, orig - dir * 384, 1600),
+            // A crate: the original (measured) window around the original
+            // centre, half extents 415 x 311.
+            object("Crate", 2, orig + dir * 415, 1600),
+            object("Crate", 2, orig + dir * 416, 1600),
+            object("PowderKeg", 2, orig - dir * 415, 1600),
             // An enemy: widened.
             object("Officer", 0, wide + dir * 1333, 1600),
             object("Officer", 0, wide + dir * 1334, 1600),
@@ -129,14 +130,18 @@ fn widened_windows_with_breakable_exceptions_near_both_edges() {
         );
     }
     // Away from the edges both centres are the camera point; a crate keeps
-    // the 384 px window while a pickup gets 917 px.
+    // the measured 415 x 311 px window while a pickup gets 917 x 288 px.
     let objs = [
-        object("BehindCrate", 2, 3000 + 385, 1600),
+        object("BehindCrate", 2, 3000 + 415, 1600),
+        object("BehindCrate", 2, 3000 + 416, 1600),
+        object("FrontStatue", 2, 3000, 1600 + 311),
+        object("FrontStatue", 2, 3000, 1600 + 312),
         object("TreasurePowerup", 2, 3000 + 917, 1600),
+        object("TreasurePowerup", 2, 3000, 1600 + 289),
     ];
     assert_eq!(
         live_after_enter(cfg, &objs, (3000, 1600)),
-        vec![false, true]
+        vec![true, false, true, false, true, false]
     );
 }
 
@@ -205,10 +210,10 @@ fn level_with_objects() -> SimLevel {
 #[test]
 fn level_objects_load_dormant_and_wake_near_the_camera() {
     let mut sim = Sim::new(level_with_objects(), SimConfig::default());
-    // At load the windows are around the start point (y = 600), so the
-    // pickup at y = 900 is still dormant; the camera then moves to Claw
-    // and the next enter pass wakes it.
-    assert_eq!(sim.activation().dormant_count(), 2);
+    // At load the windows are around the start point (y = 600): the
+    // pickup at y = 900 is inside the small objects' 311 px half height and
+    // live from the start, the far one stays dormant.
+    assert_eq!(sim.activation().dormant_count(), 1);
     sim.step(TickInput::default());
     sim.step(TickInput::default());
     let d = sim.diagnostics();

@@ -1,0 +1,5 @@
+# Waypoints for the first level at the original speeds: past the
+# crumbling pegs, the floor by the checkpoint, then the ledge beyond the
+# toggling pegs.
+4397,4346
+4950,4154
