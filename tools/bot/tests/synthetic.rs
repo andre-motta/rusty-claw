@@ -1,9 +1,14 @@
 //! The search on small levels built in code: a gap, a ladder and a
-//! stand-in hazard, and the same seed giving the same route.
+//! stand-in hazard, a boss room, and the same seed giving the same route.
 
 use claw_bot::actions;
 use claw_bot::route::{self, spacing_violations};
+use claw_bot::search::{BossStage, Intro, boss_end, boss_stage};
 use claw_bot::{Goal, SearchConfig, search, search_report};
+use claw_sim::activation::ActivationConfig;
+use claw_sim::level::ObjectSpec;
+use claw_sim::logic::enemy;
+use claw_sim::logic::world_boss::fight;
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel, TileMap};
 
 /// A level from text rows of 64 px tiles (see [`TileMap::from_ascii`]).
@@ -303,4 +308,115 @@ fn with_the_fragility_check_a_route_still_wins_with_any_change_a_tick_off() {
     let m = route::margin(&start, &found.script, &goal, 40);
     assert!(m.sampled > 0);
     assert_eq!((m.early_wins, m.late_wins), (m.sampled, m.sampled), "{m:?}");
+}
+
+/// A boss room with no introduction: a flat floor with Raux standing on
+/// it (his patrol limits and the gem's landing point in his record), a
+/// door far off to the left that leads into the room (it makes the level
+/// a boss level; Claw never goes near it), and Claw 400 px left of Raux,
+/// every object awake.
+fn boss_room() -> Sim {
+    let rows = room(80, 16);
+    let mut level = level(&rows, (2600, 900));
+    let mut raux = ObjectSpec::at("Raux", 3000, 900, 0);
+    raux.image_set = "LEVEL_RAUX".into();
+    raux.record[enemy::field::X_MIN] = 2700;
+    raux.record[enemy::field::X_MAX] = 3300;
+    raux.record[enemy::field::SPEED_X] = 2965;
+    raux.record[enemy::field::SPEED_X + 1] = 752;
+    level.objects.push(raux);
+    let mut door = ObjectSpec::at("BossWarp", 300, 900, 1000);
+    door.record[55] = 2600;
+    door.record[56] = 900;
+    level.objects.push(door);
+    let (w, h) = (level.map.width() as u32, level.map.height() as u32);
+    Sim::new(
+        level,
+        SimConfig {
+            seed: 3,
+            activation: ActivationConfig::widened((2 * w, 2 * h)),
+            ..SimConfig::default()
+        },
+    )
+}
+
+#[test]
+fn a_boss_level_is_read_from_its_door_and_its_boss() {
+    let start = boss_room();
+    let end = boss_end(&start).expect("a boss level");
+    assert_eq!(end.door, (300, 900));
+    assert_eq!(end.room, (2600, 900));
+    assert_eq!(end.boss, (3000, 900));
+    assert_eq!(end.gem, (2965, 752));
+    assert!(start.boss().current().is_some(), "Raux is built");
+    assert_eq!(boss_stage(&start), BossStage::Fight);
+    // A level without a boss is not a boss level.
+    let plain = sim(level(&room(30, 10), (5 * 64, 7 * 64)));
+    assert_eq!(boss_end(&plain), None);
+    assert_eq!(boss_stage(&plain), BossStage::Door);
+}
+
+#[test]
+fn a_boss_fight_without_an_introduction_is_dropped_when_the_route_must_play_it() {
+    // The room has no introduction (no stager): with the introduction
+    // asked for, every move in the room leaves the fight flag at 0 past
+    // the grace ticks and is dropped, and the search fails.
+    let start = boss_room();
+    assert_eq!(start.boss().fight(), fight::NONE);
+    let c = SearchConfig {
+        nodes: 2_000,
+        threads: 2,
+        intro: Intro::Play,
+        ..SearchConfig::default()
+    };
+    let err = search_report(&start, Goal::LevelComplete, &c).unwrap_err();
+    assert!(err.stats.entries_pruned > 0, "{:?}", err.stats);
+    assert_eq!(err.reason, "every reachable state was searched");
+    // Without the rule nothing is dropped for it.
+    let c = SearchConfig {
+        nodes: 200,
+        intro: Intro::Skip,
+        ..c
+    };
+    let err = search_report(&start, Goal::LevelComplete, &c).unwrap_err();
+    assert_eq!(err.stats.entries_pruned, 0);
+}
+
+#[test]
+fn the_full_jump_of_each_tuning_reaches_the_full_height() {
+    // A held jump rises 145 px at both tunings once the hold window is
+    // credited in full; the default tuning credits 16.7 ms a tick, so its
+    // full jump is held a tick longer.
+    for (tuning, full) in [
+        (route::TuningName::Original, 14),
+        (route::TuningName::Default, 15),
+    ] {
+        let rows = room(30, 10);
+        let mut sim = Sim::new(level(&rows, (5 * 64, 7 * 64)), route::sim_config(tuning, 1));
+        for _ in 0..40 {
+            sim.step(claw_sim::TickInput::default());
+        }
+        let holds = actions::jump_holds(&sim);
+        assert_eq!(holds[3], full, "{tuning:?}");
+        let rise = |hold: usize| {
+            let mut s = sim.clone();
+            let y0 = s.player().unwrap().y;
+            let mut top = y0;
+            let jump = actions::Action::Jump {
+                dir: 0,
+                hold: hold as u8,
+                up: false,
+            };
+            let mut masks = jump.masks();
+            masks.extend(std::iter::repeat_n(0, 40));
+            let script = InputScript::from_held(&masks);
+            for &t in &script.ticks {
+                s.step(t);
+                top = top.min(s.player().unwrap().y);
+            }
+            y0 - top
+        };
+        assert_eq!(rise(full), 145, "{tuning:?}");
+        assert!(rise(full - 1) < 145, "{tuning:?}");
+    }
 }

@@ -18,7 +18,9 @@
 //! - [`search`]: best-first search over short macro-actions
 //!   ([`actions`]), guided by the path distance to the level's end object
 //!   on a coarse graph of the level's tiles ([`field`]). The game is only
-//!   cloned and stepped: no move of Claw other than by input.
+//!   cloned and stepped: no move of Claw other than by input. A level
+//!   that ends with a boss is followed through the boss room's door, the
+//!   fight (with its own macros) and the gem the boss's defeat releases.
 //! - [`route`]: the route file (the input script with `# level`,
 //!   `# tuning`, `# seed` and behaviour header lines), the ROUTE.json
 //!   report, playing a route back and its timing margin.

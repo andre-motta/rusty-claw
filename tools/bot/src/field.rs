@@ -3,12 +3,15 @@
 //!
 //! The level's collision tiles are cut into square cells of [`CELL`]
 //! pixels. A cell is open when Claw's feet can be in it (it is not mostly
-//! solid and holds no death tile), and it gives support when Claw can stand
+//! solid, holds no death tile, and the [`HEADROOM`] cells above it are not
+//! mostly solid either, so Claw fits), and it gives
+//! support when Claw can stand
 //! there: a solid or ground top under it, a ladder, or the track of one of
 //! the level's elevators or pegs. Moves between neighbouring open cells
 //! follow what Claw can do, generously:
 //!
-//! - down: always (falling);
+//! - down: always (falling), except through a one-way floor (a ground
+//!   tile, which Claw stands on and cannot drop through);
 //! - up: only within a jump's reach above support in the same column, or
 //!   on a ladder;
 //! - sideways: only within a jump's reach above support somewhere within
@@ -28,6 +31,10 @@ use claw_sim::tiles::{CLIMB, DEATH, GROUND, SOLID};
 
 /// Size of a graph cell, px.
 pub const CELL: i32 = 16;
+
+/// Cells above an open cell that must not be mostly solid: Claw moves
+/// only standing (112 px tall) or in the air, never crouching.
+pub const HEADROOM: i32 = 6;
 
 /// Distance of a cell with no path to the target.
 pub const UNREACHABLE: u32 = u32::MAX;
@@ -63,6 +70,9 @@ pub struct Grid {
     rows: i32,
     open: Vec<bool>,
     climb: Vec<bool>,
+    /// The cell holds a one-way floor (and no ladder): nothing falls out
+    /// of it downward.
+    floor: Vec<bool>,
     /// Cells down to support (0 on support), saturating; `u16::MAX` with
     /// no support below before a closed cell.
     air: Vec<u16>,
@@ -80,7 +90,9 @@ impl Grid {
         let n = (cols * rows) as usize;
         let mut open = vec![false; n];
         let mut climb = vec![false; n];
+        let mut floor = vec![false; n];
         let mut support = vec![false; n];
+        let mut solid_cell = vec![false; n];
         const SAMPLES: [i32; 4] = [2, 6, 10, 14];
         for r in 0..rows {
             for c in 0..cols {
@@ -101,8 +113,10 @@ impl Grid {
                     }
                 }
                 let i = (r * cols + c) as usize;
+                solid_cell[i] = solid >= 8;
                 open[i] = solid < 8 && !death;
                 climb[i] = ladder && open[i];
+                floor[i] = ground && !ladder && open[i];
                 // Feet in this cell rest on a top at most a cell below its
                 // bottom (a floor top may lie inside the next cell).
                 let below = SAMPLES.iter().any(|&dx| {
@@ -113,11 +127,26 @@ impl Grid {
                 support[i] = open[i] && (ladder || ground || below);
             }
         }
+        // No room for Claw under a solid cell close above.
+        for r in 0..rows {
+            for c in 0..cols {
+                let i = (r * cols + c) as usize;
+                if open[i]
+                    && (1..=HEADROOM).any(|k| r >= k && solid_cell[((r - k) * cols + c) as usize])
+                {
+                    open[i] = false;
+                    climb[i] = false;
+                    floor[i] = false;
+                    support[i] = false;
+                }
+            }
+        }
         let mut grid = Grid {
             cols,
             rows,
             open,
             climb,
+            floor,
             air: Vec::new(),
             env: Vec::new(),
             reach_cells: (reach.jump_height / CELL).max(1) as u16,
@@ -315,7 +344,10 @@ impl Grid {
                 relax(i, up, &mut heap);
             }
             if r > 0 {
-                relax(self.index(c, r - 1), step, &mut heap);
+                let above = self.index(c, r - 1);
+                if !self.floor[above] {
+                    relax(above, step, &mut heap);
+                }
             }
         }
         DistanceField {
@@ -404,6 +436,63 @@ mod tests {
         let g = Grid::build(&level(&rows), Reach::default());
         let f = g.field_to(600, 240, 20);
         assert_ne!(f.at(100, 240), UNREACHABLE);
+    }
+
+    #[test]
+    fn a_gap_too_low_for_claw_is_closed() {
+        // 16 px tiles: a ceiling over the right half of the floor, 80 px
+        // above it (too low for Claw), then 112 px.
+        let gap = |n: usize| {
+            let mut rows = vec![".".repeat(40); 8];
+            rows[7 - n].replace_range(20..40, &"#".repeat(20));
+            rows.push("#".repeat(40));
+            let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+            let l = SimLevel::synthetic(TileMap::from_ascii(16, &rows), (40, 40));
+            Grid::build(&l, Reach::default())
+        };
+        // Feet on the floor (row 8 is the floor, row 7 the feet cell).
+        let feet = 7 * 16 + 8;
+        let g = gap(5);
+        assert!(g.is_open(100, feet));
+        assert!(!g.is_open(500, feet));
+        let f = g.field_to(600, feet, 8);
+        assert_eq!(f.at(100, feet), UNREACHABLE);
+        let g = gap(7);
+        assert!(g.is_open(500, feet));
+        assert_ne!(g.field_to(600, feet, 8).at(100, feet), UNREACHABLE);
+    }
+
+    #[test]
+    fn a_one_way_floor_is_not_fallen_through() {
+        // A floor of ground tiles across the level, with a ladder through
+        // it at the left: the way down from above the floor is the ladder.
+        let rows = [
+            "..........",
+            "H=========",
+            "H.........",
+            "H.........",
+            "##########",
+        ];
+        let g = Grid::build(&level(&rows), Reach::default());
+        let f = g.field_to(600, 240, 20);
+        let on_floor = f.at(600, 60);
+        let at_ladder = f.at(30, 60);
+        assert_ne!(on_floor, UNREACHABLE);
+        assert!(
+            on_floor > at_ladder,
+            "from the floor the way down is back along it to the ladder: {on_floor} {at_ladder}"
+        );
+        // Without the ladder there is no way down at all.
+        let rows = [
+            "..........",
+            "==========",
+            "..........",
+            "..........",
+            "##########",
+        ];
+        let g = Grid::build(&level(&rows), Reach::default());
+        let f = g.field_to(600, 240, 20);
+        assert_eq!(f.at(600, 60), UNREACHABLE);
     }
 
     #[test]

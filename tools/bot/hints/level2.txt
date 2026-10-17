@@ -1,0 +1,3 @@
+# Waypoint for the second level at the default tuning: on top of the
+# block beyond the three moving platforms that step up from the floor.
+12900,3689

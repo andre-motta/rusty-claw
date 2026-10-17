@@ -40,6 +40,18 @@
 //! with room to spare, so they still play the same when the timing slips
 //! by a tick somewhere before.
 //!
+//! A level that ends with a boss ([`boss_end`]) is searched in three
+//! stages ([`BossStage`]): to the boss room's door, the fight, and the gem
+//! the boss's defeat releases. The distance the search is guided by is the
+//! path distance to the door, then the boss's health and Claw's distance
+//! to him, then the path distance to where the gem lands; each stage costs
+//! less than any state of the stage before, and the first state of a new
+//! stage becomes the root of a fresh segment, as a waypoint does. Through
+//! the boss's introduction and the gem's flight Claw is held, so the time
+//! is part of the coarse state there. With [`SearchConfig::intro`] the
+//! search keeps to routes that play the introduction (the normal entry) or
+//! to routes that skip it (the jump-in entry).
+//!
 //! The search is deterministic. Its budget counts expanded nodes, never
 //! time; ties go by a hash of the seed and the node's state; and the
 //! children of a node may be played on several threads, but they are
@@ -51,11 +63,13 @@ use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use claw_sim::claw_frame::GameEvent;
-use claw_sim::logic::{enemy, pickup, platform};
+use claw_sim::logic::world_boss::fight;
+use claw_sim::logic::{boss_stage, enemy, pickup, platform};
+use claw_sim::player::special::BOSS_END;
 use claw_sim::player::state;
 use claw_sim::{Buttons, InputScript, Sim, TickInput};
 
-use crate::actions::{self, Action, MIN_SPACING};
+use crate::actions::{self, Action, Arena, MIN_SPACING};
 use crate::field::{DistanceField, Grid, Reach, UNREACHABLE};
 
 /// What ends the search.
@@ -126,7 +140,49 @@ pub struct SearchConfig {
     /// With the fragility check on, also play every move in the shadow
     /// games (see [`Shadow`]).
     pub shadows: bool,
+    /// How a boss level's route enters the boss room (see [`Intro`]).
+    pub intro: Intro,
 }
+
+/// How a route enters a boss room.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Intro {
+    /// Either way.
+    #[default]
+    Any,
+    /// The normal way: the boss's introduction plays. A move that leaves
+    /// Claw in the room for more than [`INTRO_GRACE`] ticks with the
+    /// introduction not started is dropped.
+    Play,
+    /// The jump-in: the introduction never starts. A move in which it
+    /// starts is dropped.
+    Skip,
+}
+
+impl Intro {
+    /// Reads `any`, `play` or `skip`.
+    pub fn parse(s: &str) -> Option<Intro> {
+        match s {
+            "any" => Some(Intro::Any),
+            "play" => Some(Intro::Play),
+            "skip" => Some(Intro::Skip),
+            _ => None,
+        }
+    }
+
+    /// The name [`Intro::parse`] reads.
+    pub fn name(self) -> &'static str {
+        match self {
+            Intro::Any => "any",
+            Intro::Play => "play",
+            Intro::Skip => "skip",
+        }
+    }
+}
+
+/// Ticks Claw may be in a boss room before the introduction starts, with
+/// [`Intro::Play`].
+pub const INTRO_GRACE: u64 = 4;
 
 impl Default for SearchConfig {
     fn default() -> SearchConfig {
@@ -149,6 +205,7 @@ impl Default for SearchConfig {
             land_gap: 0,
             fragile_cost: 0,
             shadows: true,
+            intro: Intro::Any,
         }
     }
 }
@@ -244,7 +301,10 @@ pub struct SearchStats {
     pub deaths_pruned: u64,
     /// Children dropped because a jump was pressed too close to a landing
     /// (see [`SearchConfig::land_gap`]).
-    pub landings_pruned: u64,
+    pub landings_pruned: u32,
+    /// Children dropped because they entered a boss room the other way
+    /// (see [`SearchConfig::intro`]).
+    pub entries_pruned: u32,
     /// Children found fragile (see [`SearchConfig::fragile_cost`]).
     pub fragile: u64,
     /// Fragile moves along the route found.
@@ -342,20 +402,36 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
             point: Some((x, y, cfg.hint_radius)),
         })
         .collect();
+    // Claw takes a pickup with any part of his body: his feet may be up to
+    // his height below it.
+    let pickup_field =
+        |(x, y): (i32, i32)| grid.field_to_box(x - 40, y - 30, x + 40, y + 2 * feet + 20);
+    let mut boss = None;
     let field = match goal {
-        Goal::LevelComplete => {
-            let (x, y) = end_object(start)
-                .ok_or_else(|| fail("the level has no end object to head for".into()))?;
-            // Claw takes it with any part of his body: his feet may be up
-            // to his height below it.
-            grid.field_to_box(x - 40, y - 30, x + 40, y + 2 * feet + 20)
-        }
+        Goal::LevelComplete => match (end_object(start), boss_end(start)) {
+            (Some(at), _) => pickup_field(at),
+            (None, Some(end)) => {
+                boss = Some(BossGoal {
+                    end,
+                    gem: pickup_field(end.gem),
+                });
+                // The door is entered by touching it.
+                let (x, y) = end.door;
+                grid.field_to_box(x - 24, y - 40, x + 24, y + feet + 40)
+            }
+            (None, None) => return Err(fail("the level has no end object to head for".into())),
+        },
         Goal::Reach { x, y, radius } => grid.field_to(x, y + feet, radius.max(8)),
     };
     targets.push(Target { field, point: None });
+    let arena = Arena {
+        door: boss.as_ref().map(|b| b.end.door),
+    };
     let mut s = Search {
         cfg,
         goal,
+        boss,
+        arena,
         targets,
         target: 0,
         nodes: Vec::new(),
@@ -378,6 +454,101 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
         began: Instant::now(),
     };
     s.run(start)
+}
+
+/// The bosses whose defeat ends a level, by logic name.
+pub fn is_boss(logic: &str) -> bool {
+    enemy::raux::NAMES.contains(&logic)
+}
+
+/// Record fields of the boss room's door: where it leads, x and y.
+const DOOR_TO: [usize; 2] = [55, 56];
+
+/// Record fields of a boss: where the gem his defeat releases lands, x and
+/// y.
+const GEM_TO: [usize; 2] = [enemy::field::SPEED_X, enemy::field::SPEED_X + 1];
+
+/// How a boss level ends: through the door into the boss room, past the
+/// boss, and at the gem his defeat releases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BossEnd {
+    /// The door into the boss room.
+    pub door: (i32, i32),
+    /// Where the door leads.
+    pub room: (i32, i32),
+    /// Where the boss is placed.
+    pub boss: (i32, i32),
+    /// Where the gem lands.
+    pub gem: (i32, i32),
+}
+
+/// The boss end of the level `sim` plays, when it has a boss room's door
+/// and a boss.
+pub fn boss_end(sim: &Sim) -> Option<BossEnd> {
+    let objects = &sim.level().objects;
+    let door = objects.iter().find(|o| o.logic == boss_stage::WARP)?;
+    let boss = objects.iter().find(|o| is_boss(&o.logic))?;
+    let at = |r: &[i32], f: [usize; 2]| (r[f[0]], r[f[1]]);
+    Some(BossEnd {
+        door: at(&door.record, [5, 6]),
+        room: at(&door.record, DOOR_TO),
+        boss: at(&boss.record, [5, 6]),
+        gem: at(&boss.record, GEM_TO),
+    })
+}
+
+/// Where a boss level's route is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BossStage {
+    /// On the way to the boss room's door.
+    Door,
+    /// In the boss room with the boss in play.
+    Fight,
+    /// The boss is defeated: on to the gem.
+    Gem,
+}
+
+/// The stage of a boss level `sim` is at.
+pub fn boss_stage(sim: &Sim) -> BossStage {
+    let b = sim.boss();
+    if b.defeated().is_some() {
+        BossStage::Gem
+    } else if b.current().is_some() || b.fight() != fight::NONE {
+        BossStage::Fight
+    } else {
+        BossStage::Door
+    }
+}
+
+/// The distance of the gem stage's start, px: any state of the fight is
+/// guided as at least this far from the goal.
+pub const FIGHT_BASE: u32 = 4000;
+
+/// What one point of the boss's health counts for in the distance, px.
+pub const BOSS_HEALTH_PX: u32 = 40;
+
+/// Most the distance from Claw to the boss counts for, px.
+pub const BOSS_NEAR_CAP: u32 = 1000;
+
+/// The boss's most health the guide counts, points.
+pub const BOSS_HEALTH_CAP: u32 = 200;
+
+/// The distance of the fight's start, px: any state on the way to the
+/// door is guided as at least this far.
+pub const DOOR_BASE: u32 = FIGHT_BASE + BOSS_HEALTH_CAP * BOSS_HEALTH_PX + BOSS_NEAR_CAP;
+
+/// The boss in play, its health and where it is.
+fn boss_in_play(sim: &Sim) -> Option<(i32, i32, i32)> {
+    let id = sim.boss().current()?;
+    let o = sim.objects().get(id)?;
+    Some((o.health, o.x, o.y))
+}
+
+/// The boss end's guide: the gem's field, besides the door's, which is the
+/// goal target.
+struct BossGoal {
+    end: BossEnd,
+    gem: DistanceField,
 }
 
 /// Where the level's end object is: the map piece or gem placed in the
@@ -416,11 +587,13 @@ struct Node {
     tie: u64,
 }
 
-/// Route ticks of Claw's last landing and of the last press of jump.
+/// Route ticks of Claw's last landing and of the last press of jump, and
+/// of his first tick in a boss room.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct Timing {
     landed: Option<u64>,
     jumped: Option<u64>,
+    arrived: Option<u64>,
 }
 
 /// How a child came out.
@@ -430,6 +603,8 @@ enum Outcome {
     Dead,
     /// A jump was pressed too close to a landing.
     TooClose,
+    /// A boss room was entered the other way (see [`SearchConfig::intro`]).
+    WrongEntry,
     /// The goal was met in the tick of this index within the action.
     Done(usize),
 }
@@ -452,6 +627,9 @@ type OpenEntry = Reverse<(i64, u64, u32)>;
 struct Search<'a> {
     cfg: &'a SearchConfig,
     goal: Goal,
+    /// The boss end the goal follows, on a level that ends with a boss.
+    boss: Option<BossGoal>,
+    arena: Arena,
     targets: Vec<Target>,
     target: usize,
     nodes: Vec<Node>,
@@ -519,7 +697,12 @@ impl Search<'_> {
             }
             let parent = self.sim_of(id);
             let node = self.nodes[id as usize];
-            let choices = actions::choices(&parent.main);
+            let choices = if self.boss.is_some() {
+                actions::choices_in(&parent.main, &self.arena)
+            } else {
+                actions::choices(&parent.main)
+            };
+            let stage = self.boss.as_ref().map(|_| boss_stage(&parent.main));
             let children = self.play_children(&parent, &node, &choices);
             self.keep(id, parent);
             for child in children {
@@ -531,6 +714,10 @@ impl Search<'_> {
                     }
                     Outcome::TooClose => {
                         self.stats.landings_pruned += 1;
+                        continue;
+                    }
+                    Outcome::WrongEntry => {
+                        self.stats.entries_pruned += 1;
                         continue;
                     }
                     Outcome::Done(_) => return Ok(self.found(id, &child)),
@@ -576,7 +763,9 @@ impl Search<'_> {
                 }
                 let ahead = self.nodes[self.root as usize].h.saturating_sub(h);
                 let hint = child.hint && self.targets[self.target].point.is_some();
-                if hint || (child.checkpoint && ahead >= self.cfg.checkpoint_progress) {
+                // A boss level's next stage starts a fresh segment.
+                let staged = stage.is_some_and(|s| boss_stage(&child.worlds.main) > s);
+                if hint || staged || (child.checkpoint && ahead >= self.cfg.checkpoint_progress) {
                     self.commit(cid, child.worlds, hint);
                     break;
                 }
@@ -650,9 +839,28 @@ impl Search<'_> {
         let Some(o) = sim.player() else {
             return UNREACHABLE;
         };
-        self.targets[self.target]
-            .field
-            .at(o.x, o.y + o.move_rect.bottom - 2)
+        let feet = o.y + o.move_rect.bottom - 2;
+        let target = &self.targets[self.target];
+        let Some(boss) = self.boss.as_ref().filter(|_| target.point.is_none()) else {
+            return target.field.at(o.x, feet);
+        };
+        match boss_stage(sim) {
+            BossStage::Door => DOOR_BASE.saturating_add(target.field.at(o.x, feet)),
+            BossStage::Fight => {
+                let (health, bx, by) = boss_in_play(sim).unwrap_or((
+                    BOSS_HEALTH_CAP as i32,
+                    boss.end.boss.0,
+                    boss.end.boss.1,
+                ));
+                let health = (health.max(0) as u32).min(BOSS_HEALTH_CAP);
+                // Near enough to strike counts as there.
+                let near = ((bx - o.x).unsigned_abs().saturating_sub(60)
+                    + (by - o.y).unsigned_abs())
+                .min(BOSS_NEAR_CAP);
+                FIGHT_BASE + health * BOSS_HEALTH_PX + near
+            }
+            BossStage::Gem => boss.gem.at(o.x, feet).min(FIGHT_BASE - 1),
+        }
     }
 
     /// The games of node `id`, from the cache or rebuilt from its nearest
@@ -722,6 +930,11 @@ impl Search<'_> {
             timing: node.timing,
             land_gap: self.cfg.land_gap,
             check_fragile: self.cfg.fragile_cost > 0,
+            intro: if self.boss.is_some() {
+                self.cfg.intro
+            } else {
+                Intro::Any
+            },
         };
         let goal = &self.goal;
         let point = self.targets[self.target].point;
@@ -852,6 +1065,7 @@ struct From {
     timing: Timing,
     land_gap: u64,
     check_fragile: bool,
+    intro: Intro,
 }
 
 /// True when route ticks `a` and `b` are at most `gap` ticks apart (the
@@ -920,6 +1134,25 @@ fn play(
         if died || dying(&sim) || sim.stats().lives < lives {
             outcome = Outcome::Dead;
             break;
+        }
+        if from.intro != Intro::Any {
+            let boss = sim.boss();
+            if timing.arrived.is_none() && boss.current().is_some() {
+                timing.arrived = Some(tick);
+            }
+            let wrong = match from.intro {
+                Intro::Skip => boss.fight() != fight::NONE,
+                Intro::Play => {
+                    boss.fight() == fight::NONE
+                        && boss.defeated().is_none()
+                        && timing.arrived.is_some_and(|a| tick >= a + INTRO_GRACE)
+                }
+                Intro::Any => false,
+            };
+            if wrong {
+                outcome = Outcome::WrongEntry;
+                break;
+            }
         }
         if done {
             outcome = Outcome::Done(i);
@@ -1068,6 +1301,31 @@ pub fn state_key(sim: &Sim) -> u64 {
             ]);
         } else if let Some(d) = enemy::data_of(o) {
             k.add(&[2, i64::from(id), i64::from(d.dead)]);
+        }
+    }
+    // In a boss fight: the flag, the boss's health, place and state, and,
+    // while Claw is held (the introduction, the gem's flight), the time.
+    let boss = sim.boss();
+    if boss.fight() != fight::NONE || boss.current().is_some() || boss.defeated().is_some() {
+        k.add(&[
+            3,
+            i64::from(boss.fight()),
+            i64::from(boss.defeated().is_some()),
+        ]);
+        if let Some((health, x, y)) = boss_in_play(sim) {
+            let st = boss
+                .current()
+                .and_then(|id| objects.get(id))
+                .map_or(0, |o| o.state);
+            k.add(&[
+                i64::from(health),
+                i64::from(x >> 3),
+                i64::from(y >> 3),
+                i64::from(st),
+            ]);
+        }
+        if matches!(c.state, state::FREEZE | BOSS_END) {
+            k.add(&[4, sim.tick() as i64]);
         }
     }
     k.0
