@@ -55,6 +55,8 @@ fn states() -> Vec<HudState> {
                     remaining_ms: d * 111_000 + 999,
                 }),
                 timer_ms: (i == 2).then_some(d * 111_000),
+                boss_meter: None,
+                boss_banner: None,
             });
         }
     }
@@ -180,6 +182,8 @@ fn level1_draws_with_the_bar_on_the_gpu() {
             remaining_ms: 12_345,
         }),
         timer_ms: None,
+        boss_meter: None,
+        boss_banner: None,
     };
     for size in [(640, 480), (1920, 1080), (5120, 1440), (3840, 2160)] {
         let v = ViewConfig::default().with_render_size(size.0, size.1);

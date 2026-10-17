@@ -32,6 +32,16 @@ pub struct PowerupHud {
     pub remaining_ms: u32,
 }
 
+/// A boss's health bar: the boss's health now and the maximum the bar
+/// measures it against.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct BossMeter {
+    /// The boss's health now.
+    pub value: i32,
+    /// The health a full bar stands for.
+    pub max: i32,
+}
+
 /// The values the status bar shows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct HudState {
@@ -53,6 +63,11 @@ pub struct HudState {
     pub powerup: Option<PowerupHud>,
     /// Countdown shown in the status bar, if one runs.
     pub timer_ms: Option<u32>,
+    /// The boss's health bar, shown during a boss fight.
+    pub boss_meter: Option<BossMeter>,
+    /// The boss's name banner during a boss fight's introduction: its
+    /// centre on the 640x480 view, scaled like the status bar.
+    pub boss_banner: Option<(i32, i32)>,
 }
 
 /// Which volume setting and switch a sound follows.
@@ -232,8 +247,11 @@ mod tests {
                 dynamite_ammo: 0,
                 powerup: None,
                 timer_ms: None,
+                boss_meter: None,
+                boss_banner: None,
             }
         );
+        assert_eq!(BossMeter::default(), BossMeter { value: 0, max: 0 });
         assert_eq!(
             SoundCue::default(),
             SoundCue {

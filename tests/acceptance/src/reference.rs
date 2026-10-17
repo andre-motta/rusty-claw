@@ -1229,6 +1229,8 @@ traces = ["trace-c60-r1.csv"]
             dynamite: 3,
             events: String::new(),
             rng: Some(1),
+            boss_fight: None,
+            boss_health: None,
         }
     }
 

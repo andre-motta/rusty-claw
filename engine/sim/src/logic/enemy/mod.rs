@@ -1,5 +1,7 @@
 //! Enemies: the officer, the soldier and the rat, on shared enemy
-//! behaviour.
+//! behaviour. The punk rat ([`punkrat`]) and Raux ([`raux`]) are declared
+//! but not built yet, and so are the shared human states they and later
+//! human enemies add ([`human`]).
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -26,6 +28,11 @@
 //! The first call builds the enemy (its class's `construct`). Hits arrive
 //! from the collision pass through the class's `on_hit`.
 //!
+//! An enemy's data is [`EnemyData`], held as [`ObjectData::Enemy`], or
+//! inside a family's own data variant that wraps it (the punk rat's and
+//! Raux's): [`data`], [`data_mut`], [`data_of`] and [`with_data`] reach it
+//! either way.
+//!
 //! Random draws happen in the game's order, from the shared stream the
 //! whole level draws from; every function that draws says which draws it
 //! makes, in order.
@@ -44,10 +51,14 @@ use crate::physics::ptype;
 use crate::tiles::SOLID;
 use crate::tuning::TICK_MS;
 
+pub mod goo;
+pub mod human;
 pub mod lift;
 pub mod motion;
 pub mod officer;
+pub mod punkrat;
 pub mod rat;
+pub mod raux;
 pub mod soldier;
 pub mod states;
 
@@ -152,6 +163,14 @@ pub mod field {
 }
 
 /// An enemy's named states. The numbers are fixed: traces show them.
+///
+/// Each state name has one number, whichever class runs it: a class that
+/// runs a state of an existing name reuses its number. New names take
+/// numbers in blocks: 2000-2021 the first level's enemies, 2022-2029 every
+/// boss, 2030-2049 the shared human states, 2050-2059 the punk rat,
+/// 2060-2069 cannons and 2070-2089 Raux; later families take blocks of 20
+/// from 2100. Numbers of a block that no state has yet stay free, so the
+/// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(i32)]
 pub enum EnemyState {
@@ -200,11 +219,33 @@ pub enum EnemyState {
     Bounce = 2020,
     /// Let go by Claw.
     Dropped = 2021,
+    /// A boss waiting for the fight to start.
+    Startup = 2022,
+    /// Hopping back, away from Claw.
+    JumpBack = 2030,
+    /// Backing off from Claw.
+    MoveBack = 2031,
+    /// Stepping in towards Claw.
+    MoveAhead = 2032,
+    /// Blocking a high blow.
+    BlockHigh = 2033,
+    /// Blocking a low blow.
+    BlockLow = 2034,
+    /// The idle state of a human class without one of its own.
+    HumanIdle = 2035,
+    /// Launched off a springboard.
+    JumpOffSpringboard = 2036,
+    /// Thrown back by its own cannon's shot (the punk rat).
+    Recoil = 2050,
+    /// Firing upwards (a cannon).
+    VertFiring = 2060,
+    /// Leaping over Claw to the far end of its ground (Raux).
+    JumpOver = 2070,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 22] = [
+    pub const ALL: [EnemyState; 33] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -227,13 +268,26 @@ impl EnemyState {
         EnemyState::Thrown,
         EnemyState::Bounce,
         EnemyState::Dropped,
+        EnemyState::Startup,
+        EnemyState::JumpBack,
+        EnemyState::MoveBack,
+        EnemyState::MoveAhead,
+        EnemyState::BlockHigh,
+        EnemyState::BlockLow,
+        EnemyState::HumanIdle,
+        EnemyState::JumpOffSpringboard,
+        EnemyState::Recoil,
+        EnemyState::VertFiring,
+        EnemyState::JumpOver,
     ];
 
-    /// The state with this number.
+    /// The state with this number; `None` for a number no state has,
+    /// including the free numbers of a block.
     pub fn from_id(id: i32) -> Option<EnemyState> {
-        let first = EnemyState::Idle as i32;
-        let i = usize::try_from(id.checked_sub(first)?).ok()?;
-        EnemyState::ALL.get(i).copied()
+        EnemyState::ALL
+            .binary_search_by_key(&id, |s| *s as i32)
+            .ok()
+            .map(|i| EnemyState::ALL[i])
     }
 
     /// Name.
@@ -261,6 +315,17 @@ impl EnemyState {
             EnemyState::Thrown => "Thrown",
             EnemyState::Bounce => "Bounce",
             EnemyState::Dropped => "Dropped",
+            EnemyState::Startup => "Startup",
+            EnemyState::JumpBack => "JumpBack",
+            EnemyState::MoveBack => "MoveBack",
+            EnemyState::MoveAhead => "MoveAhead",
+            EnemyState::BlockHigh => "BlockHigh",
+            EnemyState::BlockLow => "BlockLow",
+            EnemyState::HumanIdle => "HumanIdle",
+            EnemyState::JumpOffSpringboard => "JumpOffSpringboard",
+            EnemyState::Recoil => "Recoil",
+            EnemyState::VertFiring => "VertFiring",
+            EnemyState::JumpOver => "JumpOver",
         }
     }
 }
@@ -275,6 +340,8 @@ pub enum Deferred {
     JumpCheck,
     /// Let go by Claw.
     Dropped,
+    /// A call of the shared human states (see [`human::run_deferred`]).
+    Human(human::HumanCall),
 }
 
 /// Why an enemy died.
@@ -458,6 +525,8 @@ pub struct EnemyFields {
     pub bounces: u32,
     /// Lifting: it is let go once its pause after a throw ends.
     pub dropped_timer: Timer,
+    /// What the shared human states keep (see [`human`]).
+    pub human: human::HumanData,
 }
 
 impl Default for EnemyFields {
@@ -513,6 +582,7 @@ impl Default for EnemyFields {
             thrown_timer: Timer::default(),
             bounces: 0,
             dropped_timer: Timer::default(),
+            human: human::HumanData::default(),
         }
     }
 }
@@ -578,6 +648,24 @@ pub struct ClassAnims {
     pub bounce: &'static str,
 }
 
+impl ClassAnims {
+    /// No animations.
+    pub const NONE: ClassAnims = ClassAnims {
+        advance: "",
+        fast_advance: "",
+        pace: "",
+        walk: "",
+        hit_low: "",
+        hit_high: "",
+        home: "",
+        jump: "",
+        fall: "",
+        lifted: "",
+        lifted2: "",
+        bounce: "",
+    };
+}
+
 /// Sounds of a class used by the shared states ("" for none).
 #[derive(Debug, Clone, Copy)]
 pub struct ClassSounds {
@@ -587,6 +675,15 @@ pub struct ClassSounds {
     pub hit_low: [&'static str; 2],
     /// A high hit, then one of the four hit sounds.
     pub hit_high: &'static str,
+}
+
+impl ClassSounds {
+    /// No sounds.
+    pub const NONE: ClassSounds = ClassSounds {
+        strike: "",
+        hit_low: ["", ""],
+        hit_high: "",
+    };
 }
 
 /// The four sounds one of which follows a high hit.
@@ -624,6 +721,8 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::Officer => Some(&officer::CLASS),
         GameLogic::Soldier => Some(&soldier::CLASS),
         GameLogic::Rat => Some(&rat::CLASS),
+        GameLogic::PunkRat => Some(&punkrat::CLASS),
+        GameLogic::Raux => Some(&raux::CLASS),
         _ => None,
     }
 }
@@ -654,6 +753,29 @@ pub(crate) fn obj_mut<'a>(w: &'a mut World, id: ObjectId) -> &'a mut Object {
         .expect("an enemy's object exists during its call")
 }
 
+impl ObjectData {
+    /// The enemy data this holds: plain enemy data, or the enemy data
+    /// inside a family's own data (the punk rat's and Raux's).
+    pub fn enemy(&self) -> Option<&EnemyData> {
+        match self {
+            ObjectData::Enemy(d) => Some(d),
+            ObjectData::PunkRat(d) => Some(&d.enemy),
+            ObjectData::Raux(d) => Some(&d.enemy),
+            _ => None,
+        }
+    }
+
+    /// The enemy data this holds, mutable (see [`ObjectData::enemy`]).
+    pub fn enemy_mut(&mut self) -> Option<&mut EnemyData> {
+        match self {
+            ObjectData::Enemy(d) => Some(d),
+            ObjectData::PunkRat(d) => Some(&mut d.enemy),
+            ObjectData::Raux(d) => Some(&mut d.enemy),
+            _ => None,
+        }
+    }
+}
+
 /// Runs `f` with the enemy's data taken out of its object (so `f` can use
 /// the whole world), then puts it back. `None` before the enemy is built.
 pub fn with_data<R>(
@@ -662,38 +784,28 @@ pub fn with_data<R>(
     f: impl FnOnce(&mut World, &mut EnemyData) -> R,
 ) -> Option<R> {
     let o = w.objects.get_mut(id)?;
-    let ObjectData::Enemy(mut d) = std::mem::take(&mut o.data) else {
-        return None;
-    };
-    let r = f(w, &mut d);
+    o.data.enemy()?;
+    let mut data = std::mem::take(&mut o.data);
+    let r = f(w, data.enemy_mut().expect("the data holds enemy data"));
     if let Some(o) = w.objects.get_mut(id) {
-        o.data = ObjectData::Enemy(d);
+        o.data = data;
     }
     Some(r)
 }
 
 /// The enemy's data.
 pub fn data<'a>(w: &'a World, id: ObjectId) -> Option<&'a EnemyData> {
-    match &w.objects.get(id)?.data {
-        ObjectData::Enemy(d) => Some(d),
-        _ => None,
-    }
+    w.objects.get(id)?.data.enemy()
 }
 
 /// The enemy's data, mutable.
 pub fn data_mut<'a>(w: &'a mut World, id: ObjectId) -> Option<&'a mut EnemyData> {
-    match &mut w.objects.get_mut(id)?.data {
-        ObjectData::Enemy(d) => Some(d),
-        _ => None,
-    }
+    w.objects.get_mut(id)?.data.enemy_mut()
 }
 
 /// The enemy data of `o`, if it has any.
 pub fn data_of(o: &Object) -> Option<&EnemyData> {
-    match &o.data {
-        ObjectData::Enemy(d) => Some(d),
-        _ => None,
-    }
+    o.data.enemy()
 }
 
 /// The enemy's state.
@@ -1216,6 +1328,7 @@ pub fn post_tick(w: &mut World, id: ObjectId, class: &Class) {
         Some(Deferred::GoIdle) => (class.go_idle)(w, id),
         Some(Deferred::JumpCheck) => states::jump_check(w, id, class),
         Some(Deferred::Dropped) => lift::let_go(w, id),
+        Some(Deferred::Human(call)) => human::run_deferred(w, id, class, call),
         None => {}
     }
     motion::integrate(w, id);
@@ -1380,9 +1493,21 @@ pub const DEATH_DEPTH: i32 = 8500;
 /// Removal delay of a death on spikes or after a throw, ms.
 pub const DEATH_DELAY_MS: u64 = 1000;
 
-/// Dies of `kind`, `by` being what dealt the blow. Human enemies first
-/// drop their loot (once). Then the enemy is dead, busy and harmless to
-/// others:
+/// Dies of `kind`, `by` being what dealt the blow. A death on a death
+/// tile (kind [`DeathKind::Spikes`], from the movement step) goes through
+/// [`goo::enter_goo`], which decides how the enemy dies there; every other
+/// kind is [`die_of`].
+pub fn die(w: &mut World, id: ObjectId, kind: DeathKind, by: Option<ObjectId>) {
+    if kind == DeathKind::Spikes {
+        goo::enter_goo(w, id);
+    } else {
+        die_of(w, id, kind, by);
+    }
+}
+
+/// Dies of exactly `kind`, `by` being what dealt the blow. Human enemies
+/// first drop their loot (once). Then the enemy is dead, busy and harmless
+/// to others:
 ///
 /// - killed by a hit, the body is drawn in front of everything and thrown
 ///   up at 700 px/s and away from Claw at 150 px/s, under gravity and
@@ -1394,7 +1519,7 @@ pub const DEATH_DELAY_MS: u64 = 1000;
 ///
 /// Draws: the loot's, then one of 0..100 for a kill by a hit, and one of
 /// 0..10 when Claw speaks.
-pub fn die(w: &mut World, id: ObjectId, kind: DeathKind, by: Option<ObjectId>) {
+pub fn die_of(w: &mut World, id: ObjectId, kind: DeathKind, by: Option<ObjectId>) {
     let human = class_of(w, id).is_some_and(|c| c.human);
     if human && data(w, id).is_some_and(|d| !d.dead) {
         drop_loot(w, id);
@@ -1493,12 +1618,16 @@ mod tests {
         assert_eq!(EnemyState::Dropped as i32, 2021);
         assert_eq!(EnemyState::from_id(0), None);
         assert_eq!(EnemyState::from_id(1999), None);
-        assert_eq!(EnemyState::from_id(2022), None);
+        assert_eq!(EnemyState::from_id(2023), None, "a free number");
+        assert_eq!(EnemyState::from_id(2090), None);
         assert_eq!(EnemyState::from_id(i32::MIN), None);
+        assert_eq!(EnemyState::from_id(i32::MAX), None);
         assert_eq!(EnemyState::Strike.name(), "Strike");
-        for (i, s) in EnemyState::ALL.iter().enumerate() {
+        // The first level's states are numbered without gaps.
+        for (i, s) in EnemyState::ALL[..22].iter().enumerate() {
             assert_eq!(*s as i32, 2000 + i as i32);
         }
+        assert!(EnemyState::ALL.is_sorted_by_key(|s| *s as i32));
     }
 
     #[test]

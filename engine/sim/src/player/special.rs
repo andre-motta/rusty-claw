@@ -45,21 +45,30 @@
 //! # Frozen (5009)
 //!
 //! [`enter_freeze`] (or [`World::freeze_claw`] from a logic, such as a
-//! freeze curse or a boss stage) stops Claw: he stands facing right and
-//! reads no input until [`World::thaw_claw`] releases him, or until the
-//! freeze's time runs out when it has one.
+//! freeze curse) stops Claw: he stands facing right and reads no input
+//! until [`World::thaw_claw`] releases him, or until the freeze's time runs
+//! out when it has one.
+//!
+//! A boss fight's introduction freezes him with
+//! [`World::freeze_claw_now`] instead: at once, during the calling logic,
+//! and until the boss fight flag reaches 2 (see
+//! [`crate::logic::world_boss`]); his own next logic call then sees the
+//! flag and he stands again.
 //!
 //! A logic may also start the hit reaction with
-//! [`World::claw_hit_reaction`]. Requests from logics take effect on
+//! [`World::claw_hit_reaction`]. Other requests from logics take effect on
 //! Claw's next logic call. Forcing one of these states without its entry
 //! (tools and tests) returns Claw to standing, as a state that is not
 //! filled in does (see [`super::fallback_tick`]).
 
-use claw_frame::{Buttons, SoundChannel};
+use std::sync::Arc;
+
+use claw_frame::{Buttons, SoundChannel, TickInput};
 
 use super::{Ctx, DT, DT_S, attack, fallback_tick, state};
+use crate::logic::world_boss::fight;
 use crate::logic::{self, World};
-use crate::object::{ObjectId, Rect, flags};
+use crate::object::{LogicKind, Object, ObjectId, Rect, flags};
 use crate::physics::{opt, ptype};
 
 /// Speed of the push away from an attacker, px/s.
@@ -142,6 +151,8 @@ pub struct SpecialData {
     pub freeze_pending: bool,
     /// A logic asked for the freeze to end.
     pub thaw: bool,
+    /// The freeze is a boss fight's: it ends when the fight starts.
+    pub boss_freeze: bool,
 }
 
 /// Forgets which special state was entered; every cancel of the attack
@@ -153,6 +164,7 @@ pub(super) fn forget_entries(c: &mut Ctx) {
     s.carry_still = false;
     s.throwing = false;
     s.frozen = false;
+    s.boss_freeze = false;
 }
 
 // ---------------------------------------------------------------- hit
@@ -448,8 +460,21 @@ fn freeze_now(c: &mut Ctx, ms: i32) {
     s.freeze_ms = ms;
 }
 
+/// Freezes Claw for a boss fight's introduction: unless he is frozen
+/// already, the attack ends, he stands and faces right; then the freeze
+/// lasts until the boss fight flag reaches 2. True when he was frozen now.
+pub fn enter_boss_freeze(c: &mut Ctx) -> bool {
+    let already = c.o.state == state::FREEZE && c.p.special.frozen;
+    if !already {
+        freeze_now(c, 0);
+    }
+    c.p.special.boss_freeze = true;
+    !already
+}
+
 /// Frozen (state 5009): the animation plays and nothing else happens until
-/// the freeze is released or its time runs out; then Claw stands.
+/// the freeze is released or its time runs out (or, for a boss fight's
+/// freeze, until the fight starts); then Claw stands.
 pub fn freeze_tick(c: &mut Ctx) {
     if c.p.special.freeze_pending {
         let ms = c.p.special.freeze_ms;
@@ -464,7 +489,8 @@ pub fn freeze_tick(c: &mut Ctx) {
         s.freeze_ms = (s.freeze_ms - DT).max(0);
         s.freeze_ms == 0
     };
-    if s.thaw || timed_out {
+    let fight_on = s.boss_freeze && c.out.boss().fight() == fight::ON;
+    if s.thaw || timed_out || fight_on {
         s.thaw = false;
         super::enter_stand(c);
     }
@@ -515,6 +541,52 @@ impl World<'_> {
         s.freeze_ms = ms_of(ms);
         s.thaw = false;
         true
+    }
+
+    /// Freezes Claw at once, during this call, for a boss fight's
+    /// introduction (see [`enter_boss_freeze`]): unless he is frozen
+    /// already, his attack ends, he stands facing right in the frozen
+    /// state, and he stays so until his own logic call sees the boss fight
+    /// flag at 2. A request of [`World::freeze_claw`] still waiting is
+    /// taken over. True when he was frozen now; false when there is no
+    /// Claw or he was frozen already.
+    pub fn freeze_claw_now(&mut self) -> bool {
+        let Some(id) = self.claw_id else {
+            return false;
+        };
+        let platforms = crate::sim::platforms(self.objects);
+        let mut held = Object::new(0, 0, 0, 0, Arc::from(""), LogicKind::Inert);
+        if !self.objects.swap_payload(id, &mut held) {
+            return false;
+        }
+        // The freeze reads no input and never moves the camera.
+        let mut camera_override = None;
+        let view = self.view;
+        let frozen = {
+            let mut c = Ctx {
+                o: &mut held,
+                p: &mut *self.claw,
+                id,
+                objects: &mut *self.objects,
+                level: self.level,
+                platforms: &platforms,
+                input: TickInput::default(),
+                t: self.tuning,
+                rng: &mut *self.rng,
+                sound_rng: &mut *self.sound_rng,
+                camera_override: &mut camera_override,
+                plane_centre: ((view.left + view.right) / 2, (view.top + view.bottom) / 2),
+                out: &mut *self.out,
+                tick: self.tick,
+                now_ms: self.now_ms,
+                pulse: self.pulse,
+                view,
+                level_logics: true,
+            };
+            enter_boss_freeze(&mut c)
+        };
+        self.objects.swap_payload(id, &mut held);
+        frozen
     }
 
     /// Releases a frozen Claw on his next logic call: he stands again.

@@ -8,7 +8,8 @@
 //! 4 for objects that are always active. Names are case-sensitive.
 //!
 //! Names are bound to their implementation through
-//! [`crate::logic::kind_for`]. Registered names no family runs stay inert
+//! [`crate::logic::runs`]. Registered names no family runs yet (claimed by
+//! no family, or by a family that is not built yet) stay inert
 //! placeholders: they exist, keep their activation class and can be drawn,
 //! and do nothing. Names that are not registered at all also become inert
 //! placeholders, in activation class 0, and are reported by the
@@ -64,7 +65,7 @@ impl Registry {
             let kind = match name {
                 PLAYER_LOGIC => LogicKind::Player,
                 CAMERA_LOGIC => LogicKind::Camera,
-                _ => logic::kind_for(name).unwrap_or(LogicKind::Inert),
+                _ => logic::runs(name).unwrap_or(LogicKind::Inert),
             };
             r.register(name, flags, kind);
         }
@@ -341,6 +342,11 @@ mod tests {
         );
         assert_eq!(r.get("Sign"), None);
         assert_eq!(r.get("Laser").unwrap().kind, LogicKind::Inert);
+        // Claimed by a family that is not built yet: still a placeholder.
+        for name in ["PunkRat", "TowerCannonLeft", "Raux", "BossStager"] {
+            let built = logic::runs(name).is_some();
+            assert_eq!(r.get(name).unwrap().kind == LogicKind::Inert, !built);
+        }
         assert_eq!(Registry::shared(), &r);
     }
 }

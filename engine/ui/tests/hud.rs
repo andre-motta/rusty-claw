@@ -136,6 +136,8 @@ fn state() -> HudState {
         dynamite_ammo: 3,
         powerup: None,
         timer_ms: None,
+        boss_meter: None,
+        boss_banner: None,
     }
 }
 

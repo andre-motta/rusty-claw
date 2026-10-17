@@ -20,16 +20,20 @@
 //!   objects with [`Object::hit_handler`] or [`Object::attack_handler`];
 //! - its own data type, held in [`Object::data`] through [`ObjectData`].
 //!
-//! [`kind_for`] maps a logic name to its family; the registry uses it, and
-//! names no family claims stay inert placeholders. [`tick`], [`on_hit`],
+//! [`kind_for`] maps a logic name to its family. A family whose logics are
+//! not written yet declares `BUILT = false` ([`built`]): the registry binds
+//! a name only to a built family ([`runs`]), so until then its names stay
+//! inert placeholders as unclaimed names do (drawn, no collision, and
+//! reported by the level load as not implemented). [`tick`], [`on_hit`],
 //! [`on_attack`] and the lift hooks dispatch a call to the object's
 //! family.
 //!
 //! [`World`] is the context of every call. Besides the objects and Claw
 //! it gives the level's number, Claw's attempt counter, the frame ranges
-//! and frame boxes of the image sets, the screen shake request and the
-//! sound-only random stream. A family adds helpers of its own in an
-//! `impl World` block in its own file.
+//! and frame boxes of the image sets, the screen shake request, the
+//! sound-only random stream and the boss fight state ([`world_boss`]). A
+//! family adds helpers of its own in an `impl World` block in its own
+//! file.
 //!
 //! Families that need another family's objects go through the spawn
 //! functions [`projectile::spawn`], [`effect::spawn`] and
@@ -48,6 +52,8 @@ use std::sync::Arc;
 use crate::object::{LogicKind, Object, ObjectId, flags};
 use crate::registry::{REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
 
+pub mod boss_stage;
+pub mod cannon;
 pub mod checkpoint;
 pub mod crates;
 pub mod decor;
@@ -60,8 +66,10 @@ pub mod projectile;
 pub mod sound;
 pub mod sound_object;
 pub mod world;
+pub mod world_boss;
 
 pub use world::{Outbox, World};
+pub use world_boss::BossState;
 
 /// The level logic families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -90,10 +98,19 @@ pub enum GameLogic {
     Pickup,
     /// Sound triggers and ambient sounds.
     SoundObject,
+    /// The punk rat, the rat that rides a small cannon.
+    PunkRat,
+    /// Cannons: the tower cannons and the punk rat's ground cannon.
+    Cannon,
+    /// Raux, the boss of the second level.
+    Raux,
+    /// The boss fight's stage: the warp into the boss's room, the
+    /// introduction and the boss's health bar.
+    BossStage,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 12] = [
+pub const ALL: [GameLogic; 16] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -106,6 +123,10 @@ pub const ALL: [GameLogic; 12] = [
     GameLogic::Keg,
     GameLogic::Pickup,
     GameLogic::SoundObject,
+    GameLogic::PunkRat,
+    GameLogic::Cannon,
+    GameLogic::Raux,
+    GameLogic::BossStage,
 ];
 
 /// A logic's own data, by family.
@@ -134,6 +155,14 @@ pub enum ObjectData {
     Pickup(pickup::PickupData),
     /// A sound object.
     Sound(sound_object::SoundData),
+    /// A punk rat.
+    PunkRat(enemy::punkrat::PunkRatData),
+    /// A cannon.
+    Cannon(cannon::CannonData),
+    /// Raux.
+    Raux(enemy::raux::RauxData),
+    /// A piece of a boss fight's stage.
+    BossStage(boss_stage::BossStageData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -152,6 +181,10 @@ macro_rules! dispatch {
             GameLogic::Keg => keg::$f($($arg),*),
             GameLogic::Pickup => pickup::$f($($arg),*),
             GameLogic::SoundObject => sound_object::$f($($arg),*),
+            GameLogic::PunkRat => enemy::punkrat::$f($($arg),*),
+            GameLogic::Cannon => cannon::$f($($arg),*),
+            GameLogic::Raux => enemy::raux::$f($($arg),*),
+            GameLogic::BossStage => boss_stage::$f($($arg),*),
         }
     };
 }
@@ -172,6 +205,10 @@ macro_rules! constant {
             GameLogic::Keg => keg::$c,
             GameLogic::Pickup => pickup::$c,
             GameLogic::SoundObject => sound_object::$c,
+            GameLogic::PunkRat => enemy::punkrat::$c,
+            GameLogic::Cannon => cannon::$c,
+            GameLogic::Raux => enemy::raux::$c,
+            GameLogic::BossStage => boss_stage::$c,
         }
     };
 }
@@ -181,18 +218,39 @@ pub fn names(g: GameLogic) -> &'static [&'static str] {
     constant!(g, NAMES)
 }
 
-/// The family that runs `name`, or `None` when no family does (the object
-/// stays an inert placeholder). Names are case-sensitive.
+/// The family that claims `name`, or `None` when no family does. Names
+/// are case-sensitive.
 pub fn kind_for(name: &str) -> Option<LogicKind> {
     ALL.iter()
         .find(|&&g| names(g).contains(&name))
         .map(|&g| LogicKind::Game(g))
 }
 
+/// Whether family `g` runs its logics yet. A family whose logics are not
+/// written yet says so with `BUILT = false` in its own file; its objects
+/// stay inert placeholders until it does.
+pub fn built(g: GameLogic) -> bool {
+    match g {
+        GameLogic::PunkRat => enemy::punkrat::BUILT,
+        GameLogic::Cannon => cannon::BUILT,
+        GameLogic::Raux => enemy::raux::BUILT,
+        GameLogic::BossStage => boss_stage::BUILT,
+        _ => true,
+    }
+}
+
+/// The family that runs `name` now: the one that claims it
+/// ([`kind_for`]), when that family is [`built`]; otherwise `None` (the
+/// object stays an inert placeholder). The registry binds names with it.
+pub fn runs(name: &str) -> Option<LogicKind> {
+    kind_for(name).filter(|k| matches!(k, LogicKind::Game(g) if built(*g)))
+}
+
 /// Every image set a family may switch an object to, sorted and without
 /// duplicates.
 pub fn runtime_image_sets() -> Vec<&'static str> {
     let mut sets: BTreeSet<&'static str> = enemy::IMAGE_SETS.iter().copied().collect();
+    sets.extend(enemy::human::IMAGE_SETS.iter().copied());
     for g in ALL {
         sets.extend(constant!(g, IMAGE_SETS).iter().copied());
     }
@@ -203,6 +261,7 @@ pub fn runtime_image_sets() -> Vec<&'static str> {
 /// duplicates.
 pub fn runtime_anim_prefixes() -> Vec<&'static str> {
     let mut prefixes: BTreeSet<&'static str> = enemy::ANIM_PREFIXES.iter().copied().collect();
+    prefixes.extend(enemy::human::ANIM_PREFIXES.iter().copied());
     for g in ALL {
         prefixes.extend(constant!(g, ANIM_PREFIXES).iter().copied());
     }
