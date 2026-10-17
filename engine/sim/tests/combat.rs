@@ -927,6 +927,16 @@ fn a_sword_shot_leaves_once_per_swing() {
         assert_eq!(claw(&sim).anim.key(), Some("CLAW_POWERUPSWIPE"));
         // The 1 ms frame is shorter than a tick and still sends the shot.
         assert!(played(&sim, sound), "{sound}");
+        // Unlike pistol and magic shots, it does not carry Claw's attack
+        // count.
+        let mut serials = Vec::new();
+        shot_serials(&sim, &mut serials);
+        assert_eq!(
+            serials.iter().map(|e| (e.1, e.2)).collect::<Vec<_>>(),
+            [(logic, 0)],
+            "{logic}"
+        );
+        assert_ne!(sim.claw().attack.serial, 0);
         wait(&mut sim, &mut log, 30);
         assert_eq!(log.len(), 1, "{logic}: one shot per swing");
         let s = log.spec(0);
@@ -1184,7 +1194,8 @@ fn a_thrown_keg_strikes_every_enemy_it_overlaps_in_that_pass_then_explodes_once(
         logic::thrown(w, id, 400, 0);
     });
     let mut strikes = Vec::new();
-    let mut blasts = 0;
+    // Each explosion object counts once, however many ticks it lasts.
+    let mut blasts = std::collections::BTreeSet::new();
     for t in 0..40 {
         sim.step(TickInput::default());
         for e in sim.collision_events() {
@@ -1197,14 +1208,15 @@ fn a_thrown_keg_strikes_every_enemy_it_overlaps_in_that_pass_then_explodes_once(
                 _ => {}
             }
         }
-        blasts += sim
-            .objects()
-            .all()
-            .filter(|(_, o)| {
-                matches!(&o.data, ObjectData::Effect(d)
-                    if matches!(d.request, Some(claw_sim::logic::effect::EffectKind::Explosion { source: Some(s), .. }) if s == id))
-            })
-            .count();
+        blasts.extend(
+            sim.objects()
+                .all()
+                .filter(|(_, o)| {
+                    matches!(&o.data, ObjectData::Effect(d)
+                        if matches!(d.request, Some(claw_sim::logic::effect::EffectKind::Explosion { source: Some(s), .. }) if s == id))
+                })
+                .map(|(e, _)| e),
+        );
         if sim.objects().get(id).is_none() {
             break;
         }
@@ -1216,7 +1228,7 @@ fn a_thrown_keg_strikes_every_enemy_it_overlaps_in_that_pass_then_explodes_once(
     assert_eq!(strikes[0].0, strikes[1].0, "the same pass: {strikes:?}");
     assert_ne!(strikes[0].1, strikes[1].1);
     assert!(sim.objects().get(id).is_none(), "the keg exploded");
-    assert!(blasts <= 1, "one explosion");
+    assert_eq!(blasts.len(), 1, "one explosion: {blasts:?}");
     for o in [a, b] {
         let h = sim.objects().get(o).map_or(0, |o| o.health);
         assert!(h <= 100 - keg::BLAST_DAMAGE, "struck: {h}");

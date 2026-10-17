@@ -1018,8 +1018,8 @@ fn shot_origin(c: &Ctx) -> (i32, i32) {
 }
 
 /// Launches `spec`; mirrors the shot's picture when Claw faces left and
-/// `mirror` asks for it. A shot that is `tagged` (pistol, magic and sword
-/// shots) carries Claw's attack count. Returns the shot.
+/// `mirror` asks for it. A shot that is `tagged` (pistol and magic shots,
+/// as in the original) carries Claw's attack count. Returns the shot.
 fn spawn_shot(c: &mut Ctx, spec: ProjectileSpec, mirror: bool, tagged: bool) -> Option<ObjectId> {
     let id = if tagged {
         let serial = c.p.attack.serial;
@@ -1114,7 +1114,9 @@ fn sword_shot(c: &mut Ctx) {
         owner: Some(c.id),
         ..ProjectileSpec::default()
     };
-    if spawn_shot(c, spec, true, true).is_some() {
+    // Unlike the pistol and magic shots, a sword shot does not carry
+    // Claw's attack count.
+    if spawn_shot(c, spec, true, false).is_some() {
         c.play(sound, SoundChannel::Effect);
     }
 }

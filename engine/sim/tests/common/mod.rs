@@ -251,7 +251,9 @@ pub fn builtin() -> BTreeMap<String, Tolerance> {
         ("jump_full_peak", t(145.0, 1.0)),
         ("jump_full_time_to_peak_ms", t(366.5, 18.0)),
         ("jump_full_airtime_ms", t(724.5, 18.0)),
-        ("climb_speed", p(239.56, 3.0)),
+        // The original at 60 frames per second climbs up at 220 px/s, as
+        // fast as down.
+        ("climb_speed", p(220.05, 3.0)),
         ("climb_down_speed", p(220.05, 3.0)),
         ("fall_terminal_vy", t(1042.13, 25.0)),
         ("ledge_drop_px", t(64.0, 1.0)),

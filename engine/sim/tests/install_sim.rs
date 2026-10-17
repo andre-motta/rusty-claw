@@ -401,9 +401,15 @@ fn explore() -> InputScript {
     ])
 }
 
+/// Level logics off, with the first playable version's climbing speed
+/// (up at about 240 px/s; the default now climbs up at 220 px/s, as the
+/// original does at 60 frames per second).
 fn without_logics() -> SimConfig {
+    let mut tuning = claw_sim::Tuning::default();
+    tuning.player.climb_up_speed = 203.0;
     SimConfig {
         level_logics: false,
+        tuning,
         ..SimConfig::default()
     }
 }
