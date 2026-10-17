@@ -396,6 +396,16 @@ impl Store {
     }
 }
 
+/// Reads the route at `path`: its text and its input. A route played with
+/// a play-test aid on is refused, with a message that says so: a
+/// comparison with reference traces takes plain play only.
+pub fn read_route(path: &Path) -> Result<(String, InputScript), String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let script = InputScript::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok((text, script))
+}
+
 /// The game's configuration for replaying a route of `run`: the default
 /// view, the run's tuning, the random state at time zero as the seed (the
 /// level load draws nothing, so the first tick starts from it), the
@@ -611,10 +621,7 @@ impl Store {
         tol: &Tolerances,
         driver: Driver,
     ) -> Result<ClockResult, String> {
-        let route_text = std::fs::read_to_string(&self.route)
-            .map_err(|e| format!("reading {}: {e}", self.route.display()))?;
-        let script = InputScript::parse(&route_text)
-            .map_err(|e| format!("{}: {e}", self.route.display()))?;
+        let (route_text, script) = read_route(&self.route)?;
         if let Some(level) = script.header.level
             && level != self.level
         {
@@ -951,6 +958,23 @@ pub fn summary_line(store: &Store, result: &ClockResult) -> String {
 mod tests {
     use super::*;
     use claw_sim::trace::ColumnSummary;
+
+    #[test]
+    fn a_route_played_with_an_aid_is_never_compared() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("route.csv");
+        let plain = "# level 1\ntick,held_mask,pressed_mask\n0,0,0\n1,0,0\n";
+        std::fs::write(&path, plain).unwrap();
+        let (text, script) = read_route(&path).unwrap();
+        assert_eq!((text.as_str(), script.ticks.len()), (plain, 2));
+        for aid in ["invincible", "infinite_lives"] {
+            std::fs::write(&path, format!("# level 1\n# {aid} = on\n0,0,0\n")).unwrap();
+            let e = read_route(&path).unwrap_err();
+            assert!(e.contains("play-test aid"), "{e}");
+            assert!(e.contains(&format!("{aid} = on")), "{e}");
+            assert!(e.contains("route.csv"), "{e}");
+        }
+    }
 
     const META: &str = r#"
 # A store.

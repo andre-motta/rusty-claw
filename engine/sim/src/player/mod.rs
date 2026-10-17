@@ -48,7 +48,7 @@ use crate::object::{Object, ObjectId, Rect, draw_flags, flags, types};
 use crate::physics::{self, Collider, Platform, opt, ptype};
 use crate::rng::Rng;
 use crate::tiles::{CLIMB, DEATH};
-use crate::tuning::{TICK_MS, Tuning};
+use crate::tuning::{PlayAids, TICK_MS, Tuning};
 
 pub mod attack;
 pub mod death;
@@ -340,6 +340,8 @@ pub struct Ctx<'a> {
     /// first playable version's behaviour where a level logic would take
     /// over (a death tile is counted, not deadly).
     pub level_logics: bool,
+    /// The play-test aids ([`crate::sim::SimConfig::aids`]).
+    pub aids: PlayAids,
 }
 
 impl std::fmt::Debug for Ctx<'_> {

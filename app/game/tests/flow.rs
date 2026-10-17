@@ -27,7 +27,7 @@ use claw_game::settings::{LevelChoice, Settings};
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::checkpoint::{MESSAGE_NOT_SAVED, MESSAGE_SAVED};
 use claw_sim::trace::TraceRow;
-use claw_sim::tuning::FuseClock;
+use claw_sim::tuning::{FuseClock, PlayAids};
 use claw_sim::{Carry, SavePos, Sim, SimConfig, SimLevel, StartState, TileMap};
 use claw_ui::menu::command::{CommandCatalogue, GameplaySetting, MenuCommand, MenuKind, Page};
 use claw_ui::menu::draw::FontArt;
@@ -1384,6 +1384,8 @@ fn the_gameplay_page_switches_the_mid_air_hit_fix_and_persists_it() {
             MenuCommand::Gameplay(GameplaySetting::MidAirHitFix),
             MenuCommand::Gameplay(GameplaySetting::PauseInput),
             MenuCommand::Gameplay(GameplaySetting::FuseClock),
+            MenuCommand::Gameplay(GameplaySetting::Invincible),
+            MenuCommand::Gameplay(GameplaySetting::InfiniteLives),
             MenuCommand::Back
         ]
     );
@@ -1503,6 +1505,92 @@ fn the_gameplay_page_switches_the_pause_and_fuse_behaviour_and_persists_it() {
         saved.lines().any(|l| l == "fuse_clock = original"),
         "{saved}"
     );
+}
+
+#[test]
+fn the_gameplay_page_switches_the_play_test_aids_and_persists_them() {
+    let mut r = Rig::new(Start::Title, |_| {});
+    r.reach_main_menu();
+    assert_eq!(r.flow.settings().aids, PlayAids::NONE, "off by default");
+    r.input(MenuInput::Down);
+    r.choose(); // options
+    let entries = main_entries(&r);
+    for _ in 0..entries.len() - 2 {
+        r.input(MenuInput::Down);
+    }
+    r.choose(); // gameplay
+    assert_eq!(r.page(), Page::Gameplay);
+    let text = |r: &Rig| selected_text(r.flow.main_menu().unwrap());
+    for _ in 0..3 {
+        r.input(MenuInput::Down);
+    }
+    assert_eq!(text(&r).as_deref(), Some("INVINCIBLE OFF"));
+    r.choose();
+    assert!(r.flow.settings().aids.invincible);
+    assert_eq!(text(&r).as_deref(), Some("INVINCIBLE ON"));
+    r.input(MenuInput::Down);
+    assert_eq!(text(&r).as_deref(), Some("INFINITE LIVES OFF"));
+    r.choose();
+    assert_eq!(text(&r).as_deref(), Some("INFINITE LIVES ON"));
+    let both = PlayAids {
+        invincible: true,
+        infinite_lives: true,
+    };
+    assert_eq!(r.flow.settings().aids, both);
+    assert_eq!(
+        r.flow.settings().sim_config((640, 480)).aids,
+        both,
+        "new games play with them"
+    );
+    let saved = fs::read_to_string(&r.config).unwrap();
+    assert!(saved.lines().any(|l| l == "invincible = on"), "{saved}");
+    assert!(saved.lines().any(|l| l == "infinite_lives = on"), "{saved}");
+    let args = |config: &Path, extra: &[&str]| {
+        let mut v = vec![
+            "rusty-claw",
+            "--config",
+            config.to_str().unwrap(),
+            "--install",
+            "/i",
+        ];
+        v.extend_from_slice(extra);
+        <claw_game::settings::Args as clap::Parser>::try_parse_from(v).unwrap()
+    };
+    assert_eq!(
+        Settings::from_args(&args(&r.config, &[])).unwrap().aids,
+        both
+    );
+    // Choosing them again turns them off and saves that.
+    r.choose();
+    r.input(MenuInput::Up);
+    r.choose();
+    assert_eq!(r.flow.settings().aids, PlayAids::NONE);
+    let saved = fs::read_to_string(&r.config).unwrap();
+    assert!(saved.lines().any(|l| l == "invincible = off"), "{saved}");
+    assert!(
+        saved.lines().any(|l| l == "infinite_lives = off"),
+        "{saved}"
+    );
+    // A flag on the command line turns an aid on for that run only: the
+    // page shows it, and a change of another option does not save it.
+    let run = Settings::from_args(&args(&r.config, &["--invincible"])).unwrap();
+    assert!(run.aids.invincible && !run.aids.infinite_lives);
+    assert!(
+        run.write_back_values(&["invincible"]).is_empty(),
+        "not saved"
+    );
+    assert_eq!(
+        claw_game::flow::gameplay_text(GameplaySetting::Invincible, &run),
+        "INVINCIBLE ON"
+    );
+    let mut changed = run.clone();
+    changed.fuse_clock = FuseClock::Frozen;
+    assert_eq!(
+        changed.write_back_values(&["invincible", "fuse_clock"]),
+        [("fuse_clock".to_string(), "frozen".to_string())]
+    );
+    let f = Flow::new(run, None, None, FontArt::uniform(8, 10), Start::Title);
+    assert!(f.settings().aids.invincible, "the run plays with it");
 }
 
 #[test]

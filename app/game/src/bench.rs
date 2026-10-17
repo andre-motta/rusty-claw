@@ -1070,7 +1070,8 @@ impl RouteFile {
 
     /// The route named `name` with the text `text`.
     pub fn parse(name: &str, text: String) -> Result<RouteFile> {
-        let script = InputScript::parse(&text).with_context(|| format!("route {name}"))?;
+        let script =
+            InputScript::parse_with_aids(&text).with_context(|| format!("route {name}"))?;
         if script.ticks.is_empty() {
             anyhow::bail!("route {name} has no rows");
         }
@@ -1082,9 +1083,9 @@ impl RouteFile {
     }
 
     /// Makes `settings` play the route as a replay of it plays: the level,
-    /// tuning and seed its header names, and the mid-air hit jump fix and
-    /// the pause and fuse switches its comment lines name, each unless the
-    /// command line set it.
+    /// tuning, seed and play-test aids its header names, and the mid-air
+    /// hit jump fix and the pause and fuse switches its comment lines name,
+    /// each unless the command line set it.
     pub fn apply(&self, settings: &mut Settings) {
         let header = &self.script.header;
         if let Some(level) = header.level

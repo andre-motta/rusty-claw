@@ -18,6 +18,8 @@
 //! mid_air_hit_fix = off     # on: no second jump after a hit in mid-air
 //! pause_input = original    # release_all: keys released on pause and menus
 //! fuse_clock = original     # frozen: help time does not burn the fuse
+//! invincible = off          # play-test aid: Claw takes no damage
+//! infinite_lives = off      # play-test aid: no life is ever lost
 //! vsync = true
 //! fps_cap = 300             # with vsync off, 1 to 10000
 //! interpolation = true
@@ -83,6 +85,19 @@
 //! unless the command line sets them, and a replay follows the lines its
 //! recording carries (see [`crate::session::script_switches`]).
 //!
+//! Two play-test aids, for trying out the hard parts of a level, are off
+//! by default and set on the Gameplay page or in the config file
+//! (`invincible`, `infinite_lives`): with invincibility Claw takes no
+//! damage (death tiles and pits still end his life), with infinite lives a
+//! death never lowers the lives count. `--invincible` and
+//! `--infinite-lives` turn one on for that run only; it is not written back
+//! unless it is changed on the Gameplay page. Like the behaviour switches
+//! they apply to games started after they change, replays and benchmarks
+//! play without them unless the command line turns them on, and a replay
+//! plays with the aids its recording names (`# invincible = on`,
+//! `# infinite_lives = on`, see [`claw_sim::input::ScriptHeader::aids`]).
+//! A run with an aid on says nothing about how hard a level is.
+//!
 //! The front layer switch (`front_layer`, also in the Display menu) only
 //! changes what is drawn: off, the level's front plane is left out.
 
@@ -101,7 +116,7 @@ use claw_frame::{
     AspectPolicy, DEFAULT_FPS_CAP, DEFAULT_LOGIC_HEIGHT, DEFAULT_LOGIC_WIDTH, ScaleMode, ViewConfig,
 };
 use claw_sim::input::ScriptTuning;
-use claw_sim::tuning::FuseClock;
+use claw_sim::tuning::{FuseClock, PlayAids};
 use claw_sim::{ScriptHeader, SimConfig};
 
 use crate::keymap::{Action, Keymap, PadMap};
@@ -252,6 +267,15 @@ pub struct Args {
     /// original (default) or frozen.
     #[arg(long, value_name = "original|frozen", value_parser = parse_fuse_clock)]
     pub fuse_clock: Option<FuseClock>,
+    /// Play-test aid: Claw takes no damage from enemies, shots, hazards,
+    /// explosions or bosses (death tiles and pits still end his life). For
+    /// this run only; not saved.
+    #[arg(long)]
+    pub invincible: bool,
+    /// Play-test aid: losing a life never lowers the lives count, so play
+    /// goes on from the checkpoint. For this run only; not saved.
+    #[arg(long)]
+    pub infinite_lives: bool,
     /// Wait for the display's refresh: on or off.
     #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
     pub vsync: Option<bool>,
@@ -413,6 +437,8 @@ pub struct Settings {
     pub pause_input: PauseInput,
     /// Whether the time the help screen was up burns the dynamite fuse.
     pub fuse_clock: FuseClock,
+    /// The play-test aids, both off by default.
+    pub aids: PlayAids,
     /// Wait for the display refresh.
     pub vsync: bool,
     /// Frame-rate cap when the display refresh does not pace drawing, and
@@ -507,6 +533,7 @@ impl Settings {
             mid_air_hit_fix: false,
             pause_input: PauseInput::Original,
             fuse_clock: FuseClock::Original,
+            aids: PlayAids::NONE,
             vsync: true,
             fps_cap: Some(DEFAULT_FPS_CAP),
             interpolation: true,
@@ -662,9 +689,12 @@ impl Settings {
         }
         // The pause and screen switches the same way; a replay follows the
         // lines its recording carries.
+        // The aids the same way; a replay plays with those its recording
+        // names (see `Settings::follow_header`).
         if s.mode != Mode::Play {
             s.pause_input = PauseInput::Original;
             s.fuse_clock = FuseClock::Original;
+            s.aids = PlayAids::NONE;
         }
         if let Mode::Replay { script, .. } = &s.mode
             && let Ok(text) = fs::read_to_string(script)
@@ -676,6 +706,15 @@ impl Settings {
             if let Some(f) = recorded.fuse_clock {
                 s.fuse_clock = f;
             }
+        }
+        // An aid on the command line is on for this run only.
+        if args.invincible {
+            s.aids.invincible = true;
+            s.from_command_line.insert(PlayAids::INVINCIBLE);
+        }
+        if args.infinite_lives {
+            s.aids.infinite_lives = true;
+            s.from_command_line.insert(PlayAids::INFINITE_LIVES);
         }
         if let Some(p) = args.pause_input {
             s.pause_input = p;
@@ -699,8 +738,10 @@ impl Settings {
         }
     }
 
-    /// Takes the movement tuning and the seed a replayed script's header
-    /// names; keys the header does not have leave the settings as they are.
+    /// Takes the movement tuning, the seed and the play-test aids a
+    /// replayed script's header names; keys the header does not have leave
+    /// the settings as they are. An aid the header names is turned on (one
+    /// the command line turned on stays on).
     pub fn follow_header(&mut self, header: &ScriptHeader) {
         if header.tuning.is_some() {
             self.tuning = header.tuning;
@@ -708,12 +749,14 @@ impl Settings {
         if header.seed.is_some() {
             self.seed = header.seed;
         }
+        self.aids = self.aids.union(header.aids);
     }
 
     /// Plays level recording `rec` as it was recorded: its level
     /// (`# level N`) and its start point (`# start_at`), the mid-air hit
     /// jump fix and the pause and screen switches its lines name unless the
-    /// command line set them, and the tuning and seed its header names. Its
+    /// command line set them, and the tuning, seed and play-test aids its
+    /// header names. Its
     /// carried progress and save point are the replay's to apply (see
     /// [`crate::session::LevelRecording::start_sim`]).
     ///
@@ -805,6 +848,8 @@ impl Settings {
             "mid_air_hit_fix" => on_off(self.mid_air_hit_fix),
             "pause_input" => self.pause_input.name().to_string(),
             "fuse_clock" => self.fuse_clock.name().to_string(),
+            PlayAids::INVINCIBLE => on_off(self.aids.invincible),
+            PlayAids::INFINITE_LIVES => on_off(self.aids.infinite_lives),
             "vsync" => self.vsync.to_string(),
             "fps_cap" => self.fps_cap?.to_string(),
             "interpolation" => self.interpolation.to_string(),
@@ -885,8 +930,8 @@ impl Settings {
     ///
     /// The movement tuning and the seed follow [`Settings::tuning`] and
     /// [`Settings::seed`], the mid-air hit jump fix follows
-    /// [`Settings::mid_air_hit_fix`] and the fuse clock
-    /// [`Settings::fuse_clock`].
+    /// [`Settings::mid_air_hit_fix`], the fuse clock
+    /// [`Settings::fuse_clock`] and the play-test aids [`Settings::aids`].
     pub fn sim_config(&self, size: (u32, u32)) -> SimConfig {
         let mut cfg = self.view_sim_config(size);
         if let Some(t) = self.tuning {
@@ -897,6 +942,7 @@ impl Settings {
         }
         cfg.tuning.behaviour.fix_double_jump = self.mid_air_hit_fix;
         cfg.fuse_clock = self.fuse_clock;
+        cfg.aids = self.aids;
         cfg
     }
 
@@ -1012,7 +1058,7 @@ pub struct ConfigFile {
 
 /// Keys a config file may hold, besides the `key_<action>` and
 /// `pad_<action>` bindings.
-pub const CONFIG_KEYS: [&str; 25] = [
+pub const CONFIG_KEYS: [&str; 27] = [
     "install",
     "level",
     "custom",
@@ -1024,6 +1070,8 @@ pub const CONFIG_KEYS: [&str; 25] = [
     "mid_air_hit_fix",
     "pause_input",
     "fuse_clock",
+    PlayAids::INVINCIBLE,
+    PlayAids::INFINITE_LIVES,
     "vsync",
     "fps_cap",
     "interpolation",
@@ -1129,6 +1177,8 @@ impl ConfigFile {
                 "mid_air_hit_fix" => s.mid_air_hit_fix = flag(key, v)?,
                 "pause_input" => s.pause_input = parse_pause_input(v).map_err(|e| err(key, e))?,
                 "fuse_clock" => s.fuse_clock = parse_fuse_clock(v).map_err(|e| err(key, e))?,
+                PlayAids::INVINCIBLE => s.aids.invincible = flag(key, v)?,
+                PlayAids::INFINITE_LIVES => s.aids.infinite_lives = flag(key, v)?,
                 "vsync" => s.vsync = flag(key, v)?,
                 "fps_cap" => {
                     let n = v

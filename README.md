@@ -189,6 +189,8 @@ aspect = "fill"            # fill, centered or 4:3
 scale = "fit"              # fit or integer
 widen_activation = false
 mid_air_hit_fix = off      # on: no second jump after a hit in mid-air
+invincible = off           # play-test aid: Claw takes no damage
+infinite_lives = off       # play-test aid: a death never costs a life
 vsync = true
 fps_cap = 300              # with vsync off; 0 for no cap
 interpolation = true
@@ -216,6 +218,32 @@ turns that off: Claw falls after such a hit. Turn it on with
 `mid_air_hit_fix = on`, `--mid-air-hit-fix on` or the gameplay options
 (Options, then Gameplay); it applies to the games started after the
 change.
+
+### Play-test aids
+
+Two aids help with trying out the hard parts of a level. Both are off by
+default:
+
+- `--invincible`: Claw takes no damage from enemies, shots, hazards,
+  explosions or bosses. He never goes into the hurt reaction and is never
+  knocked back, so he moves as he does in normal play. Death tiles and pits
+  still end his life.
+- `--infinite-lives`: losing a life never lowers the lives count, so play
+  goes on from the last checkpoint.
+
+The same two switches are on the Gameplay page (Options, then Gameplay) and
+in the config file (`invincible = on`, `infinite_lives = on`). Like the
+other gameplay switches they apply from the next level started. A flag on
+the command line turns its aid on for that run only and is not saved. A
+small marker in the bottom-left corner of the screen names each aid that
+is on.
+
+A run with an aid on says nothing about how hard a level is. A recording
+made with one says so in its header (`# invincible = on`,
+`# infinite_lives = on`), and `--replay` plays it with that aid. Routes, the
+search bot and the comparisons with the original (`make compare`,
+`claw-replay --compare`) refuse such a recording, with a message that says
+why.
 
 Saved games are kept in `~/.local/share/rusty-claw/saves/default/` (or
 under `$XDG_DATA_HOME`). Touching one of a level's two save points saves
@@ -271,7 +299,10 @@ whether the mid-air hit jump fix was on, and the replay follows it. Replays
 and benchmarks never take that option from the config file: without such a
 line, or for a benchmark, it is off unless `--mid-air-hit-fix on` is given.
 Recordings made before this option existed were played with the fix on and
-have no such line, so replay them with `--mid-air-hit-fix on`.
+have no such line, so replay them with `--mid-air-hit-fix on`. A recording
+made with a play-test aid on names it in its header, and the replay plays
+with it (see [Play-test aids](#play-test-aids)); `claw-replay` accepts the
+same `--invincible` and `--infinite-lives` flags.
 
 ```sh
 # play and record, then watch the recording

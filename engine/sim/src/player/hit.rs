@@ -22,6 +22,12 @@
 //! attack, starts the hit reaction and a hit burst flashes where he was
 //! struck.
 //!
+//! With the invincibility aid on ([`crate::tuning::PlayAids::invincible`])
+//! none of this happens: an enemy's touch, a shot, a hazard or an
+//! explosion that reaches Claw is ignored as if he were not there (no
+//! sound, no damage, no hit reaction, no window; a shot flies on through
+//! him). Pickups work as always, and death tiles still kill him.
+//!
 //! # Pickups
 //!
 //! Claw reads a pickup through [`PickupFields`]: for a pickup the pickup
@@ -216,6 +222,13 @@ pub fn claw_hit(c: &mut Ctx, attacker: ObjectId) {
     let Some(a) = c.objects.get(attacker) else {
         return;
     };
+    let hurts = matches!(
+        a.type_flags,
+        types::ENEMY | types::THROWN | types::ENEMY_SHOT | types::LEVEL_SHOT
+    );
+    if hurts && c.aids.invincible {
+        return;
+    }
     match a.type_flags {
         types::ENEMY => enemy_contact(c, attacker),
         types::THROWN | types::ENEMY_SHOT | types::LEVEL_SHOT => shot(c, attacker),
@@ -301,9 +314,10 @@ pub fn take_damage(c: &mut Ctx, damage: i32) {
 /// at 0 or below kills him. Otherwise, unless he is already reeling, he
 /// drops what he carries, stops his attack, starts the hit reaction away
 /// from `attacker` and a hit burst shows where he was struck. Negative
-/// damage does nothing.
+/// damage does nothing, and so does any damage with the invincibility aid
+/// on.
 pub fn take_damage_from(c: &mut Ctx, damage: i32, attacker: Option<ObjectId>) {
-    if damage < 0 {
+    if damage < 0 || c.aids.invincible {
         return;
     }
     c.p.stats.health -= damage;

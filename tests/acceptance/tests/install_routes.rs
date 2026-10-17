@@ -224,9 +224,10 @@ fn install_routes_win_the_same_way_every_time() {
     for path in files {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let text = std::fs::read_to_string(&path).expect("the route reads");
+        // A route is plain play: one played with a play-test aid is refused.
+        let script = InputScript::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
         let h = header(&text);
         let rec = LevelRecording::parse(&text).expect("the route parses as a recording");
-        let script = InputScript::parse(&text).expect("the route parses");
         assert!(!script.ticks.is_empty(), "{name}: empty route");
         assert_eq!(
             too_close(&script),
@@ -562,6 +563,10 @@ fn install_routes_play_one_game_through_the_booty_screen() {
     for (first, later, n) in games {
         let read = |p: &Path| {
             let text = std::fs::read_to_string(p).expect("the route reads");
+            // Plain play only: a route played with a play-test aid is refused.
+            if let Err(e) = InputScript::parse(&text) {
+                panic!("{}: {e}", p.display());
+            }
             (
                 LevelRecording::parse(&text).expect("the route parses"),
                 header(&text),

@@ -25,7 +25,12 @@
 //! ([`behaviour_comment`]), then how keys count across a pause and whether
 //! help screen time reaches the dynamite fuse ([`switch_comments`]). A
 //! replay reads them back ([`script_behaviour`], [`script_switches`]) so
-//! the recording plays the same.
+//! the recording plays the same. A level played with a play-test aid on
+//! also says so in its header (`# invincible = on`,
+//! `# infinite_lives = on`; see [`claw_sim::input::ScriptHeader::aids`]),
+//! and its replay plays with the aid; a recording made with both aids off
+//! has no such line. Routes, the bot and the comparisons with reference
+//! traces refuse a recording with an aid on.
 //!
 //! # Pauses, menus and commands
 //!
@@ -1614,7 +1619,7 @@ impl LevelRecording {
     /// Reads a recording's text.
     pub fn parse(text: &str) -> Result<LevelRecording> {
         Ok(LevelRecording {
-            script: InputScript::parse(text).context("the recording's input")?,
+            script: InputScript::parse_with_aids(text).context("the recording's input")?,
             fix: script_behaviour(text),
             switches: script_switches(text),
             start: script_start(text)?,
@@ -1642,8 +1647,9 @@ impl LevelRecording {
 
     /// `cfg` as the recording was played: its movement tuning and seed
     /// when its header names them, the mid-air hit jump fix (off when it
-    /// does not say) and the fuse clock (the original's when it does not
-    /// say).
+    /// does not say), the fuse clock (the original's when it does not
+    /// say) and the play-test aids its header names on (with those of
+    /// `cfg`).
     pub fn sim_config(&self, mut cfg: SimConfig) -> SimConfig {
         if let Some(t) = self.script.header.tuning {
             cfg.tuning = t.tuning();
@@ -1653,6 +1659,7 @@ impl LevelRecording {
         }
         cfg.tuning.behaviour.fix_double_jump = self.fix.unwrap_or(false);
         cfg.fuse_clock = self.switches.fuse_clock.unwrap_or(FuseClock::Original);
+        cfg.aids = cfg.aids.union(self.script.header.aids);
         cfg
     }
 

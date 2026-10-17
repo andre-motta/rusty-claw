@@ -67,10 +67,11 @@
 //! mid-air hit jump fix (off by default, as in the original), how keys
 //! count across a pause or a screen (`pause_input`) and whether help
 //! screen time reaches a lit dynamite fuse (`fuse_clock`), both at the
-//! original's behaviour by default (see [`crate::settings`]). Choosing an
-//! entry moves it to its next value. A change there is saved at once and
-//! applies to the next game or level started; the level in play keeps the
-//! behaviour it started with.
+//! original's behaviour by default (see [`crate::settings`]), and the two
+//! play-test aids, invincibility and infinite lives, both off by default.
+//! Choosing an entry moves it to its next value. A change there is saved at
+//! once and applies to the next game or level started; the level in play
+//! keeps the behaviour it started with.
 //!
 //! Screens fade out over [`FADE_MS`] before the next one, which fades in
 //! over the same time (with the menu's roll-up and unroll sounds).
@@ -79,7 +80,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use claw_frame::{AudioCue, GameEvent, SoundChannel, SoundCue};
 use claw_sim::logic::checkpoint::MESSAGE_SAVED;
-use claw_sim::tuning::FuseClock;
+use claw_sim::tuning::{FuseClock, PlayAids};
 use claw_sim::{Sim, StartState};
 use claw_ui::menu::command::{
     GameplaySetting, MenuCommand, MenuKind, Page, Slider, Toggle, Unavailable, VideoSetting,
@@ -149,10 +150,12 @@ pub const VIDEO_SETTINGS: [VideoSetting; 8] = [
 ];
 
 /// The Gameplay page's settings in order.
-pub const GAMEPLAY_SETTINGS: [GameplaySetting; 3] = [
+pub const GAMEPLAY_SETTINGS: [GameplaySetting; 5] = [
     GameplaySetting::MidAirHitFix,
     GameplaySetting::PauseInput,
     GameplaySetting::FuseClock,
+    GameplaySetting::Invincible,
+    GameplaySetting::InfiniteLives,
 ];
 
 /// What shows.
@@ -430,6 +433,10 @@ pub fn gameplay_text(g: GameplaySetting, settings: &Settings) -> String {
         }
         GameplaySetting::FuseClock => {
             format!("FUSE CLOCK {}", name(settings.fuse_clock.name()))
+        }
+        GameplaySetting::Invincible => format!("INVINCIBLE {}", on(settings.aids.invincible)),
+        GameplaySetting::InfiniteLives => {
+            format!("INFINITE LIVES {}", on(settings.aids.infinite_lives))
         }
     }
 }
@@ -1440,6 +1447,16 @@ impl Flow {
             GameplaySetting::FuseClock => {
                 self.settings.fuse_clock = next_of(&FuseClock::ALL, self.settings.fuse_clock);
                 "fuse_clock"
+            }
+            GameplaySetting::Invincible => {
+                let aids = &mut self.settings.aids;
+                aids.invincible = !aids.invincible;
+                PlayAids::INVINCIBLE
+            }
+            GameplaySetting::InfiniteLives => {
+                let aids = &mut self.settings.aids;
+                aids.infinite_lives = !aids.infinite_lives;
+                PlayAids::INFINITE_LIVES
             }
         };
         self.persist(&[key]);

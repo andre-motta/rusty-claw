@@ -281,3 +281,91 @@ fn spacing_warnings_find_changes_too_close_together() {
         vec![SpacingWarning { tick: 1, gap: 1 }]
     );
 }
+
+// ------------------------------------------------------- play-test aids
+
+#[test]
+fn the_aids_round_trip_through_the_header() {
+    use claw_sim::tuning::PlayAids;
+    let text = "# level 2\n# invincible = on\n# infinite_lives=on\n\
+                tick,held_mask,pressed_mask\n0,0,0\n1,0x1,0x1\n";
+    let s = InputScript::parse_with_aids(text).unwrap();
+    assert_eq!(
+        s.header.aids,
+        PlayAids {
+            invincible: true,
+            infinite_lives: true
+        }
+    );
+    assert_eq!(s.header.level, Some(2));
+    let csv = s.to_csv();
+    assert!(csv.contains("# invincible = on\n"), "{csv}");
+    assert!(csv.contains("# infinite_lives = on\n"), "{csv}");
+    assert_eq!(InputScript::parse_with_aids(&csv).unwrap(), s);
+    // One aid alone, and an aid said to be off.
+    let one =
+        InputScript::parse_with_aids("# infinite_lives on\n# invincible = off\n0,0,0\n").unwrap();
+    assert_eq!(
+        one.header.aids,
+        PlayAids {
+            invincible: false,
+            infinite_lives: true
+        }
+    );
+    let csv = one.to_csv();
+    assert!(!csv.contains("invincible"), "only aids that are on: {csv}");
+    assert_eq!(InputScript::parse_with_aids(&csv).unwrap(), one);
+}
+
+#[test]
+fn a_script_without_aids_writes_no_aid_line() {
+    let s = parse("# level 1\n# seed 7\ntick,held_mask,pressed_mask\n0,0,0\n");
+    let csv = s.to_csv();
+    assert!(!csv.contains("invincible") && !csv.contains("infinite_lives"));
+    assert_eq!(
+        csv,
+        "# level 1\n# seed 7\ntick,held_mask,pressed_mask\n0,0x0,0x0\n"
+    );
+    // An aid said to be off is plain play.
+    let off = parse("# invincible = off\n# infinite_lives = off\n0,0,0\n");
+    assert!(!off.header.aids.any());
+    assert_eq!(off, InputScript::parse_with_aids("0,0,0\n").unwrap());
+}
+
+#[test]
+fn routes_refuse_a_script_played_with_an_aid() {
+    for (text, line, name) in [
+        (
+            "# level 1\n# invincible = on\n0,0,0\n",
+            2,
+            "invincible = on",
+        ),
+        ("0,0,0\n# infinite_lives = on\n", 2, "infinite_lives = on"),
+        (
+            "# invincible = on\n# infinite_lives = on\n0,0,0\n",
+            1,
+            "invincible = on, infinite_lives = on",
+        ),
+    ] {
+        let (l, message) = parse_err(text);
+        assert_eq!(l, line, "{text}");
+        assert!(message.contains("play-test aid"), "{message}");
+        assert!(message.contains(name), "{message}");
+        assert!(
+            InputScript::parse_with_aids(text).is_ok(),
+            "a replay reads it: {text}"
+        );
+    }
+}
+
+#[test]
+fn aid_keys_need_on_or_off_once() {
+    for text in [
+        "# invincible\n0,0,0\n",
+        "# invincible = yes\n0,0,0\n",
+        "# infinite_lives = on off\n0,0,0\n",
+        "# invincible = off\n# invincible = on\n0,0,0\n",
+    ] {
+        assert!(InputScript::parse_with_aids(text).is_err(), "{text}");
+    }
+}
