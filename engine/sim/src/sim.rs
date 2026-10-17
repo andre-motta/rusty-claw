@@ -728,12 +728,12 @@ impl Sim {
     /// Runs the respawn [`Sim::respawn_pending`] waits for now, between two
     /// ticks, as the next [`Sim::step`] would before its tick: Claw is back
     /// at the checkpoint, the camera is centred on him, and two update
-    /// passes run around the activation's update, all without game time. The sound cues and
-    /// events it makes become [`Sim::last_audio`] and [`Sim::last_events`]
-    /// (and so the snapshot's), and the screen transition is the opening
-    /// circle until the next tick. A presentation calls it when its
-    /// closing circle is over, to draw the opening circle on the respawned
-    /// Claw. False when no respawn was pending.
+    /// passes run around the activation's update, all without game time.
+    /// The sound cues and events it makes become [`Sim::last_audio`] and
+    /// [`Sim::last_events`] (and so the snapshot's), and the screen
+    /// transition is the opening circle until the next tick. A presentation
+    /// calls it when its closing circle is over, to draw the opening circle
+    /// on the respawned Claw. False when no respawn was pending.
     pub fn respawn_now(&mut self) -> bool {
         if !self.claw.respawn_pending {
             return false;
