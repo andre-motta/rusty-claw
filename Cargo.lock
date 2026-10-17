@@ -398,6 +398,7 @@ name = "claw-acceptance"
 version = "0.1.0"
 dependencies = [
  "claw-assets",
+ "claw-bot",
  "claw-frame",
  "claw-game",
  "claw-render",

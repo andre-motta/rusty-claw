@@ -24,7 +24,8 @@
 //! `--from-route` starts from the game after the first T ticks of another
 //! route, which lead the new one. When the prefix changed its held mask
 //! less than two ticks before T, the new part first keeps that mask for
-//! the ticks missing.
+//! the ticks missing. The other route's `# level`, `# tuning` and
+//! `# seed` lines, when it has them, must match the arguments.
 //!
 //! No route is written whose held mask changes twice less than two ticks
 //! apart.
@@ -40,7 +41,7 @@ use claw_assets::{Install, LevelData, LevelSource};
 use claw_bot::actions::MIN_SPACING;
 use claw_bot::route::{self, Header, TuningName};
 use claw_bot::{Goal, SearchConfig, search_report};
-use claw_sim::{InputScript, Sim, SimLevel};
+use claw_sim::{InputScript, ScriptHeader, Sim, SimLevel};
 
 const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S] [--hints FILE] \
@@ -146,6 +147,37 @@ fn read_hints(path: &Path) -> Result<Vec<(i32, i32)>, String> {
     Ok(out)
 }
 
+/// Checks that the header keys a continued route states (level, tuning and
+/// seed) are the ones the search runs with: a prefix played in another
+/// game would lead a route that does not play as found.
+fn prefix_matches(
+    header: &ScriptHeader,
+    level: u32,
+    tuning: TuningName,
+    seed: u32,
+) -> Result<(), String> {
+    if let Some(l) = header.level
+        && l != level
+    {
+        return Err(format!("the route is for level {l}, not level {level}"));
+    }
+    if let Some(t) = header.tuning
+        && t.name() != tuning.name()
+    {
+        return Err(format!(
+            "the route is for tuning {}, not tuning {}",
+            t.name(),
+            tuning.name()
+        ));
+    }
+    if let Some(s) = header.seed
+        && s != seed
+    {
+        return Err(format!("the route is for seed {s}, not seed {seed}"));
+    }
+    Ok(())
+}
+
 /// The mask held in the last tick of `prefix` and the ticks it has been
 /// held since it last changed (`usize::MAX` when it never changed).
 fn held_at_end(prefix: &InputScript) -> (u32, usize) {
@@ -176,6 +208,8 @@ fn run(a: Args) -> Result<bool, String> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("reading {}: {e}", path.display()))?;
         let script = InputScript::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        prefix_matches(&script.header, level_no, a.tuning, a.seed)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         if t > script.ticks.len() {
             return Err(format!(
                 "{} has only {} ticks",
@@ -337,5 +371,21 @@ mod tests {
         assert_eq!(held_at_end(&InputScript::from_held(&[4, 4, 4])), (4, 3));
         assert_eq!(held_at_end(&InputScript::from_held(&[0, 4, 4, 5])), (5, 1));
         assert_eq!(held_at_end(&InputScript::from_held(&[5, 5, 0, 0])), (0, 2));
+    }
+
+    #[test]
+    fn a_continued_route_must_state_the_same_level_tuning_and_seed() {
+        let header = |text: &str| InputScript::parse(text).unwrap().header;
+        let full = header("# level 1\n# tuning original\n# seed 7\n0,0,0\n");
+        assert!(prefix_matches(&full, 1, TuningName::Original, 7).is_ok());
+        let e = prefix_matches(&full, 2, TuningName::Original, 7).unwrap_err();
+        assert!(e.contains("level 1"), "{e}");
+        let e = prefix_matches(&full, 1, TuningName::Default, 7).unwrap_err();
+        assert!(e.contains("tuning original"), "{e}");
+        let e = prefix_matches(&full, 1, TuningName::Original, 8).unwrap_err();
+        assert!(e.contains("seed 7"), "{e}");
+        // Keys the route leaves out are not checked.
+        let bare = header("0,0,0\n");
+        assert!(prefix_matches(&bare, 3, TuningName::Default, 99).is_ok());
     }
 }

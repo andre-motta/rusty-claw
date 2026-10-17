@@ -23,11 +23,12 @@ use std::path::{Path, PathBuf};
 
 use claw_acceptance::install;
 use claw_acceptance::play::{Feed, Player, digest, replay};
+use claw_bot::route::{self, TuningName};
 use claw_frame::GameEvent;
 use claw_game::session::script_behaviour;
 use claw_game::settings::{LevelChoice, Settings};
 use claw_game::{load_level, new_sim};
-use claw_sim::{InputScript, Sim, SimConfig, Tuning};
+use claw_sim::{InputScript, Sim, Tuning};
 
 /// Fewest ticks between two changes of the held buttons.
 const MIN_SPACING: usize = 2;
@@ -185,12 +186,13 @@ fn install_routes_win_the_same_way_every_time() {
         assert_eq!(again.trace, keys.trace, "{name}: traces differ");
 
         // The bot's own configuration plays the same game.
-        let bot_cfg = SimConfig {
-            tuning: start.config().tuning.clone(),
-            seed: h.seed,
-            ..SimConfig::default()
+        let tuning = if h.original {
+            TuningName::Original
+        } else {
+            TuningName::Default
         };
-        let bot_start = Sim::new(bundle.sim_level.clone(), bot_cfg);
+        assert!(!h.fix, "{name}: bot routes play with the fix off");
+        let bot_start = Sim::new(bundle.sim_level.clone(), route::sim_config(tuning, h.seed));
         let (_, bot) = step_through(&bot_start, &script);
         assert_eq!(bot, stepped, "{name}: the bot's configuration differs");
 

@@ -24,9 +24,7 @@
 //! the result.
 
 use std::cmp::Reverse;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use claw_sim::claw_frame::GameEvent;
@@ -673,15 +671,26 @@ fn play(
 /// 8 px, his state, facing, running and attacking, his health to 10
 /// points, and the platforms (position to 16 px and state) and enemies
 /// (alive or not) within about a screen of him.
+///
+/// The key is a fixed hash of those values (64-bit FNV-1a), so it is the
+/// same with every toolchain and on every machine, and so are the routes
+/// the search finds.
 pub fn state_key(sim: &Sim) -> u64 {
-    let mut h = DefaultHasher::new();
+    let mut k = Fold::default();
     let Some(c) = sim.player() else {
         return 0;
     };
     let claw = sim.claw();
-    (c.x >> 3, c.y >> 3, c.state).hash(&mut h);
-    (claw.facing_right, claw.attacking, claw.running_time == 0).hash(&mut h);
-    (sim.stats().health / 10, sim.stats().lives).hash(&mut h);
+    k.add(&[i64::from(c.x >> 3), i64::from(c.y >> 3), i64::from(c.state)]);
+    k.add(&[
+        i64::from(claw.facing_right),
+        i64::from(claw.attacking),
+        i64::from(claw.running_time == 0),
+    ]);
+    k.add(&[
+        i64::from(sim.stats().health / 10),
+        i64::from(sim.stats().lives),
+    ]);
     let objects = sim.objects();
     for id in objects.listed() {
         let Some(o) = objects.get(id) else { continue };
@@ -689,12 +698,38 @@ pub fn state_key(sim: &Sim) -> u64 {
             continue;
         }
         if o.type_flags & platform::PLATFORM != 0 {
-            (id, o.x >> 4, o.y >> 4, o.state).hash(&mut h);
+            k.add(&[
+                1,
+                i64::from(id),
+                i64::from(o.x >> 4),
+                i64::from(o.y >> 4),
+                i64::from(o.state),
+            ]);
         } else if let Some(d) = enemy::data_of(o) {
-            (id, d.dead).hash(&mut h);
+            k.add(&[2, i64::from(id), i64::from(d.dead)]);
         }
     }
-    h.finish()
+    k.0
+}
+
+/// A running 64-bit FNV-1a hash of integers, each taken as its eight
+/// little-endian bytes.
+struct Fold(u64);
+
+impl Default for Fold {
+    fn default() -> Fold {
+        Fold(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl Fold {
+    fn add(&mut self, values: &[i64]) {
+        for &v in values {
+            for b in v.to_le_bytes() {
+                self.0 = (self.0 ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+    }
 }
 
 /// A 64-bit mix of `v` (splitmix64's finaliser).
