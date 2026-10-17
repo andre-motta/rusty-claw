@@ -389,6 +389,7 @@ impl Ctx<'_> {
                 pulse: self.pulse,
                 view: self.view,
                 out: &mut *self.out,
+                aids: self.aids,
             };
             f(&mut w)
         };

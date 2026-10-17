@@ -218,6 +218,7 @@ impl Runner<'_> {
             pulse: self.pulse,
             view,
             out: &mut *self.out,
+            aids: self.cfg.aids,
         }
     }
 
@@ -1224,9 +1225,12 @@ impl Sim {
     /// neither held nor pressed for Claw until a tick finds it released, and
     /// counts again from its next press. Play starts this way (a key held
     /// when the level starts does nothing until it is released and pressed
-    /// again), and so does the return from a screen over play.
+    /// again), and so does the return from a screen over play. The latch
+    /// also wins over Left and Right being let off it when Claw is let go
+    /// after a boss's defeat: latched after that, they stay latched.
     pub fn latch_keys(&mut self) {
         self.latched = Buttons(u32::MAX);
+        self.claw.special.unlatch_directions = false;
     }
 
     /// The keys latched now (all bits set after [`Sim::latch_keys`], until
