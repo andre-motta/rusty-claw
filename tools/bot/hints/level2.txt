@@ -1,3 +1,9 @@
-# Waypoint for the second level at the default tuning: on top of the
+# Waypoints for the second level at the default tuning: up the ledges
+# around x 8500, left and up to the walkway above them, and on top of the
 # block beyond the three moving platforms that step up from the floor.
+8590,4514
+8563,4469
+8461,4293
+8597,4182
+8906,4129
 12900,3689
