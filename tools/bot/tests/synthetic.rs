@@ -151,3 +151,40 @@ fn an_unreachable_goal_fails_within_the_budget() {
     .unwrap_err();
     assert!(err.stats.expanded <= 300);
 }
+
+#[test]
+fn a_search_from_part_way_through_a_route_keeps_the_spacing_across_the_join() {
+    let rows = room(30, 10);
+    let fresh = sim(level(&rows, (5 * 64, 7 * 64)));
+    // A prefix that changes its held mask in its very last tick.
+    let right = claw_sim::Buttons::RIGHT.0;
+    let mut held = vec![0u32; 20];
+    held.push(right);
+    let prefix = InputScript::from_held(&held);
+    let mut start = fresh.clone();
+    for &t in &prefix.ticks {
+        start.step(t);
+    }
+    let goal = Goal::Reach {
+        x: 12 * 64,
+        y: 9 * 64 - 61,
+        radius: 40,
+    };
+    let c = SearchConfig {
+        start_held: right,
+        start_held_for: 1,
+        ..cfg()
+    };
+    let found = search_report(&start, goal.clone(), &c).expect("a route");
+    // The route found first keeps the prefix's mask for the missing tick.
+    assert_eq!(found.script.ticks[0].held.0, right);
+    assert_eq!(found.script.ticks[0].pressed.0, 0);
+    let mut whole = prefix.clone();
+    whole.ticks.extend(found.script.ticks.iter().copied());
+    assert!(spacing_violations(&whole, 2).is_empty());
+    // Pressed buttons are the rising edges across the join, so the route
+    // written is the route the search played.
+    let masks: Vec<u32> = whole.ticks.iter().map(|t| t.held.0).collect();
+    assert_eq!(whole, InputScript::from_held(&masks));
+    assert!(route::play(&fresh, &whole, &goal).won());
+}

@@ -34,7 +34,7 @@ use claw_sim::logic::{enemy, pickup, platform};
 use claw_sim::player::state;
 use claw_sim::{Buttons, InputScript, Sim, TickInput};
 
-use crate::actions::{self, Action};
+use crate::actions::{self, Action, MIN_SPACING};
 use crate::field::{DistanceField, Grid, Reach, UNREACHABLE};
 
 /// What ends the search.
@@ -87,6 +87,14 @@ pub struct SearchConfig {
     pub reach: Reach,
     /// Print progress every this many expanded nodes (0: never).
     pub log_every: u64,
+    /// The mask held in the tick before the start, when the start is the
+    /// game part way through another route (0 for a fresh game).
+    pub start_held: u32,
+    /// Ticks [`start_held`](Self::start_held) has been held since it last
+    /// changed (`usize::MAX` when it never did). When this is under
+    /// [`MIN_SPACING`], the route found first holds it for the ticks
+    /// missing, so the spacing holds across the join.
+    pub start_held_for: usize,
 }
 
 impl Default for SearchConfig {
@@ -105,6 +113,8 @@ impl Default for SearchConfig {
             checkpoint_progress: 320,
             reach: Reach::default(),
             log_every: 0,
+            start_held: 0,
+            start_held_for: usize::MAX,
         }
     }
 }
@@ -139,7 +149,10 @@ pub struct SearchStats {
 /// A route found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
-    /// The route, one input per tick from the start.
+    /// The route, one input per tick from the start. Its first ticks hold
+    /// [`SearchConfig::start_held`] when that mask was held for fewer than
+    /// [`MIN_SPACING`] ticks; pressed buttons are the rising edges from
+    /// that mask.
     pub script: InputScript,
     /// What the search did.
     pub stats: SearchStats,
@@ -179,6 +192,15 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
         reason,
         stats: SearchStats::default(),
     };
+    // Keep the start mask held until it has lasted the spacing, so the
+    // first change the search makes is far enough from the last one
+    // before the start.
+    let lead = vec![cfg.start_held; MIN_SPACING.saturating_sub(cfg.start_held_for)];
+    let mut start = start.clone();
+    for &held in &lead {
+        start.step(input(held, cfg.start_held));
+    }
+    let start = &start;
     let grid = Grid::build(start.level(), cfg.reach);
     // The fields are walked by Claw's feet; a point he is to reach is his
     // middle.
@@ -214,6 +236,7 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
         cache_order: BTreeSet::new(),
         root: 0,
         root_sim: start.clone(),
+        lead,
         stats: SearchStats {
             best_distance: UNREACHABLE,
             ..SearchStats::default()
@@ -286,6 +309,8 @@ struct Search<'a> {
     cache_order: BTreeSet<(i64, u64, u32)>,
     root: u32,
     root_sim: Sim,
+    /// Ticks held at [`SearchConfig::start_held`] before the root.
+    lead: Vec<u32>,
     stats: SearchStats,
     began: Instant,
 }
@@ -296,8 +321,8 @@ impl Search<'_> {
         let root = Node {
             parent: None,
             action: None,
-            ticks: 0,
-            last: 0,
+            ticks: self.lead.len() as u64,
+            last: self.cfg.start_held,
             lost: 0,
             h,
             prio: 0,
@@ -513,7 +538,7 @@ impl Search<'_> {
             chain.push(self.nodes[cur as usize].action.expect("action"));
             cur = p;
         }
-        let mut held = Vec::new();
+        let mut held = self.lead.clone();
         for a in chain.iter().rev() {
             held.extend(a.masks());
         }
@@ -524,8 +549,17 @@ impl Search<'_> {
         };
         self.stats.ticks = held.len() as u64;
         self.stats.health_lost = self.nodes[parent as usize].lost + child.lost;
+        let mut prev = self.cfg.start_held;
+        let ticks = held
+            .iter()
+            .map(|&h| {
+                let t = input(h, prev);
+                prev = h;
+                t
+            })
+            .collect();
         Found {
-            script: InputScript::from_held(&held),
+            script: InputScript { ticks },
             stats: self.stats.clone(),
             done_at,
         }

@@ -22,7 +22,12 @@
 //! `--hints` names a file of `x,y` waypoints, one per line, written from
 //! the level's geometry; the file's name is recorded in the header.
 //! `--from-route` starts from the game after the first T ticks of another
-//! route, which lead the new one.
+//! route, which lead the new one. When the prefix changed its held mask
+//! less than two ticks before T, the new part first keeps that mask for
+//! the ticks missing.
+//!
+//! No route is written whose held mask changes twice less than two ticks
+//! apart.
 //!
 //! Exit status: 0 with a route, 1 when the search failed, 2 on a usage
 //! error.
@@ -32,6 +37,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use claw_assets::{Install, LevelData, LevelSource};
+use claw_bot::actions::MIN_SPACING;
 use claw_bot::route::{self, Header, TuningName};
 use claw_bot::{Goal, SearchConfig, search_report};
 use claw_sim::{InputScript, Sim, SimLevel};
@@ -140,6 +146,16 @@ fn read_hints(path: &Path) -> Result<Vec<(i32, i32)>, String> {
     Ok(out)
 }
 
+/// The mask held in the last tick of `prefix` and the ticks it has been
+/// held since it last changed (`usize::MAX` when it never changed).
+fn held_at_end(prefix: &InputScript) -> (u32, usize) {
+    let held = prefix.ticks.last().map_or(0, |t| t.held.0);
+    let since = route::changes(prefix)
+        .last()
+        .map_or(usize::MAX, |&c| prefix.ticks.len() - c);
+    (held, since)
+}
+
 fn run(a: Args) -> Result<bool, String> {
     let install_path = a.install.clone().ok_or(USAGE)?;
     let level_no = a.level.ok_or(USAGE)?;
@@ -177,7 +193,10 @@ fn run(a: Args) -> Result<bool, String> {
         Some(p) => read_hints(p)?,
         None => Vec::new(),
     };
+    let (start_held, start_held_for) = held_at_end(&prefix);
     let scfg = SearchConfig {
+        start_held,
+        start_held_for,
         nodes: a.nodes,
         seed: u64::from(a.seed),
         hints,
@@ -195,12 +214,17 @@ fn run(a: Args) -> Result<bool, String> {
         }
     };
     let seconds = began.elapsed().as_secs_f64();
+    // The search played its first tick against the prefix's last mask, so
+    // the route is the prefix and the search's ticks exactly as played.
     let mut script = prefix.clone();
     script.ticks.extend(found.script.ticks.iter().copied());
-    // Pressed buttons are the rising edges of the held masks across the
-    // join too.
-    let held: Vec<u32> = script.ticks.iter().map(|t| t.held.0).collect();
-    let script = InputScript::from_held(&held);
+    let too_close = route::spacing_violations(&script, MIN_SPACING);
+    if let Some(&(tick, gap)) = too_close.first() {
+        return Err(format!(
+            "not writing the route: the held mask changes at tick {tick}, {gap} tick(s) after the previous change ({} change(s) too close in all; at least {MIN_SPACING} ticks are needed)",
+            too_close.len()
+        ));
+    }
     let header = Header {
         level: level_no,
         tuning: a.tuning,
@@ -292,5 +316,17 @@ mod tests {
         assert!(args("--from-route p.csv").is_err());
         assert!(args("--budget-min 0").is_err());
         assert!(args("--bogus 1").is_err());
+    }
+
+    #[test]
+    fn the_held_mask_at_the_end_of_a_prefix_counts_ticks_since_its_change() {
+        assert_eq!(held_at_end(&InputScript::default()), (0, usize::MAX));
+        assert_eq!(
+            held_at_end(&InputScript::from_held(&[0, 0, 0])),
+            (0, usize::MAX)
+        );
+        assert_eq!(held_at_end(&InputScript::from_held(&[4, 4, 4])), (4, 3));
+        assert_eq!(held_at_end(&InputScript::from_held(&[0, 4, 4, 5])), (5, 1));
+        assert_eq!(held_at_end(&InputScript::from_held(&[5, 5, 0, 0])), (0, 2));
     }
 }
