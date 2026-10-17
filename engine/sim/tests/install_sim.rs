@@ -564,8 +564,12 @@ fn install_level1_runs_with_level_logics() {
     for (i, &input) in inputs.iter().enumerate().take(600) {
         again.step(input);
         off.step(input);
-        let a = TraceRow::capture(&again, i as u64, "script");
-        let b = TraceRow::capture(&off, i as u64, "script");
+        let mut a = TraceRow::capture(&again, i as u64, "script");
+        let mut b = TraceRow::capture(&off, i as u64, "script");
+        // The logics draw from the shared random stream; the run without
+        // them does not, so only the random state may differ.
+        a.rng = None;
+        b.rng = None;
         assert_eq!(a, b, "tick {i}");
     }
 }
