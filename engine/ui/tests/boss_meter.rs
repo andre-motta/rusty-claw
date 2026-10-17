@@ -1,6 +1,7 @@
-//! The boss fight's pieces of the status bar: the health bar falling with
-//! the boss's health and the name banner, laid out on synthetic art and
-//! drawn offscreen by the CPU reference; with `CLAW_INSTALL` set, the
+//! The boss fight's pieces of the status bar: the health bar and its level
+//! band falling with the boss's health, and the name banner, laid out on
+//! synthetic art and drawn offscreen by the CPU reference; with
+//! `CLAW_INSTALL` set, the
 //! second level's art is also drawn on the GPU and compared with the CPU
 //! reference (run that one under the shared bench lock and a virtual
 //! display).
@@ -69,14 +70,23 @@ fn meter(value: i32) -> BossMeter {
 
 #[test]
 fn the_boss_art_is_preloaded_and_its_absence_is_not_reported() {
-    let (g, with) = art(true);
+    let (mut g, with) = art(true);
     for key in hud::BOSS_IMAGE_SETS {
         assert!(g.is_loaded(key), "{key}");
     }
     let bar = with.boss_bar.expect("the bar's frame");
     assert_eq!((bar.width, bar.height), (260, 28));
+    // The band's pieces are made by the status bar itself.
+    for key in [hud::BOSS_BAND_FULL, hud::BOSS_BAND_EMPTY] {
+        assert_eq!(
+            g.frame_numbers(key),
+            vec![1, 2, 4, 8, 16, 32, 64, 128],
+            "{key}"
+        );
+    }
     let (g, without) = art(false);
     assert!(g.is_loaded(hud::BOSS_NAME));
+    assert!(g.is_loaded(hud::BOSS_BAND_FULL));
     assert_eq!(without.boss_bar, None);
     assert!(
         !without
@@ -150,30 +160,38 @@ fn the_bar_sits_at_320_447_with_its_band_inside() {
 #[test]
 fn the_bar_falls_with_scripted_health() {
     let (_, art) = art(true);
-    let hud_ = Hud::new(art);
+    let mut hud_ = Hud::new(art);
     let mut last = i32::MAX;
     for health in (0..=100).rev() {
         let h = fight(Some(meter(health)), None);
-        let fills = hud_.boss_meter_fills(&h, (640, 480));
-        let full: i32 = fills
-            .iter()
-            .filter(|f| f.index == hud::BOSS_FULL_INDEX)
-            .map(|f| f.width as i32)
-            .sum();
-        let empty: i32 = fills
-            .iter()
-            .filter(|f| f.index == hud::BOSS_EMPTY_INDEX)
-            .map(|f| f.width as i32)
-            .sum();
+        let sprites = hud_.layout(&h, (640, 480), 0.0);
+        let width = |key: &str| -> i32 {
+            sprites
+                .iter()
+                .filter(|s| s.key == key)
+                .map(|s| s.frame)
+                .sum()
+        };
+        let (full, empty) = (width(hud::BOSS_BAND_FULL), width(hud::BOSS_BAND_EMPTY));
         assert_eq!(full + empty, 226, "health {health}");
         assert_eq!(full, hud::boss_full_width(health));
         assert!(full <= last, "never rises as health falls");
         last = full;
+        // The pieces sit side by side on the band's row, full part first.
+        let band: Vec<&ScreenSprite> = sprites
+            .iter()
+            .filter(|s| s.key == hud::BOSS_BAND_FULL || s.key == hud::BOSS_BAND_EMPTY)
+            .collect();
+        let mut x = 208;
+        for piece in &band {
+            assert_eq!((piece.x, piece.y), (x, 444), "health {health}");
+            x += piece.frame;
+        }
+        assert_eq!(x, 208 + 226);
+        assert!(band.len() <= 16);
     }
-    assert!(
-        hud_.boss_meter_fills(&fight(None, None), (640, 480))
-            .is_empty()
-    );
+    let plain = hud_.layout(&fight(None, None), (640, 480), 0.0);
+    assert!(plain.iter().all(|s| !s.key.starts_with("STATUSBAR_BOSS")));
 }
 
 #[test]
@@ -186,13 +204,24 @@ fn the_banner_and_the_bar_come_before_the_status_bar() {
         (640, 480),
         0.0,
     );
-    assert_eq!(s.len(), plain.len() + 2);
+    // 40%: 90 px full (64 + 16 + 8 + 2) and 136 px empty (128 + 8).
+    let band = 6;
+    assert_eq!(s.len(), plain.len() + 2 + band);
     assert_eq!(
         s[0],
         ScreenSprite::new(hud::BOSS_NAME, -1, Anchor::TopLeft, 320, -220)
     );
     assert_eq!(s[1].key, hud::BOSS_BAR);
-    assert_eq!(&s[2..], &plain[..]);
+    let pieces: Vec<(&str, i32)> = s[2..2 + band]
+        .iter()
+        .map(|p| (p.key.as_str(), p.frame))
+        .collect();
+    let (f, e) = (hud::BOSS_BAND_FULL, hud::BOSS_BAND_EMPTY);
+    assert_eq!(
+        pieces,
+        vec![(f, 64), (f, 16), (f, 8), (f, 2), (e, 128), (e, 8)]
+    );
+    assert_eq!(&s[2 + band..], &plain[..]);
     // The banner's 640x480 position is centred in a wider picture.
     let s = hud::layout(&art, &fight(None, Some((320, 160))), (854, 480), 0.0);
     assert_eq!((s[0].x, s[0].y), (427, 160));
@@ -217,11 +246,21 @@ fn draw(g: &mut LevelGraphics, sprites: Vec<ScreenSprite>, size: (u32, u32)) -> 
 #[test]
 fn the_bar_and_the_banner_draw_offscreen_where_laid_out() {
     let (mut g, art) = art(true);
+    let boss_piece = |s: &ScreenSprite| {
+        [
+            hud::BOSS_BAR,
+            hud::BOSS_NAME,
+            hud::BOSS_BAND_FULL,
+            hud::BOSS_BAND_EMPTY,
+        ]
+        .contains(&s.key.as_str())
+    };
+    let (full, empty) = (hud::BOSS_FULL_INDEX, hud::BOSS_EMPTY_INDEX);
     for (size, k) in [((640, 480), 1usize), ((1280, 960), 2)] {
         let h = fight(Some(meter(60)), Some((320, 160)));
         let sprites: Vec<ScreenSprite> = hud::layout(&art, &h, (640, 480), 0.0)
             .into_iter()
-            .filter(|s| s.key == hud::BOSS_BAR || s.key == hud::BOSS_NAME)
+            .filter(boss_piece)
             .collect();
         let c = draw(&mut g, sprites, size);
         let at = |x: usize, y: usize| c.index[(y * k + k / 2) * c.width as usize + x * k + k / 2];
@@ -231,11 +270,36 @@ fn the_bar_and_the_banner_draw_offscreen_where_laid_out() {
         assert_eq!(at(189, 440), 0);
         assert_eq!(at(450, 440), 0);
         assert_eq!(at(300, 461), 0);
+        // The band: columns 208..=433 (+18..+243 of the frame), rows
+        // 444..=450 (+11..+17); at 60% its left 135 px are full.
+        assert_eq!(at(208, 444), full, "{size:?}");
+        assert_eq!(at(342, 450), full);
+        assert_eq!(at(343, 444), empty);
+        assert_eq!(at(433, 450), empty);
+        assert_eq!(at(207, 447), BAR_INDEX, "left of the band");
+        assert_eq!(at(434, 447), BAR_INDEX, "right of the band");
+        assert_eq!(at(300, 443), BAR_INDEX, "above the band");
+        assert_eq!(at(300, 451), BAR_INDEX, "below the band");
         // The banner: 200x60 centred at (320, 160).
         assert_eq!(at(220, 130), NAME_INDEX);
         assert_eq!(at(419, 189), NAME_INDEX);
         assert_eq!(at(219, 160), 0);
         assert_eq!(at(320, 190), 0);
+    }
+    // All full at 100, all empty at 0, every column of the band.
+    for (health, want) in [(100, full), (0, empty)] {
+        let h = fight(Some(meter(health)), None);
+        let sprites: Vec<ScreenSprite> = hud::layout(&art, &h, (640, 480), 0.0)
+            .into_iter()
+            .filter(boss_piece)
+            .collect();
+        let c = draw(&mut g, sprites, (640, 480));
+        let at = |x: usize, y: usize| c.index[y * c.width as usize + x];
+        for x in 208..=433 {
+            for y in 444..=450 {
+                assert_eq!(at(x, y), want, "health {health} at ({x}, {y})");
+            }
+        }
     }
 }
 

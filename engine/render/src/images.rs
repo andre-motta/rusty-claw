@@ -567,6 +567,26 @@ impl LevelGraphics {
         self.images.add(frame, None, None)
     }
 
+    /// Adds a sprite set made in memory, such as solid pieces of the status
+    /// bar, under `key`, with `frames` as (frame number, frame); the first
+    /// frame given for a number wins. Like a preloaded set, drawing it reads
+    /// no file. Nothing happens when `key` was already looked up; the result
+    /// says whether the set was added. Its frames have no replacement
+    /// images.
+    pub fn insert_set(&mut self, key: &str, frames: &[(i32, Frame)]) -> bool {
+        if key.is_empty() || self.sprites.contains_key(key) {
+            return false;
+        }
+        let mut map = FrameMap::new();
+        for (number, frame) in frames {
+            if !map.contains_key(number) {
+                map.insert(*number, self.images.add(frame, None, None));
+            }
+        }
+        self.sprites.insert(key.to_string(), Some(map));
+        true
+    }
+
     /// Warnings from the image pack, if one is in use.
     pub fn pack_warnings(&self) -> &[String] {
         self.pack.as_ref().map_or(&[], |p| p.warnings.as_slice())
@@ -729,6 +749,43 @@ mod tests {
         assert!(g.sprite("C", 1).is_none());
         assert_eq!(count(), 4);
         assert_eq!(g.loaded_while_drawing(), 1);
+    }
+
+    #[test]
+    fn sets_made_in_memory_draw_without_reading() {
+        let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let src = Counting {
+            inner: MemoryImages::default(),
+            reads: reads.clone(),
+        };
+        let pal = Palette::default();
+        let mut g = LevelGraphics::new(
+            Vec::new(),
+            true,
+            pal.clone(),
+            LevelTables::blank(&pal),
+            Box::new(src),
+            None,
+        );
+        let frames = [
+            (4, frame(4, 1, 0, |_, _| 0x34)),
+            (1, frame(1, 1, 0, |_, _| 0x7E)),
+            (4, frame(2, 1, 0, |_, _| 9)),
+        ];
+        assert!(g.insert_set("MADE", &frames));
+        assert!(!g.insert_set("MADE", &frames), "added once");
+        assert!(g.is_loaded("MADE"));
+        assert_eq!(g.frame_numbers("MADE"), vec![1, 4]);
+        let four = g.sprite("MADE", 4).unwrap();
+        assert_eq!(g.images.record(four).width, 4, "the first frame 4 wins");
+        assert_eq!(g.images.index_at(four, 3, 0), 0x34);
+        assert_eq!(g.sprite("MADE", -1), g.sprite("MADE", 1));
+        assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(g.loaded_while_drawing(), 0);
+        // A key already looked up is left alone.
+        g.preload(["GONE"]);
+        assert!(!g.insert_set("GONE", &frames));
+        assert!(g.sprite("GONE", 1).is_none());
     }
 
     #[test]
