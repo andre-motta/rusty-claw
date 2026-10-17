@@ -22,9 +22,14 @@ it and a per-column summary. It fails on a divergence that
 `references.toml` does not list for that route and clock, or that comes
 earlier than listed, and when the game's trace ends before the reference
 trace; a route and clock with no entry there fails on any divergence.
-`STRICT=1` fails on any divergence, listed or not. The install test
-`install_reference` holds every route in `references.toml` to the same
-rule.
+`STRICT=1` fails on any divergence, listed or not, and when the game's
+trace ends before the reference trace. The install test `install_reference`
+holds every route in `references.toml` to the same rule, playing it tick by
+tick; `install_differential`, the gate, plays every route through the
+game's own frame loop at 60 Hz, compares `c18` runs with `exact.toml` and
+`c60` runs with `feel.toml`, and fails with the first divergence the file
+does not list. Both drivers give the same trace, which that test checks
+too.
 
 ## The two clocks
 
@@ -44,7 +49,7 @@ rule.
 
 - `exact.toml`: the lockstep preset. Nothing may differ.
 - `feel.toml`: the feel preset. Claw's position and the camera point within
-  8 px, after allowing one tick (18 ms) of timing either way; state,
+  8 px, after allowing two ticks (36 ms) of timing either way; state,
   physics type and held buttons, and health, score, lives and ammunition,
   within two ticks (36 ms); game events within three ticks (54 ms).
 - `references.toml`: the routes the install test compares, each with the
@@ -111,12 +116,16 @@ leaving the climb out, until the officer (16384 ms).
 
 - `exact.toml` is exact by definition.
 - `feel.toml`: the smallest values that hold Claw's own movement on the
-  opening at 60 frames per second (leaving out the climb and the officer).
-  With one tick of timing slack, his position stays within 8 px (7 px with
-  the level's objects inert); his state changes within two ticks (one tick
-  is not enough: a landing comes two ticks apart once); score changes
-  within two ticks. The event slack is a starting value: the opening raises
-  no game event.
+  first level's routes at 60 frames per second (leaving out the climb, the
+  enemies and a partly held running jump). A fall from standing still runs
+  up to about one tick ahead of the original in the middle of the fall at
+  this frame rate (both land within 4 ms of each other), so the position
+  needs two ticks of timing slack to stay within 8 px; with it, the opening
+  holds until the climb (11400 ms) and the route written down from a fast
+  run holds until its partly held running jump (6050 ms). State changes
+  within two ticks (one tick is not enough: a landing comes two ticks apart
+  once); score changes within two ticks. The event slack is a starting
+  value.
 - The climb difference is not absorbed into the tolerance: the climbing
   speed of the default tuning is to be set to the original's 220 px/s.
 
@@ -136,14 +145,20 @@ points). Each segment is played in both games from its anchor: Claw is
 placed at the anchor point, waits until he stands, the shared random stream
 is set to a fixed value at the segment's time zero, and the segment's rows
 are played and compared from there. A difference then spoils only its own
-segment. This needs a segment mode in the reference runs, a way to set the
-game's random state after Claw settles at a start point (a small addition to
-the simulation), and a store folder per segment. The full-level run stays as
+segment. A store folder per segment names its start point in `meta.toml`
+(`teleport = "X,Y"`); `make compare` and the install tests then place Claw
+there, let him settle and set the random stream to the store's
+`rng_at_t0` before the segment's first row, as `claw-replay --start X,Y
+--seed N` does. A segment cut from a full route starts from the level's
+starting world, though (enemies the route defeated earlier are alive,
+elevators are at their start), so segments are best planned as short
+routes of their own from their start point. The full-level run stays as
 the end-to-end check.
 
-## Recommended gate
+## The gate
 
-Both clocks, with different jobs:
+Both clocks, with different jobs (`install_differential` compares each
+route in `references.toml` at its clock's preset):
 
 - **c18 lockstep gates the logic.** It is exact and repeatable, it finds a
   difference at the tick it happens, and it already shows Claw's movement
@@ -151,4 +166,22 @@ Both clocks, with different jobs:
   is fixed; until then `references.toml` records it as known.
 - **c60 feel gates Claw's movement feel**, on Claw's own columns over
   stretches without enemies (or segments), with `feel.toml`. Enemy
-  encounters at c60 are reported, not gated.
+  encounters at c60 are reported, not gated, and a full-level route at c60
+  need not finish the level: 16 and 17 ms frames against 18 ms ticks move a
+  close landing by a tick (a jump pressed on the frame Claw lands is spent
+  in the original and jumps in the game), and a route played without
+  looking at the game goes another way from there.
+
+## What the first level's bot routes show
+
+The bot's routes press Right and Jump on their first row. The original
+ignores keys already down when play starts until they are released and
+pressed again, so in the original Claw stands still at the start, and the
+rest of each route plays from the wrong place; neither route finishes the
+level there. With the routes delayed by one row, or cut into a segment
+with Claw placed at its start, Claw's own movement is equal tick for tick
+at `c18` (8.6 s and 13.6 s), until a random draw differs: an officer's
+sword that hits in the game and misses in the original, or a standing
+attack whose variant comes from the random stream. `references.toml`
+lists these first divergences per route until the original plays the new
+routes.

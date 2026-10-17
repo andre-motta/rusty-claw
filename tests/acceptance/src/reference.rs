@@ -17,12 +17,18 @@
 //! second, compared for feel with the default tuning). `meta.toml` names
 //! the level, the state of the shared random stream at the route's time
 //! zero (`rng_at_t0`) and, per clock, a table with the tuning and the trace
-//! files.
+//! files. A segment of a level that starts away from the level's start
+//! names its start point (`teleport = "X,Y"`): Claw is placed there and
+//! left to settle before the route's time zero, and the random stream is
+//! set to `rng_at_t0` once he stands.
 //!
 //! [`Store::compare_clock`] replays the route in the game with that clock's
 //! tuning and the random state at time zero, keeps stepping with no button
 //! held for as long as the reference runs past the end of the route, and
-//! compares the result with every reference trace of the clock.
+//! compares the result with every reference trace of the clock. The route
+//! is driven tick by tick ([`Driver::Ticks`]) or through the game's own
+//! frame loop at a simulated display rate ([`Driver::Session`]); both play
+//! the same game.
 //!
 //! The tolerances live in `tests/acceptance/tolerances/`: `exact.toml` and
 //! `feel.toml`, and `references.toml`, the references the install test
@@ -32,13 +38,15 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use claw_frame::ViewConfig;
-use claw_game::load::LevelBundle;
-use claw_game::session::script_behaviour;
+use claw_frame::{SimulatedRefresh, ViewConfig};
+use claw_game::Session;
+use claw_game::load::{LevelBundle, settle_at};
+use claw_game::session::{script_behaviour, script_switches};
 use claw_game::settings::LevelChoice;
-use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
+use claw_sim::input::{DirectiveKind, MenuScreen, ScriptCommand, ScriptTuning};
+use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Comparison, Tolerances, TraceRow};
-use claw_sim::tuning::TICK_MS;
+use claw_sim::tuning::{FuseClock, TICK_MS};
 use claw_sim::{InputScript, Sim, SimConfig};
 
 /// Rows of each trace shown before a divergence.
@@ -96,8 +104,8 @@ impl Clock {
     }
 
     /// The tolerance file a comparison at this clock uses when
-    /// `references.toml` does not name one: `exact` for `c18`, `feel` for
-    /// `c60`.
+    /// `references.toml` does not name one, and the one the gate compares
+    /// it at: `exact` for `c18`, `feel` for `c60`.
     pub fn default_tolerance(self) -> &'static str {
         match self {
             Clock::C18 => "exact",
@@ -254,6 +262,9 @@ pub struct ClockRun {
     pub tuning: ScriptTuning,
     /// The state of the shared random stream at the route's time zero.
     pub rng_at_t0: Option<u32>,
+    /// Where Claw was placed before the route's time zero, for a segment
+    /// that starts away from the level's start.
+    pub teleport: Option<(i32, i32)>,
     /// The reference traces, one per repeat.
     pub traces: Vec<PathBuf>,
 }
@@ -278,6 +289,18 @@ fn whole_u32(v: &Value, what: &str) -> Result<u32, String> {
     v.int()
         .and_then(|n| u32::try_from(n).ok())
         .ok_or_else(|| format!("{what} is not a whole number from 0 to 4294967295"))
+}
+
+/// A start point `"X,Y"` in level pixels.
+pub fn parse_point(text: &str) -> Option<(i32, i32)> {
+    let (x, y) = text.split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
+fn point(v: &Value, what: &str) -> Result<(i32, i32), String> {
+    v.text()
+        .and_then(parse_point)
+        .ok_or_else(|| format!("{what} is not a point \"X,Y\""))
 }
 
 impl Store {
@@ -307,6 +330,10 @@ impl Store {
             .get("rng_at_t0")
             .map(|v| whole_u32(v, "rng_at_t0"))
             .transpose()?;
+        let top_teleport = top
+            .get("teleport")
+            .map(|v| point(v, "teleport"))
+            .transpose()?;
         let mut runs = Vec::new();
         for clock in Clock::ALL {
             let table = tables
@@ -328,6 +355,10 @@ impl Store {
                 Some(v) => Some(whole_u32(v, "rng_at_t0")?),
                 None => top_rng,
             };
+            let teleport = match table.get("teleport") {
+                Some(v) => Some(point(v, "teleport")?),
+                None => top_teleport,
+            };
             let traces = table
                 .get("traces")
                 .ok_or_else(|| format!("[{}] lists no traces", clock.name()))?
@@ -343,6 +374,7 @@ impl Store {
                 clock,
                 tuning,
                 rng_at_t0,
+                teleport,
                 traces,
             });
         }
@@ -366,9 +398,10 @@ impl Store {
 
 /// The game's configuration for replaying a route of `run`: the default
 /// view, the run's tuning, the random state at time zero as the seed (the
-/// level load draws nothing, so the first tick starts from it) and the
+/// level load draws nothing, so the first tick starts from it), the
 /// mid-air hit jump fix the route names (off without one, as in the
-/// original).
+/// original) and whether help screen time reaches the dynamite fuse (as in
+/// the original unless the route says otherwise).
 pub fn replay_config(run: &ClockRun, route_text: &str) -> SimConfig {
     let mut cfg = SimConfig::for_view(ViewConfig::default());
     cfg.tuning = run.tuning.tuning();
@@ -376,19 +409,48 @@ pub fn replay_config(run: &ClockRun, route_text: &str) -> SimConfig {
         cfg.seed = seed;
     }
     cfg.tuning.behaviour.fix_double_jump = script_behaviour(route_text).unwrap_or(false);
+    cfg.fuse_clock = script_switches(route_text)
+        .fuse_clock
+        .unwrap_or(FuseClock::Original);
     cfg
 }
 
-/// Replays `script` in `bundle` with `cfg`, one trace row per tick, and
-/// keeps stepping with no button held until the trace covers `until_ms`.
-/// A command directive takes effect before its tick; pauses and menus
-/// change nothing in the game.
-pub fn replay(
+/// How a replay drives the game through a route.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Driver {
+    /// One step of the simulation per route row, as the replay tool does.
+    Ticks,
+    /// The game's own frame loop ([`Session`]) fed by a display refreshing
+    /// `hz` times a second, as a watched replay plays: whole ticks run as
+    /// the frames' time adds up, and pauses and menus hold play for their
+    /// wall time.
+    Session {
+        /// The simulated display rate, Hz.
+        hz: f64,
+    },
+}
+
+impl Driver {
+    /// A display at 60 Hz, the rate the game is tuned for.
+    pub const SESSION_60: Driver = Driver::Session { hz: 60.0 };
+
+    /// A short name for reports.
+    pub fn describe(&self) -> String {
+        match self {
+            Driver::Ticks => "tick by tick".to_string(),
+            Driver::Session { hz } => format!("through the game's frame loop at {hz} Hz"),
+        }
+    }
+}
+
+/// The game at a route's time zero: the level just loaded with `cfg`, or,
+/// with `start`, Claw placed at that point and left to settle, then the
+/// random stream set to the seed, as a segment of a level starts.
+pub fn start_game(
     bundle: &LevelBundle,
     cfg: SimConfig,
-    script: &InputScript,
-    until_ms: u64,
-) -> Result<Vec<TraceRow>, String> {
+    start: Option<(i32, i32)>,
+) -> Result<Sim, String> {
     let seed = cfg.seed;
     let mut sim = Sim::new(bundle.sim_level.clone(), cfg);
     if sim.rng_state() != seed {
@@ -398,20 +460,103 @@ pub fn replay(
             sim.rng_state()
         ));
     }
+    if let Some((x, y)) = start {
+        settle_at(&mut sim, x, y);
+        sim.with_world(|w| *w.rng = Rng::new(seed));
+    }
+    Ok(sim)
+}
+
+/// Replays `script` from `sim` (see [`start_game`]) with `driver`, one
+/// trace row per tick, and keeps playing with no button held until the
+/// trace covers `until_ms`. A command directive takes effect before its
+/// tick; a pause or a menu holds play and changes nothing in the game,
+/// except that the time of a help screen reaches the dynamite fuse at the
+/// boundary after it (unless the fuse clock is frozen). Every row's source
+/// is `script`, the rows past the route's end included.
+pub fn replay_from(
+    sim: Sim,
+    script: &InputScript,
+    route_text: &str,
+    until_ms: u64,
+    driver: Driver,
+) -> Result<Vec<TraceRow>, String> {
     let ticks = script
         .ticks
         .len()
         .max(until_ms.div_ceil(u64::from(TICK_MS)) as usize);
+    match driver {
+        Driver::Ticks => Ok(replay_ticks(sim, script, ticks)),
+        Driver::Session { hz } => replay_session(sim, script, route_text, ticks, hz),
+    }
+}
+
+fn replay_ticks(mut sim: Sim, script: &InputScript, ticks: usize) -> Vec<TraceRow> {
     let mut directives = script.directives().iter().peekable();
     let mut rows = Vec::with_capacity(ticks);
     for tick in 0..ticks {
         while let Some(d) = directives.next_if(|d| d.tick <= tick) {
-            if let DirectiveKind::Command(ScriptCommand::EndLife) = d.kind {
-                sim.end_life();
+            match &d.kind {
+                DirectiveKind::Command(ScriptCommand::EndLife) => sim.end_life(),
+                DirectiveKind::Menu {
+                    screen: MenuScreen::Help,
+                    wall_ms,
+                    ..
+                } => sim.pass_menu_time(*wall_ms),
+                _ => {}
             }
         }
         sim.step(script.ticks.get(tick).copied().unwrap_or_default());
         rows.push(TraceRow::capture(&sim, tick as u64, "script"));
+    }
+    rows
+}
+
+fn replay_session(
+    sim: Sim,
+    script: &InputScript,
+    route_text: &str,
+    ticks: usize,
+    hz: f64,
+) -> Result<Vec<TraceRow>, String> {
+    if !(hz.is_finite() && hz >= 1.0) {
+        return Err(format!("a display of {hz} Hz cannot drive the game"));
+    }
+    let pause_input = script_switches(route_text).pause_input.unwrap_or_default();
+    let mut session = Session::new(sim)
+        .with_pause_input(pause_input)
+        .with_replay(script.clone());
+    session.record_trace();
+    let mut refresh = SimulatedRefresh::new(hz);
+    // Every frame adds time, and pauses and menus hold play for their wall
+    // time only, so the ticks always come; the limit guards against a
+    // frame loop that stops running them.
+    let wall_ms: u64 = script
+        .directives()
+        .iter()
+        .map(|d| match d.kind {
+            DirectiveKind::Pause { wall_ms, .. } | DirectiveKind::Menu { wall_ms, .. } => {
+                u64::from(wall_ms)
+            }
+            DirectiveKind::Command(_) => 0,
+        })
+        .sum();
+    let game_ms = ticks as u64 * u64::from(TICK_MS);
+    let limit = ((game_ms + wall_ms) as f64 * hz / 1000.0) as u64 * 2 + 1000;
+    let mut frames = 0u64;
+    while (session.ticks() as usize) < ticks {
+        if frames > limit {
+            return Err(format!(
+                "the frame loop ran {} of {ticks} ticks in {frames} frames",
+                session.ticks()
+            ));
+        }
+        session.frame(refresh.next().unwrap_or_default());
+        frames += 1;
+    }
+    let mut rows = session.trace()[..ticks].to_vec();
+    for r in &mut rows {
+        r.source = "script".to_string();
     }
     Ok(rows)
 }
@@ -421,6 +566,8 @@ pub fn replay(
 pub struct TraceResult {
     /// The reference trace.
     pub trace: PathBuf,
+    /// The reference trace's rows.
+    pub reference: Vec<TraceRow>,
     /// The comparison.
     pub comparison: Comparison,
     /// The report: summary, per-column table and the rows leading up to the
@@ -435,6 +582,8 @@ pub struct ClockResult {
     pub run: ClockRun,
     /// The game's configuration seed.
     pub seed: u32,
+    /// How the game was driven through the route.
+    pub driver: Driver,
     /// The rebuild trace.
     pub rebuild: Vec<TraceRow>,
     /// One result per reference trace.
@@ -442,13 +591,25 @@ pub struct ClockResult {
 }
 
 impl Store {
-    /// Replays the route with `run`'s tuning and seed in the level of
-    /// `bundle` and compares it with each of the run's traces within `tol`.
+    /// Replays the route tick by tick with `run`'s tuning, seed and start
+    /// point in the level of `bundle` and compares it with each of the
+    /// run's traces within `tol`.
     pub fn compare_clock(
         &self,
         bundle: &LevelBundle,
         run: &ClockRun,
         tol: &Tolerances,
+    ) -> Result<ClockResult, String> {
+        self.compare_clock_with(bundle, run, tol, Driver::Ticks)
+    }
+
+    /// [`Store::compare_clock`], driving the game with `driver`.
+    pub fn compare_clock_with(
+        &self,
+        bundle: &LevelBundle,
+        run: &ClockRun,
+        tol: &Tolerances,
+        driver: Driver,
     ) -> Result<ClockResult, String> {
         let route_text = std::fs::read_to_string(&self.route)
             .map_err(|e| format!("reading {}: {e}", self.route.display()))?;
@@ -483,7 +644,8 @@ impl Store {
             .unwrap_or(0);
         let cfg = replay_config(run, &route_text);
         let seed = cfg.seed;
-        let rebuild = replay(bundle, cfg, &script, until)?;
+        let sim = start_game(bundle, cfg, run.teleport)?;
+        let rebuild = replay_from(sim, &script, &route_text, until, driver)?;
         let traces = references
             .into_iter()
             .map(|(trace, reference)| {
@@ -494,6 +656,7 @@ impl Store {
                 }
                 TraceResult {
                     trace,
+                    reference,
                     comparison,
                     report,
                 }
@@ -502,6 +665,7 @@ impl Store {
         Ok(ClockResult {
             run: run.clone(),
             seed,
+            driver,
             rebuild,
             traces,
         })
@@ -684,6 +848,64 @@ pub fn verdict(entry: &Entry, cmp: &Comparison) -> Verdict {
     v
 }
 
+/// What fails a comparison with `STRICT=1`: any divergence, nothing
+/// compared, or a game trace that ends before the reference trace; each a
+/// line.
+pub fn strict_failures(cmp: &Comparison) -> Vec<String> {
+    let mut out = Vec::new();
+    if cmp.rows_compared == 0 {
+        out.push("nothing was compared: the traces do not overlap in time".to_string());
+    }
+    if let Some(d) = &cmp.first_divergence {
+        out.push(format!(
+            "first leaves the tolerance at {} ms in {}",
+            d.t_ms, d.column
+        ));
+    }
+    if cmp.rows_unmatched > 0 {
+        out.push(format!(
+            "the game's trace ends before the reference trace: {} reference row(s) unmatched",
+            cmp.rows_unmatched
+        ));
+    }
+    out
+}
+
+/// `tol` with every column `entry` knows to diverge left out, unless it
+/// diverges earlier than known in `cmp`: comparing again with it finds the
+/// first divergence `references.toml` does not list.
+pub fn unlisted_tolerances(entry: &Entry, cmp: &Comparison, tol: &Tolerances) -> Tolerances {
+    let mut out = tol.clone();
+    for (column, &known) in &entry.known {
+        let first = cmp
+            .per_column
+            .iter()
+            .find(|s| &s.column == column)
+            .and_then(|s| s.first_t_ms);
+        if first.is_none_or(|t| t >= known) {
+            out.overrides.entry(column.clone()).or_default().compared = Some(false);
+        }
+    }
+    out
+}
+
+/// The first divergence of `t` that `entry` does not list (new, or earlier
+/// than listed), as the comparer's report: the divergence, the per-column
+/// table and the rows of both traces leading up to it. `None` when every
+/// divergence is listed.
+pub fn unlisted_report(
+    entry: &Entry,
+    t: &TraceResult,
+    tol: &Tolerances,
+    rebuild: &[TraceRow],
+) -> Option<String> {
+    let masked = unlisted_tolerances(entry, &t.comparison, tol);
+    let cmp = trace::compare(rebuild, &t.reference, &masked);
+    cmp.first_divergence
+        .is_some()
+        .then(|| trace::report(rebuild, &t.reference, &cmp, CONTEXT_ROWS))
+}
+
 /// The earliest divergence of any column but the random stream: its
 /// reference time and column.
 pub fn first_outside_rng(cmp: &Comparison) -> Option<(u64, &str)> {
@@ -771,6 +993,39 @@ traces = ["trace-c60-r1.csv"]
     }
 
     #[test]
+    fn segments_name_their_start_point() {
+        let meta = "level = 1\nrng_at_t0 = 111567\n[c18]\ntuning = \"original\"\n\
+                    traces = [\"a.csv\"]\nteleport = \"10355,2051\"\n";
+        let s = Store::from_meta("level1/seg", Path::new("/r"), meta).unwrap();
+        let c18 = s.run(Clock::C18).unwrap();
+        assert_eq!(c18.teleport, Some((10355, 2051)));
+        assert_eq!(c18.rng_at_t0, Some(111_567));
+        let top = "level = 1\nteleport = \"5, -7\"\n[c60]\ntraces = [\"a.csv\"]\n";
+        let s = Store::from_meta("x", Path::new("/r"), top).unwrap();
+        assert_eq!(
+            s.run(Clock::C60).unwrap().teleport,
+            Some((5, -7)),
+            "shared key"
+        );
+        let own = "level = 1\nteleport = \"1,2\"\n[c60]\nteleport = \"3,4\"\ntraces = [\"a\"]\n";
+        let s = Store::from_meta("x", Path::new("/r"), own).unwrap();
+        assert_eq!(
+            s.run(Clock::C60).unwrap().teleport,
+            Some((3, 4)),
+            "the clock's own"
+        );
+        let none = Store::from_meta("x", Path::new("/r"), META).unwrap();
+        assert_eq!(none.run(Clock::C18).unwrap().teleport, None);
+        for bad in ["\"10355\"", "\"a,b\"", "10355"] {
+            let meta = format!("level = 1\nteleport = {bad}\n[c18]\ntraces = [\"a\"]\n");
+            assert!(
+                Store::from_meta("x", Path::new("/r"), &meta).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
     fn bad_stores_are_errors() {
         let dir = Path::new("/r");
         assert!(
@@ -794,7 +1049,15 @@ traces = ["trace-c60-r1.csv"]
     #[test]
     fn the_committed_tolerance_files_read() {
         assert_eq!(tolerances("exact").unwrap(), Tolerances::exact());
-        assert_eq!(tolerances("feel.toml").unwrap(), Tolerances::feel());
+        let feel = Tolerances {
+            pos_slack_ms: 2 * TICK_MS,
+            ..Tolerances::feel()
+        };
+        assert_eq!(
+            tolerances("feel.toml").unwrap(),
+            feel,
+            "the feel preset with two ticks of position timing"
+        );
         let list = load_entries().unwrap();
         assert!(!list.is_empty());
         for e in &list {
@@ -873,6 +1136,137 @@ traces = ["trace-c60-r1.csv"]
         let mut short = cmp(vec![summary("x", Some(1000)), summary("rng", Some(18))]);
         short.rows_unmatched = 3;
         assert!(!verdict(&entry, &short).holds());
+    }
+
+    #[test]
+    fn strict_mode_fails_on_any_divergence_and_on_a_short_trace() {
+        let mut cmp = Comparison {
+            rows_compared: 10,
+            compared_ms: 180,
+            rows_unmatched: 0,
+            first_divergence: None,
+            per_column: vec![],
+        };
+        assert!(strict_failures(&cmp).is_empty());
+        cmp.rows_unmatched = 2;
+        let lines = strict_failures(&cmp);
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("2 reference row(s) unmatched"),
+            "{lines:?}"
+        );
+        cmp.first_divergence = Some(trace::Divergence {
+            t_ms: 36,
+            column: "x".into(),
+            reference: "1".into(),
+            rebuild: "2".into(),
+            reference_row: 1,
+            rebuild_row: 1,
+        });
+        assert_eq!(strict_failures(&cmp).len(), 2);
+        cmp.rows_compared = 0;
+        assert_eq!(strict_failures(&cmp).len(), 3);
+    }
+
+    #[test]
+    fn unlisted_divergences_leave_out_only_the_columns_that_hold() {
+        let entry = Entry {
+            reference: "level1/opening".into(),
+            clock: Clock::C18,
+            tolerance: "exact".into(),
+            known: [
+                ("rng".to_string(), 18),
+                ("x".to_string(), 1000),
+                ("y".to_string(), 500),
+            ]
+            .into(),
+        };
+        let cmp = Comparison {
+            rows_compared: 10,
+            compared_ms: 180,
+            rows_unmatched: 0,
+            first_divergence: None,
+            per_column: vec![
+                summary("rng", Some(18)),
+                summary("x", Some(900)),
+                summary("y", None),
+                summary("state_id", Some(700)),
+            ],
+        };
+        let tol = unlisted_tolerances(&entry, &cmp, &Tolerances::exact());
+        assert!(!tol.column("rng").unwrap().compared, "known and holding");
+        assert!(
+            !tol.column("y").unwrap().compared,
+            "known, now in tolerance"
+        );
+        assert!(tol.column("x").unwrap().compared, "earlier than known");
+        assert!(tol.column("state_id").unwrap().compared, "not listed");
+    }
+
+    fn row(tick: u64, x: i32) -> TraceRow {
+        TraceRow {
+            tick,
+            t_ms: (tick + 1) * u64::from(TICK_MS),
+            dt_ms: TICK_MS,
+            x,
+            y: 100,
+            frac_x: 0.0,
+            frac_y: 0.0,
+            state_id: 24,
+            physics_type: 1,
+            cam_x: 0,
+            cam_y: 0,
+            held: 0,
+            pressed: 0,
+            source: "script".into(),
+            activation: "original",
+            health: 100,
+            score: 0,
+            lives: 6,
+            weapon: "pistol",
+            pistol: 10,
+            magic: 5,
+            dynamite: 3,
+            events: String::new(),
+            rng: Some(1),
+        }
+    }
+
+    #[test]
+    fn the_unlisted_report_names_the_first_unknown_divergence() {
+        let rebuild: Vec<TraceRow> = (0..10).map(|t| row(t, 10)).collect();
+        let mut reference: Vec<TraceRow> = (0..10)
+            .map(|t| {
+                let mut r = row(t, if t >= 3 { 11 } else { 10 });
+                r.source = "reference".into();
+                r
+            })
+            .collect();
+        reference[6].state_id = 4;
+        let tol = Tolerances::exact();
+        let comparison = trace::compare(&rebuild, &reference, &tol);
+        let result = TraceResult {
+            trace: PathBuf::from("r.csv"),
+            reference,
+            comparison,
+            report: String::new(),
+        };
+        let mut entry = Entry {
+            reference: "x".into(),
+            clock: Clock::C18,
+            tolerance: "exact".into(),
+            known: BTreeMap::new(),
+        };
+        let text = unlisted_report(&entry, &result, &tol, &rebuild).unwrap();
+        assert!(
+            text.contains("at t_ms 72 in column x"),
+            "x leaves first: {text}"
+        );
+        entry.known.insert("x".into(), 72);
+        let text = unlisted_report(&entry, &result, &tol, &rebuild).unwrap();
+        assert!(text.contains("at t_ms 126 in column state_id"), "{text}");
+        entry.known.insert("state_id".into(), 126);
+        assert_eq!(unlisted_report(&entry, &result, &tol, &rebuild), None);
     }
 
     #[test]

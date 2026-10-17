@@ -37,7 +37,10 @@
 //! version, for comparing movement with earlier traces.
 //!
 //! `--start X,Y` moves Claw to (X, Y) before the script and lets him and the
-//! camera settle; the script's first tick is the first traced tick.
+//! camera settle; the script's first tick is the first traced tick. The
+//! shared random stream is set to the seed once he stands, so the seed is
+//! its state at the script's time zero, as for a segment of a level in a
+//! reference store (`make compare` reads the start point from the store).
 //!
 //! `--expect-complete` checks that the level ends (a level-complete event)
 //! within the script.
@@ -58,6 +61,7 @@ use std::process::ExitCode;
 use claw_assets::{Install, LevelData, LevelSource, Source};
 use claw_sim::claw_frame::{AspectPolicy, GameEvent, ViewConfig};
 use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
+use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Tolerances, TraceRow};
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel};
 
@@ -390,8 +394,17 @@ fn run(args: Args) -> Result<Outcome, String> {
 }
 
 /// Moves Claw and waits until he and the camera have stood still for ten
-/// ticks (at most four seconds).
+/// ticks (at most four seconds), then sets the shared random stream to the
+/// configured seed: the script starts from it.
 fn settle_at(sim: &mut Sim, x: i32, y: i32) {
+    settle(sim, x, y);
+    let seed = sim.config().seed;
+    sim.with_world(|w| *w.rng = Rng::new(seed));
+}
+
+/// Moves Claw and waits until he and the camera have stood still for ten
+/// ticks (at most four seconds).
+fn settle(sim: &mut Sim, x: i32, y: i32) {
     sim.teleport_player(x, y);
     let mut still = 0;
     let mut last = None;
@@ -487,6 +500,26 @@ mod tests {
             "the last line counts"
         );
         assert_eq!(script_behaviour("# level 1\ntick,a,b\n"), None);
+    }
+
+    #[test]
+    fn a_start_point_settles_claw_and_starts_the_random_stream_from_the_seed() {
+        use claw_sim::{SimConfig, TileMap};
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (300, 880));
+        let cfg = SimConfig {
+            seed: 111_567,
+            ..SimConfig::default()
+        };
+        let mut sim = Sim::new(level, cfg);
+        settle_at(&mut sim, 700, 700);
+        assert!(sim.tick() > 10, "Claw fell and stood");
+        let claw = sim.player().unwrap();
+        assert_eq!(claw.x, 700);
+        assert!(claw.y > 700, "landed on the floor: {}", claw.y);
+        assert_eq!(sim.rng_state(), 111_567);
     }
 
     #[test]

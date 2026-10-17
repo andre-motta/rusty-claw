@@ -4,9 +4,11 @@
 //!
 //! Every `[[compare]]` entry of `tests/acceptance/tolerances/references.toml`
 //! names a route in the reference store, a clock and a tolerance file. The
-//! route is replayed in the game with the clock's tuning and the random
-//! state at the route's time zero (see `claw_acceptance::reference`), and
-//! compared with each reference trace of that clock. Every compared column
+//! route is replayed in the game, tick by tick, with the clock's tuning,
+//! the random state at the route's time zero and, for a segment that starts
+//! away from the level's start, Claw placed at the store's start point (see
+//! `claw_acceptance::reference`), and compared with each reference trace of
+//! that clock. Every compared column
 //! must stay within its tolerance up to the first divergence the entry
 //! records for it as known (`known.<column> = <ms>`), and throughout when it
 //! records none: a divergence that is new or comes earlier fails the test.
@@ -18,7 +20,8 @@
 //! printed in full. It fails on a divergence that `references.toml` does not
 //! list for that route and clock, or that comes earlier than listed; a route
 //! and clock with no entry fails on any divergence, and so does every route
-//! with `STRICT=1`.
+//! with `STRICT=1`, which also fails when the game's trace ends before the
+//! reference trace.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -26,7 +29,7 @@ use std::path::Path;
 use claw_acceptance::install;
 use claw_acceptance::reference::{
     self, Clock, ClockResult, Entry, Store, first_outside_rng, load, load_entries, reference_root,
-    summary_line, tolerance_dir, tolerances, verdict,
+    strict_failures, summary_line, tolerance_dir, tolerances, verdict,
 };
 use claw_game::LevelBundle;
 
@@ -108,6 +111,13 @@ fn print_clock(store: &Store, result: &ClockResult, tolerance: &str, entry: Opti
         tolerance_dir().join(format!("{tolerance}.toml")).display(),
         result.traces.len()
     );
+    if let Some((x, y)) = run.teleport {
+        println!(
+            "   a segment: Claw placed at {x},{y} and settled before time zero, \
+             the random stream set to {} once he stood",
+            result.seed
+        );
+    }
     for t in &result.traces {
         println!("\n-- {}", t.trace.display());
         print!("{}", t.report);
@@ -197,16 +207,7 @@ fn make_compare() {
         for t in &result.traces {
             let lines = match entry {
                 Some(entry) if !strict => verdict(entry, &t.comparison).regressions,
-                _ if t.comparison.passed() => Vec::new(),
-                _ => vec![t.comparison.first_divergence.as_ref().map_or_else(
-                    || "nothing was compared".to_string(),
-                    |d| {
-                        format!(
-                            "first leaves the tolerance at {} ms in {}",
-                            d.t_ms, d.column
-                        )
-                    },
-                )],
+                _ => strict_failures(&t.comparison),
             };
             for line in lines {
                 failures.push(format!(
@@ -221,7 +222,7 @@ fn make_compare() {
     }
     println!("\n{}", summaries.join("\n"));
     let rule = if strict {
-        "STRICT=1: any divergence fails"
+        "STRICT=1: any divergence, and a game trace shorter than the reference, fails"
     } else {
         "divergences listed in references.toml are known; any other fails"
     };

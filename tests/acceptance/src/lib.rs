@@ -39,7 +39,12 @@
 //!   trace format, read from the folder `CLAW_REFERENCE` names (skipped when
 //!   that is unset): every column stays within its tolerance up to the
 //!   first divergence the file records for it. `make compare
-//!   REF=<level>/<name>` runs one route's comparison and prints it.
+//!   REF=<level>/<name>` runs one route's comparison and prints it;
+//! - `install_differential`: the gate. The same routes played through the
+//!   game's own frame loop at 60 Hz and compared at the gate's preset
+//!   (exact at one 18 ms step per frame, feel at 60 frames per second),
+//!   failing with the first divergence `references.toml` does not list;
+//!   the trace equals the one played tick by tick.
 //!
 //! [`play`] holds what the route tests share: a recorded player and the
 //! replay of what it recorded through the game's frame loop. [`reference`]
