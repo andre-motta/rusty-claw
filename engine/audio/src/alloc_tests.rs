@@ -186,6 +186,8 @@ fn output_side_does_not_allocate() {
     }
     cmds.push(Command::PauseGame);
     cmds.push(Command::ResumeGame);
+    cmds.push(Command::HoldMusic(true));
+    cmds.push(Command::HoldMusic(false));
     cmds.push(Command::Stop(2));
     cmds.push(Command::Music(Some(Box::new(Saw(0.1)))));
     for c in cmds {

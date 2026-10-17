@@ -100,6 +100,7 @@ pub struct AudioEngine {
     epoch: u64,
     retired: Vec<(u64, Arc<SoundBank>)>,
     game_paused: bool,
+    music_held: bool,
     shared: Arc<Shared>,
     host: Option<Host>,
     last_attempt: Instant,
@@ -114,6 +115,7 @@ impl fmt::Debug for AudioEngine {
             .field("output", &self.output())
             .field("bank_sounds", &self.bank.as_ref().map(|b| b.len()))
             .field("game_paused", &self.game_paused)
+            .field("music_held", &self.music_held)
             .finish()
     }
 }
@@ -146,6 +148,7 @@ impl AudioEngine {
             epoch: 0,
             retired: Vec::new(),
             game_paused: false,
+            music_held: false,
             shared: Arc::new(Shared::default()),
             host: None,
             last_attempt: Instant::now(),
@@ -157,7 +160,7 @@ impl AudioEngine {
     }
 
     /// Starts a host thread with fresh queues and resends the current bank,
-    /// settings and pause state. A music source given earlier is not restored.
+    /// settings, pause state and music hold. A music source given earlier is not restored.
     fn spawn_host(&mut self) {
         let (mut tx, rx) = RingBuffer::new(QUEUE);
         let (gtx, grx) = RingBuffer::new(GARBAGE_QUEUE);
@@ -167,6 +170,7 @@ impl AudioEngine {
         if self.game_paused {
             mixer.pause_game();
         }
+        mixer.hold_music(self.music_held);
         if let Some(bank) = &self.bank {
             let _ = tx.push(Command::Bank {
                 epoch: self.epoch,
@@ -305,6 +309,21 @@ impl AudioEngine {
     pub fn resume_game(&mut self) {
         self.game_paused = false;
         self.send(Command::ResumeGame);
+    }
+
+    /// Holds the music where it is (`true`) or lets it carry on from there
+    /// (`false`), leaving every sound as it is (see [`Mixer::hold_music`]).
+    /// Independent of [`AudioEngine::pause_game`].
+    pub fn hold_music(&mut self, on: bool) {
+        if on != self.music_held {
+            self.music_held = on;
+            self.send(Command::HoldMusic(on));
+        }
+    }
+
+    /// True while [`AudioEngine::hold_music`] holds the music.
+    pub fn music_held(&self) -> bool {
+        self.music_held
     }
 
     /// Applies new settings. Turning audio off closes the output device and

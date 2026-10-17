@@ -24,7 +24,11 @@
 //!   playing; resuming starts the live ambient loops again at their current
 //!   level, while the effects and lines the pause stopped stay stopped;
 //! - leaving a level ([`AudioBridge::leave_level`]) ends its ambient loops
-//!   for good, paused or not.
+//!   for good, paused or not;
+//! - the music can also be held on its own ([`AudioBridge::hold_music`]):
+//!   it stops where it is while every sound plays on, and carries on from
+//!   there when let go. Play running with the pause key's flag still set
+//!   after a help screen holds it this way.
 //!
 //! Music rules: one track at a time, looping as the cue asks; the power-up
 //! track pauses the level track, which resumes where it was when the level
@@ -599,6 +603,20 @@ impl AudioBridge {
     /// True while the game's sounds are paused.
     pub fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    /// Holds the music where it is (`true`) or lets it carry on from there
+    /// (`false`). Unlike [`AudioBridge::pause`] it leaves every sound as it
+    /// is, and the two are independent: the music plays only when neither
+    /// holds it. Music cues that arrive while it is held still switch
+    /// tracks; the track chosen sounds once the hold ends.
+    pub fn hold_music(&mut self, on: bool) {
+        self.engine.hold_music(on);
+    }
+
+    /// True while [`AudioBridge::hold_music`] holds the music.
+    pub fn is_music_held(&self) -> bool {
+        self.engine.music_held()
     }
 
     /// Plays an interface sound.

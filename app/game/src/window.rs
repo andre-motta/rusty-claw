@@ -1272,10 +1272,16 @@ impl App {
             }
             GameKey::ClearFlag => {
                 // The pause key's flag left by help: a pause of no time,
-                // which goes on as any resume does.
+                // which goes on as any resume does. The game's sounds
+                // already play, so that pause leaves them alone (it would
+                // cut the effects playing); the music carries on where the
+                // flag held it.
                 self.pauses.flag = false;
+                let audio = self.audio.take();
                 self.user_pause(true);
                 self.user_pause(false);
+                self.audio = audio;
+                self.update_pause();
             }
             GameKey::Quit => event_loop.exit(),
             GameKey::Nothing => {}

@@ -2,6 +2,7 @@
 //! mixer without a device.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use claw_audio::{
@@ -127,4 +128,46 @@ fn audio_off_plays_nothing() {
     assert!(wait(&mut engine, |e| e.stats().commands >= 1));
     std::thread::sleep(Duration::from_millis(30));
     assert_eq!(engine.stats().voices_started, 0);
+}
+
+/// Music that counts the frames it rendered.
+struct Counting(Arc<AtomicUsize>);
+
+impl MusicSource for Counting {
+    fn render(&mut self, out: &mut [f32], _rate: u32) {
+        self.0.fetch_add(out.len() / 2, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn a_music_hold_stops_the_music_and_leaves_the_sounds() {
+    let mut engine = AudioEngine::null(AudioSettings::default());
+    engine.set_bank(bank(&["LEVEL_AMBIENT"], 22050));
+    let rendered = Arc::new(AtomicUsize::new(0));
+    engine.set_music(Some(Box::new(Counting(Arc::clone(&rendered)))));
+    let frames = || rendered.load(Ordering::Relaxed);
+    assert!(wait(&mut engine, |_| frames() > 0), "the music plays");
+    let start = engine.stats().commands;
+    engine.hold_music(true);
+    engine.hold_music(true);
+    assert!(engine.music_held() && !engine.game_paused());
+    // One command for the two calls.
+    assert!(wait(&mut engine, |e| e.stats().commands == start + 1));
+    let mut ambient = PlayRequest::new("LEVEL_AMBIENT", Channel::Ambient);
+    ambient.looped = true;
+    ambient.handle = Some(1);
+    engine.play(&ambient);
+    assert!(wait(&mut engine, |e| e.stats().active_voices == 1));
+    let held = frames();
+    std::thread::sleep(Duration::from_millis(60));
+    engine.poll_device();
+    assert_eq!(frames(), held, "the held music does not move");
+    assert_eq!(engine.stats().active_voices, 1, "the sounds play on");
+    engine.hold_music(false);
+    assert!(!engine.music_held());
+    assert!(
+        wait(&mut engine, |_| frames() > held),
+        "the music carries on"
+    );
+    engine.stop_all();
 }

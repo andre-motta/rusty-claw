@@ -686,44 +686,52 @@ fn the_music_stays_paused_after_help_over_a_pause_until_the_pause_key() {
     let mut p = Pauses::default();
     let since = Duration::ZERO;
     s.frame(Duration::from_millis(18));
-    // The pause key.
+    // The pause key: the game's sounds and the music pause.
     p.user = true;
     assert_eq!(
         p.apply(Some(&mut s), Some(&mut audio), since),
         Change::Paused
     );
-    assert!(audio.is_paused());
+    assert!(audio.is_paused() && !audio.is_music_held());
     // F1 over the pause: help shows and the pause key's flag stays set
     // (the window turns the pause into the flag).
     p.follow(&Effect::PauseGame, Some(&mut s), Some(&mut audio), since);
     p.user = false;
     p.flag = true;
-    // Help closes: play runs, the music stays paused.
+    // Help closes: play and the game's sounds run, the music alone stays
+    // paused.
     assert_eq!(
         p.follow(&Effect::ResumeGame, Some(&mut s), Some(&mut audio), since),
         Change::Resumed
     );
     assert!(!s.is_paused());
-    assert!(audio.is_paused(), "the music waits for the pause key");
+    assert!(!audio.is_paused(), "the game's sounds play");
+    assert!(audio.is_music_held(), "the music waits for the pause key");
     assert_eq!(s.frame(Duration::from_millis(18)).ticks, 1, "play runs");
     // Another pass of the sounds changes nothing while the flag is set.
     p.apply(Some(&mut s), Some(&mut audio), since);
+    assert!(!audio.is_paused() && audio.is_music_held());
+    // Help again over the flag pauses everything, and its close holds
+    // the music again.
+    p.follow(&Effect::PauseGame, Some(&mut s), Some(&mut audio), since);
     assert!(audio.is_paused());
-    // The pause key clears the flag: a pause of no time, and the music
-    // carries on.
+    p.follow(&Effect::ResumeGame, Some(&mut s), Some(&mut audio), since);
+    assert!(!audio.is_paused() && audio.is_music_held());
+    // The pause key clears the flag: a pause of no time that leaves the
+    // game's sounds alone (the window runs it without them), then the
+    // music carries on.
     p.flag = false;
     p.user = true;
-    p.apply(Some(&mut s), Some(&mut audio), since);
+    p.apply(Some(&mut s), None, since);
     p.user = false;
-    assert_eq!(
-        p.apply(Some(&mut s), Some(&mut audio), since),
-        Change::Resumed
-    );
+    assert_eq!(p.apply(Some(&mut s), None, since), Change::Resumed);
     assert!(!audio.is_paused());
-    // Without a level in play the flag pauses nothing.
+    assert_eq!(p.apply(Some(&mut s), Some(&mut audio), since), Change::None);
+    assert!(!audio.is_paused() && !audio.is_music_held());
+    // Without a level in play the flag holds nothing.
     p.flag = true;
     p.apply(None, Some(&mut audio), since);
-    assert!(!audio.is_paused());
+    assert!(!audio.is_paused() && !audio.is_music_held());
 }
 
 // ------------------------------------------------------ the stand window

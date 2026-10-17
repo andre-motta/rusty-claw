@@ -16,8 +16,8 @@
 //! screen. When that help screen closes play runs again although the pause
 //! is still set: Escape stays blocked (and the sign is gone) until the
 //! next press of the Pause key, which ends the pause as any other resume.
-//! The music stays paused all that time (the game's sounds pause with it,
-//! see [`Pauses::flag`]) and carries on where it was at that press.
+//! The music stays paused all that time while the game's sounds play
+//! (see [`Pauses::flag`]), and carries on where it was at that press.
 //! A gamepad's Start opens the in-game menu, as the original joystick's
 //! menu button does; without menus (watching a script, a benchmark) it
 //! pauses and goes on as the Pause key does (see [`game_key`]).
@@ -100,8 +100,8 @@ pub struct Pauses {
     pub background: bool,
     /// The pause key's flag left set by a help screen opened while paused:
     /// play runs, but Escape stays blocked and the music stays paused until
-    /// the pause key is pressed again. It does not stop play; for the
-    /// sounds it counts as a pause (see [`Pauses::apply`]).
+    /// the pause key is pressed again. It stops neither play nor the game's
+    /// sounds; it holds the music only (see [`Pauses::apply`]).
     pub flag: bool,
 }
 
@@ -197,9 +197,10 @@ impl Pauses {
     /// releasing held buttons at the right moment when the session's
     /// [`PauseInput`] is [`PauseInput::ReleaseAll`] (with the original
     /// default nothing is released). The game's sounds pause only while a
-    /// level is in play, and stay paused while the pause key's flag is set
-    /// (the music waits for the pause key; the resume that clears the flag
-    /// lets it carry on where it was).
+    /// level is in play. While the pause key's flag is set with a level in
+    /// play the music alone is held (see [`AudioBridge::hold_music`]): the
+    /// game's sounds play, and the music waits for the pause key, whose
+    /// resume clears the flag and lets it carry on where it was.
     pub fn apply(
         &self,
         session: Option<&mut Session>,
@@ -223,11 +224,12 @@ impl Pauses {
             }
         }
         if let Some(a) = audio {
-            if (paused || self.flag) && in_play {
+            if paused && in_play {
                 a.pause();
             } else {
                 a.resume();
             }
+            a.hold_music(self.flag && in_play);
         }
         change
     }

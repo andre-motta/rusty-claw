@@ -120,6 +120,7 @@ pub struct Mixer {
     clock_frames: u64,
     game_paused: bool,
     all_paused: bool,
+    music_held: bool,
     music: Option<Box<dyn MusicSource>>,
     music_gain: f32,
     scratch: Box<[f32]>,
@@ -133,6 +134,7 @@ impl fmt::Debug for Mixer {
             .field("settings", &self.settings)
             .field("game_paused", &self.game_paused)
             .field("all_paused", &self.all_paused)
+            .field("music_held", &self.music_held)
             .field("music", &self.music.is_some())
             .finish()
     }
@@ -151,6 +153,7 @@ impl Mixer {
             clock_frames: 0,
             game_paused: false,
             all_paused: false,
+            music_held: false,
             music: None,
             music_gain: curve::music_gain(settings.music_volume),
             scratch: vec![0.0; SCRATCH_FRAMES * 2].into_boxed_slice(),
@@ -366,6 +369,19 @@ impl Mixer {
         self.game_paused
     }
 
+    /// Holds the music where it is (`true`) or lets it carry on from there
+    /// (`false`), without touching any sound: effects, speech, ambient loops
+    /// and interface sounds play as before. Independent of
+    /// [`Mixer::pause_game`]: the music sounds only when neither holds it.
+    pub fn hold_music(&mut self, on: bool) {
+        self.music_held = on;
+    }
+
+    /// Whether [`Mixer::hold_music`] holds the music.
+    pub fn music_held(&self) -> bool {
+        self.music_held
+    }
+
     /// Replaces the music source and returns the previous one, so the caller
     /// decides where it is dropped.
     pub fn set_music(
@@ -415,7 +431,7 @@ impl Mixer {
                     mix_voice(v, out);
                 }
             }
-            let music = if self.game_paused {
+            let music = if self.game_paused || self.music_held {
                 None
             } else {
                 self.music.as_mut()
@@ -1005,6 +1021,61 @@ mod tests {
         m.render(&mut out);
         assert!(out.iter().all(|s| *s == 0.0));
         assert!(m.set_music(None).is_some());
+    }
+
+    /// A music source that counts the frames it rendered.
+    struct Counting(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl MusicSource for Counting {
+        fn render(&mut self, out: &mut [f32], _rate: u32) {
+            out.fill(0.25);
+            self.0
+                .fetch_add(out.len() / 2, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn a_music_hold_keeps_the_music_in_place_and_the_sounds_playing() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let s: Vec<i16> = (0..2000).map(|i| (i * 7 % 3000) as i16).collect();
+        let bk = bank(&[("LOOP", Pcm::mono(RATE, s))]);
+        let mut m = mixer(&full_volume());
+        let rendered = Arc::new(AtomicUsize::new(0));
+        m.set_music(Some(Box::new(Counting(Arc::clone(&rendered)))));
+        let looped = PlayRequest {
+            looped: true,
+            channel: Channel::Ambient,
+            handle: Some(3),
+            ..req("LOOP")
+        };
+        m.play(&looped, &bk).unwrap();
+        let mut out = vec![0.0f32; 2 * 100];
+        m.render(&mut out);
+        assert_eq!(rendered.load(Ordering::Relaxed), 100);
+        m.hold_music(true);
+        assert!(m.music_held() && !m.game_paused());
+        m.render(&mut out);
+        assert_eq!(
+            rendered.load(Ordering::Relaxed),
+            100,
+            "the held music does not move"
+        );
+        assert_eq!(m.active_voices(), 1, "the sounds keep playing");
+        assert!(out.iter().any(|v| *v != 0.0));
+        // A game pause and its resume over the hold leave the music held.
+        m.pause_game();
+        m.resume_game();
+        m.render(&mut out);
+        assert_eq!(rendered.load(Ordering::Relaxed), 100);
+        // Released, the music carries on from where it was.
+        m.hold_music(false);
+        m.render(&mut out);
+        assert_eq!(rendered.load(Ordering::Relaxed), 200);
+        // A game pause still holds it without a hold.
+        m.pause_game();
+        m.render(&mut out);
+        assert_eq!(rendered.load(Ordering::Relaxed), 200);
     }
 
     #[test]

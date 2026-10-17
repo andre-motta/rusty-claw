@@ -263,7 +263,10 @@ pub struct Session {
     /// Buttons down right now, as the key events and
     /// [`Session::sync_keys`] say.
     down: Buttons,
-    /// The tick after a resume waits for the next frame.
+    /// The tick after a resume waits for the next frame. It can stay set
+    /// across a pause: when [`Session::pause`] cannot run that tick (a
+    /// replayed pause or menu holds play at the boundary), the tick still
+    /// waits, and the frame after the next resume runs it.
     stepping: bool,
     /// The input of that tick, when the resume decided it.
     resume_input: Option<TickInput>,
