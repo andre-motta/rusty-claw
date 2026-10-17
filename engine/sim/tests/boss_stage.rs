@@ -5,14 +5,18 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use claw_sim::claw_frame::output::BossMeter;
 use claw_sim::claw_frame::{AudioCue, Buttons, GameEvent, MusicTrack, SoundChannel};
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::boss_stage::{self, stage_state};
 use claw_sim::logic::world_boss::fight;
 use claw_sim::logic::{GameLogic, ObjectData};
-use claw_sim::object::{LogicKind, ObjectId, types};
+use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags, types};
 use claw_sim::physics::ptype;
+use claw_sim::player::death::powerup;
+use claw_sim::player::hit::PickupFields;
 use claw_sim::player::special::BOSS_END;
 use claw_sim::player::state;
 use claw_sim::{Sim, SimConfig, SimLevel, TickInput};
@@ -681,4 +685,74 @@ fn the_door_wakes_the_stager_for_claws_first_tick_at_the_target() {
     s.step(jump_right());
     assert_eq!(s.boss().fight(), fight::STAGING);
     assert_eq!(s.player().unwrap().state, state::FREEZE);
+}
+
+/// A special pickup giving powerup `code` for `ms`, touching Claw.
+fn give_powerup(sim: &mut Sim, code: u32, ms: i32) {
+    let (x, y) = {
+        let o = sim.player().unwrap();
+        (o.x, o.y)
+    };
+    let mut o = Object::new(0, x, y, 10, Arc::from("Toucher"), LogicKind::Inert);
+    o.flags = flags::WORLD;
+    o.type_flags = types::SPECIAL;
+    o.attack_rect = Rect::new(-20, -20, 20, 20);
+    PickupFields {
+        kind: 53,
+        points: code as i32,
+        smarts: ms,
+        ..PickupFields::default()
+    }
+    .store(&mut o);
+    sim.spawn(o);
+}
+
+fn music(audio: &[AudioCue]) -> Vec<MusicTrack> {
+    audio
+        .iter()
+        .filter_map(|c| match c {
+            AudioCue::Music { track, .. } => Some(*track),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Gives the ghost powerup for 200 ms and runs until it is over; the
+/// music cues of those ticks.
+fn powerup_music(sim: &mut Sim) -> Vec<MusicTrack> {
+    give_powerup(sim, powerup::GHOST, 200);
+    let mut cues = Vec::new();
+    sim.step(TickInput::default());
+    assert_eq!(sim.stats().powerup_kind, powerup::GHOST);
+    cues.extend(music(sim.last_audio()));
+    for _ in 0..30 {
+        sim.step(TickInput::default());
+        cues.extend(music(sim.last_audio()));
+    }
+    assert_eq!(sim.stats().powerup_kind, 0, "the powerup ran out");
+    cues
+}
+
+#[test]
+fn a_powerup_leaves_the_boss_music_alone_while_the_flag_is_set() {
+    // During the introduction and the fight: no music change at all.
+    let (mut sim, _, _) = arena_sim(150, 8000);
+    while sim.boss().fight() == fight::NONE {
+        sim.step(hold(RIGHT));
+    }
+    assert_eq!(powerup_music(&mut sim), vec![]);
+    while sim.boss().fight() != fight::ON {
+        sim.step(TickInput::default());
+    }
+    idle(&mut sim, 2);
+    assert_eq!(sim.player().unwrap().state, state::STAND);
+    assert_eq!(powerup_music(&mut sim), vec![]);
+    // With the flag at 0 (as after an intro skip): the powerup's tune, then
+    // the level's.
+    let (mut sim, _, _) = arena_sim(600, 8000);
+    assert_eq!(sim.boss().fight(), fight::NONE);
+    assert_eq!(
+        powerup_music(&mut sim),
+        vec![MusicTrack::Powerup, MusicTrack::Level]
+    );
 }
