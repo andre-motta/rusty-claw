@@ -49,6 +49,7 @@ use claw_frame::{
 };
 use claw_render::gpu::COLOR_FORMAT;
 use claw_render::palette::{self, FULL_BRIGHTNESS};
+use claw_render::screen::transition_at;
 use claw_render::{
     Anchor, FrameInput, Gpu, ImageId, LevelGraphics, Offscreen, Renderer, Scene, SceneBuilder,
     ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
@@ -84,7 +85,7 @@ use crate::load::{
 };
 use crate::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, game_key};
 use crate::saves::SaveStore;
-use crate::session::{GameRecording, LevelRecording, Session, Span, start_sim};
+use crate::session::{Circles, GameRecording, LevelRecording, Session, Span, start_sim};
 use crate::settings::{Aspect, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
 
 /// The image set of the PAUSE sign (its frame [`PAUSE_FRAME`]), preloaded
@@ -104,13 +105,16 @@ pub fn pause_sign() -> ScreenSprite {
 ///
 /// Messages age with game time only: by the ticks that run, and not while a
 /// transition runs (or while paused, when no tick runs). They are hidden
-/// while a transition runs (see [`transition_running`]).
+/// while a transition runs (see [`transition_running`]) and while a death's
+/// circles are drawn between two ticks ([`StatusLayer::circles`]), which
+/// are timed by the frames instead of the ticks.
 #[derive(Debug, Clone)]
 pub struct StatusLayer {
     hud: Hud,
     transition: Option<ScreenTransition>,
     running: bool,
     fresh: bool,
+    circles: Option<Circles>,
 }
 
 /// True while `t` runs at tick `tick`: a closing transition until the next
@@ -139,7 +143,14 @@ impl StatusLayer {
             transition: None,
             running: false,
             fresh: true,
+            circles: None,
         }
+    }
+
+    /// Draws a death's circles as `circles` says from now on (see
+    /// [`Session::circles`]), or the simulation's transition with `None`.
+    pub fn circles(&mut self, circles: Option<Circles>) {
+        self.circles = circles;
     }
 
     /// Keeps the status bar inside the centred 4:3 area (true) or at the
@@ -181,6 +192,14 @@ impl StatusLayer {
     /// `sim` in a presentation of `presentation` game pixels.
     pub fn apply(&mut self, input: &mut FrameInput<'_>, sim: &Sim, presentation: (u32, u32)) {
         input.screen = self.hud.layout(&sim.hud(), presentation, input.time_ms);
+        if let Some(c) = self.circles {
+            // No game time passes: the frame's time moves on with the
+            // circles instead.
+            let (t, time) = transition_at(&c.transition, input.time_ms, c.elapsed_ms);
+            input.transition = Some(t);
+            input.time_ms = time;
+            return;
+        }
         if !self.running {
             input.screen.extend(self.hud.message_layout());
         }
@@ -739,7 +758,9 @@ impl App {
             let mut status = StatusLayer::new(&mut graphics, &bundle);
             status.set_centred(self.settings.status_bar_centred);
             graphics.preload([PAUSE_SET]);
-            let mut session = Session::new(sim).with_pause_input(self.settings.pause_input);
+            let mut session = Session::new(sim)
+                .with_pause_input(self.settings.pause_input)
+                .with_death_circles();
             self.router
                 .set_keep_held(self.settings.pause_input == PauseInput::Original);
             if let Some(path) = &self.settings.record
@@ -876,7 +897,9 @@ impl App {
         self.preloaded = preload(&mut graphics, &bundle.level, &sim.snapshot());
         let mut status = StatusLayer::new(&mut graphics, &bundle);
         graphics.preload([PAUSE_SET]);
-        let mut session = Session::new(sim).with_pause_input(self.settings.pause_input);
+        let mut session = Session::new(sim)
+            .with_pause_input(self.settings.pause_input)
+            .with_death_circles();
         self.router
             .set_keep_held(self.settings.pause_input == PauseInput::Original);
         // Every level is recorded, each into its own file.
@@ -1498,6 +1521,7 @@ impl App {
             }
             level.status.events(&events);
             level.status.update(level.session.sim(), f.ticks);
+            level.status.circles(level.session.circles());
         }
         let held = self
             .router
@@ -1701,6 +1725,7 @@ impl App {
         self.cues.extend(cues);
         status.events(&game_events);
         status.update(session.sim(), f.ticks);
+        status.circles(session.circles());
         if !self.announced_end && matches!(self.mode, WindowMode::Watch(_)) && !session.replaying()
         {
             self.announced_end = true;
