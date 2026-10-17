@@ -33,7 +33,9 @@
 //!
 //! The rows of the hit (31), lift (5000), throw (5001), death-fall (5004),
 //! death (5005), swing (5007) and freeze (5009) states call into those
-//! submodules, which fall back to standing until they are filled in.
+//! submodules, which fall back to standing until they are filled in (or,
+//! once filled in, when Claw is found in the state without what it needs:
+//! a swing with no rope).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -259,6 +261,10 @@ pub struct Claw {
     /// The lives step of a death with lives left has run: Claw respawns
     /// between this tick and the next (see [`death`]).
     pub respawn_pending: bool,
+    /// The rope Claw grabbed last (see [`swing`]); kept after he lets go.
+    pub rope: Option<ObjectId>,
+    /// Time left before Claw can grab the rope he let go of again, ms.
+    pub rope_regrab_ms: i32,
 }
 
 impl Default for Claw {
@@ -293,6 +299,8 @@ impl Default for Claw {
             movement: MovementOverrides::default(),
             repress_directions: false,
             respawn_pending: false,
+            rope: None,
+            rope_regrab_ms: 0,
         }
     }
 }
@@ -834,6 +842,7 @@ pub fn respawn(c: &mut Ctx) {
     c.p.attacking = false;
     c.p.conveyor_force = 0.0;
     c.p.aux_timer_ms = 0;
+    c.p.rope_regrab_ms = 0;
     c.o.teleported = true;
     if c.o.x != c.p.spawn_point.0 {
         c.play(CHECKPOINT_RESPAWN_SOUND, claw_frame::SoundChannel::Effect);
@@ -1744,7 +1753,8 @@ pub fn tick(c: &mut Ctx) {
 }
 
 /// Shared bookkeeping after every handler: the weapon toggle (with its
-/// click), timers, the position clamp and death-tile marks.
+/// click), timers (the rope regrab timer among them), the position clamp
+/// and death-tile marks.
 pub fn post_tick(c: &mut Ctx) {
     if c.pressed(Buttons::TOGGLE) && !c.p.attacking {
         c.p.stats.weapon = stats::next_weapon(c.p.stats.weapon);
@@ -1760,6 +1770,7 @@ pub fn post_tick(c: &mut Ctx) {
     death::powerup_tick(c);
     c.p.post_climb_lockout_ms = (c.p.post_climb_lockout_ms - c.dt()).max(0);
     c.p.aux_timer_ms = (c.p.aux_timer_ms - c.dt()).max(0);
+    c.p.rope_regrab_ms = (c.p.rope_regrab_ms - c.dt()).max(0);
     if c.o.state != state::DEATH_FALL {
         let r = c.p.clamp;
         c.o.x = c.o.x.clamp(r.left, r.right.max(r.left));

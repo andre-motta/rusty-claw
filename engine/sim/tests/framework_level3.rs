@@ -1,8 +1,8 @@
 //! The framework the third level's families build on: the families that
 //! are declared but not built yet stay inert placeholders, the thieves'
 //! classes and data, the images of their knife and arrow, the enemy state
-//! numbers reserved for the level, and Claw's Swing state, which still
-//! returns him to standing.
+//! numbers reserved for the level, and Claw's Swing state, which returns
+//! him to standing when he has no rope to hang from.
 //!
 //! The tests named `install_*` read the user's own install from the folder
 //! named by `CLAW_INSTALL` at run time and skip themselves when it is
@@ -209,7 +209,7 @@ fn the_third_levels_state_numbers_are_reserved_and_empty() {
 }
 
 #[test]
-fn swing_is_declared_and_still_returns_claw_to_standing() {
+fn swing_is_declared_and_without_a_rope_returns_claw_to_standing() {
     let row = player::row_of(state::SWING);
     assert_eq!((row.id, row.name), (5007, "Swing"));
     assert_eq!(row.kind, RowKind::Fallback);

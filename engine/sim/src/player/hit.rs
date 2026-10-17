@@ -44,8 +44,9 @@
 //!   the status bar: it is not removed here.
 //! - Pistol shots and magic charges add their amount, up to [`MAX_AMMO`].
 //! - Special pickups carry a special code: the end of the level, warps,
-//!   dynamite, curses, the ghost, Vader and sword powerups, and extra lives
-//!   (up to [`MAX_LIVES`], flying to the status bar).
+//!   dynamite, curses, the ghost, Vader and sword powerups, extra lives
+//!   (up to [`MAX_LIVES`], flying to the status bar), and swinging ropes,
+//!   which Claw grabs and which stay (see [`super::swing`]).
 
 use claw_frame::{AudioCue, GameEvent, SoundChannel};
 
@@ -92,7 +93,7 @@ pub mod special_code {
     pub const END_OF_LEVEL: i32 = 9901;
     /// Moves Claw elsewhere in the level.
     pub const WARP: i32 = 9902;
-    /// A swinging rope (no first-level source).
+    /// A swinging rope: Claw grabs it (see [`super::super::swing::grab`]).
     pub const ROPE: i32 = 9903;
     /// Sticks of dynamite.
     pub const DYNAMITE: i32 = 9904;
@@ -467,6 +468,7 @@ fn special_pickup(c: &mut Ctx, id: ObjectId) {
             remove(c, id);
         }
         WARP => warp(c, id, &f),
+        ROPE => super::swing::grab(c, id),
         DYNAMITE => {
             let n = if f.smarts > 0 {
                 f.smarts
@@ -499,8 +501,8 @@ fn special_pickup(c: &mut Ctx, id: ObjectId) {
             }
             fly_to_hud(c, id);
         }
-        // Ropes have no first-level source; the plasma sword and catnip
-        // codes do nothing on a special pickup.
+        // The plasma sword and catnip codes do nothing on a special
+        // pickup.
         _ => {}
     }
 }
