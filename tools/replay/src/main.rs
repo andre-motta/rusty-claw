@@ -24,6 +24,13 @@
 //! flags of the same names do. A run with an aid on is not plain play, so
 //! `--compare` refuses it.
 //!
+//! A route or recording of a later level of one game starts from the
+//! progress the game carried into it, named in its `# start_score = ...`
+//! lines (score, health, lives, ammunition, weapon and the game's
+//! treasure): the level starts with that progress, as the game's own flow
+//! starts it. The lines of a save point a recording started from are not
+//! applied.
+//!
 //! The script's `@` directive lines are played at their tick boundaries: a
 //! command (`end_life`) takes effect before its tick, and a pause or a menu
 //! changes nothing in the game (play stops and goes on where it stopped;
@@ -67,10 +74,11 @@ use std::process::ExitCode;
 use claw_assets::{Install, LevelData, LevelSource, Source};
 use claw_sim::claw_frame::{AspectPolicy, GameEvent, ViewConfig};
 use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
+use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Tolerances, TraceRow};
 use claw_sim::tuning::PlayAids;
-use claw_sim::{InputScript, Sim, SimConfig, SimLevel};
+use claw_sim::{InputScript, Sim, SimConfig, SimLevel, StartState};
 
 const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FILE.WWD] \
 --script ROUTE.csv [--trace OUT.csv] [--tuning default|original] [--seed N] [--res WxH] \
@@ -246,6 +254,7 @@ fn run(args: Args) -> Result<Outcome, String> {
     let script = InputScript::parse_with_aids(&text)
         .map_err(|e| format!("{}: {e}", script_path.display()))?;
     let header = script.header;
+    let carry = parse_start_lines(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
     let aids = args.aids.union(header.aids);
     if args.compare.is_some() && aids.any() {
         let names: Vec<String> = aids.names().iter().map(|n| format!("{n} = on")).collect();
@@ -318,7 +327,13 @@ fn run(args: Args) -> Result<Outcome, String> {
     }
     cfg.tuning.behaviour.fix_double_jump = fix;
     cfg.aids = aids;
-    let mut sim = Sim::new(sim_level, cfg);
+    let carried = carry.as_ref().map(|c| {
+        format!(
+            ", carried in: score {}, health {}, lives {}",
+            c.score, c.health, c.lives
+        )
+    });
+    let mut sim = Sim::with_start(sim_level, cfg, StartState { carry, save: None });
     if let Some((x, y)) = args.start {
         settle_at(&mut sim, x, y);
     }
@@ -356,7 +371,7 @@ fn run(args: Args) -> Result<Outcome, String> {
         );
     }
     eprintln!(
-        "claw-replay: {} ticks, {} directives ({} commands), tuning {}, seed {}, mid-air hit fix {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}",
+        "claw-replay: {} ticks, {} directives ({} commands), tuning {}, seed {}, mid-air hit fix {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}{}",
         rows.len(),
         script.directives().len(),
         commands,
@@ -373,6 +388,7 @@ fn run(args: Args) -> Result<Outcome, String> {
         unknown,
         inert,
         d.dropped_records,
+        carried.unwrap_or_default(),
         args.trace
             .as_ref()
             .map(|p| format!(", trace {}", p.display()))
@@ -600,6 +616,44 @@ mod tests {
         // Plain play is compared as before (here it stops at the install).
         let e = run_script("plain", plain, "--compare ref.csv --tolerance exact");
         assert!(e.contains("opening install"), "{e}");
+    }
+
+    #[test]
+    fn a_later_level_starts_from_the_progress_its_start_lines_name() {
+        let lines = "# level 2\n# start_score = 99700\n# start_health = 100\n\
+                     # start_lives = 7\n# start_pistol = 10\n# start_magic = 5\n\
+                     # start_dynamite = 3\n# start_weapon = pistol\n\
+                     # start_treasure_game = 87, 0, 4, 4, 3, 0, 6, 0, 0\n";
+        // Read: the run stops at the missing install.
+        let e = run_script(
+            "carry",
+            &format!("{lines}tick,held_mask,pressed_mask\n0,0,0\n"),
+            "",
+        );
+        assert!(e.contains("opening install"), "{e}");
+        // Part of the progress only: refused before anything is loaded.
+        let e = run_script(
+            "carry-part",
+            "# start_score = 99700\ntick,held_mask,pressed_mask\n0,0,0\n",
+            "",
+        );
+        assert!(e.contains("start_health is missing"), "{e}");
+        // Applied to the level's start.
+        use claw_sim::{SimConfig, TileMap};
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (300, 880));
+        let carry = parse_start_lines(lines).unwrap();
+        let sim = Sim::with_start(
+            level,
+            SimConfig::default(),
+            StartState { carry, save: None },
+        );
+        assert_eq!(
+            (sim.stats().score, sim.stats().health, sim.stats().lives),
+            (99_700, 100, 7)
+        );
     }
 
     #[test]

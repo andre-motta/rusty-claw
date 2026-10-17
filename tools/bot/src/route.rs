@@ -2,8 +2,6 @@
 //! report, playing a route back and its timing margin.
 
 use claw_sim::claw_frame::GameEvent;
-use claw_sim::claw_frame::output::Weapon;
-use claw_sim::player::stats::TREASURE_KINDS;
 use claw_sim::{Carry, InputScript, Sim, SimConfig};
 
 use crate::actions::MIN_SPACING;
@@ -106,123 +104,19 @@ pub struct Header {
     pub carry: Option<Carry>,
 }
 
-/// The prefix of the keys of a level's start in a recording's comment
-/// lines (`# start_score = 25000`).
-pub const START_PREFIX: &str = "start_";
-
-/// The progress keys of a level's start, in the order a recording writes
-/// them.
-pub const CARRY_KEYS: [&str; 8] = [
-    "score",
-    "health",
-    "lives",
-    "pistol",
-    "magic",
-    "dynamite",
-    "weapon",
-    "treasure_game",
-];
-
-fn weapon_name(w: Weapon) -> &'static str {
-    match w {
-        Weapon::Pistol => "pistol",
-        Weapon::Magic => "magic",
-        Weapon::Dynamite => "dynamite",
-    }
-}
+pub use claw_sim::player::progress::{CARRY_KEYS, START_PREFIX};
 
 /// The comment lines of the progress a level starts with, as a recording
-/// of a game's later level writes them: `# start_score = 25000`, ...,
-/// `# start_treasure_game = 10, 2, 0, 0, 0, 0, 0, 0, 0`.
+/// of a game's later level writes them (see
+/// [`claw_sim::player::progress::start_lines`]).
 pub fn carry_lines(c: &Carry) -> String {
-    let counts: Vec<String> = c.treasure_game.iter().map(u32::to_string).collect();
-    let values = [
-        c.score.to_string(),
-        c.health.to_string(),
-        c.lives.to_string(),
-        c.pistol.to_string(),
-        c.magic.to_string(),
-        c.dynamite.to_string(),
-        weapon_name(c.weapon).to_string(),
-        counts.join(", "),
-    ];
-    CARRY_KEYS
-        .iter()
-        .zip(values)
-        .map(|(k, v)| format!("# {START_PREFIX}{k} = {v}\n"))
-        .collect()
+    claw_sim::player::progress::start_lines(c)
 }
 
 /// The progress a level starts with, read from the `# start_...` comment
-/// lines of `text` (a recording of the level, or the lines alone; the last
-/// line of a key counts): `None` with no such line, an error when one of
-/// [`CARRY_KEYS`] is missing or unreadable.
+/// lines of `text` (see [`claw_sim::player::progress::parse_start_lines`]).
 pub fn parse_carry(text: &str) -> Result<Option<Carry>, String> {
-    let mut fields: Vec<(&str, &str)> = Vec::new();
-    for line in text.lines() {
-        let Some((k, v)) = line
-            .trim()
-            .strip_prefix('#')
-            .and_then(|r| r.split_once('='))
-        else {
-            continue;
-        };
-        let Some(k) = k.trim().strip_prefix(START_PREFIX) else {
-            continue;
-        };
-        if CARRY_KEYS.contains(&k) {
-            fields.retain(|(f, _)| *f != k);
-            fields.push((k, v.trim()));
-        }
-    }
-    if fields.is_empty() {
-        return Ok(None);
-    }
-    let get = |k: &str| {
-        fields
-            .iter()
-            .find(|(f, _)| *f == k)
-            .map(|(_, v)| *v)
-            .ok_or_else(|| format!("{START_PREFIX}{k} is missing"))
-    };
-    let bad = |k: &str, v: &str| format!("bad {START_PREFIX}{k} {v:?}");
-    let int = |k: &str| -> Result<i32, String> {
-        let v = get(k)?;
-        v.parse().map_err(|_| bad(k, v))
-    };
-    // In the order of the keys, so the first one missing is named.
-    let score = get("score")?;
-    let score = score.parse().map_err(|_| bad("score", score))?;
-    let health = int("health")?;
-    let lives = int("lives")?;
-    let pistol = int("pistol")?;
-    let magic = int("magic")?;
-    let dynamite = int("dynamite")?;
-    let weapon = match get("weapon")? {
-        "pistol" => Weapon::Pistol,
-        "magic" => Weapon::Magic,
-        "dynamite" => Weapon::Dynamite,
-        v => return Err(bad("weapon", v)),
-    };
-    let counts = get("treasure_game")?;
-    let parsed: Vec<u32> = counts
-        .split(',')
-        .map(|n| n.trim().parse())
-        .collect::<Result<_, _>>()
-        .map_err(|_| bad("treasure_game", counts))?;
-    let treasure_game: [u32; TREASURE_KINDS] = parsed
-        .try_into()
-        .map_err(|_| bad("treasure_game", counts))?;
-    Ok(Some(Carry {
-        score,
-        health,
-        lives,
-        pistol,
-        magic,
-        dynamite,
-        weapon,
-        treasure_game,
-    }))
+    claw_sim::player::progress::parse_start_lines(text)
 }
 
 impl Header {
@@ -500,6 +394,7 @@ pub fn report_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use claw_sim::claw_frame::Weapon;
     use claw_sim::input::ScriptTuning;
 
     #[test]
