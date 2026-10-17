@@ -62,7 +62,16 @@
 # last health before he falls, keeping his fraction of a pixel; (26) an
 # enemy backing off or moving up reaches its spot by its exact position;
 # and (27) a route of a later level of one game starts from the progress
-# its `# start_...` lines carry in. The comparison itself takes a
+# its `# start_...` lines carry in. Four more came from the throw routes:
+# (28) a flying keg moves on an exact position by `(v + g dt / 2) dt`, with
+# `dt` the tick on the game clock in double-precision seconds, keeps the
+# box it is carried with and explodes on the tick after it lands; (29) an
+# enemy the tiles stop up or down takes the speed the move it made gives;
+# (30) the ledge guard looks at the side an enemy's exact position moved
+# to and puts it back where it was before the step, both coordinates (a
+# thrown enemy caught by a step's corner lands where it was); and (31) a
+# thrown enemy's bounce keeps the fractions of its exact position. The
+# comparison itself takes a
 # reference step of no game time (the original's step of a save, `dt_ms`
 # 0) as the instant at its time, so the save's checkpoint is found in
 # both traces. The rule numbers below refer to this list.
@@ -691,3 +700,86 @@ known.state_id = 6400
 known.health = 6400
 known.x = 6467
 known.cam_x = 6467
+
+# The throw routes of the first level, one 18 ms step per frame from where
+# the original's Claw stood at the route's time zero: a powder keg lifted
+# on the long upper floor and thrown with a tap of the lift key, or with
+# the key held 0.5 s, 1.5 s, 3 s and 3.6 s (past the 3 s limit, so the keg
+# leaves by itself at full power), and the lift key held from the lift on
+# with no second press (no throw). Claw's position, state and stats are
+# equal on every row of every route: the wind-up while the key is down,
+# the release on the first tick without it and the 21 ticks of the throw
+# picture before he stands. install_throw checks the keg's flight against
+# the original's (the release, the peak and the landing at Y 2102, every
+# row equal). The random stream differs from the first tick: Claw is put
+# down where the original's Claw had already settled, so the game's
+# settling is shorter than the original's and the objects around him and
+# the frame pulse start from other states. The blast's screen shake draws
+# its jolts from that stream, so the camera differs from the shake's first
+# tick on.
+[[compare]]
+reference = "level1/throw-keg_tap"
+clock = "c18"
+tolerance = "exact"
+known.rng = 18
+known.cam_x = 2376
+known.cam_y = 2376
+
+[[compare]]
+reference = "level1/throw-keg_h500"
+clock = "c18"
+tolerance = "exact"
+known.rng = 18
+known.cam_x = 2934
+known.cam_y = 2934
+
+[[compare]]
+reference = "level1/throw-keg_h1500"
+clock = "c18"
+tolerance = "exact"
+known.rng = 18
+known.cam_x = 3960
+known.cam_y = 3960
+
+[[compare]]
+reference = "level1/throw-keg_h3000"
+clock = "c18"
+tolerance = "exact"
+known.rng = 18
+known.cam_x = 5544
+known.cam_y = 5562
+
+[[compare]]
+reference = "level1/throw-keg_h3600"
+clock = "c18"
+tolerance = "exact"
+known.rng = 18
+known.cam_x = 5562
+known.cam_y = 5580
+
+[[compare]]
+reference = "level1/throw-keg_held_through"
+clock = "c18"
+tolerance = "exact"
+known.rng = 18
+
+# An officer on the lower floor lifted and thrown with a tap of the lift
+# key. The store's start point is where the original put Claw before he
+# settled; its officer struck him then, taking 10 health and pushing him
+# 27 px left, before the route's time zero. The game's officer does not,
+# so Claw stands 27 px further right with 10 health more from the first
+# row (his x and the camera's), and a coin the officer drops when it dies
+# reaches him there at 4950 ms. His state is equal on every row: he walks
+# up, lifts, winds up, throws and stands on the original's ticks.
+# install_throw plays the route from the original's settled point and
+# checks the officer's flight, landing speed and bounces against the
+# original's, every row equal.
+[[compare]]
+reference = "level1/throw-officer_tap"
+clock = "c18"
+tolerance = "exact"
+known.x = 18
+known.cam_x = 18
+known.health = 18
+known.rng = 630
+known.score = 4950

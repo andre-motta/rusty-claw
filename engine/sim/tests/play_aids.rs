@@ -291,23 +291,33 @@ fn with_infinite_lives_a_death_tile_respawns_at_the_checkpoint() {
 }
 
 #[test]
-fn with_both_aids_off_the_game_plays_as_without_them() {
-    let run = |cfg: SimConfig| {
-        let mut sim = pressing_sim(level(), cfg);
+fn where_nothing_hurts_claw_the_aids_change_nothing() {
+    // Walking both ways and jumping on clear floor, away from the death
+    // tiles: nothing hurts Claw, so the game plays the same with both aids
+    // on as with both off, tick for tick.
+    let run = |aids: PlayAids| {
+        let mut sim = pressing_sim(
+            level(),
+            SimConfig {
+                aids,
+                ..SimConfig::default()
+            },
+        );
         let mut out = Vec::new();
         for k in 0..300u32 {
-            let input = if k % 50 < 30 {
-                hold(RIGHT)
-            } else {
-                press(JUMP)
+            let input = match k % 100 {
+                0..30 => hold(RIGHT),
+                50..80 => hold(LEFT),
+                _ => press(JUMP),
             };
             let snap = sim.step(input);
             let o = sim.player().unwrap();
+            assert_eq!(sim.stats().health, 100, "nothing hurts Claw: tick {k}");
+            assert!(o.x < 1600, "clear of the death tiles: tick {k}");
             out.push((
                 o.x,
                 o.y,
                 o.state,
-                sim.stats().health,
                 sim.stats().lives,
                 sim.rng_state(),
                 snap.events.len(),
@@ -315,10 +325,25 @@ fn with_both_aids_off_the_game_plays_as_without_them() {
         }
         out
     };
-    let plain = run(SimConfig::default());
-    let off = run(SimConfig {
-        aids: PlayAids::NONE,
-        ..SimConfig::default()
-    });
-    assert_eq!(plain, off);
+    let off = run(PlayAids::NONE);
+    assert!(
+        off.iter().any(|r| r.0 != off[0].0) && off.iter().any(|r| r.1 != off[0].1),
+        "Claw walked and jumped"
+    );
+    assert_eq!(run(aids(true, true)), off);
+    assert_eq!(run(aids(true, false)), off);
+    assert_eq!(run(aids(false, true)), off);
+}
+
+#[test]
+fn the_aids_reach_every_logic_call() {
+    for a in [
+        PlayAids::NONE,
+        aids(true, false),
+        aids(false, true),
+        aids(true, true),
+    ] {
+        let mut sim = sim_with(a);
+        assert_eq!(sim.with_world(|w| w.aids), a);
+    }
 }

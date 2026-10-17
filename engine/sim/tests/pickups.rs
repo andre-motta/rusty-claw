@@ -778,6 +778,70 @@ fn claws_blows_do_not_touch_a_keg() {
 }
 
 #[test]
+fn a_thrown_keg_moves_on_an_exact_position_and_explodes_the_tick_after_it_lands() {
+    // A full-power throw to the left from where Claw holds a keg 96 px
+    // above the floor (the throw that lands 448 px away on the first
+    // level's long upper floor, moved onto this floor).
+    let mut sim = Sim::new(keg_level(true), SimConfig::default());
+    step(&mut sim, 2);
+    let k = find(&sim, "PowderKeg")[0];
+    let claw = claw(&mut sim);
+    let start = (1876, FLOOR - 1 - keg::CARRY_BOX.bottom - 96);
+    sim.with_world(|w| logic::lifted(w, k, claw));
+    sim.with_world(|w| logic::thrown(w, k, -497, -798));
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(k).unwrap();
+        o.x = start.0;
+        o.y = start.1;
+    });
+    // The rule, step by step: each tick on the game clock in seconds, the
+    // exact position moves by (v + g dt / 2) dt, the keg is drawn at its
+    // whole pixels, and the speed grows by g dt.
+    let (mut px, mut py) = (f64::from(start.0), f64::from(start.1));
+    let (vx, mut vy) = (-497.0, -798.0);
+    let mut seen_short_tick = false;
+    let mut ticks = 0;
+    let landed = loop {
+        let now = sim.tick() * 18;
+        let dt = (now + 18) as f64 * 0.001 - now as f64 * 0.001;
+        seen_short_tick |= dt != 0.018;
+        px += vx * dt;
+        py += (vy + 0.5 * keg::GRAVITY * dt) * dt;
+        vy += keg::GRAVITY * dt;
+        step(&mut sim, 1);
+        ticks += 1;
+        let o = obj(&sim, k);
+        if o.physics_type == ptype::STAND {
+            break (o.x, o.y);
+        }
+        assert_eq!(
+            (o.x, o.y),
+            (px.trunc() as i32, py.trunc() as i32),
+            "tick {ticks}"
+        );
+        if ticks == 1 {
+            // It leaves 9 px across and 15 px up: 14.04 px at the mean
+            // speed of the tick, not 13.392 px after a tick of gravity.
+            assert_eq!((o.x, o.y), (start.0 - 9, start.1 - 15));
+        }
+        let d = keg::data_of(o).unwrap();
+        assert!((d.vy - vy).abs() < 1e-9 && (d.vx - vx).abs() < 1e-9);
+        assert!(ticks < 100);
+    };
+    assert!(seen_short_tick, "the clock's ticks are not all 0.018 s");
+    // It lands with its carrying box on the 51st tick, the step across of
+    // that tick dropped by the landing, and explodes at its next call.
+    assert_eq!(ticks, 51);
+    assert_eq!(landed, (start.0 - 448, FLOOR - 1 - keg::CARRY_BOX.bottom));
+    let d = keg::data_of(obj(&sim, k)).unwrap();
+    assert_eq!(d.phase, keg::Phase::Thrown);
+    step(&mut sim, 1);
+    let o = obj(&sim, k);
+    assert_eq!(keg::data_of(o).unwrap().phase, keg::Phase::Exploding);
+    assert_eq!((o.x, o.y), landed);
+}
+
+#[test]
 fn a_lifted_keg_follows_claw_and_explodes_where_it_lands() {
     let mut sim = Sim::new(keg_level(true), SimConfig::default());
     step(&mut sim, 2);
@@ -792,6 +856,8 @@ fn a_lifted_keg_follows_claw_and_explodes_where_it_lands() {
     let d = keg::data_of(o).unwrap();
     assert_eq!((d.phase, d.carrier), (keg::Phase::Lifted, Some(claw)));
     assert!(o.flags & flags::SAFE != 0 && o.flags & flags::ALWAYS_ACTIVE != 0);
+    // Lifted, it takes its carrying box and keeps it from then on.
+    assert_eq!(o.move_rect, keg::CARRY_BOX);
     let set_frame = |sim: &mut Sim, f: i32| {
         sim.with_world(|w| w.objects.get_mut(claw).unwrap().frame = f);
         sim.with_world(|w| logic::tick(w, k));
@@ -834,10 +900,17 @@ fn a_lifted_keg_follows_claw_and_explodes_where_it_lands() {
         start_x,
         o.x
     );
+    // It lands with its carrying box, 4 px higher than a lying keg stands.
+    assert_eq!(o.move_rect, keg::CARRY_BOX);
     assert_eq!(
-        o.y + keg::move_box(keg::KEG_BOX).bottom,
+        o.y + keg::CARRY_BOX.bottom,
         FLOOR - 1,
         "landed on the floor"
+    );
+    assert_eq!(
+        o.y + keg::move_box(keg::KEG_BOX).bottom + 4,
+        FLOOR - 1,
+        "4 px above a lying keg"
     );
     log.step(&mut sim, 40, k);
     assert_eq!(log.all().len(), 1);

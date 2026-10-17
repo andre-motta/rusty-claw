@@ -392,6 +392,36 @@ fn a_direction_held_through_the_gems_flight_walks_claw_once_he_is_let_go() {
 }
 
 #[test]
+fn keys_latched_after_claw_is_let_go_stay_latched() {
+    let mut sim = arena(false);
+    let id = raux_id(&sim);
+    sim.with_world(|w| w.objects.get_mut(id).unwrap().health = 10);
+    sword_blow(&mut sim, id);
+    let gem = find(&sim, pickup::END_GEM).expect("the gem");
+    let right = hold(Buttons::RIGHT.0);
+    sim.step(right);
+    while &*sim.objects().get(gem).unwrap().logic == pickup::END_GEM {
+        sim.step(right);
+    }
+    // The gem's landing lets Claw go, so Left and Right would come off the
+    // latch at the next tick; a screen over play between the ticks latches
+    // every key down again, and that latch wins.
+    assert!(sim.claw().special.unlatch_directions);
+    let held = sim.player().unwrap().clone();
+    sim.latch_keys();
+    assert!(!sim.claw().special.unlatch_directions);
+    sim.step(right);
+    assert_eq!(sim.latched().0 & Buttons::RIGHT.0, Buttons::RIGHT.0);
+    assert_eq!(sim.claw_input().held, Buttons::NONE);
+    let c = sim.player().unwrap();
+    assert_eq!((c.state, c.x), (state::STAND, held.x));
+    // Released and pressed again, Right walks him.
+    sim.step(TickInput::default());
+    sim.step(press(Buttons::RIGHT.0));
+    assert_eq!(sim.claw_input().held, Buttons::RIGHT);
+}
+
+#[test]
 fn a_gem_with_no_target_lands_at_once() {
     let mut sim = arena(false);
     sim.with_world(|w| {

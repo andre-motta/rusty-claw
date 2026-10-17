@@ -86,7 +86,7 @@ use crate::logic::world_boss::fight;
 use crate::logic::{self, World};
 use crate::object::{LogicKind, Object, ObjectId, Rect, flags};
 use crate::physics::{opt, ptype};
-use crate::tuning::{PlayAids, TICK_MS};
+use crate::tuning::TICK_MS;
 
 /// Speed of the push away from an attacker, px/s.
 pub const KNOCKBACK_SPEED: i32 = 200;
@@ -671,9 +671,7 @@ impl World<'_> {
                 pulse: self.pulse,
                 view,
                 level_logics: true,
-                // Holding and letting go of Claw for a boss never hurts
-                // him or takes a life, so the aids do not matter here.
-                aids: PlayAids::NONE,
+                aids: self.aids,
             };
             f(&mut c)
         };

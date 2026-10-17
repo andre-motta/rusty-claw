@@ -5,7 +5,8 @@
 //! reaching it, so one explosion can set off the kegs around it in a chain.
 //! Claw's own blows do not touch it. Claw's side lifts it through
 //! [`lifted`]: it follows his lifting frames, then rides over his head on
-//! the side he faces. [`thrown`] sends it flying under gravity and
+//! the side he faces, with its carrying box ([`CARRY_BOX`]), which it
+//! keeps from then on. [`thrown`] sends it flying under gravity and
 //! [`dropped`] lets it fall; either way it explodes when it lands, and a
 //! thrown keg also explodes on the first enemy it strikes that can be hit
 //! by thrown objects (it flies past the others, other kegs among them). The
@@ -38,6 +39,19 @@
 //! (damage 20) centred on the blast and a screen shake of
 //! [`BLAST_SHAKE_MS`], and it is removed when the animation ends. A keg
 //! explodes only once.
+//!
+//! A flying keg moves as the enemies do: each tick its exact position
+//! moves by `(v + g dt / 2) dt` on each axis, at most 24 px, it is drawn at
+//! the whole pixels of that position, and then its speed grows by `g dt`.
+//! `dt` is the tick on the game clock in double-precision seconds (the
+//! tick's end `ms * 0.001` less its start `ms * 0.001`), so it is now and
+//! then a hair off 0.018 s, and a keg falling at 964 px/s from Y 2078.324
+//! reaches 2096 and not 2095.
+//! With its carrying box it lands 4 px higher than a lying keg stands: on
+//! the first level's long upper floor a lying keg stands at Y 2106 and a
+//! thrown one lands, and explodes, at Y 2102. It explodes at its logic call
+//! after the landing (the blast and the screen shake come a tick after
+//! the landing).
 
 use claw_frame::SoundChannel;
 
@@ -90,6 +104,9 @@ pub const KILL_EXPLODE: i32 = 2;
 pub const BLAST_EVENT: i32 = 1;
 /// Gravity on a flying keg, px/s/s.
 pub const GRAVITY: f64 = 2000.0;
+/// The box a keg stands and lands with from the moment it is lifted on:
+/// the box Claw carries it with, kept through a throw or a drop.
+pub const CARRY_BOX: Rect = Rect::new(-24, 25, 24, 64);
 /// Box of a keg that shots hit, relative to its position (the picture
 /// hangs below the position), when the level does not know the keg's
 /// frame; otherwise the box of the level's own frame is used.
@@ -139,7 +156,7 @@ pub struct KegData {
     pub vx: f64,
     /// Vertical speed, px/s (down is positive).
     pub vy: f64,
-    /// Sub-pixel movement carried to the next tick.
+    /// How far its exact position is past its whole pixels, px (0 to 1).
     pub rest: (f64, f64),
     /// The explosion it requested, once it has.
     pub blast: Option<ObjectId>,
@@ -147,6 +164,8 @@ pub struct KegData {
     pub blasted: bool,
     /// It struck an enemy in flight and explodes at its next logic call.
     pub struck: bool,
+    /// It landed and explodes at its next logic call.
+    pub landed: bool,
 }
 
 fn data_mut(o: &mut Object) -> &mut KegData {
@@ -214,6 +233,7 @@ pub fn tick(w: &mut World, id: ObjectId) {
         Phase::Idle => depth_sort(w, id),
         Phase::Lifted | Phase::Overhead => carry(w, id),
         Phase::Thrown if d.struck => explode(w, id),
+        Phase::Thrown | Phase::Dropped if d.landed => explode(w, id),
         Phase::Thrown | Phase::Dropped => fly(w, id),
         Phase::Exploding => exploding(w, id),
     }
@@ -339,6 +359,7 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     }
     o.physics_type = ptype::DIRECT;
     o.flags |= flags::ALWAYS_ACTIVE | flags::SAFE;
+    o.move_rect = CARRY_BOX;
     let d = data_mut(o);
     d.phase = Phase::Lifted;
     d.carrier = Some(carrier);
@@ -372,6 +393,7 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
     d.vy = f64::from(vy);
     d.rest = (0.0, 0.0);
     d.struck = false;
+    d.landed = false;
     w.set_anim(id, ANIM_THROWN);
 }
 
@@ -394,6 +416,7 @@ pub fn dropped(w: &mut World, id: ObjectId) {
     d.vx = 0.0;
     d.vy = 0.0;
     d.rest = (0.0, 0.0);
+    d.landed = false;
 }
 
 /// Follows the carrier: halfway up in its lifting frame, then over its
@@ -442,24 +465,28 @@ fn carry(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
 }
 
-/// Flight after a throw or a drop: explodes on landing.
+/// Flight after a throw or a drop: a landing makes it explode at its next
+/// logic call, where it landed.
 fn fly(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
+    let start = w.now_ms;
+    let dt = (start + u64::from(TICK_MS)) as f64 * 0.001 - start as f64 * 0.001;
     let o = w.objects.get_mut(id).expect("caller checked");
     let mut d = data_mut(o).clone();
-    let dt = f64::from(TICK_MS) / 1000.0;
-    d.vy += GRAVITY * dt;
-    let fx = d.vx * dt + d.rest.0;
-    let fy = d.vy * dt + d.rest.1;
-    let (dx, dy) = (fx.trunc(), fy.trunc());
-    d.rest = (fx - dx, fy - dy);
-    let (tx, ty) = (o.x + dx as i32, o.y + dy as i32);
+    let px = f64::from(o.x) + d.rest.0 + enemy::motion::axis_step_for(&mut d.vx, 0.0, dt);
+    let py = f64::from(o.y) + d.rest.1 + enemy::motion::axis_step_for(&mut d.vy, GRAVITY, dt);
+    let (tx, ty) = (px.trunc() as i32, py.trunc() as i32);
     *data_mut(o) = d;
     w.physics(id, tx, ty, 0);
     let o = w.objects.get_mut(id).expect("checked");
-    if o.physics_type == ptype::STAND {
-        explode(w, id);
-    }
+    let rest = (
+        if o.x == tx { px - f64::from(tx) } else { 0.0 },
+        if o.y == ty { py - f64::from(ty) } else { 0.0 },
+    );
+    let landed = o.physics_type == ptype::STAND;
+    let d = data_mut(o);
+    d.rest = rest;
+    d.landed = landed;
 }
 
 /// Starts the explosion: blast sound and animation; the blast itself comes

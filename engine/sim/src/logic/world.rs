@@ -16,7 +16,7 @@ use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags};
 use crate::physics::{self, Collider, Platform};
 use crate::player::Claw;
 use crate::rng::Rng;
-use crate::tuning::{TICK_MS, Tuning};
+use crate::tuning::{PlayAids, TICK_MS, Tuning};
 
 /// A line Claw's code asks him to say (see [`crate::player::Ctx::say`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,6 +220,8 @@ pub struct World<'a> {
     pub view: Rect,
     /// Sounds, events and screen effects of the tick.
     pub out: &'a mut Outbox,
+    /// The play-test aids ([`crate::sim::SimConfig::aids`]).
+    pub aids: PlayAids,
 }
 
 impl World<'_> {
