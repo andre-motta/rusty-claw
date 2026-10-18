@@ -26,9 +26,22 @@
 //!
 //! It draws no random number.
 //!
-//! Not built yet ([`BUILT`] is false): saws stay inert placeholders
-//! (drawn, no collision, reported as not implemented), and the calls below
-//! do nothing.
+//! The cycle ([`state`], the floor spikes' numbers):
+//!
+//! | State | Per call |
+//! | --- | --- |
+//! | Down | harmless, the picture held; when the clock is in the up half, go to RiseStart |
+//! | RiseStart | play the rise sound when the level has it and the saw was on screen, start the rise, go to Rising |
+//! | Rising | advance the rise; when it ends, turn dangerous, start the spin and go to Up |
+//! | Up | dangerous; advance the spin; when the clock leaves the up half, go to SinkStart |
+//! | SinkStart | turn harmless, start the sink, play the sink sound as the rise's, go to Sinking |
+//! | Sinking | advance the sink; when it ends, go to Down |
+//!
+//! Each clock edge takes effect one call late, as for the spikes: the
+//! call that sees it only picks the next state. So with E the first Down
+//! call that sees the up half and F the first Up call that sees the down
+//! half, a saw shows the rise's pictures from E + 2, is dangerous from
+//! E + 32 to F, harmless from F + 1 and back Down on F + 29.
 //!
 //! # State numbers
 //!
@@ -42,15 +55,21 @@
 //! - The hook-handed pirates and the PegLeg whose patrols end beside a saw
 //!   get no special case: the saw's hit reaches them whenever its strike
 //!   box overlaps their hit box.
+//! - Asleep in the side areas of a wide display, a saw never woken is
+//!   drawn sunk, as its set-up leaves it ([`first_look`]); woken inside its
+//!   up half it then rises at once.
 //!
 //! Its data ([`SawData`]) is its own.
 
 pub use super::floor_spike::state;
 
-use super::World;
+use claw_frame::SoundChannel;
+
+use super::platform::{level_clock, toggle_on};
+use super::{ObjectData, World, sound};
 use crate::level::SimLevel;
 use crate::logic::Look;
-use crate::object::{Object, ObjectId, Rect, types};
+use crate::object::{Object, ObjectId, Rect, engine_state, flags, types};
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["SawBlade", "SawBlade2", "SawBlade3", "SawBlade4"];
@@ -66,7 +85,7 @@ pub const IMAGE_SETS: &[&str] = &[];
 pub const ANIM_PREFIXES: &[&str] = &["LEVEL_SAWBLADE_"];
 
 /// Whether this family runs its logics yet (see [`super::built`]).
-pub const BUILT: bool = false;
+pub const BUILT: bool = true;
 
 /// The rise.
 pub const UP_ANIM: &str = "LEVEL_SAWBLADE_UP";
@@ -132,16 +151,152 @@ pub struct SawData {
     pub period: i32,
 }
 
+/// Record field holding `SawBlade`'s phase, ms.
+pub const SPEED_FIELD: usize = 60;
+
+/// True while a saw with this cycle is in its up half at level clock
+/// `ms` (see [`super::platform::toggle_on`]).
+pub fn up_at(ms: u32, d: &SawData) -> bool {
+    toggle_on(ms, d.phase, d.on_ms, d.period)
+}
+
+/// True while the saw `o` hurts what it touches.
+pub fn dangerous(o: &Object) -> bool {
+    o.flags & flags::HARMLESS == 0
+}
+
+/// The set-up of saw `o` on its first call (see the module
+/// documentation): its strike box from the picture it shows, harmless, a
+/// hazard's shot, its depth and damage, its cycle; it waits Down.
+fn set_up(level: &SimLevel, o: &mut Object, d: &mut SawData) {
+    if let Some(b) = level.frame_box(&o.image_set, o.frame) {
+        o.attack_rect = strike_box(b);
+    }
+    o.flags |= flags::HARMLESS;
+    o.type_flags = TYPE;
+    if o.z == 0 {
+        o.z = DEFAULT_Z;
+        o.flags |= flags::RESORT;
+    }
+    if o.damage == 0 {
+        o.damage = DAMAGE;
+    }
+    let speed = o.record.as_ref().map_or(0, |r| r[SPEED_FIELD]);
+    d.phase = phase_of(&o.logic, speed).unwrap_or(speed);
+    let or_default = |v: i32| if v == 0 { DEFAULT_HALF_MS } else { v };
+    d.on_ms = or_default(o.speed_x);
+    d.period = d.on_ms.wrapping_add(or_default(o.speed_y));
+    o.state = state::DOWN;
+}
+
 /// How a saw whose first call has not run yet looks once it has (see
-/// [`super::first_look`]): `None`, as it looks now.
+/// [`super::first_look`]): sunk, showing the picture it shows now (its
+/// set-up changes nothing drawn). `None` once it has run.
 pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
-    let _ = (level, o);
-    None
+    if o.state != engine_state::INIT {
+        return None;
+    }
+    let mut s = o.clone();
+    set_up(level, &mut s, &mut SawData::default());
+    Some(vec![Look::of(&s)])
 }
 
 /// One logic call.
 pub fn tick(w: &mut World, id: ObjectId) {
-    let _ = (w, id);
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    // The data is held outside the object during the call and put back
+    // after it.
+    let mut d = match std::mem::take(&mut o.data) {
+        ObjectData::SawBlade(d) => d,
+        _ => SawData::default(),
+    };
+    step(w, id, &mut d);
+    if let Some(o) = w.objects.get_mut(id) {
+        o.data = ObjectData::SawBlade(d);
+    }
+}
+
+/// Plays `key` from the saw when the level has that sound and the saw was
+/// on screen in the previous tick; nothing at all otherwise.
+fn cue(w: &mut World, id: ObjectId, key: &str) {
+    if !w.level.sounds.contains_key(key) {
+        return;
+    }
+    if w.objects.get(id).is_some_and(|o| w.on_screen(o)) {
+        sound::play_from(w, id, key, SoundChannel::Effect);
+    }
+}
+
+fn set_harmless(w: &mut World, id: ObjectId, harmless: bool) {
+    if let Some(o) = w.objects.get_mut(id) {
+        if harmless {
+            o.flags |= flags::HARMLESS;
+        } else {
+            o.flags &= !flags::HARMLESS;
+        }
+    }
+}
+
+fn set_state(w: &mut World, id: ObjectId, s: i32) {
+    if let Some(o) = w.objects.get_mut(id) {
+        o.state = s;
+    }
+}
+
+/// Starts animation `key` without advancing it (none when the level does
+/// not have it).
+fn set_anim(w: &mut World, id: ObjectId, key: &str) {
+    super::enemy::set_anim(w, id, key);
+}
+
+/// Advances the animation one call; true when it has ended.
+fn advance(w: &mut World, id: ObjectId) -> bool {
+    w.advance_anim(id);
+    w.objects.get(id).is_none_or(|o| o.anim.is_done())
+}
+
+fn step(w: &mut World, id: ObjectId, d: &mut SawData) {
+    let ms = level_clock(w);
+    let Some(s) = w.objects.get(id).map(|o| o.state) else {
+        return;
+    };
+    match s {
+        state::SET_UP => {
+            let level = w.level;
+            if let Some(o) = w.objects.get_mut(id) {
+                set_up(level, o, d);
+            }
+        }
+        state::DOWN if up_at(ms, d) => set_state(w, id, state::RISE_START),
+        state::RISE_START => {
+            cue(w, id, RISE_SOUND);
+            set_anim(w, id, UP_ANIM);
+            set_state(w, id, state::RISING);
+        }
+        // The rise and the sink advance on every call; the guard is the
+        // call's work.
+        state::RISING if advance(w, id) => {
+            set_harmless(w, id, false);
+            set_anim(w, id, SPIN_ANIM);
+            set_state(w, id, state::UP);
+        }
+        state::UP => {
+            w.advance_anim(id);
+            if !up_at(ms, d) {
+                set_state(w, id, state::DROP_START);
+            }
+        }
+        state::DROP_START => {
+            set_harmless(w, id, true);
+            set_anim(w, id, DOWN_ANIM);
+            cue(w, id, SINK_SOUND);
+            set_state(w, id, state::DROPPING);
+        }
+        state::DROPPING if advance(w, id) => set_state(w, id, state::DOWN),
+        _ => {}
+    }
 }
 
 /// `attacker` hit `id`. Nothing hits a saw.
@@ -149,7 +304,7 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
     let _ = (w, id, attacker);
 }
 
-/// `id` attacked `victim`.
+/// `id` attacked `victim`. A saw hurts through its type alone.
 pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     let _ = (w, id, victim);
 }

@@ -1757,7 +1757,15 @@ pub fn transition(c: &mut Ctx, next: i32) {
 }
 
 /// Runs one logic call: the state's handler, then the post-tick step.
+///
+/// The call that settles a move between two ticks (a warp: Claw was put
+/// at the target and the call counts no time) first drops a conveyor
+/// belt's push, so he does not drift at the target; the belt he left
+/// would clear it in the next tick anyway, before his update.
 pub fn tick(c: &mut Ctx) {
+    if c.o.teleported && c.dt_ms == 0 {
+        c.p.conveyor_force = 0.0;
+    }
     let row = row_of(c.o.state);
     (row.tick)(c);
     post_tick(c);
