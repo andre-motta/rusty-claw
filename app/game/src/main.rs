@@ -16,7 +16,10 @@
 //! With only `--install` (and options), the game starts at the title and
 //! its main menu. `--level` and `--custom` start straight into that level
 //! with the in-game menu, the end-of-level tally and the main menu after
-//! it; `--replay` and `--bench` play one level without menus. Run
+//! it; `--replay` and `--bench` play one level without menus. A replay in
+//! the window plays the game's sound and music as play does (silent with
+//! `--no-audio`); the window benchmark and a replay with `--trace` are
+//! silent. Run
 //! `rusty-claw --help` for every option; settings can also come from a
 //! config file (see the `settings` module).
 //!
@@ -85,7 +88,10 @@ How a run starts:
   rusty-claw --install PATH --level N (or --custom FILE.WWD)
                                      straight into that level; Escape, P or
                                      the pad's Start button open the in-game menu
-  --replay FILE.csv, --bench SECONDS one level without menus, as before
+  --replay FILE.csv, --bench SECONDS one level without menus, as before; a
+                                     replay in the window plays the sound and
+                                     music (--no-audio silences it), the
+                                     benchmark is silent
   --bench-route FILE.csv --headless  benchmark along a route from the level's
                                      start until its end
 

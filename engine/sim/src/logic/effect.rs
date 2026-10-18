@@ -10,8 +10,9 @@
 //!   that was hit and ends early when that object is gone or off screen;
 //! - a sparkle plays its six-frame twinkle once at a random point of the
 //!   box of whatever sheds it;
-//! - the glitter driver is hidden and sheds two sparkles over its target
-//!   every tick until its owner removes it;
+//! - the glitter driver is hidden; its first call only sets it up, and
+//!   from its second call it sheds two sparkles over its target every
+//!   tick until its owner removes it;
 //! - the flare is the glow around a magic shot. It is kept hidden for now,
 //!   because it needs a light blend the renderer does not offer objects
 //!   yet;
@@ -226,7 +227,8 @@ pub fn spawn_hit_burst(
 /// Starts the glitter that trails `target` while a powerup lasts and
 /// returns the object that drives it; the caller removes it (with
 /// [`World::destroy`]) when the powerup ends. `None` when `target` does
-/// not exist.
+/// not exist. The driver's first call only marks it started; it sheds
+/// from its second call.
 pub fn spawn_glitter(w: &mut World, target: ObjectId) -> Option<ObjectId> {
     w.objects.get(target)?;
     let mut o = new_object("GlitterMother", 100, 100, 0);
@@ -235,7 +237,6 @@ pub fn spawn_glitter(w: &mut World, target: ObjectId) -> Option<ObjectId> {
     o.draw_flags |= draw_flags::HIDDEN;
     o.data = ObjectData::Effect(EffectData {
         owner: Some(target),
-        started: true,
         ..EffectData::default()
     });
     Some(w.spawn(o))
@@ -428,6 +429,14 @@ fn glitter_tick(w: &mut World, id: ObjectId) {
     let Some(target) = effect_data(w, id).and_then(|d| d.owner) else {
         return;
     };
+    // The first call with a target only sets the driver up: no sparkles
+    // and no draws until the next call.
+    if let Some(o) = w.objects.get_mut(id)
+        && !data_mut(o).started
+    {
+        data_mut(o).started = true;
+        return;
+    }
     if let Some(o) = w.objects.get_mut(id) {
         // Sheds every 15 ms, which at the 18 ms tick is every tick.
         o.time_delay = 15;

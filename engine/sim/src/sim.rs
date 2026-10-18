@@ -168,6 +168,13 @@ pub struct Sim {
     /// Claw respawned since the last tick: the death's circles end with
     /// the next tick.
     respawned: bool,
+    /// The frame time the logic calls run with, ms: one tick, or 0 in the
+    /// respawn's two update passes (see [`Sim::respawn_between_ticks`]).
+    frame_ms: u32,
+    /// The game time the logic calls see while the clock stands still
+    /// (the respawn's update passes), ms; `None` the rest of the time,
+    /// when it is the start of the current tick.
+    held_clock_ms: Option<u64>,
     /// The level was won in an earlier tick: play has stopped (see
     /// [`Sim::level_ended`]).
     ended: bool,
@@ -188,8 +195,11 @@ struct Runner<'a> {
     input: TickInput,
     tick: u64,
     now_ms: u64,
-    /// Game time Claw's call covers, ms: one tick, 0 for the settle after
-    /// a warp.
+    /// The frame time of the call, ms: one tick; 0 in the respawn's
+    /// update passes and in Claw's call in the settle after a warp. Claw's
+    /// timers and movement, the level logics' animations
+    /// ([`World::dt_ms`]), the camera and the objects' time delays count
+    /// it.
     dt_ms: u32,
     pulse: bool,
     player: Option<ObjectId>,
@@ -225,6 +235,7 @@ impl Runner<'_> {
             tuning: &self.cfg.tuning,
             tick: self.tick,
             now_ms: self.now_ms,
+            dt_ms: self.dt_ms,
             pulse: self.pulse,
             view,
             out: &mut *self.out,
@@ -327,12 +338,13 @@ impl Runner<'_> {
                     look_down_time: self.claw.look_down_time,
                 });
                 self.apply_shake();
-                self.camera.tick(
+                self.camera.tick_for(
                     followed.as_ref(),
                     *self.camera_override,
                     &self.cfg.tuning.camera,
                     self.rng,
                     self.now_ms,
+                    self.dt_ms,
                 );
                 *self.camera_point = self.camera.current;
             }
@@ -501,6 +513,8 @@ impl Sim {
             give_powerup: None,
             respawned: false,
             ended: false,
+            frame_ms: TICK_MS,
+            held_clock_ms: None,
             level,
         };
         sim.give_powerup = sim.cfg.start_powerup;
@@ -623,7 +637,7 @@ impl Sim {
     }
 
     fn parts(&mut self) -> (Runner<'_>, &mut Container, &mut Activation) {
-        let now_ms = self.tick * u64::from(TICK_MS);
+        let now_ms = self.held_clock_ms.unwrap_or(self.tick * u64::from(TICK_MS));
         (
             Runner {
                 cfg: &self.cfg,
@@ -638,7 +652,7 @@ impl Sim {
                 input: self.claw_input,
                 tick: self.tick,
                 now_ms,
-                dt_ms: TICK_MS,
+                dt_ms: self.frame_ms,
                 pulse: self.pulse_left == 0,
                 player: self.player,
                 ambient: &mut self.ambient,
@@ -789,20 +803,27 @@ impl Sim {
     }
 
     /// The respawn between ticks (see [`player::death`]): Claw at the
-    /// checkpoint and the camera on him at once; the objects now out of
-    /// the camera's reach go to sleep and an update pass runs; then the
-    /// objects around Claw wake and a second update pass runs. Both passes
-    /// run at the time of the death, with the held keys and nothing
-    /// pressed. An object near both places runs twice (an enemy the first
-    /// pass sends Home makes Home's draws in the second and can start its
-    /// strike there); one the respawn wakes runs once.
+    /// checkpoint and the camera on him at once; a first update pass runs
+    /// over the objects still awake around the place of the death; then
+    /// the objects now out of the camera's reach go to sleep, those around
+    /// Claw wake, and a second update pass runs. Both passes run with the
+    /// held keys and nothing pressed, and with a frame time of 0: the game
+    /// clock stays at the time of the tick that took the life, the camera
+    /// does not move towards its target or shake, time delays and
+    /// animations stand still and Claw's timers do not count down. An
+    /// object near both places runs twice (an enemy the first pass sends
+    /// Home makes Home's draws in the second and can start its strike
+    /// there); one the respawn wakes runs once; one near the place of the
+    /// death only, about to go to sleep, still runs in the first pass (a
+    /// crate there makes its roll).
     ///
-    /// Inferred: the order (objects out of reach put to sleep, a pass, the
-    /// objects around Claw woken, a second pass) is the one that gives the
-    /// original's random draws and positions on the first level's runs
-    /// that lose a life; the original's own order of these steps is not
-    /// known. One run of the second level shows a keg the respawn wakes
-    /// making its first roll a tick later than this order gives.
+    /// Inferred: the clock standing still in the passes. An enemy by the
+    /// place of the death whose timer runs out at the end of that tick
+    /// does not act on it in the first pass, as a run of the first level
+    /// shows (a soldier there takes no new pose).
+    ///
+    /// One run of the second level shows a keg the respawn wakes making
+    /// its first roll a tick later than this order gives.
     fn respawn_between_ticks(&mut self) {
         let Some(id) = self.player else {
             self.claw.respawn_pending = false;
@@ -833,19 +854,23 @@ impl Sim {
             &self.cfg.tuning.camera,
         );
         self.camera_point = self.camera.current;
-        let c = self.centres();
-        {
-            let (mut runner, objects, activation) = self.parts();
-            activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
-        }
         // Inferred: the passes run with the keys of the tick that took the
         // life still held but nothing newly pressed, so a press made in
         // that tick neither makes the respawned Claw jump nor starts a
         // walk before the next tick's input arrives.
         self.claw_input.pressed = Buttons::NONE;
+        self.frame_ms = 0;
+        self.held_clock_ms = Some(self.tick.saturating_sub(1) * u64::from(TICK_MS));
         self.update_pass();
+        let c = self.centres();
+        {
+            let (mut runner, objects, activation) = self.parts();
+            activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
+        }
         self.activation.enter(&mut self.objects, c);
         self.update_pass();
+        self.frame_ms = TICK_MS;
+        self.held_clock_ms = None;
         self.respawned = true;
     }
 
@@ -995,8 +1020,9 @@ impl Sim {
                 // Only the move made in this turn is published, so a platform
                 // that stops or skips a tick stops carrying its riders.
                 o.platform_move = (0, 0);
-                if o.time_delay != 0 && TICK_MS < o.time_delay {
-                    o.time_delay -= TICK_MS;
+                let dt = runner.dt_ms;
+                if o.time_delay != 0 && dt < o.time_delay {
+                    o.time_delay -= dt;
                     false
                 } else {
                     o.time_delay = 0;

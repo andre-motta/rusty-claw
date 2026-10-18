@@ -253,7 +253,11 @@ pub fn death_fall_tick(c: &mut Ctx) {
     let _ = c.p.mover.take_x();
     let dy = c.p.mover.take_y();
     c.o.y += dy;
-    c.p.fall_height += dy + 1;
+    // The fall's depth reads the vertical step a second time, and that
+    // read takes the step's fraction into the carried remainder again, so
+    // the body falls a little faster than the step alone gives.
+    let dh = c.p.mover.take_y();
+    c.p.fall_height += dh + 1;
     if c.p.fall_height > DEATH_FALL_DEPTH {
         lives_step(c);
     }
