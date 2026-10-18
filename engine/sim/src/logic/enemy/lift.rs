@@ -156,14 +156,24 @@ fn place(w: &mut World, id: ObjectId, offset: (i32, i32, i32)) {
     o.y = y;
 }
 
-/// Lifted: on Claw's lift frame it is placed beside him; on the next
-/// frame it goes over his head.
+/// The picture a lifted enemy shows on Claw's lift frame when the level
+/// has no lift animation for its class (the second town guard on the
+/// fifth level): the first of its own set, drawn as usual.
+pub const NO_LIFT_ANIM_FRAME: i32 = 1;
+
+/// Lifted: on Claw's lift frame it is placed beside him, showing its lift
+/// animation (or, when the level has none for its class, the first
+/// picture of its own set, [`NO_LIFT_ANIM_FRAME`]); on the next frame it
+/// goes over his head.
 pub fn lifted_tick(w: &mut World, id: ObjectId) {
     let Some(class) = class_of(w, id) else { return };
     let Some(carry) = class.carry else { return };
     match w.claw_object().map(|c| c.frame) {
         Some(CLAW_LIFT_FRAME) => {
             set_anim(w, id, class.anims.lifted);
+            if !w.level.animations.contains_key(class.anims.lifted) {
+                obj_mut(w, id).frame = NO_LIFT_ANIM_FRAME;
+            }
             place(w, id, carry.beside);
         }
         Some(CLAW_OVERHEAD_FRAME) => {
@@ -390,6 +400,9 @@ fn recover(w: &mut World, id: ObjectId) {
 }
 
 /// The movement box saved at the lift, keeping the feet where they are.
+/// The move to the new height keeps the fraction of a pixel the enemy
+/// carries across (it walks on from there), and drops the one up and
+/// down.
 fn restore_move_rect(w: &mut World, id: ObjectId) {
     let Some(saved) = data(w, id).map(|d| d.saved_move_rect) else {
         return;
@@ -398,9 +411,17 @@ fn restore_move_rect(w: &mut World, id: ObjectId) {
         return;
     }
     let o = obj_mut(w, id);
+    let before = (o.x, o.y);
     let r = facing_rect(o, saved);
     if o.move_rect.is_set() {
         o.y += o.move_rect.bottom - r.bottom;
     }
     o.move_rect = r;
+    let after = (o.x, o.y);
+    if let Some(d) = data_mut(w, id)
+        && d.moved_to == Some(before)
+    {
+        d.moved_to = Some(after);
+        d.carry.1 = 0.0;
+    }
 }

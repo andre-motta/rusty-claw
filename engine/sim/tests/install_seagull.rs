@@ -116,6 +116,11 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   17 ms, so he stands (1167 ms) and then falls (the y columns) a tick
 ///   later than the original. The beak's hits themselves come on the
 ///   original's frames.
+/// - c60, gull-dive, 5950 ms (health, then x): the random stream played
+///   tick by tick leaves the original's within the first second, so the
+///   town guard Claw lands beside draws other idle waits and strike rolls;
+///   here it strikes him as it does at the 18 ms step, in the original's
+///   run at 60 frames per second it does not.
 const KNOWN: &[Known] = &[
     (
         "gull-dive",
@@ -133,7 +138,14 @@ const KNOWN: &[Known] = &[
     (
         "gull-dive",
         "c60",
-        &[("state_id", 1167), ("y", 4733), ("cam_y", 4733)],
+        &[
+            ("state_id", 1167),
+            ("y", 4733),
+            ("cam_y", 4733),
+            ("health", 5950),
+            ("x", 5983),
+            ("cam_x", 5983),
+        ],
     ),
     (
         "gull-air",

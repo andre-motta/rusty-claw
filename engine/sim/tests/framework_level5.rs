@@ -184,6 +184,7 @@ fn the_guards_and_the_seagull_are_enemy_classes_whose_data_holds_enemy_data() {
     for mut d in [
         ObjectData::TownGuard(townguard::TownGuardData {
             enemy: enemy_data.clone(),
+            ..Default::default()
         }),
         ObjectData::Seagull(seagull::SeagullData {
             enemy: enemy_data.clone(),

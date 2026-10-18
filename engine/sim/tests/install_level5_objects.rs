@@ -167,6 +167,10 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   the second piece's cell when it goes; in the original he stands for a
 ///   tick before he falls, here he falls at once (his own states, not the
 ///   planks': the floor goes on the original's tick).
+/// - c18, plank-edge-18809, 3186 ms (health): the same early fall happens
+///   again at the next row's edge, so Claw falls two ticks ahead of the
+///   original and meets the town guard below two ticks earlier, at the
+///   same height; from 3222 ms his health matches again.
 /// - c18, plank-reset, 8100 ms: Claw's fall off the screen after he ends
 ///   his life is 1 px from the original's on some rows (his own death
 ///   fall, not the planks').
@@ -187,7 +191,7 @@ const KNOWN: &[Known] = &[
             ("physics_type", 918),
             ("y", 954),
             ("cam_y", 954),
-            ("health", 3222),
+            ("health", 3186),
         ],
     ),
     ("plank-edge-18810", "c18", &[("rng", 36)]),

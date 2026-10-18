@@ -145,3 +145,21 @@ Katherine's room comes later.
 5. Stepping stones, the clock rows: each stone sinks into the goo and rises again on its own beat, a row sinking as a wave; a stone stops holding Claw the moment it starts to sink, and holds him again once it is halfway back up. Arrive late and Claw drops through into the goo and dies. The stones make no sound.
 6. Stepping stones, the ones that wait: a stone that waits for Claw sinks a moment after he lands on it (jump on at once to keep going), stays under for about a second and comes back up, ready again.
 7. Floor spikes: each spike rises and sinks on its beat, as on the third level, and hurts only while up; goo pools kill Claw and swallow enemies dropped in, drawn in front of whatever sinks.
+
+## Milestone 3, LEVEL5 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the fifth level with `make run-game ARGS="--install PATH --level 5"`,
+or play on from the fourth level. This section covers the two town guards
+(the lighter first guard and the bulkier second guard), the jump switches
+that launch them, and being hit in mid-air.
+
+1. Guards, idle: walk up to a guard and stand still near it without swinging: it plays its idle poses for about two to four seconds before it comes for you, as in the original; step out of its reach and back, and it starts its idle poses over.
+2. Guards, strikes: standing, a guard's cut lands about a third of a second into its swing, with its strike sound, costs 10 health and pushes Claw back a little; it keeps striking while you stay close, sometimes stepping in or backing off first.
+3. Guards, crouching: crouch in front of a guard: it cuts low instead, a tick later in its swing; crouching and facing away just beyond its reach, Claw is not hit until it steps in, as in the original.
+4. The hop back: swing the sword at an idle second guard while facing it: it shouts and hops about 100 px back from where it stood (not from Claw), lands, and comes back to fight. Keep swinging: it hops again, at most three times in a row. A first guard does not hop on this level until it has gone back to pacing once.
+5. The parry: keep striking a second guard: about one blow in four it raises its blade and the blow does nothing (a block sound, sometimes a shout); if it was walking at Claw it slides on during the parry. Otherwise it flinches, and the second blow kills it, flying off and dropping its coin. A first guard never parries here.
+6. Lifting a second guard: Z lifts it; while Claw lifts it the guard is drawn in his hands (it does not vanish for a moment), then over his head. Throw it: it bounces twice, rests, gets up and comes back for you.
+7. Jump switches: stand below the raised ledge right of the start, out of the guard's reach, and watch it pace: when it walks onto the switch near the ledge's left end it leaps off through the air and lands on the floor below, then comes for you; it never paces back to its old patrol. A guard Claw has just struck walks over a switch without leaping.
+8. Hit in mid-air: jump into a guard's strike: Claw hangs where he was struck for a moment, stands there in mid-air, then falls; a jump pressed in the moment he stands launches a full jump, as in the original (and as for a soldier's ball, line 25 at the top).
+<!-- The seagulls, the breaking planks and the statues get their lines here with their families. -->
