@@ -1,8 +1,8 @@
 //! Enemies: the officer, the soldier, the rat, the punk rat ([`punkrat`])
 //! and Raux ([`raux`]), on shared enemy behaviour and the shared human
 //! states ([`human`]), with the cutthroat ([`cutthroat`]) and the robber
-//! thief ([`robberthief`]). Katherine ([`katherine`]) is declared but not
-//! built yet.
+//! thief ([`robberthief`]), and Katherine ([`katherine`]), the boss of the
+//! fourth level.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
