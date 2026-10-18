@@ -1,6 +1,7 @@
 //! The framework the fourth level's families build on: the springboards,
-//! the stepping stones and Katherine are declared but not built yet and
-//! stay inert placeholders; Katherine's class, data and state numbers;
+//! the stepping stones and Katherine are declared, and each stays an inert
+//! placeholder until its family is built (the springboards and the
+//! stepping stones are); Katherine's class, data and state numbers;
 //! the level's platform table, springboard data and goo splash height;
 //! and, on the install, the level's inert census, its boss stage bound to
 //! the shared stage pieces, and what the earlier families do with the
