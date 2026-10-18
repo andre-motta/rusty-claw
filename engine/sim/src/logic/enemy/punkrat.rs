@@ -189,6 +189,9 @@ pub fn cannon_of(w: &World, id: ObjectId) -> Option<ObjectId> {
 /// Builds the punk rat and sets its cannon down (see the module
 /// documentation). Draws nothing.
 pub fn construct(w: &mut World, id: ObjectId) {
+    // The construction step every enemy shares moves a rat placed beside
+    // its record's range onto the nearer limit before its beat is set.
+    super::clamp_on_record_range(w, id);
     let x = obj(w, id).x;
     let fields = EnemyFields {
         bounds: (x - BEAT_BACK, x + BEAT_AHEAD),

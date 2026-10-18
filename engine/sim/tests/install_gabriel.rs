@@ -938,13 +938,11 @@ fn trace_firsts(cmp: &Comparison) -> BTreeMap<String, u64> {
 
 /// A store, a clock, and the first divergence (ms) of each column known
 /// there; a column not listed must stay within its tolerance, and one
-/// listed must not leave it earlier. What they come from:
+/// listed must not leave it earlier. Claw standing still for 17 s (after
+/// the skip, after the button, on the deck with Catnip, after a throw)
+/// follows the original to the draw of his idle line as his idle
+/// animation ends. What the entries come from:
 ///
-/// - Claw standing still for 17 s (after the skip, after the button, on
-///   the deck with Catnip, after a throw): his idle animation ends and the
-///   original draws once there for his idle line, which this build does
-///   not pick yet; Gabriel sleeps on (or stands in his strike) in both
-///   games.
 /// - Claw's falling death in the water a pixel off (5244 against 5245):
 ///   the original's fall reads its vertical step twice per tick; the rule
 ///   comes with the third level's route work, merged later. After it, his
@@ -1035,8 +1033,6 @@ const KNOWN: &[Known] = &[
             ("y", 6833),
         ],
     ),
-    // Claw's idle line.
-    ("boss-button-skip-c18", "c18", &[("rng", 23922)]),
     // The skip's arc, then the late introduction's delays.
     (
         "boss-button-skip-return",
@@ -1097,10 +1093,6 @@ const KNOWN: &[Known] = &[
         "c60",
         &[("physics_type", 1083), ("state_id", 1083)],
     ),
-    // Claw's idle line.
-    ("boss-intro-skip-c18", "c18", &[("rng", 18090)]),
-    // Claw's idle line.
-    ("boss-intro-skip-catnip", "c18", &[("rng", 18288)]),
     // Claw with Catnip in the room a tick early: the introduction runs.
     (
         "boss-intro-skip-catnip",
@@ -1221,8 +1213,6 @@ const KNOWN: &[Known] = &[
     ),
     // The full throw's whole pixel.
     ("boss-lift-drown-c18", "c18", &[("his_y", 10260)]),
-    // Claw's idle line.
-    ("boss-lift-throw", "c18", &[("rng", 19404)]),
     // Claw with Catnip in the room a tick early: the introduction runs.
     (
         "boss-lift-throw",

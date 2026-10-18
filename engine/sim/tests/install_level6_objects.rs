@@ -191,13 +191,11 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 
 /// The first reference time (ms) at which each column already leaves its
 /// tolerance, per store and clock; a column not listed must stay within
-/// it, and one listed must not leave it earlier. What they come from:
+/// it, and one listed must not leave it earlier. On vent-watch Claw
+/// stands still for 17 s and follows the original to the draw of his
+/// idle line (16200 ms); the vent never reads the stream. What the
+/// entries come from:
 ///
-/// - c18, vent-watch, 16200 ms (rng): Claw has stood still for 17 s and
-///   his idle animation reaches the picture on which he says one of his
-///   idle lines, which draws from the random stream. The idle line is not
-///   built (his idle animation plays, silent). The vent never reads the
-///   stream.
 /// - c60 (the default tuning played tick by tick): the vents and the
 ///   blowers count 18 ms ticks. A vent's picture lasts 12 ticks (216 ms)
 ///   where the original at 60 frames per second shows it for 12 frames
@@ -209,7 +207,6 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   17 ms frames give 22 and 24 px, so he is never left inside the
 ///   nozzle box for the second test (the original's 472 px throw).
 const KNOWN: &[Known] = &[
-    ("vent-watch", "c18", &[("rng", 16200)]),
     (
         "vent-stand",
         "c60",

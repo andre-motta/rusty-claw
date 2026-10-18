@@ -123,6 +123,12 @@ pub const IMAGE_SET: &str = "CLAW";
 
 /// Voice line Claw may say when he starts teetering on a ledge.
 pub const TEETER_VOICE: &str = "CLAW_1021";
+/// Claw's idle wait after the game's clock is reset (the level start, a
+/// resume after a pause or a menu, a respawn), ms: standing still from
+/// there, his idle animation starts after 20 s; later waits (a stand
+/// entered, an attack's end, the idle animation's end) are the tuning's
+/// shorter idle delay.
+pub const IDLE_WAIT_AFTER_CLOCK_RESET_MS: i32 = 20_000;
 /// Sound of Claw's feet touching the ground after a fall.
 pub const LANDING_SOUND: &str = "CLAW_LEFTFOOT1";
 /// Sound of the flag when Claw comes back at a checkpoint.
@@ -247,7 +253,8 @@ pub struct Claw {
     pub running_time: i32,
     /// Hold window left for the variable jump, ms.
     pub jump_press_time: f64,
-    /// Idle time left before the idle animation, ms.
+    /// Idle time left before the idle animation, ms (see
+    /// [`IDLE_WAIT_AFTER_CLOCK_RESET_MS`]).
     pub afk_time: i32,
     /// Second timer counted down by the post-tick step, ms.
     pub aux_timer_ms: i32,
@@ -708,9 +715,14 @@ pub fn enter_climb(c: &mut Ctx) {
     c.p.mover.y.a = 0.0;
 }
 
+/// The teeter line: on [`Tuning`]'s teeter chance Claw says
+/// [`TEETER_VOICE`] as one of his lines, through his dialog helper (not
+/// forced, so it is refused while another of his lines runs). The helper
+/// then follows him at his depth + 1 and stays in the object list after
+/// the line, where the update walk visits it after him.
 fn teeter_voice(c: &mut Ctx) {
     if c.rng.below(100) < c.t.player.teeter_voice_percent {
-        c.play(TEETER_VOICE, claw_frame::SoundChannel::Voice);
+        c.say(TEETER_VOICE, false);
     }
 }
 
