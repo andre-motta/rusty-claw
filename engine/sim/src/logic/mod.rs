@@ -68,6 +68,8 @@ pub mod projectile;
 pub mod rope;
 pub mod sound;
 pub mod sound_object;
+pub mod springboard;
+pub mod stepping_stone;
 pub mod world;
 pub mod world_boss;
 
@@ -120,10 +122,16 @@ pub enum GameLogic {
     PathElevator,
     /// Swinging ropes.
     Rope,
+    /// Springboards that throw Claw or an enemy into the air.
+    SpringBoard,
+    /// Stepping stones that sink on the level clock or under Claw.
+    SteppingStone,
+    /// Katherine, the boss of the fourth level.
+    Katherine,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 21] = [
+pub const ALL: [GameLogic; 24] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -145,6 +153,9 @@ pub const ALL: [GameLogic; 21] = [
     GameLogic::FloorSpike,
     GameLogic::PathElevator,
     GameLogic::Rope,
+    GameLogic::SpringBoard,
+    GameLogic::SteppingStone,
+    GameLogic::Katherine,
 ];
 
 /// A logic's own data, by family.
@@ -191,6 +202,12 @@ pub enum ObjectData {
     PathElevator(path_elevator::PathElevatorData),
     /// A rope.
     Rope(rope::RopeData),
+    /// A springboard.
+    SpringBoard(springboard::SpringBoardData),
+    /// A stepping stone.
+    SteppingStone(stepping_stone::SteppingStoneData),
+    /// Katherine.
+    Katherine(enemy::katherine::KatherineData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -218,6 +235,9 @@ macro_rules! dispatch {
             GameLogic::FloorSpike => floor_spike::$f($($arg),*),
             GameLogic::PathElevator => path_elevator::$f($($arg),*),
             GameLogic::Rope => rope::$f($($arg),*),
+            GameLogic::SpringBoard => springboard::$f($($arg),*),
+            GameLogic::SteppingStone => stepping_stone::$f($($arg),*),
+            GameLogic::Katherine => enemy::katherine::$f($($arg),*),
         }
     };
 }
@@ -247,6 +267,9 @@ macro_rules! constant {
             GameLogic::FloorSpike => floor_spike::$c,
             GameLogic::PathElevator => path_elevator::$c,
             GameLogic::Rope => rope::$c,
+            GameLogic::SpringBoard => springboard::$c,
+            GameLogic::SteppingStone => stepping_stone::$c,
+            GameLogic::Katherine => enemy::katherine::$c,
         }
     };
 }
@@ -278,6 +301,9 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::FloorSpike => floor_spike::BUILT,
         GameLogic::PathElevator => path_elevator::BUILT,
         GameLogic::Rope => rope::BUILT,
+        GameLogic::SpringBoard => springboard::BUILT,
+        GameLogic::SteppingStone => stepping_stone::BUILT,
+        GameLogic::Katherine => enemy::katherine::BUILT,
         _ => true,
     }
 }
@@ -351,15 +377,19 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     }
 }
 
-/// `carrier` lifted `id`. Kegs, crates and the human enemies (officers,
-/// soldiers, cutthroats and robber thieves, see [`enemy::lift`]) react;
-/// other families ignore it.
+/// `carrier` lifted `id`. Kegs, crates and the human enemies Claw can
+/// carry (officers, soldiers, cutthroats, robber thieves and Katherine,
+/// see [`enemy::lift`]) react; other families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
         Some(GameLogic::Crate) => crates::lifted(w, id, carrier),
         Some(
-            GameLogic::Officer | GameLogic::Soldier | GameLogic::CutThroat | GameLogic::RobberThief,
+            GameLogic::Officer
+            | GameLogic::Soldier
+            | GameLogic::CutThroat
+            | GameLogic::RobberThief
+            | GameLogic::Katherine,
         ) => enemy::lift::lifted(w, id, carrier),
         _ => {}
     }
@@ -371,7 +401,11 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
         Some(GameLogic::Keg) => keg::thrown(w, id, vx, vy),
         Some(GameLogic::Crate) => crates::thrown(w, id, vx, vy),
         Some(
-            GameLogic::Officer | GameLogic::Soldier | GameLogic::CutThroat | GameLogic::RobberThief,
+            GameLogic::Officer
+            | GameLogic::Soldier
+            | GameLogic::CutThroat
+            | GameLogic::RobberThief
+            | GameLogic::Katherine,
         ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
@@ -383,7 +417,11 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
     if matches!(
         family(w, id),
         Some(
-            GameLogic::Officer | GameLogic::Soldier | GameLogic::CutThroat | GameLogic::RobberThief
+            GameLogic::Officer
+                | GameLogic::Soldier
+                | GameLogic::CutThroat
+                | GameLogic::RobberThief
+                | GameLogic::Katherine
         )
     ) {
         enemy::lift::wind_up(w, id);
@@ -396,7 +434,11 @@ pub fn dropped(w: &mut World, id: ObjectId) {
         Some(GameLogic::Keg) => keg::dropped(w, id),
         Some(GameLogic::Crate) => crates::dropped(w, id),
         Some(
-            GameLogic::Officer | GameLogic::Soldier | GameLogic::CutThroat | GameLogic::RobberThief,
+            GameLogic::Officer
+            | GameLogic::Soldier
+            | GameLogic::CutThroat
+            | GameLogic::RobberThief
+            | GameLogic::Katherine,
         ) => enemy::lift::dropped(w, id),
         _ => {}
     }

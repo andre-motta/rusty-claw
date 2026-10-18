@@ -33,6 +33,17 @@ pub fn is_goo_level(number: u32) -> bool {
     GOO_LEVELS.contains(&number)
 }
 
+/// How far above Claw the splash of his own goo death rises, px, on the
+/// levels whose value is known: 50 on the second level, 40 on the
+/// fourth. Later levels add theirs with their slices.
+pub fn splash_y(number: u32) -> Option<i32> {
+    match number {
+        2 => Some(50),
+        4 => Some(40),
+        _ => None,
+    }
+}
+
 /// How an enemy dies on a death tile of the level being played: in goo on
 /// the goo levels, on spikes on the others.
 pub fn death_tile_kind(w: &World) -> DeathKind {
@@ -99,5 +110,12 @@ mod tests {
         }
         assert!(!is_goo_level(0));
         assert!(!is_goo_level(15));
+    }
+
+    #[test]
+    fn splash_heights() {
+        assert_eq!(splash_y(2), Some(50));
+        assert_eq!(splash_y(4), Some(40));
+        assert_eq!(splash_y(1), None);
     }
 }

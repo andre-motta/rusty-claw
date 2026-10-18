@@ -1,7 +1,8 @@
 //! Enemies: the officer, the soldier, the rat, the punk rat ([`punkrat`])
 //! and Raux ([`raux`]), on shared enemy behaviour and the shared human
-//! states ([`human`]). The cutthroat ([`cutthroat`]) and the robber thief
-//! ([`robberthief`]) are declared but not built yet.
+//! states ([`human`]), with the cutthroat ([`cutthroat`]) and the robber
+//! thief ([`robberthief`]). Katherine ([`katherine`]) is declared but not
+//! built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -54,6 +55,7 @@ use crate::tuning::TICK_MS;
 pub mod cutthroat;
 pub mod goo;
 pub mod human;
+pub mod katherine;
 pub mod lift;
 pub mod motion;
 pub mod officer;
@@ -171,8 +173,10 @@ pub mod field {
 /// numbers in blocks: 2000-2021 the first level's enemies, 2022-2029 every
 /// boss, 2030-2049 the shared human states, 2050-2059 the punk rat,
 /// 2060-2069 cannons, 2070-2089 Raux and 2100-2119 the third level's
-/// thieves (reserved, no state yet: see [`cutthroat::STATE_BLOCK`]); later
-/// families take blocks of 20 from 2120. Numbers of a block that no state has yet stay free, so the
+/// thieves (reserved, no state yet: see [`cutthroat::STATE_BLOCK`]),
+/// 2120-2139 the fourth level's (Katherine's somersault, see
+/// [`katherine::STATE_BLOCK`]); later families take blocks of 20 from 2140.
+/// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(i32)]
@@ -244,11 +248,15 @@ pub enum EnemyState {
     VertFiring = 2060,
     /// Leaping over Claw to the far end of its ground (Raux).
     JumpOver = 2070,
+    /// Somersaulting over Claw to land on his far side (Katherine).
+    Flip = 2120,
+    /// Landing from the somersault (Katherine).
+    FlipLand = 2121,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 33] = [
+    pub const ALL: [EnemyState; 35] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -282,6 +290,8 @@ impl EnemyState {
         EnemyState::Recoil,
         EnemyState::VertFiring,
         EnemyState::JumpOver,
+        EnemyState::Flip,
+        EnemyState::FlipLand,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -329,6 +339,8 @@ impl EnemyState {
             EnemyState::Recoil => "Recoil",
             EnemyState::VertFiring => "VertFiring",
             EnemyState::JumpOver => "JumpOver",
+            EnemyState::Flip => "Flip",
+            EnemyState::FlipLand => "FlipLand",
         }
     }
 }
@@ -732,6 +744,7 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::Raux => Some(&raux::CLASS),
         GameLogic::CutThroat => Some(&cutthroat::CLASS),
         GameLogic::RobberThief => Some(&robberthief::CLASS),
+        GameLogic::Katherine => Some(&katherine::CLASS),
         _ => None,
     }
 }
@@ -764,8 +777,8 @@ pub(crate) fn obj_mut<'a>(w: &'a mut World, id: ObjectId) -> &'a mut Object {
 
 impl ObjectData {
     /// The enemy data this holds: plain enemy data, or the enemy data
-    /// inside a family's own data (the punk rat's, Raux's and the
-    /// thieves').
+    /// inside a family's own data (the punk rat's, Raux's, the thieves'
+    /// and Katherine's).
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -773,6 +786,7 @@ impl ObjectData {
             ObjectData::Raux(d) => Some(&d.enemy),
             ObjectData::CutThroat(d) => Some(&d.enemy),
             ObjectData::RobberThief(d) => Some(&d.enemy),
+            ObjectData::Katherine(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -785,6 +799,7 @@ impl ObjectData {
             ObjectData::Raux(d) => Some(&mut d.enemy),
             ObjectData::CutThroat(d) => Some(&mut d.enemy),
             ObjectData::RobberThief(d) => Some(&mut d.enemy),
+            ObjectData::Katherine(d) => Some(&mut d.enemy),
             _ => None,
         }
     }
