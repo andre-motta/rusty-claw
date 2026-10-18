@@ -1050,6 +1050,125 @@ fn any_enemys_touch_in_the_air_reaches_the_same_hit_state() {
     assert!(rows[30].1 < y - 40, "a full jump");
 }
 
+// ----------------------------------------------------------------------
+// The sixth level
+
+/// The arena as level `number` with Claw put `dx` px from the guard on
+/// the first tick (see [`with_claw`]).
+fn with_claw_on(name: &str, number: u32, seed: u32, dx: i32) -> (Sim, ObjectId) {
+    let mut level = arena(name, vec![]);
+    level.number = number;
+    let mut sim = sim_of(level, seed);
+    sim.teleport_player(GUARD_AT + dx, 899);
+    sim.with_world(|w| w.claw.stats.health = 10_000);
+    sim.step(TickInput::default());
+    let id = guard_id(&sim);
+    (sim, id)
+}
+
+/// Over `seeds`, how many of one sword blow of `kind` on a guard walking
+/// at Claw on level `number` are parried, and how many hurt.
+fn parries(name: &str, number: u32, kind: i32, seeds: std::ops::Range<u32>) -> (usize, usize) {
+    let (mut parried, mut hurt) = (0, 0);
+    for seed in seeds {
+        let (mut sim, id) = with_claw_on(name, number, seed, 60);
+        sim.with_world(|w| {
+            enemy::go_home(w, id);
+            enemy::data_mut(w, id).unwrap().vx = 60.0;
+        });
+        let health = obj(&sim, id).health;
+        sword_blow(&mut sim, id, kind);
+        match state_of(&sim, id) {
+            Some(EnemyState::Block) => {
+                parried += 1;
+                assert_eq!(obj(&sim, id).health, health, "unhurt");
+            }
+            Some(EnemyState::HitLow) => {
+                hurt += 1;
+                assert_eq!(obj(&sim, id).health, health - 5);
+            }
+            s => panic!("{name} seed {seed}: {s:?}"),
+        }
+    }
+    (parried, hurt)
+}
+
+#[test]
+fn on_the_sixth_level_the_second_guard_parries_one_sword_blow_in_two() {
+    let (parried, hurt) = parries("TownGuard2", 6, attack::kind::SWIPE, 0..80);
+    println!("sixth level, second guard: parried {parried}, hurt {hurt}");
+    assert!((28..=52).contains(&parried), "parried {parried} of 80");
+    let (fifth, _) = parries("TownGuard2", 5, attack::kind::SWIPE, 0..80);
+    assert!(fifth < parried, "one in four on the fifth: {fifth}");
+    // Never a punch.
+    assert_eq!(
+        parries("TownGuard2", 6, attack::kind::PUNCH, 0..20),
+        (0, 20)
+    );
+}
+
+#[test]
+fn on_the_sixth_level_the_first_guard_parries_one_sword_blow_in_four() {
+    let (parried, hurt) = parries("TownGuard1", 6, attack::kind::SWIPE, 0..80);
+    println!("sixth level, first guard: parried {parried}, hurt {hurt}");
+    assert!((10..=30).contains(&parried), "parried {parried} of 80");
+    // Never a punch, but the roll is drawn first, whatever the blow: one
+    // number more than the same blow on the fifth level.
+    assert_eq!(
+        parries("TownGuard1", 6, attack::kind::PUNCH, 0..20),
+        (0, 20)
+    );
+    let after = |number: u32| {
+        let (mut sim, id) = with_claw_on("TownGuard1", number, 4, 60);
+        let before = sim.rng().clone();
+        sword_blow(&mut sim, id, attack::kind::PUNCH);
+        assert_eq!(state_of(&sim, id), Some(EnemyState::HitLow));
+        (before, sim.rng().clone())
+    };
+    let (before5, after5) = after(5);
+    let (before6, after6) = after(6);
+    assert_eq!(before5, before6, "built alike");
+    let mut one_more = after5.clone();
+    one_more.next_u15();
+    assert_eq!(one_more, after6);
+}
+
+#[test]
+fn a_guard_whose_record_sets_its_first_user_value_never_paces() {
+    for name in ["TownGuard1", "TownGuard2"] {
+        let paces = |user_0: i32| {
+            let mut level = arena(name, vec![]);
+            level.number = 6;
+            level.objects[0].record[field::USER_0] = user_0;
+            let mut sim = sim_of(level, 11);
+            // Claw out of every range box.
+            sim.teleport_player(GUARD_AT + 1500, 899);
+            sim.step(TickInput::default());
+            let id = guard_id(&sim);
+            let stationary = enemy::data_of(obj(&sim, id)).unwrap().stationary;
+            let mut idles = 0;
+            let mut was = state_of(&sim, id);
+            for _ in 0..600 {
+                sim.step(TickInput::default());
+                let now = state_of(&sim, id);
+                if now == Some(EnemyState::Pace) {
+                    return (stationary, idles, true);
+                }
+                if now == Some(EnemyState::Idle) && was != now {
+                    idles += 1;
+                }
+                was = now;
+            }
+            (stationary, idles, false)
+        };
+        let (stationary, _, paced) = paces(0);
+        assert!(!stationary && paced, "{name} paces");
+        let (stationary, idles, paced) = paces(1);
+        assert!(stationary && !paced, "{name} stands still");
+        assert!(idles >= 1, "{name} goes idle again ({idles})");
+    }
+}
+
 // ---------------------------------------------------------------- install
 
 fn level5() -> Option<SimLevel> {
