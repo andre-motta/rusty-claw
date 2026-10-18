@@ -201,6 +201,10 @@ struct Runner<'a> {
     /// ([`World::dt_ms`]), the camera and the objects' time delays count
     /// it.
     dt_ms: u32,
+    /// The game time Claw's movement covers, ms ([`Ctx::move_ms`]): one
+    /// tick, also in the respawn's update passes; 0 in his call in the
+    /// settle after a warp.
+    move_ms: u32,
     pulse: bool,
     player: Option<ObjectId>,
     /// The ambient manager, recorded when [`Runner::list_spawned`] lists it.
@@ -277,6 +281,7 @@ impl Runner<'_> {
                 tick: self.tick,
                 now_ms: self.now_ms,
                 dt_ms: self.dt_ms,
+                move_ms: self.move_ms,
                 pulse: self.pulse,
                 view,
                 level_logics: self.cfg.level_logics,
@@ -653,6 +658,7 @@ impl Sim {
                 tick: self.tick,
                 now_ms,
                 dt_ms: self.frame_ms,
+                move_ms: TICK_MS,
                 pulse: self.pulse_left == 0,
                 player: self.player,
                 ambient: &mut self.ambient,
@@ -757,13 +763,7 @@ impl Sim {
         self.last_audio = audio;
         self.last_events = events;
         let snapshot = self.snapshot();
-        // Jumps are reported once, in the snapshot of the tick they happen
-        // in (or the next one, for moves made between ticks).
-        for id in self.objects.listed() {
-            if let Some(o) = self.objects.get_mut(id) {
-                o.teleported = false;
-            }
-        }
+        self.end_frame();
         snapshot
     }
 
@@ -784,8 +784,9 @@ impl Sim {
 
     /// Runs the respawn [`Sim::respawn_pending`] waits for now, between two
     /// ticks, as the next [`Sim::step`] would before its tick: Claw is back
-    /// at the checkpoint, the camera is centred on him, and two update
-    /// passes run around the activation's update, all without game time.
+    /// at the checkpoint, and two update passes run around the activation's
+    /// update, all without game time; the camera's call in the first pass
+    /// takes it to him.
     /// The sound cues and events it makes become [`Sim::last_audio`] and
     /// [`Sim::last_events`] (and so the snapshot's), and the screen
     /// transition is the opening circle until the next tick. A presentation
@@ -803,14 +804,20 @@ impl Sim {
     }
 
     /// The respawn between ticks (see [`player::death`]): Claw at the
-    /// checkpoint and the camera on him at once; a first update pass runs
-    /// over the objects still awake around the place of the death; then
-    /// the objects now out of the camera's reach go to sleep, those around
-    /// Claw wake, and a second update pass runs. Both passes run with the
-    /// held keys and nothing pressed, and with a frame time of 0: the game
-    /// clock stays at the time of the tick that took the life, the camera
-    /// does not move towards its target or shake, time delays and
-    /// animations stand still and Claw's timers do not count down. An
+    /// checkpoint; a first update pass runs over the objects still awake
+    /// around the place of the death, in which the camera's own call jumps
+    /// to Claw when he is beyond its snap distance; then the objects now
+    /// out of the camera's reach go to sleep, those around Claw wake, and a
+    /// second update pass runs. Both passes run with the keys of the tick
+    /// that took the life, held and pressed, and with a frame time of 0:
+    /// the game clock stays at the time of the tick that took the life, the
+    /// camera does not move towards its target or shake, time delays and
+    /// animations stand still, Claw's timers do not count down and an
+    /// enemy's movement, which counts the game time since its last move,
+    /// moves nothing a second time. Claw's own movement still counts a
+    /// whole tick in each pass ([`Ctx::move_ms`]): with Left pressed in the
+    /// tick of the death, he starts walking in the first pass and is three
+    /// walking steps left of the checkpoint after the next tick. An
     /// object near both places runs twice (an enemy the first pass sends
     /// Home makes Home's draws in the second and can start its strike
     /// there); one the respawn wakes runs once; one near the place of the
@@ -841,24 +848,11 @@ impl Sim {
             });
             runner.list_spawned(objects);
         }
-        let followed = self.objects.get(id).map(|o| Followed {
-            x: o.x,
-            y: o.y,
-            state: o.state,
-            physics_type: o.physics_type,
-            look_down_time: self.claw.look_down_time,
-        });
-        self.camera.settle(
-            followed.as_ref(),
-            self.camera_override,
-            &self.cfg.tuning.camera,
-        );
-        self.camera_point = self.camera.current;
-        // Inferred: the passes run with the keys of the tick that took the
-        // life still held but nothing newly pressed, so a press made in
-        // that tick neither makes the respawned Claw jump nor starts a
-        // walk before the next tick's input arrives.
-        self.claw_input.pressed = Buttons::NONE;
+        // The camera is not moved here: its own call in the first pass
+        // snaps it to Claw where that pass leaves him, when he is beyond
+        // its snap distance. The passes run with the keys of the tick that
+        // took the life, pressed ones included, so a direction pressed in
+        // that tick starts a walk in the first pass.
         self.frame_ms = 0;
         self.held_clock_ms = Some(self.tick.saturating_sub(1) * u64::from(TICK_MS));
         self.update_pass();
@@ -900,6 +894,7 @@ impl Sim {
         self.claw_input.pressed = Buttons::NONE;
         let (mut runner, objects, _) = self.parts();
         runner.dt_ms = 0;
+        runner.move_ms = 0;
         runner.with_claw(objects, id, player::tick);
         runner.list_spawned(objects);
     }
@@ -1068,6 +1063,36 @@ impl Sim {
             runner.list_spawned(objects);
         }
         self.events = events;
+    }
+
+    /// The end of a tick's frame, for each object in the live list: a jump
+    /// is reported once, in the snapshot of the tick it happens in (or the
+    /// next one, for moves made between ticks); and the frame shown after
+    /// the tick draws the object ([`Object::drawn_last_frame`]) when it is
+    /// not hidden and its draw box overlaps the logic view at the camera
+    /// point the tick ended with. The game shows one frame per tick, after
+    /// the tick's logic, so this is what that frame draws, worked out here
+    /// without the renderer. Objects out of the live list keep what they
+    /// had; the respawn and the warp between ticks show no frame of their
+    /// own.
+    fn end_frame(&mut self) {
+        let v = &self.cfg.view;
+        let view = PlaneView::new(
+            self.level.plane(),
+            self.camera_point,
+            (v.logic_width, v.logic_height),
+        )
+        .rect;
+        for id in self.objects.listed() {
+            let Some(o) = self.objects.get(id) else {
+                continue;
+            };
+            let drawn = o.draw_flags & draw_flags::HIDDEN == 0 && self.level.in_view(o, &view);
+            if let Some(o) = self.objects.get_mut(id) {
+                o.teleported = false;
+                o.drawn_last_frame = drawn;
+            }
+        }
     }
 
     /// The snapshot of the current state.

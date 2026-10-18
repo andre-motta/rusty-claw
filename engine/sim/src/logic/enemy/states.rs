@@ -102,6 +102,14 @@ fn bounds(w: &World, id: ObjectId) -> (i32, i32) {
     data(w, id).map_or(UNBOUNDED, |d| d.bounds)
 }
 
+/// True when the enemy stands exactly on the limit `limit`: its exact
+/// position (with its carried fraction) equals it, not the whole pixel
+/// alone. A walker arriving at the limit's pixel with a fraction left
+/// turns a tick later, once the move has clamped it onto the limit.
+fn at_limit(w: &World, id: ObjectId, limit: i32) -> bool {
+    exact_x(w, id) == f64::from(limit)
+}
+
 fn mode(w: &World, id: ObjectId) -> u8 {
     data(w, id).map_or(6, |d| d.mode)
 }
@@ -241,7 +249,7 @@ pub fn start_pacing(w: &mut World, id: ObjectId) {
 pub fn pace_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     let (min, max) = bounds(w, id);
-    if exact_x(w, id) == f64::from(min) {
+    if at_limit(w, id, min) {
         if rand(w, 100) < 50 {
             go_idle(w, id);
         } else {
@@ -249,7 +257,7 @@ pub fn pace_tick(w: &mut World, id: ObjectId) {
             set_facing(w, id, true);
         }
     }
-    if exact_x(w, id) == f64::from(max) {
+    if at_limit(w, id, max) {
         if rand(w, 100) < 50 {
             go_idle(w, id);
         } else {
@@ -278,13 +286,12 @@ pub fn enter_advance(w: &mut World, id: ObjectId) {
     set_anim(w, id, anim);
 }
 
-/// Advance: at either limit it goes idle (and carries on); it faces Claw
-/// and walks at him at 60 px/s; then by mode it runs (0), keeps walking
-/// (1, 2) or goes Home (3 to 6).
+/// Advance: exactly on either limit it goes idle (and carries on); it
+/// faces Claw and walks at him at 60 px/s; then by mode it runs (0), keeps
+/// walking (1, 2) or goes Home (3 to 6).
 pub fn advance_tick(w: &mut World, id: ObjectId) {
     let (min, max) = bounds(w, id);
-    let x = obj(w, id).x;
-    if x == min || x == max {
+    if at_limit(w, id, min) || at_limit(w, id, max) {
         go_idle(w, id);
     }
     face_claw(w, id);
@@ -308,14 +315,13 @@ pub fn enter_fast_advance(w: &mut World, id: ObjectId) {
     set_anim(w, id, anim);
 }
 
-/// FastAdvance: at the limit on Claw's side it goes idle (and carries
-/// on); it faces Claw; then by mode it keeps running at him (0, 1, 5),
-/// walks (2), goes Home (3, 4) or paces (6). Draws: one, discarded.
+/// FastAdvance: exactly on the limit on Claw's side it goes idle (and
+/// carries on); it faces Claw; then by mode it keeps running at him (0, 1,
+/// 5), walks (2), goes Home (3, 4) or paces (6). Draws: one, discarded.
 pub fn fast_advance_tick(w: &mut World, id: ObjectId) {
     let (min, max) = bounds(w, id);
-    let x = obj(w, id).x;
     let right = claw_right(w, id);
-    if (x == min && !right) || (x == max && right) {
+    if (at_limit(w, id, min) && !right) || (at_limit(w, id, max) && right) {
         go_idle(w, id);
     }
     face_claw(w, id);
@@ -349,23 +355,23 @@ pub fn move_right(w: &mut World, id: ObjectId, speed: f64) {
     set_anim(w, id, anim);
 }
 
-/// MoveLeft: at the left limit it walks right with its current speed
-/// reversed and truncated ([`turn_speed`]); after a wall on its left that
-/// speed leads back into the wall, which holds it there.
+/// MoveLeft: exactly on the left limit it walks right with its current
+/// speed reversed and truncated ([`turn_speed`]); after a wall on its left
+/// that speed leads back into the wall, which holds it there.
 pub fn walk_left_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
-    if obj(w, id).x == bounds(w, id).0 {
+    if at_limit(w, id, bounds(w, id).0) {
         let vx = data(w, id).map_or(0.0, |d| d.vx);
         move_right(w, id, turn_speed(-vx));
     }
 }
 
-/// MoveRight: at the right limit it walks left with its current speed
-/// reversed and truncated ([`turn_speed`]); after a wall on its right
-/// that speed leads back into the wall, which holds it there.
+/// MoveRight: exactly on the right limit it walks left with its current
+/// speed reversed and truncated ([`turn_speed`]); after a wall on its
+/// right that speed leads back into the wall, which holds it there.
 pub fn walk_right_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
-    if obj(w, id).x == bounds(w, id).1 {
+    if at_limit(w, id, bounds(w, id).1) {
         let vx = data(w, id).map_or(0.0, |d| d.vx);
         move_left(w, id, turn_speed(vx));
     }

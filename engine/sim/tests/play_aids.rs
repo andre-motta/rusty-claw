@@ -8,7 +8,7 @@ mod common;
 
 use std::sync::Arc;
 
-use claw_frame::{AudioCue, GameEvent, SoundCue};
+use claw_frame::{AudioCue, Buttons, GameEvent, SoundCue};
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::effect::{self, EffectKind};
 use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags, types};
@@ -285,9 +285,14 @@ fn with_infinite_lives_a_death_tile_respawns_at_the_checkpoint() {
     assert!(sim.respawn_pending(), "the death tile kills");
     assert_eq!(sim.claw().checkpoint, Some((1210, 867)));
     assert_eq!(sim.stats().lives, 7);
+    // Right, still held when the dying took Claw out of his walk, counts
+    // as pressed again in the tick that took the life; the respawn's update
+    // passes see that press, so he walks a step in each of them before the
+    // next tick, with nothing held, stands him still.
+    assert_eq!(sim.claw_input().pressed, Buttons(RIGHT));
     sim.step(TickInput::default());
     let o = sim.player().unwrap();
-    assert_eq!((o.x, o.y, o.state), (1210, 899, state::STAND));
+    assert_eq!((o.x, o.y, o.state), (1219, 899, state::STAND));
 }
 
 #[test]
