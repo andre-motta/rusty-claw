@@ -29,8 +29,8 @@
 
 use claw_frame::SoundChannel;
 
-use super::{ObjectData, World, enemy, new_object, pickup, sound};
-use crate::level::runtime_image_set;
+use super::{Look, ObjectData, World, enemy, new_object, pickup, sound};
+use crate::level::{SimLevel, runtime_image_set};
 use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags, types};
 use crate::tuning::TICK_MS;
 
@@ -168,6 +168,56 @@ pub fn stack_contents(record: &[i32]) -> Vec<i32> {
         }
     }
     out
+}
+
+/// How crate or stack `o`, not set up yet, looks once its first logic
+/// call has run: a stack shows the column of crates it builds (nothing
+/// when it holds nothing), a single crate the first image of its set, at
+/// the depth its set-up gives it. `None` for a crate of a stack, which
+/// looks as it is, and once it is set up.
+pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
+    if o.state != state::INIT {
+        return None;
+    }
+    match &*o.logic {
+        FRONT_STACK | BACK_STACK => {
+            let z = match o.z {
+                0 if &*o.logic == FRONT_STACK => 5000,
+                0 => 1000,
+                z => z,
+            };
+            let image_set = runtime_image_set(CRATE_IMAGE_SET);
+            let contents = stack_contents(o.record.as_deref().map_or(&[][..], |r| &r[..]));
+            Some(
+                (0..contents.len() as i32)
+                    .map(|i| Look {
+                        image_set: image_set.clone(),
+                        frame: o.frame,
+                        x: o.x,
+                        y: o.y - STACK_STEP * i,
+                        z: z + i + 1,
+                        draw_flags: 0,
+                    })
+                    .collect(),
+            )
+        }
+        STACKED_CRATE => None,
+        _ => {
+            let z = match o.z {
+                0 if &*o.logic == FRONT_CRATE => 5000,
+                0 => 1100,
+                z => z,
+            };
+            let frame = level
+                .image_frames(&o.image_set)
+                .map_or(o.frame, |(first, _)| first);
+            Some(vec![Look {
+                frame,
+                z,
+                ..Look::of(o)
+            }])
+        }
+    }
 }
 
 /// One logic call.

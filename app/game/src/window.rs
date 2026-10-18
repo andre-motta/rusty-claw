@@ -890,6 +890,7 @@ impl App {
                 max,
                 self.settings.front_layer,
             ));
+            level.session.set_presentation(view);
             let want = self.settings.res;
             if self.bench.is_some() && !self.settings.fullscreen && surface_size != want {
                 // The desktop cannot hold a window of the requested size (a
@@ -1032,6 +1033,7 @@ impl App {
                 live.gpu.max_target(),
                 self.settings.front_layer,
             ));
+            session.set_presentation(view);
         }
         eprintln!(
             "rusty-claw: {} ready in {:.0} ms",
@@ -1273,13 +1275,14 @@ impl App {
             self.settings.widen_activation,
             (live.config.width, live.config.height),
         );
-        if let Some(level) = &self.level {
+        if let Some(level) = &mut self.level {
             live.builder = Some(scene_builder(
                 &level.graphics,
                 view,
                 live.gpu.max_target(),
                 self.settings.front_layer,
             ));
+            level.session.set_presentation(view);
         }
         live.screen_builder = ScreenBuilder::new(&view, live.gpu.max_target());
         note(&mut self.events, "view rebuilt");

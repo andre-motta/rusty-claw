@@ -44,6 +44,14 @@ on says nothing about how hard the level is.
 33. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
 34. On level 2, knock an officer or a soldier into a goo pool: it is gone at once, as on spikes (line 4 of the LEVEL2 section). Springboards are checked on the fourth level (its early section below); not checked yet: loot carried through a warp, and enemies on moving elevators (they stay put).
 
+## Wide screens
+
+Failures only, as above. Play on a display wider than 4:3 (or with
+`--res 3840x2160` or `--res 5120x1440`) in the default fill aspect.
+
+1. Shoot or strike an enemy near the side of the screen so that its body flies into the extra width: it plays its whole death fall there and leaves at the bottom of the screen, instead of vanishing at the edge of the 4:3 area.
+2. Walk up to crates, crate stacks, powder kegs and pickups that start in the extra width: each is there, whole and on the floor, before Claw comes near, and does not pop in, jump down or change when he gets close (a stack shows all its crates; a pickup shows its sparkle).
+
 ## Milestone 3, slice 0 (LEVEL1)
 
 Failures only, as above: note the line, what happened instead, and where.

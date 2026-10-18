@@ -145,7 +145,8 @@ use anyhow::{Context, Result};
 
 use claw_frame::step::{MAX_FRAME_US, MAX_TICKS_PER_FRAME, TICK_US};
 use claw_frame::{
-    AudioCue, Buttons, FrameDriver, GameEvent, InterpolatedFrame, ScreenTransition, TickInput,
+    AudioCue, Buttons, FallingBodies, FrameDriver, GameEvent, InterpolatedFrame, ScreenTransition,
+    TickInput, ViewConfig,
 };
 use claw_sim::input::{MenuScreen, ScriptCommand, ScriptTuning};
 use claw_sim::player::death::{CLOSE_MS, HOLD_MS, OPEN_MS};
@@ -384,6 +385,12 @@ pub struct Session {
     /// The powerup the play-test key gave last (or the level's start
     /// powerup), where [`Session::cycle_powerup`] goes on from.
     powerup_cycle: AidPowerup,
+    /// Bodies the game removed as they fell out of the view, drawn on in
+    /// the extra width of a wide presentation (drawing only).
+    bodies: FallingBodies,
+    /// The view the frames are presented in, when the presentation said
+    /// (see [`Session::set_presentation`]).
+    presentation: Option<ViewConfig>,
 }
 
 impl std::fmt::Debug for Session {
@@ -430,7 +437,24 @@ impl Session {
             circles_us: None,
             death_circles: false,
             powerup_cycle,
+            bodies: FallingBodies::new(),
+            presentation: None,
         }
+    }
+
+    /// Presents the frames in `view` from now on: a view wider than the
+    /// logic view draws on the fall of the bodies the game removes as they
+    /// leave the logic view (see [`claw_frame::bodies`]); a view as wide
+    /// as the logic view draws exactly what the game shows. Until this is
+    /// called, the simulation's own view is the presentation's. Drawing
+    /// only: the ticks are the same with any view.
+    pub fn set_presentation(&mut self, view: ViewConfig) {
+        self.presentation = Some(view);
+    }
+
+    /// Bodies being drawn on as they fall (see [`Session::set_presentation`]).
+    pub fn falling_bodies(&self) -> usize {
+        self.bodies.len()
     }
 
     /// Draws each death's circles between the tick that took the life and
@@ -895,6 +919,7 @@ impl Session {
         }
         let snapshot = self.sim.snapshot();
         self.outputs.add(&snapshot.audio, &snapshot.events);
+        self.bodies.clear();
         self.driver.restart(snapshot);
         if self.stepping {
             self.driver.step_mut().step_once();
@@ -965,6 +990,7 @@ impl Session {
     /// Adds `us` microseconds to the frame driver and runs the ticks that
     /// fit.
     fn run(&mut self, us: u64) -> Frame {
+        let view = self.presentation.unwrap_or(self.sim.config().view);
         let Session {
             sim,
             driver,
@@ -979,6 +1005,7 @@ impl Session {
             outputs,
             directives,
             resume_input,
+            bodies,
             ..
         } = self;
         let report = driver.frame(Duration::from_micros(us), || {
@@ -1002,7 +1029,7 @@ impl Session {
             if let Some(hook) = before_tick {
                 hook(n, sim);
             }
-            let snapshot = if let Some(samples) = samples {
+            let mut snapshot = if let Some(samples) = samples {
                 let t = Instant::now();
                 let snapshot = sim.step(input);
                 let ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -1022,6 +1049,7 @@ impl Session {
                 rows.push(TraceRow::capture(sim, n, source));
             }
             *ticks += 1;
+            bodies.absorb(&view, &mut snapshot);
             snapshot
         });
         if report.ticks > 0 {

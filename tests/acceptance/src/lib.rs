@@ -40,6 +40,11 @@
 //!   that is unset): every column stays within its tolerance up to the
 //!   first divergence the file records for it. `make compare
 //!   REF=<level>/<name>` runs one route's comparison and prints it;
+//! - `install_wide_edges`: the extra width of a wide display is drawing
+//!   only: a wide presentation plays the third level's route exactly as
+//!   640x480 and bars at the sides do, and crates, kegs and pickups asleep
+//!   in the extra width along the first three levels' routes are drawn as
+//!   they look once woken, so none pops in;
 //! - `install_differential`: the gate. The same routes played through the
 //!   game's own frame loop at 60 Hz and compared at the gate's preset
 //!   (exact at one 18 ms step per frame, feel at 60 frames per second),

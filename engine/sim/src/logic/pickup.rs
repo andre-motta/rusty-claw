@@ -65,7 +65,7 @@
 
 use claw_frame::SoundChannel;
 
-use super::{ObjectData, World, new_object, sound};
+use super::{Look, ObjectData, World, new_object, sound};
 use crate::level::{SimLevel, runtime_image_set};
 use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags, special, types};
 use crate::physics::{ptype, res};
@@ -854,6 +854,55 @@ fn pickup_tick(w: &mut World, id: ObjectId) {
     }
 }
 
+/// How pickup `o`, not set up yet, looks once its first logic call has
+/// run (see [`init_pickup`]): at the depth its set-up gives it, with its
+/// glitter next to it showing the first image of its set when it gets
+/// one. A curse goes on its first call and shows nothing. `None` for the
+/// objects pickups make (goodies, gems, glitters, points icons) and once
+/// it is set up.
+pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
+    if o.state != state::INIT {
+        return None;
+    }
+    let logic = &*o.logic;
+    match logic {
+        CURSE => return Some(Vec::new()),
+        BOUNCING_GOODIE | END_GEM | GLITTER | POINTS_ICON => return None,
+        _ => {}
+    }
+    let z = if o.z == 0 { PICKUP_Z } else { o.z };
+    let mut looks = vec![Look { z, ..Look::of(o) }];
+    if has_glitter(logic, &o.image_set) {
+        let set = runtime_image_set(if logic == END_OF_LEVEL_LOGIC {
+            END_GLITTER_IMAGE
+        } else {
+            GLITTER_IMAGE
+        });
+        let frame = level.image_frames(&set).map_or(-1, |(first, _)| first);
+        let gz = if z + 1 == 0 { PICKUP_Z + 1 } else { z + 1 };
+        looks.push(Look {
+            image_set: set,
+            frame,
+            x: o.x,
+            y: o.y,
+            z: gz,
+            draw_flags: 0,
+        });
+    }
+    Some(looks)
+}
+
+/// True when a pickup running `logic` with picture `image_set` starts a
+/// glitter next to itself on its first call.
+fn has_glitter(logic: &str, image_set: &str) -> bool {
+    GLITTER_ON
+        && match logic {
+            "GlitterlessPowerup" | "GoldPowerup" | "CoinPowerup" => false,
+            SPECIAL => image_set != "GAME_WARP",
+            _ => true,
+        }
+}
+
 /// The first call of a pickup: picture, kind, amount, touch box,
 /// animation (kept when it already has one, as a goodie that settles
 /// does), glitter.
@@ -898,12 +947,7 @@ fn init_pickup(w: &mut World, id: ObjectId) {
         .then(|| idle_anim(&logic, &o.image_set));
     let smarts = o.record.as_ref().map_or(0, |r| r[17]);
     let code = code_in(&o.image_set, level);
-    let glitter = GLITTER_ON
-        && match &*logic {
-            "GlitterlessPowerup" | "GoldPowerup" | "CoinPowerup" => false,
-            SPECIAL => o.image_set != "GAME_WARP",
-            _ => true,
-        };
+    let glitter = has_glitter(&logic, &o.image_set);
     let d = data_mut(o);
     d.glitter = None;
     d.flight = None;

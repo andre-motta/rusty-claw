@@ -15,7 +15,9 @@
 //!
 //! - [`ActivationMode::Original`]: the original windows (the default).
 //! - [`ActivationMode::FrozenEdge`]: the original simulation; a wider
-//!   presentation draws dormant objects in the extra width frozen.
+//!   presentation draws dormant objects in the extra width frozen, those
+//!   never woken yet as they look once woken
+//!   ([`crate::logic::first_look`]).
 //! - [`ActivationMode::Widened`]: every window grows by the extra half view
 //!   width, so everything on a wide screen is live, except breakable
 //!   objects and jump switches, which keep the original window around the

@@ -146,6 +146,7 @@ mod tests {
             audio: Vec::new(),
             events: Vec::new(),
             transition: None,
+            removed_bodies: Vec::new(),
         }
     }
 

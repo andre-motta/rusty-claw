@@ -22,9 +22,12 @@
 //!
 //! [`output`] holds what a tick hands over besides sprites: the status bar
 //! values, sound and music cues, game events and screen transitions.
+//! [`bodies`] draws on, on a wide display, the falling bodies the game
+//! removes when they leave the logic view.
 
 #![forbid(unsafe_code)]
 
+pub mod bodies;
 pub mod driver;
 pub mod input;
 pub mod interp;
@@ -33,6 +36,7 @@ pub mod pace;
 pub mod refresh;
 pub mod step;
 
+pub use bodies::{FallingBodies, RemovedBody};
 pub use driver::{FrameDriver, FrameReport};
 pub use input::InputLatch;
 pub use interp::{InterpolatedFrame, InterpolatedRenderable, interpolate};
@@ -249,6 +253,11 @@ pub struct SimSnapshot {
     pub events: Vec<GameEvent>,
     /// Screen transition in progress, if any.
     pub transition: Option<ScreenTransition>,
+    /// Bodies killed by a hit that the game removed in this tick only, as
+    /// they fell out of the logic view; a wider presentation draws them on
+    /// (see [`FallingBodies`]). Drawing only: nothing in the game depends
+    /// on them.
+    pub removed_bodies: Vec<RemovedBody>,
 }
 
 /// How the presentation fills a display whose shape differs from the logic

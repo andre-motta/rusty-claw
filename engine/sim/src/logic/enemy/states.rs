@@ -485,7 +485,9 @@ pub fn dead_tick(w: &mut World, id: ObjectId) {
         DeathKind::Hit => {
             if !on_screen(w, id) {
                 play(w, super::SPLASH_SOUND);
-                w.destroy(id);
+                // Gone for the game; a wider presentation draws its fall
+                // on (see `World::remove_falling_body`).
+                w.remove_falling_body(id);
             }
         }
         DeathKind::Landing | DeathKind::Spikes => {

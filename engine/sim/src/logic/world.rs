@@ -5,7 +5,7 @@
 //! A family adds its own helpers in an `impl World` block in its own file;
 //! this file holds what every family shares.
 
-use claw_frame::{AudioCue, GameEvent, PaletteFade, ScreenTransition, SoundChannel};
+use claw_frame::{AudioCue, GameEvent, PaletteFade, RemovedBody, ScreenTransition, SoundChannel};
 
 use crate::anim::{Animation, FRAME_SOUND_IN_VIEW, FRAME_SOUND_POSITIONAL};
 use crate::container::Container;
@@ -52,6 +52,8 @@ pub struct Outbox {
     frame_time_reset: bool,
     tile_edits: Vec<(i32, i32, i32)>,
     pub(crate) boss: BossState,
+    falling: Vec<ObjectId>,
+    removed_bodies: Vec<RemovedBody>,
 }
 
 impl Outbox {
@@ -166,6 +168,38 @@ impl Outbox {
         )
     }
 
+    /// Marks `id`, which is being removed, as a falling body a wider
+    /// presentation draws on (see [`World::remove_falling_body`]).
+    pub(crate) fn falling(&mut self, id: ObjectId) {
+        self.falling.push(id);
+    }
+
+    /// True when `id` was marked by [`Outbox::falling`]; forgets the mark.
+    pub(crate) fn take_falling(&mut self, id: ObjectId) -> bool {
+        match self.falling.iter().position(|&f| f == id) {
+            Some(i) => {
+                self.falling.swap_remove(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Forgets every falling mark.
+    pub(crate) fn clear_falling(&mut self) {
+        self.falling.clear();
+    }
+
+    /// Adds a removed body for the presentation.
+    pub(crate) fn removed_body(&mut self, body: RemovedBody) {
+        self.removed_bodies.push(body);
+    }
+
+    /// Takes the removed bodies gathered since the last call.
+    pub(crate) fn take_removed_bodies(&mut self) -> Vec<RemovedBody> {
+        std::mem::take(&mut self.removed_bodies)
+    }
+
     /// Takes the objects spawned since the last call, in spawn order.
     pub(crate) fn take_spawned(&mut self) -> Vec<ObjectId> {
         std::mem::take(&mut self.spawned)
@@ -254,6 +288,18 @@ impl World<'_> {
     pub fn destroy(&mut self, id: ObjectId) {
         if let Some(o) = self.objects.get_mut(id) {
             o.flags |= flags::DESTROY;
+        }
+    }
+
+    /// Removes `id` as [`World::destroy`] does, as a body killed by a hit
+    /// that fell out of the view. For the game this is exactly a removal;
+    /// in addition, the tick's snapshot reports the body as it was at the
+    /// end of its last logic call ([`claw_frame::RemovedBody`]), so that a
+    /// presentation wider than the logic view can draw its fall on.
+    pub fn remove_falling_body(&mut self, id: ObjectId) {
+        if self.objects.get(id).is_some() {
+            self.destroy(id);
+            self.out.falling(id);
         }
     }
 

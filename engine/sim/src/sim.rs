@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use claw_frame::{
-    AspectPolicy, AudioCue, Buttons, DrawMode, GameEvent, HudState, Point, PowerupHud, Renderable,
-    SimSnapshot, TickInput, ViewConfig,
+    AspectPolicy, AudioCue, Buttons, DrawMode, GameEvent, HudState, Point, PowerupHud, RemovedBody,
+    Renderable, SimSnapshot, TickInput, ViewConfig,
 };
 
 use crate::activation::{Activation, ActivationConfig, ActivationMode, Centres};
@@ -159,6 +159,9 @@ pub struct Sim {
     out: Outbox,
     last_audio: Vec<AudioCue>,
     last_events: Vec<GameEvent>,
+    /// Bodies removed in the last tick as they fell out of the view, for
+    /// the presentation only.
+    last_bodies: Vec<RemovedBody>,
     /// [`Sim::end_life`] was called: Claw dies at the start of the next
     /// tick.
     end_life: bool,
@@ -527,6 +530,7 @@ impl Sim {
             out: Outbox::new(),
             last_audio: Vec::new(),
             last_events: Vec::new(),
+            last_bodies: Vec::new(),
             end_life: false,
             give_powerup: None,
             respawned: false,
@@ -706,6 +710,7 @@ impl Sim {
             self.tick += 1;
             self.last_audio.clear();
             self.last_events.clear();
+            self.last_bodies.clear();
             return self.snapshot();
         }
         // A death's respawn comes between two ticks; its circles are drawn
@@ -774,6 +779,7 @@ impl Sim {
             .any(|e| matches!(e, GameEvent::LevelComplete { .. }));
         self.last_audio = audio;
         self.last_events = events;
+        self.last_bodies = self.out.take_removed_bodies();
         let snapshot = self.snapshot();
         // Jumps are reported once, in the snapshot of the tick they happen
         // in (or the next one, for moves made between ticks).
@@ -817,6 +823,9 @@ impl Sim {
         let (audio, events) = self.out.take_tick();
         self.last_audio = audio;
         self.last_events = events;
+        // A respawn drops the bodies falling on display.
+        self.out.take_removed_bodies();
+        self.last_bodies.clear();
         true
     }
 
@@ -1064,6 +1073,18 @@ impl Sim {
                 }
             }
         }
+        // A body removed as it fell out of the view goes to the
+        // presentation as the pass left it, before it is removed.
+        for &id in &destroy {
+            if runner.out.take_falling(id)
+                && let Some(o) = objects.get(id)
+                && let Some(fall) = logic::falling::fall_of(o)
+                && let Some(body) = logic::falling::removed_body(runner.level, o, fall)
+            {
+                runner.out.removed_body(body);
+            }
+        }
+        runner.out.clear_falling();
         objects.finish_pass(&destroy, &resort, &mut |objects, id| {
             runner.notify(objects, id);
         });
@@ -1122,16 +1143,38 @@ impl Sim {
                 rect.right + extra + margin,
                 rect.bottom + margin,
             );
+            let mut insert = |r: Renderable| {
+                let at = renderables
+                    .iter()
+                    .position(|x| x.z > r.z)
+                    .unwrap_or(renderables.len());
+                renderables.insert(at, r);
+            };
             for (_, o) in self.objects.all() {
                 if o.is_listed() || o.flags & flags::WORLD == 0 || !area.contains(o.x, o.y) {
                     continue;
                 }
-                if let Some(r) = renderable(o) {
-                    let at = renderables
-                        .iter()
-                        .position(|x| x.z > r.z)
-                        .unwrap_or(renderables.len());
-                    renderables.insert(at, r);
+                // An object the game has not woken yet is drawn as it will
+                // look once woken, so it does not pop in, jump or vanish
+                // there when the game wakes it. Not in the logic view, which
+                // shows what the game shows (the upper crates of a stack
+                // below it come into it as the stack wakes).
+                match logic::first_look(&self.level, o) {
+                    Some(looks) => {
+                        for (k, look) in looks.iter().enumerate() {
+                            if rect.contains(look.x, look.y) {
+                                continue;
+                            }
+                            if let Some(r) = look_renderable(o, look, k) {
+                                insert(r);
+                            }
+                        }
+                    }
+                    None => {
+                        if let Some(r) = renderable(o) {
+                            insert(r);
+                        }
+                    }
                 }
             }
         }
@@ -1148,6 +1191,7 @@ impl Sim {
             audio: self.last_audio.clone(),
             events: self.last_events.clone(),
             transition: self.out.transition(),
+            removed_bodies: self.last_bodies.clone(),
         }
     }
 
@@ -1495,6 +1539,36 @@ impl Sim {
         id
     }
 }
+
+/// Sprite `k` of how the sleeping object `o` will look once woken
+/// (see [`logic::first_look`]). The first sprite keeps the object's id;
+/// the others get ids of their own, apart from every object's.
+fn look_renderable(o: &Object, look: &logic::Look, k: usize) -> Option<Renderable> {
+    if look.image_set.is_empty() || look.draw_flags & draw_flags::HIDDEN != 0 {
+        return None;
+    }
+    let id = match k {
+        0 => o.serial,
+        k => LOOK_IDS | (o.serial.wrapping_shl(4) | (k as u32 & 0xF)) & !LOOK_IDS,
+    };
+    Some(Renderable {
+        id,
+        image_set_key: look.image_set.clone(),
+        frame: look.frame,
+        x: f64::from(look.x),
+        y: f64::from(look.y),
+        z: look.z,
+        mirror: look.draw_flags & draw_flags::MIRROR != 0,
+        invert: look.draw_flags & draw_flags::INVERT != 0,
+        flash: look.draw_flags & draw_flags::FLASH != 0,
+        draw_mode: DrawMode::NORMAL,
+        draw_color: None,
+        teleported: false,
+    })
+}
+
+/// The top bit of the ids of the extra sprites [`look_renderable`] makes.
+const LOOK_IDS: u32 = 1 << 31;
 
 fn renderable(o: &Object) -> Option<Renderable> {
     if o.image_set.is_empty() || o.draw_flags & draw_flags::HIDDEN != 0 {

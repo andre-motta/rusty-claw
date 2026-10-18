@@ -327,6 +327,7 @@ fn snapshot_sprite_over_planes(
         audio: Vec::new(),
         events: Vec::new(),
         transition: None,
+        removed_bodies: Vec::new(),
     };
     let frame = interpolate(&snap, &snap, 0.5);
     let input = FrameInput::from_frame(&frame, &v);
@@ -405,6 +406,7 @@ fn snapshot_camera_is_the_logic_view_corner() {
         audio: Vec::new(),
         events: Vec::new(),
         transition: None,
+        removed_bodies: Vec::new(),
     };
     let frame = interpolate(&snap, &snap, 0.0);
     let input = FrameInput::from_frame(&frame, &v);

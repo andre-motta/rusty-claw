@@ -1355,6 +1355,7 @@ fn run_planned(
             s
         }
     };
+    session.set_presentation(view);
     let mut combat = Combat::default();
     // The preload looks every set up through the drawing path too: only
     // what frames look up from here on counts.

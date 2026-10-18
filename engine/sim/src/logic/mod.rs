@@ -49,6 +49,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use crate::level::SimLevel;
 use crate::object::{LogicKind, Object, ObjectId, flags};
 use crate::registry::{REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
 
@@ -61,6 +62,7 @@ pub mod crates;
 pub mod decor;
 pub mod effect;
 pub mod enemy;
+pub mod falling;
 pub mod floor_spike;
 pub mod goo_vent;
 pub mod ground_blower;
@@ -640,6 +642,62 @@ pub fn dropped(w: &mut World, id: ObjectId) {
             | GameLogic::Gabriel,
         ) => enemy::lift::dropped(w, id),
         _ => {}
+    }
+}
+
+/// One sprite of how a level object looks (see [`first_look`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Look {
+    /// Image set.
+    pub image_set: String,
+    /// Frame number.
+    pub frame: i32,
+    /// Position.
+    pub x: i32,
+    /// Position.
+    pub y: i32,
+    /// Draw order.
+    pub z: i32,
+    /// Draw flags ([`crate::object::draw_flags`]).
+    pub draw_flags: u32,
+}
+
+impl Look {
+    /// How `o` looks now.
+    pub fn of(o: &Object) -> Look {
+        Look {
+            image_set: o.image_set.clone(),
+            frame: o.frame,
+            x: o.x,
+            y: o.y,
+            z: o.z,
+            draw_flags: o.draw_flags,
+        }
+    }
+}
+
+/// How the level object `o`, whose first logic call has not run yet,
+/// looks once it has: the sprites a presentation draws for it while it
+/// sleeps outside the logic view (in the extra width of a wide display),
+/// so that it does not pop in, jump or vanish when the game first wakes
+/// it. `None` when it looks as it is now; an empty list when it is not
+/// drawn at all.
+///
+/// - A powder keg stands on the floor below it ([`keg::first_look`]).
+/// - A stack of crates shows its column of crates, an empty stack nothing;
+///   a single crate shows the first image of its set
+///   ([`crates::first_look`]).
+/// - A pickup shows its glitter next to it; a curse, which goes on its
+///   first call in a single-player game, nothing ([`pickup::first_look`]).
+///
+/// It reads the object and the level only, on copies: nothing in the game
+/// changes, no logic runs and no random number is drawn.
+pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
+    match o.kind {
+        LogicKind::Game(GameLogic::Keg) => keg::first_look(level, o).map(|l| vec![l]),
+        LogicKind::Game(GameLogic::Crate) => crates::first_look(level, o),
+        LogicKind::Game(GameLogic::Pickup) => pickup::first_look(level, o),
+        _ => None,
     }
 }
 

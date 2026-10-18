@@ -56,10 +56,10 @@
 use claw_frame::SoundChannel;
 
 use super::effect::{self, EffectKind};
-use super::{ObjectData, World, enemy, sound};
-use crate::level::runtime_image_set;
+use super::{Look, ObjectData, World, enemy, sound};
+use crate::level::{SimLevel, runtime_image_set};
 use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags, special, types};
-use crate::physics::ptype;
+use crate::physics::{align_to_ground, ptype};
 use crate::player::state as claw_state;
 use crate::tuning::TICK_MS;
 
@@ -266,19 +266,44 @@ fn depth_sort(w: &mut World, id: ObjectId) {
 /// The box shots hit on keg `o`: the box of its frame in the level, or
 /// [`KEG_BOX`] when the level does not know the frame.
 pub fn hit_box(w: &World, o: &Object) -> Rect {
+    hit_box_in(w.level, o)
+}
+
+/// [`hit_box`] with the frames of `level`.
+fn hit_box_in(level: &SimLevel, o: &Object) -> Rect {
     let frame = if o.frame < 0 {
-        w.image_frames(&o.image_set)
+        level
+            .image_frames(&o.image_set)
             .map_or(o.frame, |(first, _)| first)
     } else {
         o.frame
     };
-    w.frame_box(&o.image_set, frame).unwrap_or(KEG_BOX)
+    level.frame_box(&o.image_set, frame).unwrap_or(KEG_BOX)
 }
 
 /// The box a keg with hit box `b` stands and lands with: its bottom is
 /// [`FEET_ABOVE_BOX`] px higher.
 pub const fn move_box(b: Rect) -> Rect {
     Rect::new(b.left, b.top, b.right, b.bottom - FEET_ABOVE_BOX)
+}
+
+/// How keg `o`, not set up yet, looks once its first logic call has run
+/// (see [`init`]): its picture, standing on the first floor below the
+/// point 32 px above it. Worked out on a copy, from the level's tiles
+/// only: nothing in the game changes and no random number is drawn.
+/// `None` once the keg is set up.
+pub fn first_look(level: &SimLevel, o: &Object) -> Option<Look> {
+    if o.state != state::INIT {
+        return None;
+    }
+    let mut k = o.clone();
+    if k.image_set.is_empty() {
+        k.image_set = runtime_image_set(IMAGE_SET);
+    }
+    k.move_rect = move_box(hit_box_in(level, &k));
+    k.y -= 32;
+    align_to_ground(&level.map, &mut k);
+    Some(Look::of(&k))
 }
 
 /// First logic call: sets the keg up, and kegs rest on the floor at spawn
