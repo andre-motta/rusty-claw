@@ -37,15 +37,6 @@
 //! which must be the progress the next file starts with, and that file,
 //! played as a replay of it plays (with the seed and tuning it names), wins
 //! that level too; twice, with the same traces.
-//!
-//! The fourth level's routes ([`SEARCHED_AGAIN_IN_S3_P5B`]) were found
-//! before the game learned three more of the original's rules (every
-//! enemy built outside its patrol limits starts on the nearer one; Claw's
-//! teeter line goes through his dialog helper; standing still, his idle
-//! wait after the level's start is 20 s and his idle animation says one
-//! of his idle lines); under those rules they no longer play the game
-//! they were found on, so their checks are skipped until they are
-//! searched again (S3-P5b).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -88,26 +79,6 @@ const LEVEL_SEEDS: [(u32, u32); 4] = [
     (3, 714_107_639),
     (4, 1_617_999_171),
 ];
-
-/// The routes found before the fourth level's latest rules, skipped until
-/// they are searched again (S3-P5b).
-const SEARCHED_AGAIN_IN_S3_P5B: [&str; 4] = [
-    "level3-original.level4.csv",
-    "level4-introskip.csv",
-    "level4-original.csv",
-    "level4.csv",
-];
-
-/// True (with a note) when `name` waits to be searched again.
-fn awaits_search(name: &str) -> bool {
-    let waits = SEARCHED_AGAIN_IN_S3_P5B.contains(&name);
-    if waits {
-        println!(
-            "{name}: skipped, expected to fail until it is searched again under the fourth level's latest rules (S3-P5b)"
-        );
-    }
-    waits
-}
 
 /// The route header keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,9 +231,6 @@ fn install_routes_win_the_same_way_every_time() {
     assert!(!files.is_empty(), "no committed routes");
     for path in files {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        if awaits_search(&name) {
-            continue;
-        }
         let text = std::fs::read_to_string(&path).expect("the route reads");
         // A route is plain play: one played with a play-test aid is refused.
         let script = InputScript::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -604,9 +572,6 @@ fn install_routes_play_one_game_through_the_booty_screen() {
     let games = later_levels();
     assert!(!games.is_empty(), "no route of a game's later level");
     for (first, later, n) in games {
-        if awaits_search(&later.file_name().unwrap().to_string_lossy()) {
-            continue;
-        }
         let read = |p: &Path| {
             let text = std::fs::read_to_string(p).expect("the route reads");
             // Plain play only: a route played with a play-test aid is refused.
