@@ -55,6 +55,7 @@ use crate::registry::{REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
 pub mod boss_stage;
 pub mod break_plank;
 pub mod cannon;
+pub mod cannon_switch;
 pub mod checkpoint;
 pub mod crates;
 pub mod decor;
@@ -166,10 +167,21 @@ pub enum GameLogic {
     CrabNest,
     /// The bomb a bomber crab throws.
     CrabBomb,
+    /// Gabriel, the boss of the eighth level.
+    Gabriel,
+    /// The bombs Gabriel lobs.
+    GabrielBomb,
+    /// The lever beside Gabriel that flips when he orders his cannon to
+    /// fire.
+    CannonSwitch,
+    /// The button Claw strikes to turn Gabriel's cannon upwards.
+    CannonButton,
+    /// Gabriel's deck cannon.
+    GabrielCannon,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 40] = [
+pub const ALL: [GameLogic; 45] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -210,6 +222,11 @@ pub const ALL: [GameLogic; 40] = [
     GameLogic::HermitCrab,
     GameLogic::CrabNest,
     GameLogic::CrabBomb,
+    GameLogic::Gabriel,
+    GameLogic::GabrielBomb,
+    GameLogic::CannonSwitch,
+    GameLogic::CannonButton,
+    GameLogic::GabrielCannon,
 ];
 
 /// A logic's own data, by family.
@@ -292,6 +309,16 @@ pub enum ObjectData {
     CrabNest(enemy::crab::nest::NestData),
     /// A crab bomb.
     CrabBomb(enemy::crab::bomb::BombData),
+    /// Gabriel.
+    Gabriel(enemy::gabriel::GabrielData),
+    /// One of Gabriel's bombs.
+    GabrielBomb(enemy::gabriel::bomb::BombData),
+    /// The cannon switch.
+    CannonSwitch(cannon_switch::SwitchData),
+    /// The cannon button.
+    CannonButton(cannon_switch::button::ButtonData),
+    /// Gabriel's cannon.
+    GabrielCannon(cannon_switch::cannon::CannonData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -338,6 +365,11 @@ macro_rules! dispatch {
             GameLogic::HermitCrab => enemy::crab::$f($($arg),*),
             GameLogic::CrabNest => enemy::crab::nest::$f($($arg),*),
             GameLogic::CrabBomb => enemy::crab::bomb::$f($($arg),*),
+            GameLogic::Gabriel => enemy::gabriel::$f($($arg),*),
+            GameLogic::GabrielBomb => enemy::gabriel::bomb::$f($($arg),*),
+            GameLogic::CannonSwitch => cannon_switch::$f($($arg),*),
+            GameLogic::CannonButton => cannon_switch::button::$f($($arg),*),
+            GameLogic::GabrielCannon => cannon_switch::cannon::$f($($arg),*),
         }
     };
 }
@@ -386,6 +418,11 @@ macro_rules! constant {
             GameLogic::HermitCrab => enemy::crab::$c,
             GameLogic::CrabNest => enemy::crab::nest::$c,
             GameLogic::CrabBomb => enemy::crab::bomb::$c,
+            GameLogic::Gabriel => enemy::gabriel::$c,
+            GameLogic::GabrielBomb => enemy::gabriel::bomb::$c,
+            GameLogic::CannonSwitch => cannon_switch::$c,
+            GameLogic::CannonButton => cannon_switch::button::$c,
+            GameLogic::GabrielCannon => cannon_switch::cannon::$c,
         }
     };
 }
@@ -436,6 +473,11 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::HermitCrab => enemy::crab::BUILT,
         GameLogic::CrabNest => enemy::crab::nest::BUILT,
         GameLogic::CrabBomb => enemy::crab::bomb::BUILT,
+        GameLogic::Gabriel => enemy::gabriel::BUILT,
+        GameLogic::GabrielBomb => enemy::gabriel::bomb::BUILT,
+        GameLogic::CannonSwitch => cannon_switch::BUILT,
+        GameLogic::CannonButton => cannon_switch::button::BUILT,
+        GameLogic::GabrielCannon => cannon_switch::cannon::BUILT,
         _ => true,
     }
 }
@@ -511,8 +553,8 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 
 /// `carrier` lifted `id`. Kegs, crates and the human enemies Claw can
 /// carry (officers, soldiers, cutthroats, robber thieves, Katherine, the
-/// town guards, Wolvington, the red-tail pirates and the bear sailors, see
-/// [`enemy::lift`]) react; other families ignore it.
+/// town guards, Wolvington, the red-tail pirates, the bear sailors and
+/// Gabriel, see [`enemy::lift`]) react; other families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
@@ -527,7 +569,8 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
             | GameLogic::TownGuard2
             | GameLogic::Wolvington
             | GameLogic::RedTailPirate
-            | GameLogic::BearSailor,
+            | GameLogic::BearSailor
+            | GameLogic::Gabriel,
         ) => enemy::lift::lifted(w, id, carrier),
         _ => {}
     }
@@ -548,7 +591,8 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
             | GameLogic::TownGuard2
             | GameLogic::Wolvington
             | GameLogic::RedTailPirate
-            | GameLogic::BearSailor,
+            | GameLogic::BearSailor
+            | GameLogic::Gabriel,
         ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
@@ -570,6 +614,7 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
                 | GameLogic::Wolvington
                 | GameLogic::RedTailPirate
                 | GameLogic::BearSailor
+                | GameLogic::Gabriel
         )
     ) {
         enemy::lift::wind_up(w, id);
@@ -591,7 +636,8 @@ pub fn dropped(w: &mut World, id: ObjectId) {
             | GameLogic::TownGuard2
             | GameLogic::Wolvington
             | GameLogic::RedTailPirate
-            | GameLogic::BearSailor,
+            | GameLogic::BearSailor
+            | GameLogic::Gabriel,
         ) => enemy::lift::dropped(w, id),
         _ => {}
     }
