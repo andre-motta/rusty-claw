@@ -107,10 +107,10 @@ fn install_unregistered_logics_become_placeholders() {
             assert_eq!(d.unknown_logics.get("Sign"), Some(&3));
         }
     }
-    // One enemy logic of levels 9 and 10 is not in the built-in table yet
-    // (it runs as a placeholder in its own activation class, 0), and
-    // level 12 names a logic the game never registered.
-    assert_eq!(per_level, vec![(9, 1, 45), (10, 1, 48), (12, 1, 3)]);
+    // Only level 12 names a logic the game never registered; the
+    // hook-handed pirate of levels 9 and 10 is registered from his own
+    // module.
+    assert_eq!(per_level, vec![(12, 1, 3)]);
 }
 
 /// A simulation of LEVEL1 with Claw moved to (x, y) and settled.

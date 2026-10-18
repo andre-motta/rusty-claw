@@ -58,7 +58,9 @@ pub mod break_plank;
 pub mod cannon;
 pub mod cannon_switch;
 pub mod checkpoint;
+pub mod conveyor_belt;
 pub mod crates;
+pub mod dart_trap;
 pub mod decor;
 pub mod effect;
 pub mod enemy;
@@ -73,6 +75,8 @@ pub mod pickup;
 pub mod platform;
 pub mod projectile;
 pub mod rope;
+pub mod saw_blade;
+pub mod skull_cannon;
 pub mod sound;
 pub mod sound_object;
 pub mod springboard;
@@ -180,10 +184,22 @@ pub enum GameLogic {
     CannonButton,
     /// Gabriel's deck cannon.
     GabrielCannon,
+    /// The hook-handed pirate, who holds his hook out and parries.
+    HookPirate,
+    /// PegLeg, the rolling gunner.
+    PegLeg,
+    /// Dart traps that shoot arrows while Claw stands in their rectangle.
+    DartTrap,
+    /// Conveyor belt pieces that push Claw along.
+    ConveyorBelt,
+    /// Saw blades that rise and sink on the level clock.
+    SawBlade,
+    /// Skull cannons that fire a cannonball every three seconds.
+    SkullCannon,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 45] = [
+pub const ALL: [GameLogic; 51] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -229,6 +245,12 @@ pub const ALL: [GameLogic; 45] = [
     GameLogic::CannonSwitch,
     GameLogic::CannonButton,
     GameLogic::GabrielCannon,
+    GameLogic::HookPirate,
+    GameLogic::PegLeg,
+    GameLogic::DartTrap,
+    GameLogic::ConveyorBelt,
+    GameLogic::SawBlade,
+    GameLogic::SkullCannon,
 ];
 
 /// A logic's own data, by family.
@@ -321,6 +343,18 @@ pub enum ObjectData {
     CannonButton(cannon_switch::button::ButtonData),
     /// Gabriel's cannon.
     GabrielCannon(cannon_switch::cannon::CannonData),
+    /// A hook-handed pirate.
+    HookPirate(enemy::hook_pirate::HookPirateData),
+    /// A PegLeg.
+    PegLeg(enemy::pegleg::PegLegData),
+    /// A dart trap.
+    DartTrap(dart_trap::DartTrapData),
+    /// A conveyor belt piece.
+    ConveyorBelt(conveyor_belt::BeltData),
+    /// A saw blade.
+    SawBlade(saw_blade::SawData),
+    /// A skull cannon.
+    SkullCannon(skull_cannon::SkullCannonData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -372,6 +406,12 @@ macro_rules! dispatch {
             GameLogic::CannonSwitch => cannon_switch::$f($($arg),*),
             GameLogic::CannonButton => cannon_switch::button::$f($($arg),*),
             GameLogic::GabrielCannon => cannon_switch::cannon::$f($($arg),*),
+            GameLogic::HookPirate => enemy::hook_pirate::$f($($arg),*),
+            GameLogic::PegLeg => enemy::pegleg::$f($($arg),*),
+            GameLogic::DartTrap => dart_trap::$f($($arg),*),
+            GameLogic::ConveyorBelt => conveyor_belt::$f($($arg),*),
+            GameLogic::SawBlade => saw_blade::$f($($arg),*),
+            GameLogic::SkullCannon => skull_cannon::$f($($arg),*),
         }
     };
 }
@@ -425,6 +465,12 @@ macro_rules! constant {
             GameLogic::CannonSwitch => cannon_switch::$c,
             GameLogic::CannonButton => cannon_switch::button::$c,
             GameLogic::GabrielCannon => cannon_switch::cannon::$c,
+            GameLogic::HookPirate => enemy::hook_pirate::$c,
+            GameLogic::PegLeg => enemy::pegleg::$c,
+            GameLogic::DartTrap => dart_trap::$c,
+            GameLogic::ConveyorBelt => conveyor_belt::$c,
+            GameLogic::SawBlade => saw_blade::$c,
+            GameLogic::SkullCannon => skull_cannon::$c,
         }
     };
 }
@@ -480,6 +526,12 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::CannonSwitch => cannon_switch::BUILT,
         GameLogic::CannonButton => cannon_switch::button::BUILT,
         GameLogic::GabrielCannon => cannon_switch::cannon::BUILT,
+        GameLogic::HookPirate => enemy::hook_pirate::BUILT,
+        GameLogic::PegLeg => enemy::pegleg::BUILT,
+        GameLogic::DartTrap => dart_trap::BUILT,
+        GameLogic::ConveyorBelt => conveyor_belt::BUILT,
+        GameLogic::SawBlade => saw_blade::BUILT,
+        GameLogic::SkullCannon => skull_cannon::BUILT,
         _ => true,
     }
 }
@@ -496,6 +548,7 @@ pub fn runs(name: &str) -> Option<LogicKind> {
 pub fn runtime_image_sets() -> Vec<&'static str> {
     let mut sets: BTreeSet<&'static str> = enemy::IMAGE_SETS.iter().copied().collect();
     sets.extend(enemy::human::IMAGE_SETS.iter().copied());
+    sets.extend(enemy::hook_pirate::derived_image_sets());
     for g in ALL {
         sets.extend(constant!(g, IMAGE_SETS).iter().copied());
     }
@@ -507,6 +560,7 @@ pub fn runtime_image_sets() -> Vec<&'static str> {
 pub fn runtime_anim_prefixes() -> Vec<&'static str> {
     let mut prefixes: BTreeSet<&'static str> = enemy::ANIM_PREFIXES.iter().copied().collect();
     prefixes.extend(enemy::human::ANIM_PREFIXES.iter().copied());
+    prefixes.extend(enemy::hook_pirate::derived_anim_prefixes());
     for g in ALL {
         prefixes.extend(constant!(g, ANIM_PREFIXES).iter().copied());
     }
@@ -555,8 +609,9 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 
 /// `carrier` lifted `id`. Kegs, crates and the human enemies Claw can
 /// carry (officers, soldiers, cutthroats, robber thieves, Katherine, the
-/// town guards, Wolvington, the red-tail pirates, the bear sailors and
-/// Gabriel, see [`enemy::lift`]) react; other families ignore it.
+/// town guards, Wolvington, the red-tail pirates, the bear sailors,
+/// Gabriel, the hook-handed pirates and PegLegs, see [`enemy::lift`])
+/// react; other families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
@@ -572,7 +627,9 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
             | GameLogic::Wolvington
             | GameLogic::RedTailPirate
             | GameLogic::BearSailor
-            | GameLogic::Gabriel,
+            | GameLogic::Gabriel
+            | GameLogic::HookPirate
+            | GameLogic::PegLeg,
         ) => enemy::lift::lifted(w, id, carrier),
         _ => {}
     }
@@ -594,7 +651,9 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
             | GameLogic::Wolvington
             | GameLogic::RedTailPirate
             | GameLogic::BearSailor
-            | GameLogic::Gabriel,
+            | GameLogic::Gabriel
+            | GameLogic::HookPirate
+            | GameLogic::PegLeg,
         ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
@@ -617,6 +676,8 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
                 | GameLogic::RedTailPirate
                 | GameLogic::BearSailor
                 | GameLogic::Gabriel
+                | GameLogic::HookPirate
+                | GameLogic::PegLeg
         )
     ) {
         enemy::lift::wind_up(w, id);
@@ -639,7 +700,9 @@ pub fn dropped(w: &mut World, id: ObjectId) {
             | GameLogic::Wolvington
             | GameLogic::RedTailPirate
             | GameLogic::BearSailor
-            | GameLogic::Gabriel,
+            | GameLogic::Gabriel
+            | GameLogic::HookPirate
+            | GameLogic::PegLeg,
         ) => enemy::lift::dropped(w, id),
         _ => {}
     }
@@ -689,6 +752,10 @@ impl Look {
 ///   ([`crates::first_look`]).
 /// - A pickup shows its glitter next to it; a curse, which goes on its
 ///   first call in a single-player game, nothing ([`pickup::first_look`]).
+/// - Dart traps, conveyor belt pieces, saw blades and skull cannons answer
+///   for themselves ([`dart_trap::first_look`],
+///   [`conveyor_belt::first_look`], [`saw_blade::first_look`],
+///   [`skull_cannon::first_look`]).
 ///
 /// It reads the object and the level only, on copies: nothing in the game
 /// changes, no logic runs and no random number is drawn.
@@ -697,6 +764,10 @@ pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
         LogicKind::Game(GameLogic::Keg) => keg::first_look(level, o).map(|l| vec![l]),
         LogicKind::Game(GameLogic::Crate) => crates::first_look(level, o),
         LogicKind::Game(GameLogic::Pickup) => pickup::first_look(level, o),
+        LogicKind::Game(GameLogic::DartTrap) => dart_trap::first_look(level, o),
+        LogicKind::Game(GameLogic::ConveyorBelt) => conveyor_belt::first_look(level, o),
+        LogicKind::Game(GameLogic::SawBlade) => saw_blade::first_look(level, o),
+        LogicKind::Game(GameLogic::SkullCannon) => skull_cannon::first_look(level, o),
         _ => None,
     }
 }
