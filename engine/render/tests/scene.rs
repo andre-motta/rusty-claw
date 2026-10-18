@@ -291,6 +291,91 @@ fn ghost_reads_what_is_below() {
     assert!(checked > 50);
 }
 
+/// Draws one snapshot sprite in `mode` with `color` over the planes and
+/// checks every pixel it covers against `want(destination, sprite pixel)`.
+fn snapshot_sprite_over_planes(
+    mode: DrawMode,
+    color: Option<u8>,
+    want: impl Fn(&claw_render::LevelGraphics, u8, u8) -> u8,
+) {
+    let mut g = graphics(None);
+    let v = view(640, 480);
+    let mut b = SceneBuilder::new(&g, v, DEFAULT_MAX_TARGET);
+    // In front of the front plane, so the sprite is the last draw and
+    // everything below it is the level's planes.
+    let r = Renderable {
+        id: 7,
+        image_set_key: "SPR".into(),
+        frame: 1,
+        x: 1000.0,
+        y: 400.0,
+        z: 9500,
+        mirror: false,
+        invert: false,
+        flash: false,
+        draw_mode: mode,
+        draw_color: color,
+        teleported: false,
+    };
+    let snap = SimSnapshot {
+        tick: 3,
+        camera: Point { x: 680.0, y: 160.0 },
+        renderables: vec![r],
+        palette_fade: None,
+        camera_teleported: false,
+        hud: HudState::default(),
+        audio: Vec::new(),
+        events: Vec::new(),
+        transition: None,
+    };
+    let frame = interpolate(&snap, &snap, 0.5);
+    let input = FrameInput::from_frame(&frame, &v);
+    let scene = b.build(&mut g, &input);
+    assert_eq!(scene.sprites.len(), 1);
+    let sp = scene.sprites[0];
+    assert_eq!(
+        sp.color,
+        u32::from(color.unwrap_or(DrawMode::DEFAULT_COLOR))
+    );
+    let below = {
+        let mut only = scene.clone();
+        assert_eq!(only.items.pop(), Some(Item::Sprite(0)));
+        cpu::compose(&g, &only)
+    };
+    let both = cpu::compose(&g, &scene);
+    let tables = g.tables.packed();
+    let plain = claw_render::scene::SpriteParams { effect: 1, ..sp };
+    let (x0, y0, x1, y1) = sp.quad();
+    let (mut checked, mut differ) = (0, 0);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let o = (y * 640 + x) as usize;
+            let d = below.index[o];
+            if let Some((s, _)) = cpu::sprite_pixel(&g, &tables, &plain, x, y, d) {
+                assert_eq!(both.index[o], want(&g, d, s), "pixel ({x}, {y})");
+                checked += 1;
+                differ += usize::from(both.index[o] != s);
+            }
+        }
+    }
+    assert!(checked > 50, "{checked}");
+    assert!(differ > 0, "the background shows through");
+}
+
+#[test]
+fn snapshot_ghost_sprite_blends_with_the_background() {
+    snapshot_sprite_over_planes(DrawMode::GHOST, None, |g, d, s| {
+        g.tables.average[usize::from(d) * 256 + usize::from(s)]
+    });
+}
+
+#[test]
+fn snapshot_silhouette_carries_its_colour() {
+    snapshot_sprite_over_planes(DrawMode::SHADOW, Some(0x35), |g, d, _| {
+        g.tables.average[usize::from(d) * 256 + 0x35]
+    });
+}
+
 #[test]
 fn snapshot_camera_is_the_logic_view_corner() {
     let mut g = graphics(None);
@@ -307,6 +392,7 @@ fn snapshot_camera_is_the_logic_view_corner() {
         invert: false,
         flash: false,
         draw_mode: DrawMode::NORMAL,
+        draw_color: None,
         teleported: false,
     };
     let snap = SimSnapshot {

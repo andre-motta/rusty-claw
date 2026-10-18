@@ -7,7 +7,8 @@
 //! and 3 select the pistol, magic and dynamite; the left and right Ctrl,
 //! Alt and Shift keys both work. Escape opens the in-game menu, the Pause
 //! key pauses play without a menu (each press steps out of it one tick at
-//! a time, see [`crate::pause`]) and F1 shows the help screen. Keys are
+//! a time, see [`crate::pause`]) and F1 shows the help screen. With a
+//! play-test aid on, F6 gives Claw the next powerup. Keys are
 //! matched by their physical position, so the map works on any keyboard
 //! layout.
 //!
@@ -61,6 +62,10 @@ pub enum Command {
     Pause,
     /// Show the help screen.
     Help,
+    /// Play-test aid: give Claw the next powerup (see
+    /// [`crate::session::Session::cycle_powerup`]); only while a play-test
+    /// aid is on.
+    CyclePowerup,
 }
 
 /// A key's meaning.
@@ -74,7 +79,7 @@ pub enum Action {
 
 /// Every bindable action with its stable name, in the order the config
 /// file lists them.
-pub const ACTIONS: [(&str, Action); 20] = [
+pub const ACTIONS: [(&str, Action); 21] = [
     ("left", Action::Button(Buttons::LEFT)),
     ("right", Action::Button(Buttons::RIGHT)),
     ("up", Action::Button(Buttons::UP)),
@@ -98,6 +103,7 @@ pub const ACTIONS: [(&str, Action); 20] = [
     ),
     ("pause", Action::Command(Command::Pause)),
     ("help", Action::Command(Command::Help)),
+    ("powerup", Action::Command(Command::CyclePowerup)),
 ];
 
 impl Action {
@@ -357,7 +363,7 @@ pub struct Keymap {
 }
 
 /// The default keyboard bindings.
-pub const DEFAULT_KEYS: [(KeyCode, Action); 23] = {
+pub const DEFAULT_KEYS: [(KeyCode, Action); 24] = {
     use Action::{Button as B, Command as C};
     [
         (KeyCode::ArrowLeft, B(Buttons::LEFT)),
@@ -383,14 +389,15 @@ pub const DEFAULT_KEYS: [(KeyCode, Action); 23] = {
         (KeyCode::F7, C(Command::ToggleInterpolation)),
         (KeyCode::Pause, C(Command::Pause)),
         (KeyCode::F1, C(Command::Help)),
+        (KeyCode::F6, C(Command::CyclePowerup)),
     ]
 };
 
 const DEFAULT_HELP: &str = "arrows move, climb, crouch and look up; Space jumps; Ctrl attacks; \
      Alt fires the weapon; Shift switches weapons; Z lifts and throws; \
      1, 2, 3 select pistol, magic, dynamite; Pause pauses (each press steps one tick); \
-     F1 help; F7 interpolation; F8 fit or integer scaling; F9 aspect (fill, centered, 4:3); \
-     F10 window size; F11 fullscreen; Escape opens the menu (quits without menus)";
+     F1 help; F6 next powerup (with a play-test aid on); F7 interpolation; \
+     F8 fit or integer scaling; F9 aspect (fill, centered, 4:3); F10 window size; F11 fullscreen; Escape opens the menu (quits without menus)";
 
 impl Default for Keymap {
     fn default() -> Self {
@@ -800,5 +807,30 @@ mod tests {
         assert_eq!(parse_key("ctrl"), Some(KeyCode::ControlLeft));
         assert_eq!(parse_key("nope"), None);
         assert_eq!(parse_key(""), None);
+    }
+
+    #[test]
+    fn the_powerup_key_is_f6_and_f9_stays_the_aspect_key() {
+        let map = Keymap::default();
+        assert_eq!(
+            map.action(KeyCode::F6),
+            Some(Action::Command(Command::CyclePowerup))
+        );
+        assert_eq!(
+            map.action(KeyCode::F9),
+            Some(Action::Command(Command::NextAspect))
+        );
+        assert_eq!(
+            Action::from_name("powerup"),
+            Some(Action::Command(Command::CyclePowerup))
+        );
+        // No other default binding takes F6, and it is reserved.
+        let f6 = DEFAULT_KEYS
+            .iter()
+            .filter(|(k, _)| *k == KeyCode::F6)
+            .count();
+        assert_eq!(f6, 1);
+        assert!(Action::Command(Command::CyclePowerup).is_reserved());
+        assert!(map.help().contains("F6 next powerup"));
     }
 }

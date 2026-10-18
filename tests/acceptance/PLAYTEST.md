@@ -5,8 +5,9 @@ game). Note only what fails: the line, what happened instead, and where.
 Where a line says "as in the original", compare with the original game.
 
 For hard levels, the play-test aids (`--invincible`, `--infinite-lives`, or
-the Gameplay page) let you reach and repeat any part of a level; a run with
-an aid on says nothing about how hard the level is.
+the Gameplay page) let you reach and repeat any part of a level, and
+`--powerup NAME` or F6 (with an aid on) give any powerup; a run with an aid
+on says nothing about how hard the level is.
 
 1. Strike an officer standing, crouching and in the air: each blow lands when the sword or fist reaches him, he flinches and slides back, and he dies as quickly as in the original.
 2. Let an officer strike you: one hit sound and pain line, a short push back, then a moment in which he cannot hurt you again.
@@ -37,10 +38,11 @@ an aid on says nothing about how hard the level is.
 27. Charge a keg throw on a crumbling peg until it gives way: the keg drops from Claw's hands as he falls; after any throw the keg never stays in his hands.
 28. Get hit with speech switched off in the options: the hit sound still plays and Claw's pain line is silent.
 29. Take catnip and let it run out: every sparkle around Claw disappears at once when it ends.
-30. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
-31. Watch a rat walk into a wall: it stays against the wall for good, its walk playing on the spot, until it throws a bomb at Claw, as in the original.
-32. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
-33. On level 2, knock an officer or a soldier into a goo pool: it is gone at once, as on spikes (line 4 of the LEVEL2 section). Not checked before the fourth level: springboards (Claw's jump height, and enemies on them do not launch); not checked yet: loot carried through a warp, and enemies on moving elevators (they stay put).
+30. Start the first level with a play-test aid on (`--invincible`), then press F6 once for each powerup in turn; each press names the powerup in the middle of the screen, switches to the powerup tune and starts its status bar timer at 30 seconds. INVISIBLE: Claw is drawn see-through, the scenery showing through him; give it away from enemies, then walk up to one: enemies that had not noticed him do not come for him or shoot, as in the original (one already fighting him may keep striking). INVULNERABLE: Claw is a dark silhouette whose shade flickers about ten times a second, and shots and blows leave his health alone (play with `--infinite-lives` alone to see that, since `--invincible` hides it). CATNIP: Claw walks and climbs faster and jumps higher, sparkles trail him, and his blows hurt twice as much. FIRE SWORD, ICE SWORD, LIGHTNING SWORD: every swipe sends that sword's shot with its sound, and the shot hurts an officer. NO POWERUP: the look ends at once, the sparkles go and the level tune comes back. Losing a life ends any look at once; `--powerup fire` gives the fire sword again at the start and after the respawn, and F6 does nothing without an aid on.
+31. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
+32. Watch a rat walk into a wall: it stays against the wall for good, its walk playing on the spot, until it throws a bomb at Claw, as in the original.
+33. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
+34. On level 2, knock an officer or a soldier into a goo pool: it is gone at once, as on spikes (line 4 of the LEVEL2 section). Not checked before the fourth level: springboards (Claw's jump height, and enemies on them do not launch); not checked yet: loot carried through a warp, and enemies on moving elevators (they stay put).
 
 ## Milestone 3, slice 0 (LEVEL1)
 
@@ -122,8 +124,9 @@ hazards, Claw's rope swing and the two thieves.
 3. Rope swing, grab: jump or fall into the lower end of a swinging rope: Claw catches it and hangs just below the end. Standing or climbing under a rope's end, he does not catch it.
 4. Rope swing, swing: hanging on, Claw swings with the rope and turns to face the way it swings at each end of the swing; he passes through walls and floors with it, as in the original.
 5. Rope swing, let go: press jump: Claw leaps from where he hangs with no push from the swing, and Left or Right steers the leap. He cannot catch the same rope again for half a second (another rope at once). Cross the first pit on its two ropes, one to the next.
-6. Rope swing, get hit: let a shot or an enemy hit Claw while he swings: he takes the damage and drops, and the rope may catch him again at once, cutting the hurt short, as in the original.
+6. Rope swing, get hit: let a shot or an enemy hit Claw while he swings: he takes the damage (10 for a thief's knife or arrow) and shows the hurt pose for a single frame, then the rope catches him again at once, so he stays on it, as in the original.
 
 7. Thieves: while Claw is level with a cutthroat on screen with nothing between them, it stands still and throws a knife about every 2 s, slashes with its sword when Claw comes close, and never walks up to him; a robber thief shoots arrows the same way. Each shouts once when it first sees Claw.
 8. A knife or an arrow that reaches Claw costs 10 health and is gone; one that reaches a wall stops there.
 9. Knock a thief out and lift it with Z: Claw carries it and throws it as he does an officer, and a thrown thief hurts the enemies it lands on. A beaten thief drops the loot it carries and stops attacking once it starts to fall.
+10. Watch a route or a recording in the window (`--replay FILE.csv`): the level music and the game's sounds play from the level's start as in play, the boss and powerup tunes come in where play would start them, and sound carries on after the recording ends and the keyboard takes over. Where the recording paused or opened a menu, the sounds stop and the music holds, then both carry on as in play. The Pause key and switching to another window pause the sound as in play; `--no-audio` (or `audio = off`) keeps the replay silent.

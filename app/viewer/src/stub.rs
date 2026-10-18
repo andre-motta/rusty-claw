@@ -60,6 +60,7 @@ impl Stub {
                 invert: o.ints[11] & 4 != 0,
                 flash: false,
                 draw_mode: DrawMode::NORMAL,
+                draw_color: None,
                 teleported: false,
             })
             .collect();

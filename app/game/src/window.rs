@@ -20,9 +20,13 @@
 //! (the output size, the aspect policy, the scaling, fullscreen, vsync,
 //! the frame-rate cap, interpolation and the key bindings).
 //!
-//! Watching a script and the benchmark show one level without menus and
-//! are silent; the benchmark reads the keyboard only. The window title
-//! shows Claw's health, score and lives.
+//! Watching a script and the benchmark show one level without menus; the
+//! benchmark reads the keyboard only. A watched script plays the game's
+//! sound and music as play does, from the level's start through the
+//! handover to the keyboard, and its sounds pause where the recording
+//! paused (see [`crate::pause::ReplayedHolds`]); with sound off
+//! (`--no-audio`, `audio = off`) it opens no audio device. The benchmark
+//! is silent. The window title shows Claw's health, score and lives.
 //!
 //! With `--record`, every level played is recorded into its own file, one
 //! after the other as the game goes from level to level (see
@@ -44,6 +48,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use claw_assets::{Install, Palette};
+use claw_audio::AudioSettings;
 use claw_frame::{
     AudioCue, DrawMode, FrameClock, FramePacer, GameEvent, PaletteFade, ScreenTransition, TICK_MS,
 };
@@ -54,9 +59,10 @@ use claw_render::{
     Anchor, FrameInput, Gpu, ImageId, LevelGraphics, Offscreen, Renderer, Scene, SceneBuilder,
     ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
 };
-use claw_sim::Sim;
 use claw_sim::input::MenuScreen;
-use claw_ui::hud::{Hud, HudArt};
+use claw_sim::player::powerup_aid::AidPowerup;
+use claw_sim::{Sim, SimConfig};
+use claw_ui::hud::{Hud, HudArt, marker_layout, marker_lines};
 use claw_ui::menu::command::{MenuKind, Page, VideoSetting};
 use claw_ui::menu::decor::{SPARKLE, Sparkles};
 use claw_ui::menu::draw::{self, FontArt, MenuSprite};
@@ -83,10 +89,12 @@ use crate::keymap::{Action, Command};
 use crate::load::{
     LevelBundle, SHADE_SET, SHADE_SIZE, load_graphics, load_level, preload, start_override,
 };
-use crate::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, game_key};
+use crate::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, ReplayedHolds, game_key};
 use crate::saves::SaveStore;
-use crate::session::{Circles, GameRecording, LevelRecording, Session, Span, start_sim};
-use crate::settings::{Aspect, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
+use crate::session::{
+    Circles, GameRecording, HoldChange, LevelRecording, Session, Span, start_sim,
+};
+use crate::settings::{Aspect, Mode, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
 
 /// The image set of the PAUSE sign (its frame [`PAUSE_FRAME`]), preloaded
 /// with every level.
@@ -189,16 +197,29 @@ impl StatusLayer {
         self.transition
     }
 
+    /// Names powerup `p`, just given with the play-test key, on screen for
+    /// [`POWERUP_MESSAGE_MS`] of game time, as a message.
+    pub fn show_powerup(&mut self, p: AidPowerup) {
+        self.hud.messages.show(p.label(), POWERUP_MESSAGE_MS);
+    }
+
+    /// The message on screen, if any.
+    pub fn message(&self) -> Option<&str> {
+        self.hud.messages.text()
+    }
+
     /// Fills the screen layer and the transition of `input`, a frame of
     /// `sim` in a presentation of `presentation` game pixels.
     pub fn apply(&mut self, input: &mut FrameInput<'_>, sim: &Sim, presentation: (u32, u32)) {
         input.screen = self.hud.layout(&sim.hud(), presentation, input.time_ms);
         // A small marker while a play-test aid is on.
-        let aids = sim.config().aids;
-        input.screen.extend(self.hud.aid_marker_layout(
-            aids.invincible,
-            aids.infinite_lives,
+        let lines = aid_marker_lines(sim.config());
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        input.screen.extend(marker_layout(
+            self.hud.art(),
+            &lines,
             presentation,
+            self.hud.placement,
         ));
         if let Some(c) = self.circles {
             // No game time passes: the frame's time moves on with the
@@ -215,6 +236,25 @@ impl StatusLayer {
     }
 }
 
+/// How long the name of a powerup given with the play-test key stays on
+/// screen, ms of game time.
+pub const POWERUP_MESSAGE_MS: u32 = 2000;
+
+/// The lines of the play-test aid marker for a level played with `cfg`:
+/// `INVINCIBLE`, `INFINITE LIVES` and, with the powerup aid, `POWERUP`
+/// and the powerup's name (`POWERUP FIRE SWORD`), each when on; none with
+/// every aid off.
+pub fn aid_marker_lines(cfg: &SimConfig) -> Vec<String> {
+    let mut lines: Vec<String> = marker_lines(cfg.aids.invincible, cfg.aids.infinite_lives)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    if let Some(p) = cfg.start_powerup {
+        lines.push(format!("POWERUP {}", p.label()));
+    }
+    lines
+}
+
 /// What the window does.
 #[derive(Debug, Clone)]
 pub enum WindowMode {
@@ -227,6 +267,37 @@ pub enum WindowMode {
     Watch(Box<LevelRecording>),
     /// Run the benchmark route for this many seconds after the warm-up.
     Bench(f64),
+}
+
+/// The sound of a window without menus: a watched script plays the game's
+/// sound and music as play does, unless sound is off (`--no-audio`,
+/// `audio = off`), when no audio device opens; the window benchmark is
+/// silent. A replay that writes a trace runs without a window and plays
+/// nothing. (With menus the window always has sound, which the menus can
+/// turn on and off.)
+pub fn level_audio(mode: &WindowMode, settings: &Settings) -> Option<AudioSettings> {
+    match (mode, &settings.mode) {
+        (_, Mode::Replay { trace: Some(_), .. }) => None,
+        (WindowMode::Watch(_), _) if settings.audio => Some(settings.audio_settings()),
+        _ => None,
+    }
+}
+
+/// Loads the sounds and music of `bundle` into `audio`, when there is
+/// sound, and says how it went.
+fn load_sounds(audio: Option<&mut AudioBridge>, bundle: &LevelBundle) {
+    let Some(audio) = audio else { return };
+    let r = audio.load_level(&bundle.store, &bundle.level.registries);
+    eprintln!(
+        "rusty-claw: {} of {} sounds ready in {:.0} ms ({:.1} MB)",
+        r.decoded,
+        r.registered,
+        r.ms,
+        r.bytes as f64 / 1_048_576.0
+    );
+    for (key, why) in r.failed.iter().take(5) {
+        eprintln!("rusty-claw: sound {key} left out: {why}");
+    }
 }
 
 struct Live {
@@ -545,6 +616,11 @@ struct App {
     shown: Option<String>,
     /// Sound cues of the ticks of the current frame, played after it.
     cues: Vec<AudioCue>,
+    /// The replayed pauses and menus that started or ended in the current
+    /// frame, followed before its cues play.
+    holds: Vec<HoldChange>,
+    /// What the replayed pauses and menus did to the sounds so far.
+    replayed: ReplayedHolds,
     live: Option<Live>,
     clock: FrameClock,
     pacer: FramePacer,
@@ -799,6 +875,8 @@ impl App {
                     });
                 }
             }
+            // A watched script's level music starts as the level shows.
+            load_sounds(self.audio.as_mut(), &bundle);
             let level = self.level.insert(Level {
                 bundle,
                 graphics,
@@ -939,19 +1017,7 @@ impl App {
             flow.measure(MenuKind::InGame, &mut graphics);
             status.set_centred(flow.status_bar_centred());
         }
-        if let Some(audio) = &mut self.audio {
-            let r = audio.load_level(&bundle.store, &bundle.level.registries);
-            eprintln!(
-                "rusty-claw: {} of {} sounds ready in {:.0} ms ({:.1} MB)",
-                r.decoded,
-                r.registered,
-                r.ms,
-                r.bytes as f64 / 1_048_576.0
-            );
-            for (key, why) in r.failed.iter().take(5) {
-                eprintln!("rusty-claw: sound {key} left out: {why}");
-            }
-        }
+        load_sounds(self.audio.as_mut(), &bundle);
         if let Some(live) = &mut self.live {
             live.renderer.set_level(&graphics);
             let view = view_for(
@@ -1243,6 +1309,7 @@ impl App {
             Command::Quit | Command::Pause | Command::Help => {
                 self.game_key(event_loop, cmd, from_pad);
             }
+            Command::CyclePowerup => self.cycle_powerup(),
             Command::ToggleFullscreen => {
                 if let Some(live) = &self.live {
                     let full = live.window.fullscreen().is_none();
@@ -1296,6 +1363,28 @@ impl App {
                     f.view_changed(|s| s.interpolation = interp);
                 }
             }
+        }
+    }
+
+    /// The play-test key that gives powerups (see
+    /// [`Session::cycle_powerup`]): only while play shows (not under a
+    /// screen or the menu, nor once the level is won), and only with a
+    /// play-test aid on in the level. The powerup's name shows on screen.
+    fn cycle_powerup(&mut self) {
+        let in_play = self
+            .flow
+            .as_ref()
+            .is_none_or(|f| f.screen() == Screen::Play && !f.completing());
+        // A replay or a bench run plays its own input: a powerup given there
+        // would leave the recording.
+        let bench = matches!(self.mode, WindowMode::Bench(_));
+        let Some(level) = &mut self.level else { return };
+        if !in_play || bench || level.session.replaying() || level.session.sim().level_ended() {
+            return;
+        }
+        if let Some(p) = level.session.cycle_powerup() {
+            level.status.show_powerup(p);
+            eprintln!("rusty-claw: play-test powerup {p}");
         }
     }
 
@@ -1476,6 +1565,20 @@ impl App {
         }
     }
 
+    /// Brings the sounds in line with the pauses and menus a watched script
+    /// replayed in this frame (see [`ReplayedHolds`]).
+    fn follow_holds(&mut self) {
+        let holds = std::mem::take(&mut self.holds);
+        if holds.is_empty() {
+            return;
+        }
+        let restart = self.replayed.follow(&holds, &mut self.pauses);
+        self.update_pause();
+        if restart && let Some(audio) = &mut self.audio {
+            audio.restart_music();
+        }
+    }
+
     /// Plays the sound cues of the ticks just run.
     fn play_outputs(&mut self) {
         let cues = std::mem::take(&mut self.cues);
@@ -1505,7 +1608,11 @@ impl App {
         } else {
             self.frame_inner(event_loop);
         }
+        // The cues first: those of ticks before a recorded pause start
+        // before the pause cuts them; the mixer holds any started while
+        // paused until the resume.
         self.play_outputs();
+        self.follow_holds();
         self.update_title();
     }
 
@@ -1732,6 +1839,11 @@ impl App {
         // Sound cues are played after the frame; messages show in it.
         let (cues, game_events) = session.drain_outputs();
         self.cues.extend(cues);
+        self.holds.extend(session.take_holds());
+        if let Some(audio) = &mut self.audio {
+            // The level-complete music stop.
+            audio.events(&game_events);
+        }
         status.events(&game_events);
         status.update(session.sim(), f.ticks);
         status.circles(session.circles());
@@ -2015,6 +2127,8 @@ fn run_app(
         audio = Some(bridge);
         screens = Some(s);
         flow = Some(f);
+    } else if let Some(a) = level_audio(&mode, &settings) {
+        audio = Some(AudioBridge::new(a));
     }
     let mut app = App {
         aspect: settings.aspect,
@@ -2037,6 +2151,8 @@ fn run_app(
         first_level,
         shown: None,
         cues: Vec::new(),
+        holds: Vec::new(),
+        replayed: ReplayedHolds::default(),
         live: None,
         clock: FrameClock::new(),
         pacer: FramePacer::uncapped(),
@@ -2072,7 +2188,50 @@ fn run_app(
 mod tests {
     use super::*;
 
+    use clap::Parser;
     use claw_frame::{Point, TransitionKind};
+
+    use crate::settings::Args;
+
+    fn settings(line: &str) -> Settings {
+        let args =
+            Args::try_parse_from(std::iter::once("rusty-claw").chain(line.split_whitespace()))
+                .unwrap();
+        Settings::resolve(&args, None).unwrap()
+    }
+
+    fn watch() -> WindowMode {
+        let rec = LevelRecording::parse("0,0,0\n1,0,0\n").unwrap();
+        WindowMode::Watch(Box::new(rec))
+    }
+
+    #[test]
+    fn a_watched_replay_plays_sound_and_the_benchmark_and_traces_do_not() {
+        // Watched in the window: the bridge plays with the settings' sound.
+        let s = settings("--install /i --replay r.csv --res 640x480");
+        let a = level_audio(&watch(), &s).expect("a watched replay has sound");
+        assert_eq!(a, s.audio_settings());
+        assert!(a.enabled && a.music);
+        // The volumes and switches of the settings carry over.
+        let mut quiet = s.clone();
+        quiet.sound_volume = 20;
+        quiet.voice = false;
+        let a = level_audio(&watch(), &quiet).unwrap();
+        assert_eq!((a.sound_volume, a.voice), (20, false));
+        // Sound off wins: no bridge, no device.
+        let off = settings("--install /i --replay r.csv --no-audio");
+        assert!(level_audio(&watch(), &off).is_none());
+        let mut file_off = s.clone();
+        file_off.audio = false;
+        assert!(level_audio(&watch(), &file_off).is_none());
+        // The window benchmark is silent.
+        let bench = settings("--install /i --bench 10");
+        assert!(level_audio(&WindowMode::Bench(10.0), &bench).is_none());
+        // A replay that writes a trace is silent too, however it is asked.
+        let trace = settings("--install /i --replay r.csv --trace out.csv");
+        assert!(matches!(trace.mode, Mode::Replay { trace: Some(_), .. }));
+        assert!(level_audio(&watch(), &trace).is_none());
+    }
 
     fn transition(closing: bool) -> ScreenTransition {
         ScreenTransition {
@@ -2170,5 +2329,22 @@ mod tests {
                 assert_eq!(n, 1, "{presentation:?} at {x},{y}");
             }
         }
+    }
+
+    #[test]
+    fn the_aid_marker_names_the_powerup_aid() {
+        use claw_sim::tuning::PlayAids;
+        let mut cfg = SimConfig::default();
+        assert!(aid_marker_lines(&cfg).is_empty());
+        cfg.start_powerup = Some(AidPowerup::parse("lightning").unwrap());
+        assert_eq!(aid_marker_lines(&cfg), ["POWERUP LIGHTNING SWORD"]);
+        cfg.aids = PlayAids {
+            invincible: true,
+            infinite_lives: true,
+        };
+        assert_eq!(
+            aid_marker_lines(&cfg),
+            ["INVINCIBLE", "INFINITE LIVES", "POWERUP LIGHTNING SWORD"]
+        );
     }
 }

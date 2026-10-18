@@ -27,6 +27,7 @@
 //! - [`special`]: the hit reaction, lifting, throwing and freezing states;
 //! - [`hit`]: what happens when something touches Claw;
 //! - [`death`]: dying, the death states and the powerup timer;
+//! - [`powerup_aid`]: the play-test aid that gives any powerup;
 //! - [`progress`]: starting a level from a carried state or a save, and
 //!   handing the progress on;
 //! - [`swing`]: hanging from a rope.
@@ -56,6 +57,8 @@ use crate::tuning::{PlayAids, Tuning};
 pub mod attack;
 pub mod death;
 pub mod hit;
+pub mod look;
+pub mod powerup_aid;
 pub mod progress;
 pub mod special;
 pub mod stats;
@@ -265,6 +268,8 @@ pub struct Claw {
     pub rope: Option<ObjectId>,
     /// Time left before Claw can grab the rope he let go of again, ms.
     pub rope_regrab_ms: i32,
+    /// How he is drawn while a powerup runs (see [`look`]).
+    pub look: look::Look,
 }
 
 impl Default for Claw {
@@ -301,6 +306,7 @@ impl Default for Claw {
             respawn_pending: false,
             rope: None,
             rope_regrab_ms: 0,
+            look: look::Look::default(),
         }
     }
 }
