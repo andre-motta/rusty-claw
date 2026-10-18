@@ -64,7 +64,7 @@ use std::time::{Duration, Instant};
 
 use claw_sim::claw_frame::GameEvent;
 use claw_sim::logic::world_boss::fight;
-use claw_sim::logic::{boss_stage, enemy, pickup, platform};
+use claw_sim::logic::{ObjectData, boss_stage, enemy, floor_spike, pickup, platform};
 use claw_sim::player::special::BOSS_END;
 use claw_sim::player::state;
 use claw_sim::{Buttons, InputScript, Sim, TickInput};
@@ -519,6 +519,10 @@ pub fn boss_stage(sim: &Sim) -> BossStage {
         BossStage::Door
     }
 }
+
+/// How finely the search tells apart the moments of a floor spike's
+/// cycle, ms.
+pub const SPIKE_STEP_MS: i64 = 100;
 
 /// The distance of the gem stage's start, px: any state of the fight is
 /// guided as at least this far from the goal.
@@ -1285,7 +1289,18 @@ pub fn state_key(sim: &Sim) -> u64 {
         i64::from(sim.stats().health / 10),
         i64::from(sim.stats().lives),
     ]);
+    // Struck, or in another state that takes no steering, Claw waits for
+    // it to end: a wait through it is progress, so the time tells the
+    // states apart (they end soon, so this never grows far).
+    if actions::phase(sim) == actions::Phase::Busy {
+        k.add(&[
+            6,
+            i64::from(c.frame),
+            (sim.tick() / actions::STEP as u64) as i64,
+        ]);
+    }
     let objects = sim.objects();
+    let clock = sim.tick() as i64 * i64::from(claw_sim::tuning::TICK_MS);
     for id in objects.listed() {
         let Some(o) = objects.get(id) else { continue };
         if o.x.abs_diff(c.x) > 700 || o.y.abs_diff(c.y) > 500 {
@@ -1301,6 +1316,20 @@ pub fn state_key(sim: &Sim) -> u64 {
             ]);
         } else if let Some(d) = enemy::data_of(o) {
             k.add(&[2, i64::from(id), i64::from(d.dead)]);
+        } else if let ObjectData::Rope(r) = &o.data {
+            // Where the rope is in its swing decides where a grab or a
+            // release takes Claw.
+            k.add(&[4, i64::from(id), i64::from(r.frame / 2)]);
+        } else if let ObjectData::FloorSpike(d) = &o.data {
+            // A wait for a spike to sink is progress: where the spike is
+            // in its cycle, to a tenth of a second.
+            let into = (clock - i64::from(d.phase)).rem_euclid(i64::from(d.period.max(1)));
+            k.add(&[
+                5,
+                i64::from(id),
+                i64::from(floor_spike::dangerous(o)),
+                into / SPIKE_STEP_MS,
+            ]);
         }
     }
     // In a boss fight: the flag, the boss's health, place and state, and,
