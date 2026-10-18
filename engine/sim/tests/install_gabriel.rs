@@ -1683,11 +1683,7 @@ fn install_level8_five_cannon_hits_and_his_death_acts() {
     println!("his health: {healths:?}");
     // The pirates he calls in draw from the stream: without their
     // boss-fight hooks his attacks would come at other times.
-    assert_ne!(
-        hooks_live,
-        Some(false),
-        "his pirates are sent on his attack"
-    );
+    assert_eq!(hooks_live, Some(true), "his pirates are sent on his attack");
     // The cannon's upward ball strikes him on 1651 and, his fifth, starts
     // his death acts 19 ticks later; they last 224, 32, 122 and 293
     // ticks, the second landing him on the dock.

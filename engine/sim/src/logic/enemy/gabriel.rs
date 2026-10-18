@@ -1424,8 +1424,8 @@ pub mod pirates {
     }
 
     /// The fight's step at the start of a pirate's call: with Gabriel
-    /// defeated a pirate still alive dies at once (true: the call ends
-    /// there). While it runs his attack, and in the leap that follows, the
+    /// defeated, or gone while the pirate still runs his attack, a pirate
+    /// still alive dies at once (true: the call ends there). While it runs his attack, and in the leap that follows, the
     /// call is only that state's step and the movement step, without the
     /// shared steps (no roll, no reaction to Claw): true. Otherwise
     /// nothing (false).
@@ -1436,9 +1436,15 @@ pub mod pirates {
         let Some(state) = state else {
             return false;
         };
-        let defeated = w.gabriel_link().is_some_and(|l| l.defeated);
+        let link = w.gabriel_link();
+        let defeated = link.is_some_and(|l| l.defeated);
+        // A pirate still running his attack when he is gone (drowned or
+        // removed) dies as with him defeated. Default taken: the original
+        // was not measured here; without it the pirate would run on
+        // without limits.
+        let orphaned = link.is_none() && state == EnemyState::GabrielAttack;
         let alive = data(w, id).is_some_and(|d| !d.dead);
-        if defeated && alive {
+        if (defeated || orphaned) && alive {
             die(w, id, DeathKind::Hit, None);
             return true;
         }

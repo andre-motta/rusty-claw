@@ -478,6 +478,28 @@ fn once_he_is_defeated_his_pirates_die() {
 }
 
 #[test]
+fn a_pirate_running_his_attack_when_he_is_gone_dies() {
+    let (mut sim, id) = in_fight();
+    let p = sim.with_world(|w| {
+        let o = logic::new_object(redtail_pirate::NAMES[0], PLACED.0 + 150, PLACED.1, 0);
+        let p = w.spawn(o);
+        redtail_pirate::construct(w, p);
+        gabriel::pirates::take_mode(w, p);
+        gabriel::pirates::enter_attack(w, p);
+        p
+    });
+    sim.with_world(|w| assert!(gabriel::pirates::mode_step(w, p), "runs"));
+    assert!(!enemy::data_of(obj(&sim, p)).unwrap().dead);
+    // He is gone (drowned): no current boss any more.
+    sim.with_world(|w| {
+        w.destroy(id);
+        w.set_current_boss(None);
+    });
+    sim.with_world(|w| assert!(gabriel::pirates::mode_step(w, p), "the call ends"));
+    assert!(enemy::data_of(obj(&sim, p)).unwrap().dead);
+}
+
+#[test]
 fn the_lever_order_comes_on_the_throws_second_picture() {
     let (mut sim, id) = in_fight();
     choose(&mut sim, id, 2);
