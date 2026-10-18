@@ -13,7 +13,8 @@
 //!
 //! Any blow kills it at once (a pistol shot is used up), with no flinch;
 //! its body flies off like an officer's. It drops nothing and cannot be
-//! lifted. It has 1 health and its touch costs Claw 5.
+//! lifted. It has 1 health and its touch costs Claw 5; it touches him only
+//! at a single point, its position ([`TOUCH_BOX`]).
 
 use super::states::{move_left, move_right, walk_left_tick, walk_right_tick};
 use super::{
@@ -50,9 +51,15 @@ pub const DEATH_SOUND: &str = "GAME_MOUSEKILL";
 
 /// Movement box.
 pub const MOVE_RECT: Rect = Rect::new(-10, 20, 10, 33);
-/// Hit and touch box when the level does not know the rat's picture: the
-/// box of a 30 x 28 px picture standing on the rat's feet.
+/// Hit box when the level does not know the rat's picture: the box of a
+/// 30 x 28 px picture standing on the rat's feet.
 pub const FALLBACK_BOX: Rect = Rect::new(-15, 6, 14, 33);
+/// Touch box: the single pixel at the rat's position. Claw is hurt by
+/// touching a rat only when his own box reaches that point, not when it
+/// meets the rat's picture. Provisional: the original's rats keep this box
+/// in every state they were seen in, but what gives it to them is not known
+/// yet.
+pub const TOUCH_BOX: Rect = Rect::new(0, 0, 0, 0);
 /// The frame a rat shows when it is placed, when its image set has it.
 pub const START_FRAME: i32 = 12;
 /// Kinds of object that can hit a rat: Claw, his pistol shots, the
@@ -161,9 +168,9 @@ fn handler(s: EnemyState) -> Option<Handler> {
 }
 
 /// Builds the rat: 1 health, 5 damage, its patrol limits (across and up
-/// and down) and whether it walks from the level record, its hit and touch
-/// boxes from its first picture; it goes Home (grunting) and drops to the
-/// floor. Draws nothing.
+/// and down) and whether it walks from the level record, its hit box from
+/// its first picture and its one-pixel touch box; it goes Home (grunting)
+/// and drops to the floor. Draws nothing.
 pub fn construct(w: &mut World, id: ObjectId) {
     let fields = EnemyFields {
         bounds: record_bounds(w, id),
@@ -201,7 +208,7 @@ pub fn construct(w: &mut World, id: ObjectId) {
         image_set: "LEVEL_RAT",
         move_rect: MOVE_RECT,
         hit_rect: frame_box,
-        attack_rect: frame_box,
+        attack_rect: TOUCH_BOX,
         health: HEALTH,
         damage: DAMAGE,
         hit_by: HIT_BY,

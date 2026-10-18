@@ -680,11 +680,12 @@ fn the_respawn_runs_a_pass_at_the_death_then_one_after_the_objects_around_claw_w
     // they are always awake or within the camera's reach.
     assert_eq!(goodie(&sim, awake).age_ms, age + 2 * 18, "two calls");
     assert_eq!(goodie(&sim, near).age_ms, age + 2 * 18, "two calls");
-    // The rat by the death tiles was still awake for the first pass and
-    // took a step in it, then went to sleep before the second.
+    // The rat by the death tiles was still awake for the first pass, but
+    // its move counts the game time since its last one, made in the tick
+    // that took the life: it ran without moving, then went to sleep before
+    // the second.
     let o = obj(&sim, rat);
-    assert_eq!((o.y, o.state), (walking.y, walking.state));
-    assert_ne!(o.x, walking.x, "run in the first pass");
+    assert_eq!((o.x, o.y, o.state), (walking.x, walking.y, walking.state));
     assert!(!sim.objects().listed().contains(&rat), "asleep after it");
     // The sleeping coin by the start woke between the passes: it ran once.
     assert!(sim.objects().listed().contains(&asleep), "woken");
@@ -744,49 +745,88 @@ fn the_respawns_update_passes_count_no_time() {
     assert_eq!(now.0, camera.0 - 9, "one step towards {start:?}");
 }
 
-#[test]
-fn a_press_in_the_tick_that_takes_a_life_is_not_seen_by_the_respawned_claw() {
-    for mask in [JUMP, RIGHT, JUMP | RIGHT] {
-        let mut sim = pressing_sim(deadly_level(), SimConfig::default());
-        idle(&mut sim, 3);
-        let start = (sim.player().unwrap().x, sim.player().unwrap().y);
-        sim.step(press(RIGHT));
-        // Walk into the death tiles; in the tick that takes the life, press
-        // `mask` (the dead Claw ignores it).
-        let mut died = false;
-        for _ in 0..400 {
-            let quiet = if sim.player().unwrap().state == state::DEATH {
-                TickInput::default()
-            } else {
-                hold(RIGHT)
-            };
-            let mut probe = sim.clone();
-            let lost = probe
-                .step(quiet)
-                .events
-                .contains(&GameEvent::ClawDied { lives_left: 6 });
-            if lost {
-                let snap = sim.step(press(mask));
-                assert!(
-                    snap.events.contains(&GameEvent::ClawDied { lives_left: 6 }),
-                    "{mask:#x}: the press does not save the life"
-                );
-                died = true;
-                break;
-            }
-            sim.step(quiet);
+/// Walks Claw into the death tiles of [`deadly_level`] and presses `mask`
+/// in the tick that takes the life (the dead Claw ignores it); returns his
+/// start point, with the respawn waiting.
+fn die_pressing(sim: &mut Sim, mask: u32) -> (i32, i32) {
+    idle(sim, 3);
+    let start = (sim.player().unwrap().x, sim.player().unwrap().y);
+    sim.step(press(RIGHT));
+    for _ in 0..400 {
+        let quiet = if sim.player().unwrap().state == state::DEATH {
+            TickInput::default()
+        } else {
+            hold(RIGHT)
+        };
+        let mut probe = sim.clone();
+        let lost = probe
+            .step(quiet)
+            .events
+            .contains(&GameEvent::ClawDied { lives_left: 6 });
+        if lost {
+            let snap = sim.step(press(mask));
+            assert!(
+                snap.events.contains(&GameEvent::ClawDied { lives_left: 6 }),
+                "{mask:#x}: the press does not save the life"
+            );
+            assert!(sim.respawn_pending());
+            return start;
         }
-        assert!(died, "{mask:#x}: Claw did not die on the death tiles");
-        assert!(sim.respawn_pending());
-        // The update pass between the ticks runs with the keys still held
-        // but nothing pressed: the respawned Claw stands at the start.
-        assert!(sim.respawn_now());
-        assert_eq!(sim.claw_input().held, Buttons(mask), "{mask:#x}: held");
-        assert_eq!(sim.claw_input().pressed, Buttons::NONE, "{mask:#x}");
-        let o = sim.player().unwrap();
-        assert_eq!((o.x, o.y), start, "{mask:#x}: back at the start");
-        assert_eq!(o.state, state::STAND, "{mask:#x}: standing");
+        sim.step(quiet);
     }
+    panic!("{mask:#x}: Claw did not die on the death tiles");
+}
+
+/// Claw's place after `ticks` ticks of walking right from a standing
+/// start at the level start of [`deadly_level`].
+fn walked_from_start(ticks: usize) -> i32 {
+    let mut sim = pressing_sim(deadly_level(), SimConfig::default());
+    idle(&mut sim, 3);
+    sim.step(press(RIGHT));
+    for _ in 1..ticks {
+        sim.step(hold(RIGHT));
+    }
+    sim.player().unwrap().x
+}
+
+#[test]
+fn a_press_in_the_tick_that_takes_a_life_is_seen_by_the_respawned_claw() {
+    // The respawn's two update passes run with the keys of the tick that
+    // took the life, pressed ones included, and Claw's movement counts a
+    // whole tick in each pass though the frame time is 0.
+    let (one, two, three) = (
+        walked_from_start(1),
+        walked_from_start(2),
+        walked_from_start(3),
+    );
+    for mask in [RIGHT, JUMP | RIGHT] {
+        let mut sim = pressing_sim(deadly_level(), SimConfig::default());
+        let start = die_pressing(&mut sim, mask);
+        assert!(sim.respawn_now());
+        assert_eq!(sim.claw_input().pressed, Buttons(mask), "{mask:#x}");
+        let o = sim.player().unwrap();
+        if mask == RIGHT {
+            // A walk started in the first pass: two walking steps.
+            assert_eq!((o.x, o.y, o.state), (two, start.1, state::MOVE_RIGHT));
+        } else {
+            assert_eq!((o.x, o.state), (two, state::JUMP), "{mask:#x}");
+            assert!(o.y < start.1, "{mask:#x}: off the floor");
+        }
+        // The camera, 600 px from the respawned Claw, jumped to him in its
+        // own call of the first pass, after his first step, and did not
+        // move in the second pass.
+        assert_eq!(sim.camera().current.0, one, "{mask:#x}");
+        // The next tick is the third walking step.
+        sim.step(hold(mask));
+        assert_eq!(sim.player().unwrap().x, three, "{mask:#x}");
+    }
+    // A jump pressed in that tick takes him off the floor in the passes.
+    let mut sim = pressing_sim(deadly_level(), SimConfig::default());
+    let start = die_pressing(&mut sim, JUMP);
+    assert!(sim.respawn_now());
+    let o = sim.player().unwrap();
+    assert_eq!((o.x, o.state), (start.0, state::JUMP));
+    assert!(o.y < start.1, "off the floor");
 }
 
 #[test]

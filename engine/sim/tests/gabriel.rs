@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use claw_frame::TickInput;
+use claw_frame::{TICK_MS, TickInput};
 use claw_sim::activation::ActivationConfig;
 use claw_sim::anim::Animation;
 use claw_sim::level::ObjectSpec;
@@ -428,11 +428,16 @@ fn his_pirate_runs_along_the_deck_and_leaps_from_its_exact_place() {
     assert!(d.busy);
     assert_eq!(d.ranges[0], redtail_pirate::GABRIEL_RANGES[0]);
     assert_eq!(d.ranges[1], redtail_pirate::GABRIEL_RANGES[1]);
-    // Its run, driven by the boss fight's step: 8 or 9 px a tick.
+    // Its run, driven by the boss fight's step: 8 or 9 px a tick. Each
+    // call is a tick later than the one before, as in the game: a second
+    // step in the same moment covers no time and moves nothing.
     let run_to = link(&mut sim).run_to;
     let mut xs = vec![obj(&sim, p).x];
+    let mut ticks = 0u64;
     loop {
+        ticks += 1;
         sim.with_world(|w| {
+            w.now_ms += ticks * u64::from(TICK_MS);
             assert!(gabriel::pirates::mode_step(w, p));
         });
         xs.push(obj(&sim, p).x);

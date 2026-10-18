@@ -38,17 +38,17 @@
 //! played as a replay of it plays (with the seed and tuning it names), wins
 //! that level too; twice, with the same traces.
 //!
-//! The third level's routes ([`SEARCHED_AGAIN_IN_S2_P5B`]) were found
-//! before the game learned six of the original's rules (Claw's shots
-//! waiting a call, the catnip glitter's set-up call, the falling death's
-//! second read, the respawn's passes counting no time and their order,
-//! the enemy owning its hit burst); under those rules they no longer win,
-//! so their checks are skipped until they are searched again (S2-P5b).
-//! The game from the third level into the fourth waits with them, since
-//! its first level is one of them; its fourth level
-//! (`level3-original.level4.csv`) starts with the progress the third
-//! level's route carried before those rules and is checked on its own, and
-//! it is found again from the new route's progress.
+//! The fourth level's routes ([`SEARCHED_AGAIN_IN_CH_2`]) were found
+//! before the game learned eight more of the original's rules (an enemy's
+//! sight reading the last drawn frame, the respawn's passes keeping the
+//! death tick's presses, moving Claw a whole tick and leaving the camera
+//! to its own call, an enemy's move counting the time since its last one,
+//! the rat's single-point touch, the walkers' exact limits, the
+//! end-of-level glitter's first call); under those rules they no longer
+//! win, so their checks are skipped until they are searched again (CH-2).
+//! The game from the third level into the fourth waits with them: its
+//! fourth level (`level3-original.level4.csv`) already starts with the
+//! progress the third level's new route carries.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -92,22 +92,22 @@ const LEVEL_SEEDS: [(u32, u32); 4] = [
     (4, 1_617_999_171),
 ];
 
-/// The routes found before the third level's rules, skipped until they
-/// are searched again (S2-P5b). A game whose first level is one of them
+/// The routes found before the fourth level's newest rules, skipped until
+/// they are searched again (CH-2). A game with one of them as a level
 /// waits too.
-const SEARCHED_AGAIN_IN_S2_P5B: [&str; 4] = [
-    "level2-original.level3.csv",
-    "level3-boost.csv",
-    "level3-original.csv",
-    "level3.csv",
+const SEARCHED_AGAIN_IN_CH_2: [&str; 4] = [
+    "level3-original.level4.csv",
+    "level4-introskip.csv",
+    "level4-original.csv",
+    "level4.csv",
 ];
 
 /// True (with a note) when `name` waits to be searched again.
 fn awaits_search(name: &str) -> bool {
-    let waits = SEARCHED_AGAIN_IN_S2_P5B.contains(&name);
+    let waits = SEARCHED_AGAIN_IN_CH_2.contains(&name);
     if waits {
         println!(
-            "{name}: skipped, expected to fail until it is searched again under the third level's rules (S2-P5b)"
+            "{name}: skipped, expected to fail until it is searched again under the fourth level's newest rules (CH-2)"
         );
     }
     waits
