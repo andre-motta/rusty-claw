@@ -8,8 +8,8 @@
 //! ignores while rolling, the pistol shot that rolls him at Claw, the
 //! blows that land half the time, the crouching stab that always lands
 //! and opens the window, the lift in the middle of a roll, the throw that
-//! never hurts him and the taunt and firing spell after it, and the tenth
-//! level's pairs.
+//! never hurts him and the taunt and firing spell after it, his idle pose,
+//! and the tenth level's pairs and full-length forward roll.
 
 mod common;
 
@@ -422,6 +422,51 @@ fn a_forward_roll_starts_right_and_stops_35_px_short_of_claw() {
     assert!(stop <= cx + 35, "{stop}");
     assert!(stop > cx + 35 - 5, "{stop}");
     assert_eq!(obj(&sim, id).hit_rect, pegleg::HIT_RECT);
+}
+
+#[test]
+fn on_the_tenth_level_a_forward_roll_aims_its_full_length() {
+    // Claw 100 px to his left: the roll aims 150 px on, not 35 px short of
+    // him, so it carries on past where the ninth level's stops and reaches
+    // Claw's place.
+    let (mut sim, id) = with_claw(10, 4, -100);
+    at_home(&mut sim, id);
+    let x0 = obj(&sim, id).x;
+    let cx = sim.player().unwrap().x;
+    sim.with_world(|w| {
+        enemy::set_state(w, id, EnemyState::Home);
+        pegleg::roll_forward(w, id);
+    });
+    assert_eq!(state_of(&sim, id), Some(EnemyState::RollForward));
+    assert_eq!(pdata(&sim, id).target, x0 - 150);
+    let mut xs = Vec::new();
+    while state_of(&sim, id) == Some(EnemyState::RollForward) {
+        sim.step(TickInput::default());
+        xs.push(obj(&sim, id).x);
+        assert!(xs.len() < 100, "the roll ends");
+    }
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Fire));
+    assert!(xs.iter().any(|&x| x < cx + 35), "{xs:?}");
+    assert!(*xs.last().unwrap() <= cx, "{xs:?}");
+}
+
+#[test]
+fn going_idle_he_shows_his_idle_pose() {
+    // Claw far out of his range and sight.
+    let (mut sim, id) = with_claw(10, 4, -1500);
+    sim.with_world(|w| (pegleg::CLASS.go_idle)(w, id));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Idle));
+    assert_eq!(obj(&sim, id).anim.key(), Some(pegleg::IDLE_ANIM));
+    // Idle, the pose plays on: its second picture after 400 ms.
+    let mut frames = Vec::new();
+    for _ in 0..30 {
+        sim.step(TickInput::default());
+        if state_of(&sim, id) != Some(EnemyState::Idle) {
+            break;
+        }
+        frames.push(obj(&sim, id).frame);
+    }
+    assert!(frames.contains(&100) && frames.contains(&101), "{frames:?}");
 }
 
 #[test]

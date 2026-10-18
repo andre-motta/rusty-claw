@@ -6,7 +6,9 @@
 //! ([`townguard`]), Wolvington ([`wolvington`]), the red-tail pirates
 //! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
 //! ([`crab`]), Gabriel with his bomb ([`gabriel`]), the hook-handed
-//! pirate ([`hook_pirate`]) and PegLeg with his bullet ([`pegleg`]).
+//! pirate ([`hook_pirate`]) and PegLeg with his bullet ([`pegleg`]);
+//! Marrow ([`marrow`]) and his parrot ([`parrot`]) are declared but not
+//! built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -65,8 +67,10 @@ pub mod hook_pirate;
 pub mod human;
 pub mod katherine;
 pub mod lift;
+pub mod marrow;
 pub mod motion;
 pub mod officer;
+pub mod parrot;
 pub mod pegleg;
 pub mod punkrat;
 pub mod rat;
@@ -198,8 +202,9 @@ pub mod field {
 /// [`bear_sailor::STATE_BLOCK`]) and 2200-2219 the eighth level's
 /// (Gabriel's attacks, hits and death acts, see [`gabriel::STATE_BLOCK`])
 /// and 2220-2239 the ninth level's (PegLeg's rolls and the hook hold, see
-/// [`hook_pirate::STATE_BLOCK`]); later families take blocks of 20 from
-/// 2240.
+/// [`hook_pirate::STATE_BLOCK`]) and 2240-2259 the tenth level's
+/// (Marrow's whistle and the parrot's flights, see
+/// [`marrow::STATE_BLOCK`]); later families take blocks of 20 from 2260.
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -350,11 +355,23 @@ pub enum EnemyState {
     /// Holding the hook out, its whole picture hurting on contact (the
     /// hook-handed pirate).
     HoldHook = 2222,
+    /// Whistling for the parrot and waiting to be carried, Safe (Marrow).
+    WaitForParrot = 2240,
+    /// Patrolling the line near the top of the room (Marrow's parrot).
+    FlyAbout = 2241,
+    /// Turning down towards a dive point (Marrow's parrot).
+    StrikeSetup = 2242,
+    /// Flying home to the perch (Marrow's parrot).
+    FlyToIdle = 2243,
+    /// Flying to Marrow to take hold of him (Marrow's parrot).
+    FlyToMarrow = 2244,
+    /// Carrying Marrow across the pit (Marrow's parrot).
+    CarryMarrow = 2245,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 70] = [
+    pub const ALL: [EnemyState; 76] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -425,6 +442,12 @@ impl EnemyState {
         EnemyState::RollForward,
         EnemyState::RollBackward,
         EnemyState::HoldHook,
+        EnemyState::WaitForParrot,
+        EnemyState::FlyAbout,
+        EnemyState::StrikeSetup,
+        EnemyState::FlyToIdle,
+        EnemyState::FlyToMarrow,
+        EnemyState::CarryMarrow,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -509,6 +532,12 @@ impl EnemyState {
             EnemyState::RollForward => "RollForward",
             EnemyState::RollBackward => "RollBackward",
             EnemyState::HoldHook => "HoldHook",
+            EnemyState::WaitForParrot => "WaitForParrot",
+            EnemyState::FlyAbout => "FlyAbout",
+            EnemyState::StrikeSetup => "StrikeSetup",
+            EnemyState::FlyToIdle => "FlyToIdle",
+            EnemyState::FlyToMarrow => "FlyToMarrow",
+            EnemyState::CarryMarrow => "CarryMarrow",
         }
     }
 }
@@ -931,6 +960,8 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::Gabriel => Some(&gabriel::CLASS),
         GameLogic::HookPirate => Some(&hook_pirate::CLASS),
         GameLogic::PegLeg => Some(&pegleg::CLASS),
+        GameLogic::Marrow => Some(&marrow::CLASS),
+        GameLogic::Parrot => Some(&parrot::CLASS),
         _ => None,
     }
 }
@@ -966,7 +997,7 @@ impl ObjectData {
     /// inside a family's own data (the punk rat's, Raux's, the thieves',
     /// Katherine's, the town guards', the seagull's, Wolvington's, the
     /// red-tail pirates', the bear sailors', the crabs', Gabriel's, the
-    /// hook-handed pirates' and PegLegs').
+    /// hook-handed pirates', PegLegs', Marrow's and his parrot's).
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -984,6 +1015,8 @@ impl ObjectData {
             ObjectData::Gabriel(d) => Some(&d.enemy),
             ObjectData::HookPirate(d) => Some(&d.enemy),
             ObjectData::PegLeg(d) => Some(&d.enemy),
+            ObjectData::Marrow(d) => Some(&d.enemy),
+            ObjectData::Parrot(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -1006,6 +1039,8 @@ impl ObjectData {
             ObjectData::Gabriel(d) => Some(&mut d.enemy),
             ObjectData::HookPirate(d) => Some(&mut d.enemy),
             ObjectData::PegLeg(d) => Some(&mut d.enemy),
+            ObjectData::Marrow(d) => Some(&mut d.enemy),
+            ObjectData::Parrot(d) => Some(&mut d.enemy),
             _ => None,
         }
     }
