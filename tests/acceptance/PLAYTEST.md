@@ -247,3 +247,23 @@ pirates he calls in, his cannon with its lever and the button on the mast.
 10. Gabriel, after a throw he survives: on the dock he gets up, pauses a few times, and then stays in his strike pose for good: he never bombs, calls a pirate or pulls the lever again, and his strike hurts you only if you stand right on him.
 11. Gabriel, the cannon after a lost life: strike the button, then lose a life before he fires: after the respawn the cannon shows its barrel down and the button blinks, but every later lever pull still fires straight up into him, and the cannon never turns down again.
 12. Red-tail pirates on this level: stand next to one and keep swinging the sword: about one swing in four is parried (the pirate raises its sword with a clang and takes no damage, then fights on); the other swings hurt it as on the seventh level, and two hits kill it. In Gabriel's fight his bomb blasts also hurt the pirates he calls in: they flinch.
+
+## Milestone 3, LEVEL9 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the ninth level with `make run-game ARGS="--install PATH --level 9"`,
+or play on from the eighth level. This section covers the hook-handed
+pirates and PegLeg, the rolling gunner; the level's traps, belts, saws and
+skull cannons have their own lines below.
+
+1. Hook-handed pirate, the hold: walk up to a hook-handed pirate: from 100 to 300 px away he sometimes raises his hook in his parry pose and holds it for about two seconds without moving; walk into him while he holds it and his whole body hurts (10 health), again a little under a second later if you stay against him.
+2. Hook-handed pirate, the swing: from the same range he sometimes swings his hook at the air instead; it reaches only about 67 px, so it hurts you only if you walk into it, and after a swing or a hold he waits about two seconds before the next.
+3. Hook-handed pirate, the stab: he runs at you from afar, walks the last stretch and stops about 100 px from a standing Claw; closer than 100 px he stabs with his dagger about once a second (the stab lands about a tenth of a second in, 10 health).
+4. Hook-handed pirate, parries: stand and swing the sword at him: every standing swing is parried with a clang, he takes nothing and fights on about a fifth of a second later. Crouch and stab, or jump and stab, or punch: those land (a crouching stab costs him 2 of his 10), and he swings his hook back at once instead of flinching; five crouching stabs kill him.
+5. Hook-handed pirate, the pistol: shoot him while he walks or stands: he flinches and loses 8, and the second shot kills him. Shoot him while he holds the hook: he parries, the hold ends, and the bullet flies on past him.
+6. PegLeg, the shot: stand 150 to 200 px from PegLeg (the first is on the deck right of the start, past a saw blade): he aims his pistol, the bullet leaves about a third of a second later from in front of him, high at a standing Claw and low at a crouching one, flies at about 500 px/s and costs 10; he cannot fire again for a second after a bullet.
+7. PegLeg, the rolls: come closer than 150 px and he rolls about 150 px away from you in about 0.6 s, then shoots; from further off he walks or rolls towards you, stopping about 35 px short of you, or on the end of his patrol, and shoots. While he rolls nothing hurts him.
+8. PegLeg, hits: shoot him with the pistol: it does him no harm and he rolls at you. Stand and swing: about half the swings make him flinch (5 of his 7); a crouching stab always lands (2), and for two seconds after it every blow lands.
+9. PegLeg, lifting: lift him in the middle of a roll towards you (stand right of him, facing him, and press Lift as he arrives): he is carried like any pirate; throw him: he bounces, pauses half a second, loses no health, then taunts and fires six shots in a row about half a second apart, alternating high and low.
+
+<!-- The ninth level's dart traps, conveyor belts, saw blades and skull cannons: their lines go here. -->
