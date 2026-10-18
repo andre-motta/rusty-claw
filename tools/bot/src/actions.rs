@@ -15,7 +15,10 @@
 //! - the door's, offered on the ground near the boss room's door: walk
 //!   toward the door for a few ticks, then jump on through it, so that one
 //!   of them jumps on Claw's first tick in the room (the jump-in entry,
-//!   which skips the boss's introduction).
+//!   which skips the boss's introduction). A door overhead is jumped up
+//!   into instead: jump held for a few ticks, let go for a few, then a
+//!   fresh jump toward the boss, so that one of them presses jump on the
+//!   first tick in the room.
 
 use claw_sim::player::state;
 use claw_sim::{Buttons, Sim};
@@ -73,6 +76,20 @@ pub const ENTRY_WALKS: std::ops::RangeInclusive<u8> = 2..=8;
 /// How near the door, across, Claw must stand for the door entries, px.
 pub const DOOR_REACH: i32 = 240;
 
+/// Ticks a jump up into a door overhead is held: one entry each.
+pub const RISE_HOLDS: std::ops::RangeInclusive<u8> = 4..=8;
+
+/// Ticks the jump is let go before the fresh press of an entry through a
+/// door overhead: one entry each.
+pub const RISE_WAITS: std::ops::RangeInclusive<u8> = 2..=3;
+
+/// How near a door overhead Claw must stand across for its entries, px.
+pub const RISE_REACH: i32 = 48;
+
+/// How far above Claw's position a door counts as overhead, px: higher
+/// than he walks into, within a jump.
+pub const RISE_HEIGHT: std::ops::RangeInclusive<i32> = 60..=240;
+
 /// One macro-action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Action {
@@ -104,6 +121,12 @@ pub enum Action {
     Up,
     /// Climb down.
     Down,
+    /// Hold Up while steering `dir` (-1 left, 1 right): in the air, keep
+    /// going that way and catch the ladder ahead.
+    Catch {
+        /// Steering: -1 left, 1 right.
+        dir: i8,
+    },
     /// Hold nothing for a moment ([`SHORT`] ticks), to time a blow.
     Short,
     /// Turn to `dir` (-1 left, 1 right) and strike once with the sword.
@@ -119,6 +142,17 @@ pub enum Action {
         dir: i8,
         /// Ticks walked before the jump.
         walk: u8,
+    },
+    /// Jump up holding the button for `hold` ticks, let go for `wait`,
+    /// then jump toward `dir` (held [`ENTRY_JUMP`] ticks): into a door
+    /// overhead, a fresh jump on the first tick beyond it.
+    RiseEntry {
+        /// Direction of the second jump: -1 left, 1 right.
+        dir: i8,
+        /// Ticks the first jump is held.
+        hold: u8,
+        /// Ticks with jump let go before the second.
+        wait: u8,
     },
 }
 
@@ -151,6 +185,7 @@ impl Action {
             Action::Crouch => seg(DOWN, STEP),
             Action::Up => seg(UP, STEP),
             Action::Down => seg(DOWN, STEP),
+            Action::Catch { dir } => seg(UP | dir_mask(dir), STEP),
             Action::Short => seg(0, SHORT),
             Action::Strike { dir } => {
                 seg(dir_mask(dir), MIN_SPACING);
@@ -160,6 +195,13 @@ impl Action {
             Action::Entry { dir, walk } => {
                 let d = dir_mask(dir);
                 seg(d, usize::from(walk).max(MIN_SPACING));
+                seg(d | JUMP, ENTRY_JUMP);
+                seg(d, MIN_SPACING);
+            }
+            Action::RiseEntry { dir, hold, wait } => {
+                let d = dir_mask(dir);
+                seg(JUMP, usize::from(hold).max(MIN_SPACING));
+                seg(0, usize::from(wait).max(MIN_SPACING));
                 seg(d | JUMP, ENTRY_JUMP);
                 seg(d, MIN_SPACING);
             }
@@ -174,7 +216,9 @@ impl Action {
                 format!("jump{dir:+}x{hold}{}", if up { "up" } else { "" })
             }
             Action::Strike { dir } => format!("strike{dir:+}"),
+            Action::Catch { dir } => format!("catch{dir:+}"),
             Action::Entry { dir, walk } => format!("entry{dir:+}x{walk}"),
+            Action::RiseEntry { dir, hold, wait } => format!("rise{dir:+}x{hold}w{wait}"),
             other => format!("{other:?}").to_lowercase(),
         }
     }
@@ -233,6 +277,9 @@ pub fn phase(sim: &Sim) -> Phase {
 pub struct Arena {
     /// The boss room's door, when the level has one.
     pub door: Option<(i32, i32)>,
+    /// The side of the boss room's entry the boss is on: -1 left, 1 right
+    /// (0 when unknown, taken as right).
+    pub boss_side: i8,
 }
 
 /// The actions worth trying in `sim`, in a fixed order: [`choices`], with
@@ -249,6 +296,14 @@ pub fn choices_in(sim: &Sim, arena: &Arena) -> Vec<Action> {
         if across.abs() <= DOOR_REACH && (dy - o.y).abs() <= DOOR_REACH {
             let dir = if across >= 0 { 1 } else { -1 };
             out.extend(ENTRY_WALKS.map(|walk| Action::Entry { dir, walk }));
+        }
+        if across.abs() <= RISE_REACH && RISE_HEIGHT.contains(&(o.y - dy)) {
+            let dir = if arena.boss_side < 0 { -1 } else { 1 };
+            for hold in RISE_HOLDS {
+                for wait in RISE_WAITS {
+                    out.push(Action::RiseEntry { dir, hold, wait });
+                }
+            }
         }
     }
     out
@@ -322,7 +377,12 @@ pub fn choices(sim: &Sim) -> Vec<Action> {
                 out.push(Action::Fire);
             }
         }
-        Phase::Air => out.extend([Action::Up, Action::Attack]),
+        Phase::Air => out.extend([
+            Action::Up,
+            Action::Catch { dir: 1 },
+            Action::Catch { dir: -1 },
+            Action::Attack,
+        ]),
         Phase::Climb => {
             out.extend([Action::Up, Action::Down]);
             for dir in [1i8, -1] {
@@ -373,10 +433,17 @@ mod tests {
             Action::Short,
             Action::Strike { dir: -1 },
             Action::Strike { dir: 1 },
+            Action::Catch { dir: -1 },
+            Action::Catch { dir: 1 },
         ];
         for dir in [-1i8, 1] {
             for walk in ENTRY_WALKS {
                 all.push(Action::Entry { dir, walk });
+            }
+            for hold in RISE_HOLDS {
+                for wait in RISE_WAITS {
+                    all.push(Action::RiseEntry { dir, hold, wait });
+                }
             }
         }
         for dir in [-1, 0, 1] {

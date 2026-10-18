@@ -7,7 +7,7 @@
 //!          [--seed S|level] [--hints FILE] [--from-route FILE --from-tick T]
 //!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--threads N]
 //!          [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot]
-//!          [--intro any|play|skip] [--carry FILE] [--quiet]
+//!          [--intro any|play|skip] [--carry FILE] [--goal X,Y] [--quiet]
 //! ```
 //!
 //! The route is an input script (`tick,held_mask,pressed_mask`, one row
@@ -68,6 +68,11 @@
 //! recording of a game's later level starts with); the route's header
 //! repeats them, so a replay starts the level the same way.
 //!
+//! `--goal X,Y` ends the route where Claw first comes within
+//! [`GOAL_RADIUS`] px of (X, Y) instead of at the level's end: a leg of a
+//! longer route, which `--from-route` then continues, so a long level can
+//! be searched a stretch at a time. Its report counts the goal as the win.
+//!
 //! No route is written whose held mask changes twice less than two ticks
 //! apart.
 //!
@@ -89,7 +94,7 @@ const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S|level] [--hints FILE] \
 [--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
 [--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot] \
-[--intro any|play|skip] [--carry FILE] [--quiet]";
+[--intro any|play|skip] [--carry FILE] [--goal X,Y] [--quiet]";
 
 /// The random state a route starts from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +110,9 @@ const DEFAULT_FRAGILE_COST: i64 = 400;
 
 /// Ticks a jump press keeps from a landing with the default tuning.
 const DEFAULT_LAND_GAP: u64 = 2;
+
+/// How near Claw must come to a `--goal` point, px.
+pub const GOAL_RADIUS: i32 = 48;
 
 #[derive(Debug)]
 struct Args {
@@ -128,6 +136,7 @@ struct Args {
     margin_samples: usize,
     intro: Intro,
     carry: Option<PathBuf>,
+    goal: Option<(i32, i32)>,
     quiet: bool,
 }
 
@@ -154,6 +163,7 @@ impl Default for Args {
             margin_samples: 40,
             intro: Intro::Any,
             carry: None,
+            goal: None,
             quiet: false,
         }
     }
@@ -205,13 +215,8 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
             "--hints" => a.hints = Some(PathBuf::from(&v)),
             "--from-route" => a.from_route = Some(PathBuf::from(&v)),
             "--from-tick" => a.from_tick = Some(v.parse().map_err(|_| num("tick"))?),
-            "--start" => {
-                a.start = Some(
-                    v.split_once(',')
-                        .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
-                        .ok_or_else(|| num("start point"))?,
-                );
-            }
+            "--start" => a.start = Some(point(&v).ok_or_else(|| num("start point"))?),
+            "--goal" => a.goal = Some(point(&v).ok_or_else(|| num("goal point"))?),
             "--land-gap" => a.land_gap = Some(v.parse().map_err(|_| num("landing gap"))?),
             "--fragile-cost" => {
                 a.fragile_cost = v.parse().map_err(|_| num("fragile cost"))?;
@@ -241,6 +246,12 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         ));
     }
     Ok(a)
+}
+
+/// Reads `x,y`.
+fn point(v: &str) -> Option<(i32, i32)> {
+    v.split_once(',')
+        .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
 }
 
 /// The game a route starts from: the level start (with `carry`, the
@@ -439,8 +450,16 @@ fn run(a: Args) -> Result<bool, String> {
         log_every: if a.quiet { 0 } else { 500 },
         ..SearchConfig::default()
     };
+    let goal = match a.goal {
+        Some((x, y)) => Goal::Reach {
+            x,
+            y,
+            radius: GOAL_RADIUS,
+        },
+        None => Goal::LevelComplete,
+    };
     let began = Instant::now();
-    let found = match search_report(&start, Goal::LevelComplete, &scfg) {
+    let found = match search_report(&start, goal.clone(), &scfg) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("claw-bot: no route: {e}");
@@ -478,11 +497,11 @@ fn run(a: Args) -> Result<bool, String> {
         a.start,
         carry.as_ref(),
     );
-    let played = route::play(&fresh, &script, &Goal::LevelComplete);
+    let played = route::play(&fresh, &script, &goal);
     if !played.won() {
         return Err("the route found does not win when played from the start".into());
     }
-    let margin = route::margin(&fresh, &script, &Goal::LevelComplete, a.margin_samples);
+    let margin = route::margin(&fresh, &script, &goal, a.margin_samples);
     let mut stats = found.stats.clone();
     stats.ticks = script.ticks.len() as u64;
     stats.health_lost = played.health_lost;
@@ -494,9 +513,14 @@ fn run(a: Args) -> Result<bool, String> {
     )
     .map_err(|e| format!("writing {}: {e}", json.display()))?;
     eprintln!(
-        "claw-bot: route of {} ticks ({:.1} s of play), level complete at tick {}, {} nodes, {} segments, {} deaths, {} health lost, margin {}/{} early and {}/{} late, {:.0} s; wrote {} and {}",
+        "claw-bot: route of {} ticks ({:.1} s of play), {} at tick {}, {} nodes, {} segments, {} deaths, {} health lost, margin {}/{} early and {}/{} late, {:.0} s; wrote {} and {}",
         script.ticks.len(),
         script.ticks.len() as f64 * 0.018,
+        if a.goal.is_some() {
+            "goal reached"
+        } else {
+            "level complete"
+        },
         done_at,
         stats.expanded,
         stats.segments,
@@ -566,6 +590,12 @@ mod tests {
         assert_eq!(s.start, Some((10355, 2051)));
         assert!(args("--start 10").is_err());
         assert!(args("--start 1,2 --from-route p.csv --from-tick 3").is_err());
+        assert_eq!(
+            args("--goal 4851,3340").map(|a| a.goal),
+            Ok(Some((4851, 3340)))
+        );
+        assert_eq!(a.goal, None);
+        assert!(args("--goal 4851").is_err());
         assert_eq!(a.intro, Intro::Any);
         assert_eq!(args("--intro skip").map(|a| a.intro), Ok(Intro::Skip));
         assert_eq!(args("--intro play").map(|a| a.intro), Ok(Intro::Play));
