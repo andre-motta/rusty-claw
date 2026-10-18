@@ -12,7 +12,7 @@ mod common;
 
 use std::sync::Arc;
 
-use claw_frame::{AudioCue, Point, ScreenTransition, TickInput, TransitionKind};
+use claw_frame::{AudioCue, Point, ScreenTransition, TICK_MS, TickInput, TransitionKind};
 use claw_sim::activation::ActivationConfig;
 use claw_sim::anim::Animation;
 use claw_sim::level::ObjectSpec;
@@ -666,8 +666,8 @@ fn built_on_her_floor_she_stands_exactly_on_her_pixel_until_she_steps_back() {
     assert_eq!(seen, [324, 648, 972, 0]);
 }
 
-/// The opening circle of Claw's respawn, up while the respawn runs
-/// between two ticks.
+/// The opening circle of Claw's respawn, up from the respawn until the
+/// circle has opened.
 fn opening_circle() -> ScreenTransition {
     ScreenTransition {
         kind: TransitionKind::Circle,
@@ -695,12 +695,13 @@ fn in_the_respawns_passes_her_strike_and_her_movement_wait_for_the_tick() {
     }
     let x = obj(&sim, id).x;
     sim.with_world(|w| enemy::data_mut(w, id).unwrap().vx = 100.0);
-    // In the respawn's two passes the whip goes on and she does not move;
-    // her draws are made.
+    // In the respawn's two passes (frame time 0) the whip goes on and she
+    // does not move; her draws are made.
     for _ in 0..2 {
         let before = sim.rng().state();
         sim.with_world(|w| {
             w.out.set_transition(Some(opening_circle()));
+            w.dt_ms = 0;
             assert!(katherine::between_ticks(w));
             katherine::tick(w, id);
         });
@@ -708,15 +709,17 @@ fn in_the_respawns_passes_her_strike_and_her_movement_wait_for_the_tick() {
         assert_eq!(obj(&sim, id).x, x, "no movement");
         assert!(draws_between(before, sim.rng().state()) >= 1);
     }
-    // The tick's own call ends it.
+    // The tick's own call (one tick of frame time, the opening circle
+    // still up) ends it.
     sim.with_world(|w| {
         enemy::data_mut(w, id).unwrap().vx = 0.0;
-        w.out.set_transition(None);
+        assert_eq!(w.dt_ms, TICK_MS);
+        w.out.set_transition(Some(opening_circle()));
         assert!(!katherine::between_ticks(w));
         katherine::tick(w, id);
     });
     assert_eq!(state_of(&sim, id), Some(EnemyState::Home));
-    // The death's closing circle is no respawn pass.
+    // Nor is a call during the death's closing circle a respawn pass.
     sim.with_world(|w| {
         w.out.set_transition(Some(ScreenTransition {
             closing: true,
@@ -759,7 +762,7 @@ fn her_decisions_are_made_in_the_respawns_passes() {
     assert_eq!(state_of(&sim, id), Some(EnemyState::Pace));
     let x = obj(&sim, id).x;
     sim.with_world(|w| {
-        w.out.set_transition(Some(opening_circle()));
+        w.dt_ms = 0;
         katherine::tick(w, id);
     });
     assert_eq!(state_of(&sim, id), Some(EnemyState::Home));

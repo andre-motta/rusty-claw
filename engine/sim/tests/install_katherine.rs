@@ -340,12 +340,9 @@ const STORES: &[(&str, &[&str])] = &[
 ///   (whips, stabs, somersaults, blocks, flinches, steps back), lifting
 ///   and throwing her, the jump-in skip, the late trigger after it, the
 ///   fight after a skip and her blows that end Claw's freeze follow the
-///   original step for step, the random stream included, and so does her
-///   reset when Claw respawns, near her clearing or far from it. Only
-///   Claw's own death fall (1 px higher on some steps: `y` from 26406 to
-///   30564 ms by route) and the camera after his respawn (it moves on
-///   each of the respawn's update passes: `cam_x` on the respawn step)
-///   leave the traces, and both come back.
+///   original step for step, the random stream included, and so do
+///   Claw's own death fall, the camera after his respawn and her reset
+///   when he respawns, near her clearing or far from it.
 /// - c18 end of life: the in-game menu opened before the life ends puts
 ///   the original's frame pulse a tick earlier from then on (14418 ms);
 ///   the replay plays no time for that menu, so her rolls come a tick
@@ -377,11 +374,6 @@ const KNOWN: &[Known] = &[
         ],
     ),
     (
-        "boss-intro-skip-c18",
-        "c18",
-        &[("y", 30240), ("cam_x", 31050)],
-    ),
-    (
         "boss-intro-skip",
         "c60",
         &[
@@ -398,22 +390,6 @@ const KNOWN: &[Known] = &[
             ("physics_type", 24167),
             ("lives", 25850),
         ],
-    ),
-    (
-        "boss-intro-skip-return-c18",
-        "c18",
-        &[("y", 26406), ("cam_x", 27216)],
-    ),
-    ("boss-intro-skip-fight-c18", "c18", &[("y", 30564)]),
-    (
-        "boss-intro-skip-lift-c18",
-        "c18",
-        &[("y", 30240), ("cam_x", 31050)],
-    ),
-    (
-        "boss-intro-skip-up-c18",
-        "c18",
-        &[("y", 26676), ("cam_x", 27486)],
     ),
     (
         "boss-intro-normal-lift",
@@ -438,8 +414,7 @@ const KNOWN: &[Known] = &[
         &[
             ("rng", 14418),
             ("her_state", 14940),
-            ("y", 15300),
-            ("cam_x", 16110),
+            ("cam_x", 16398),
             ("health", 16380),
             ("state_id", 16380),
             ("x", 16398),
