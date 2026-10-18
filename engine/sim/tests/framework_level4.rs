@@ -143,6 +143,7 @@ fn katherine_is_a_human_class_whose_data_holds_enemy_data() {
     let enemy_data = enemy::EnemyData::default();
     let mut d = ObjectData::Katherine(katherine::KatherineData {
         enemy: enemy_data.clone(),
+        ..Default::default()
     });
     assert_eq!(d.enemy(), Some(&enemy_data));
     d.enemy_mut().unwrap().roll = 5;
@@ -326,7 +327,9 @@ fn install_level4_boss_stage_binds_around_katherine() {
 
     // Claw put down where the door drops him starts the introduction; with
     // Katherine not built there is no current boss and no health bar, and
-    // the fight still comes on at the end of the introduction.
+    // the fight still comes on at the end of the introduction. Built, she
+    // is the current boss and the bar reads her health.
+    let built = logic::built(GameLogic::Katherine);
     let mut sim = Sim::new(level, SimConfig::default());
     sim.step(TickInput::default());
     let d = sim.diagnostics();
@@ -338,8 +341,10 @@ fn install_level4_boss_stage_binds_around_katherine() {
     let mut on = None;
     for t in 1..=900 {
         sim.step(TickInput::default());
-        assert_eq!(sim.boss().current(), None, "no boss is built");
-        assert_eq!(sim.hud().boss_meter, None);
+        if !built {
+            assert_eq!(sim.boss().current(), None, "no boss is built");
+            assert_eq!(sim.hud().boss_meter, None);
+        }
         match sim.boss().fight() {
             fight::STAGING => {
                 staging.get_or_insert(t);

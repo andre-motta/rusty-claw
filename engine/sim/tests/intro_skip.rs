@@ -1,32 +1,38 @@
-//! Raux's fight around its introduction: what a jump-in entry that skips
-//! the introduction leaves behind (Raux waiting in his start-up state for
-//! as long as Claw stays within his reach, the "AI breakdown" speedruns
-//! use), the health bar the introduction makes, and the gem that ends the
-//! level after either entry.
+//! The boss fights around their introduction: what a jump-in entry that
+//! skips the introduction leaves behind (Raux waiting in his start-up
+//! state for as long as Claw stays within his reach, the "AI breakdown"
+//! speedruns use; Katherine woken by Claw's jump itself, which keeps him
+//! above her boxes for more than 500 ms), the health bar the introduction
+//! makes, the trigger left armed after a skip (Katherine's next blow ends
+//! the freeze it starts in the middle of her fight), and the gem that ends
+//! the level after either entry.
 //!
-//! The synthetic tests run Raux on a flat floor with the fight flag left
-//! at 0, as after a skipped introduction. The tests named `install_*` play
-//! the jump-in through the second level's door on the user's own install
-//! (`CLAW_INSTALL`) and skip themselves when it is unset; nothing from an
-//! install is stored in the repository.
+//! The synthetic tests run the boss on a flat floor with the fight flag
+//! left at 0, as after a skipped introduction. The tests named `install_*`
+//! play the jump-in through the second and fourth levels' doors on the
+//! user's own install (`CLAW_INSTALL`) and skip themselves when it is
+//! unset; nothing from an install is stored in the repository.
 
 mod common;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_frame::output::BossMeter;
 use claw_frame::{AudioCue, Buttons, GameEvent, TickInput};
 use claw_sim::activation::ActivationConfig;
+use claw_sim::anim::Animation;
 use claw_sim::input::ScriptTuning;
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::boss_stage::{self, stage_state};
-use claw_sim::logic::enemy::{self, EnemyState, raux};
+use claw_sim::logic::enemy::{self, EnemyState, katherine, raux};
 use claw_sim::logic::world_boss::{AMULET_SOUND, fight};
 use claw_sim::logic::{self, pickup};
 use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags, types};
 use claw_sim::player::special::BOSS_END;
 use claw_sim::player::state;
+use claw_sim::rng::Rng;
 use claw_sim::tiles::TileMap;
 use claw_sim::{GameLogic, Sim, SimConfig, SimLevel};
 use common::*;
@@ -614,4 +620,280 @@ fn install_level2_jump_in_at_60_fps_leaves_raux_waiting() {
     assert_eq!(j.sim.claw().stats.health, 100, "never attacked");
     let o = j.sim.objects().get(j.raux).unwrap();
     assert_eq!((o.x, o.y, o.health), (23970, 3955, 100));
+}
+
+// ----------------------------------------------------------------------
+// Katherine: the trigger left armed after a skip
+
+/// Katherine on the flat floor (feet on 959) at x 3000, awake and
+/// fighting with the fight flag at 0 (as after a skip), Claw standing
+/// near a stager placed left of her.
+fn katherine_arena() -> (Sim, ObjectId, ObjectId) {
+    let mut level = flat_level();
+    // Her whip, with its blow on the seventh element as on her level.
+    let ms = [20, 30, 40, 30, 30, 30, 150, 50, 80, 0];
+    let pairs: Vec<(i32, i32)> = ms.iter().enumerate().map(|(i, &d)| (i as i32, d)).collect();
+    let mut whip = Animation::once(katherine::WHIP_ANIM, &pairs);
+    whip.frames[6].event = 1;
+    level
+        .animations
+        .insert(katherine::WHIP_ANIM.to_string(), Arc::new(whip));
+    let mut o = ObjectSpec::at("Katherine", 3000, 900, 0);
+    o.image_set = "LEVEL_KATHERINE".into();
+    level.objects.push(o);
+    level
+        .objects
+        .push(ObjectSpec::at(boss_stage::STAGER, 2860, 899 - 29, 1000));
+    let (w, h) = (level.map.width() as u32, level.map.height() as u32);
+    let mut sim = Sim::new(
+        level,
+        SimConfig {
+            seed: 3,
+            activation: ActivationConfig::widened((2 * w, 2 * h)),
+            ..SimConfig::default()
+        },
+    );
+    sim.teleport_player(2700, 899);
+    idle(&mut sim, 5);
+    let her = sim.boss().current().expect("Katherine is the current boss");
+    let stager = find(&sim, boss_stage::STAGER).expect("the stager");
+    sim.with_world(|w| katherine::go_idle(w, her));
+    (sim, her, stager)
+}
+
+#[test]
+fn after_a_skip_the_armed_trigger_freezes_claw_and_her_blow_ends_the_freeze() {
+    let (mut sim, her, stager) = katherine_arena();
+    assert_eq!(sim.objects().get(stager).unwrap().state, stage_state::ARMED);
+    // Claw walks into the stager's box: the whole introduction starts in
+    // the middle of the fight.
+    sim.teleport_player(2860, 899);
+    sim.step(TickInput::default());
+    assert!(
+        sim.last_events()
+            .iter()
+            .any(|e| matches!(e, GameEvent::Checkpoint { .. })),
+        "the trigger fired"
+    );
+    sim.step(TickInput::default());
+    assert_eq!(sim.boss().fight(), fight::STAGING);
+    assert_eq!(sim.player().unwrap().state, state::FREEZE);
+    // She is awake: she whips him from 140 px, and the blow ends the
+    // freeze; he can act while the script runs on.
+    sim.with_world(|w| {
+        w.claw.stats.health = 100;
+        w.objects.get_mut(her).unwrap().x = 3000;
+        enemy::go_home(w, her);
+        let d = enemy::data_mut(w, her).unwrap();
+        d.busy = false;
+        d.mode = 2;
+        d.roll = 0;
+        katherine::home_tick(w, her);
+    });
+    assert_eq!(
+        EnemyState::from_id(sim.objects().get(her).unwrap().state),
+        Some(EnemyState::Strike)
+    );
+    let mut hit_at = None;
+    for k in 0..40 {
+        sim.step(TickInput::default());
+        let c = sim.player().unwrap();
+        if sim.claw().stats.health < 100 {
+            assert_eq!(c.state, state::HIT, "the blow ends the freeze");
+            hit_at = Some(k);
+            break;
+        }
+        assert_eq!(c.state, state::FREEZE, "tick {k}");
+    }
+    assert!(hit_at.is_some(), "she hit him");
+    assert_eq!(sim.boss().fight(), fight::STAGING, "the script runs on");
+    for _ in 0..ticks(500) {
+        sim.step(TickInput::default());
+        assert_ne!(
+            sim.player().unwrap().state,
+            state::FREEZE,
+            "not frozen again"
+        );
+    }
+}
+
+// ----------------------------------------------------------------------
+// The fourth level's jump-in
+
+/// Where the fourth level's boss routes start: under its door.
+const START4: (i32, i32) = (16107, 1500);
+/// Game time from the level's start to the routes' time zero, ms, and the
+/// random state then.
+const T0_MS: u64 = 828;
+const SEED4: u32 = 111_567;
+
+fn level4() -> Option<SimLevel> {
+    let Some(root) = std::env::var_os("CLAW_INSTALL").map(PathBuf::from) else {
+        eprintln!("skipped: CLAW_INSTALL is not set");
+        return None;
+    };
+    let store = Install::open(&root).unwrap().store().unwrap();
+    let data = LevelData::build(&store, LevelSource::Retail(4)).unwrap();
+    Some(SimLevel::from_level(&data, &store).unwrap())
+}
+
+/// What the fourth level's jump-in left, read tick by tick from the
+/// routes' time zero.
+struct JumpIn4 {
+    sim: Sim,
+    /// The first tick in her clearing.
+    arena: u64,
+    /// The first tick Katherine was out of her start-up state, with the
+    /// state and her range mode then.
+    woke: Option<(u64, EnemyState, u8)>,
+    /// The first tick Claw's health was below 100.
+    hurt: Option<u64>,
+    /// The first tick the trigger fired.
+    trigger: Option<u64>,
+    /// The first tick Claw went from frozen to his hit reaction.
+    freeze_broken: Option<u64>,
+}
+
+/// Plays the routes' jump-in at `tuning` for `ticks` ticks: Claw put under
+/// the door at the level's start, still until the routes' time zero, Jump
+/// held into the door for 6 ticks from the 15th, then on the first tick in
+/// her clearing Jump pressed (with Right when `right`), held for 12 ticks,
+/// the direction alone for 28 more, then nothing.
+fn jump_in4(level: SimLevel, tuning: ScriptTuning, right: bool, ticks: u64) -> JumpIn4 {
+    let mut sim = Sim::new(
+        level,
+        SimConfig {
+            tuning: tuning.tuning(),
+            ..SimConfig::default()
+        },
+    );
+    sim.teleport_player(START4.0, START4.1);
+    idle(&mut sim, T0_MS.div_ceil(18) as usize);
+    sim.with_world(|w| *w.rng = Rng::new(SEED4));
+    let dir = if right { RIGHT } else { 0 };
+    let mut arena = None;
+    let mut out = JumpIn4 {
+        sim: sim.clone(),
+        arena: 0,
+        woke: None,
+        hurt: None,
+        trigger: None,
+        freeze_broken: None,
+    };
+    let mut was_frozen = false;
+    for t in 0..ticks {
+        let (held, pressed) = match arena {
+            None if t == 15 => (JUMP, JUMP),
+            None if (16..=20).contains(&t) => (JUMP, 0),
+            None => (0, 0),
+            Some(a) if t == a => (dir | JUMP, dir | JUMP),
+            Some(a) if t < a + 12 => (dir | JUMP, 0),
+            Some(a) if t < a + 40 => (dir, 0),
+            Some(_) => (0, 0),
+        };
+        sim.step(TickInput {
+            held: Buttons(held),
+            pressed: Buttons(pressed),
+        });
+        if arena.is_none() && sim.claw().special.warp_to.is_some() {
+            arena = Some(t + 1);
+        }
+        let c = sim.player().unwrap().clone();
+        if out.trigger.is_none()
+            && sim
+                .last_events()
+                .iter()
+                .any(|e| matches!(e, GameEvent::Checkpoint { .. }))
+        {
+            out.trigger = Some(t);
+        }
+        if out.hurt.is_none() && sim.claw().stats.health < 100 {
+            out.hurt = Some(t);
+        }
+        if was_frozen && c.state == state::HIT && out.freeze_broken.is_none() {
+            out.freeze_broken = Some(t);
+        }
+        was_frozen = c.state == state::FREEZE;
+        if let Some(a) = arena
+            && t >= a
+            && let Some(h) = sim.boss().current()
+        {
+            let o = sim.objects().get(h).unwrap();
+            let s = EnemyState::from_id(o.state);
+            if out.woke.is_none() && s != Some(EnemyState::Startup) {
+                let mode = enemy::data_of(o).map_or(0, |d| d.mode);
+                out.woke = Some((t, s.unwrap(), mode));
+            }
+        }
+    }
+    out.arena = arena.expect("through the door");
+    out.sim = sim;
+    out
+}
+
+#[test]
+fn install_level4_jump_in_at_the_original_speeds_wakes_katherine_after_500_ms() {
+    let Some(level) = level4() else { return };
+    // The original at 18 ms steps: her clearing on step 23 with Claw
+    // jumping; out of her boxes from step 27, she goes idle on step 55
+    // (504 ms later) and fights; Claw comes down on her and takes her
+    // touch's 5 on step 57. The trigger never fires and stays armed.
+    let j = jump_in4(level, ScriptTuning::Original, true, 400);
+    println!(
+        "jump-in at the original speeds: clearing {}, Katherine woke {:?}, Claw hurt {:?}",
+        j.arena, j.woke, j.hurt
+    );
+    assert_eq!(j.arena, 23);
+    assert_eq!(j.woke, Some((55, EnemyState::Idle, 5)));
+    assert_eq!(j.hurt, Some(57));
+    assert_eq!(j.trigger, None);
+    assert_eq!(j.sim.boss().fight(), fight::NONE);
+    assert_eq!(j.sim.hud().boss_meter, None);
+    let stager = find(&j.sim, boss_stage::STAGER).expect("the stager");
+    assert_eq!(
+        j.sim.objects().get(stager).unwrap().state,
+        stage_state::ARMED,
+        "the trigger stays armed"
+    );
+}
+
+#[test]
+fn install_level4_jump_in_at_60_fps_wakes_katherine_too() {
+    let Some(level) = level4() else { return };
+    // The original at 60 frames per second: she goes idle 1000 ms after
+    // time zero and Claw takes 5 at 1017 ms. The default tuning plays that
+    // feel within two ticks: she wakes through the same 500 ms rule.
+    let j = jump_in4(level, ScriptTuning::Default, true, 400);
+    println!(
+        "jump-in at 60 fps: clearing {}, Katherine woke {:?}, Claw hurt {:?}",
+        j.arena, j.woke, j.hurt
+    );
+    let (t, s, mode) = j.woke.expect("she wakes");
+    assert_eq!((s, mode), (EnemyState::Idle, 5));
+    let end_ms = |t: u64| (t + 1) * 18;
+    assert!(end_ms(t).abs_diff(1000) <= 36, "woke at {} ms", end_ms(t));
+    let hurt = j.hurt.expect("Claw lands on her");
+    assert!(
+        end_ms(hurt).abs_diff(1017) <= 36,
+        "hurt at {} ms",
+        end_ms(hurt)
+    );
+    assert_eq!(j.trigger, None);
+}
+
+#[test]
+fn install_level4_a_jump_straight_up_comes_down_in_the_box_and_her_blow_ends_the_freeze() {
+    let Some(level) = level4() else { return };
+    // The original at 18 ms steps: Claw comes down in the stager's box on
+    // step 59 and the trigger fires; she is awake already, and her first
+    // blow ends his freeze on step 75.
+    let j = jump_in4(level, ScriptTuning::Original, false, 400);
+    println!(
+        "jump straight up: woke {:?}, trigger {:?}, freeze broken {:?}",
+        j.woke, j.trigger, j.freeze_broken
+    );
+    assert_eq!(j.woke.map(|w| w.0), Some(55));
+    assert_eq!(j.trigger, Some(59));
+    assert_eq!(j.freeze_broken, Some(75));
+    assert_eq!(j.sim.boss().fight(), fight::STAGING, "the script runs on");
 }
