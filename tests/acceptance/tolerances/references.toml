@@ -781,3 +781,46 @@ known.cam_x = 18
 known.health = 18
 known.rng = 630
 known.score = 4950
+
+# The bot's route of the third level (original speeds), one 18 ms step per
+# frame. Both games win the level on it and are equal on every compared
+# row, the random stream included.
+[[compare]]
+reference = "level3/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The third level of a game that started with the second level's route
+# (`level2-original.csv`), entered through the end-of-level screen with the
+# progress the second level carries: equal on every row.
+[[compare]]
+reference = "level3/pair-original"
+clock = "c18"
+tolerance = "exact"
+
+# The third level's dynamite-boost route (original speeds): the boost past
+# the first save point, then the bot's route; equal on every row.
+[[compare]]
+reference = "level3/boost-original"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's route of the third level (default tuning) at 60 frames per
+# second. It leaves the feel tolerance in the first jump at 1250 ms (the
+# original's jump peaks 10 px higher, the default tuning's jump as on the
+# first two levels), then the runs go different ways.
+[[compare]]
+reference = "level3/bot"
+clock = "c60"
+tolerance = "feel"
+known.y = 1250
+known.cam_y = 1250
+known.state_id = 3734
+known.physics_type = 3734
+known.health = 3734
+known.x = 4100
+known.cam_x = 4100
+known.score = 5167
+known.events = 11646
+known.lives = 28834
+known.pistol = 142950
