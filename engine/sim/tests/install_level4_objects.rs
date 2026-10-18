@@ -5,9 +5,14 @@
 //! fern, or on the floor right of the first row of clock stones), lets him
 //! settle, waits until the level clock reaches the time the original's run
 //! started at, and starts the shared random stream from the run's state.
-//! It is then played tick by tick and Claw's position and state are
-//! compared with the reference trace of the same route at the 18 ms step,
-//! row by row, exactly:
+//! It is then played tick by tick and compared with the reference trace
+//! of the same route at the 18 ms step, row by row, exactly: Claw's
+//! position and state, and every other column of the trace too (health,
+//! score, the camera, the random stream, the events), except that the
+//! original's camera is still catching up with Claw on the first five rows
+//! of a fern route. Played this way, from the original's level clock, the
+//! level's timed sounds draw from the random stream and the floor spikes
+//! by the fern strike on the original's ticks:
 //!
 //! - standing on the fern: thrown 21 ticks after landing, to 450 px, over
 //!   and over;
@@ -278,8 +283,10 @@ fn install_level4_fern_and_stone_routes_follow_the_reference_traces() {
         let mut sim = at_time_zero(&level, r.start);
         let ticks = route_ticks(r);
         let mut first = None;
+        let mut rows = Vec::with_capacity(reference.len());
         for (k, want) in reference.iter().enumerate() {
             sim.step(ticks.get(k).copied().unwrap_or_default());
+            rows.push(trace::TraceRow::capture(&sim, k as u64, "script"));
             let got = claw(&sim);
             if got != (want.x, want.y, want.state_id) && first.is_none() {
                 first = Some((k, got, (want.x, want.y, want.state_id)));
@@ -296,8 +303,51 @@ fn install_level4_fern_and_stone_routes_follow_the_reference_traces() {
                 r.store, f.0, f.1, f.2
             ));
         }
+        failures.extend(other_columns(r.store, &rows, &reference));
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// Rows at the start of a fern route on which the original's camera is
+/// still catching up with Claw after he was put down: it reaches him on
+/// the sixth row, where the game's already stands.
+const CAMERA_CATCH_UP_ROWS: usize = 5;
+
+/// Every other column of the trace, exactly, on the same clock: the
+/// camera, health, score, the random stream and the events. Only the
+/// camera's x may differ, and only on the first
+/// [`CAMERA_CATCH_UP_ROWS`] rows of a fern route.
+fn other_columns(
+    store: &str,
+    rows: &[trace::TraceRow],
+    reference: &[trace::TraceRow],
+) -> Vec<String> {
+    let cmp = trace::compare(rows, reference, &trace::Tolerances::exact());
+    let mut failures = Vec::new();
+    if cmp.rows_compared != reference.len() {
+        failures.push(format!(
+            "{store}: {} of {} rows compared",
+            cmp.rows_compared,
+            reference.len()
+        ));
+    }
+    for c in cmp.per_column.iter().filter(|c| c.diverged > 0) {
+        let catch_up = store != "stones-row"
+            && c.column == "cam_x"
+            && c.diverged <= CAMERA_CATCH_UP_ROWS
+            && rows
+                .iter()
+                .zip(reference)
+                .skip(CAMERA_CATCH_UP_ROWS)
+                .all(|(a, b)| a.cam_x == b.cam_x);
+        if !catch_up {
+            failures.push(format!(
+                "{store}: {} leaves the exact tolerance on {} rows from {:?} ms",
+                c.column, c.diverged, c.first_t_ms
+            ));
+        }
+    }
+    failures
 }
 
 /// The rows on which `id` stores `s`, over `rows` rows of `sim` from time
