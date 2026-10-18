@@ -2,8 +2,7 @@
 //! look and effect without looking for its pickup.
 //!
 //! A powerup is named by a short name ([`AID_POWERUPS`]): `invisible`,
-//! `invulnerable`, `catnip`, `fire`, `ice`, `lightning` or `plasma`,
-//! optionally with its length in whole seconds (`fire:45`). Without one it
+//! `invulnerable`, `catnip`, `fire`, `ice` or `lightning`, optionally with its length in whole seconds (`fire:45`). Without one it
 //! runs for [`AID_DEFAULT_MS`], the length of a powerup pickup that names
 //! none (the larger catnip's for catnip). `none` names no powerup: giving
 //! it ends the running one.
@@ -32,14 +31,15 @@ pub const NONE_NAME: &str = "none";
 
 /// The powerups the aid gives, in the order the play-test key steps
 /// through them: short name, powerup code and the name shown on screen.
-pub const AID_POWERUPS: [(&str, u32, &str); 7] = [
+/// The plasma sword is left out: the game has its code and pickup, but
+/// taking it changes nothing.
+pub const AID_POWERUPS: [(&str, u32, &str); 6] = [
     ("invisible", powerup::GHOST, "INVISIBLE"),
     ("invulnerable", powerup::VADER, "INVULNERABLE"),
     ("catnip", powerup::CATNIP, "CATNIP"),
     ("fire", powerup::FIRE_SWORD, "FIRE SWORD"),
     ("ice", powerup::ICE_SWORD, "ICE SWORD"),
     ("lightning", powerup::LIGHTNING_SWORD, "LIGHTNING SWORD"),
-    ("plasma", powerup::PLASMA_SWORD, "PLASMA SWORD"),
 ];
 
 /// A powerup the aid gives and for how long; [`AidPowerup::NONE`] ends
@@ -197,7 +197,7 @@ mod tests {
     fn the_cycle_goes_through_every_powerup_then_none() {
         let mut p = AidPowerup::NONE;
         let mut seen = Vec::new();
-        for _ in 0..9 {
+        for _ in 0..8 {
             p = AidPowerup::next_in_cycle(p);
             seen.push(p.name());
         }
@@ -210,7 +210,6 @@ mod tests {
                 "fire",
                 "ice",
                 "lightning",
-                "plasma",
                 "none",
                 "invisible"
             ]

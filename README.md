@@ -246,8 +246,9 @@ powerup. All are off by default:
 - `--powerup NAME[:SECONDS]`: Claw has that powerup at the start of every
   level and again after every respawn, given as a pickup gives it (its
   tune, voice line, look and status bar timer). NAME is `invisible`,
-  `invulnerable`, `catnip`, `fire`, `ice`, `lightning` or `plasma` (the
-  four swords); SECONDS defaults to 30, the length of a pickup that names
+  `invulnerable`, `catnip`, `fire`, `ice` or `lightning` (the three
+  swords; the plasma sword's pickup does nothing in the game, so it is
+  not offered); SECONDS defaults to 30, the length of a pickup that names
   none. For example `--powerup fire` or `--powerup catnip:90`.
 
 While any of these aids is on, F6 gives Claw the next powerup in that order

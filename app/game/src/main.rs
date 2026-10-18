@@ -33,8 +33,8 @@
 //! life) are on for that run only, as is `--powerup NAME[:SECONDS]` (Claw
 //! has that powerup, as if just picked up, at every level start and after
 //! every respawn). While any of them is on, F6 gives Claw the next powerup
-//! in turn (invisible, invulnerable, catnip, fire, ice, lightning and
-//! plasma sword, then none) and names it on screen. A recording made with
+//! in turn (invisible, invulnerable, catnip, fire, ice and lightning
+//! sword, then none) and names it on screen. A recording made with
 //! an aid on names it in its header (`# invincible = on`,
 //! `# infinite_lives = on`, `# powerup = fire:30`, `# powerup_key = used`)
 //! and a replay plays it with that aid and gives the powerups of the key
@@ -96,7 +96,7 @@ Play-test aids, off by default, for trying out hard levels:
   --powerup NAME[:SECONDS]           Claw has this powerup at the start of every
                                      level and after every respawn, as if just
                                      picked up: invisible, invulnerable, catnip,
-                                     fire, ice, lightning or plasma (the swords),
+                                     fire, ice or lightning (the swords),
                                      for SECONDS (default 30)
   F6 (while any aid is on)           give the next powerup in that order, then
                                      none, for 30 seconds; its name shows on

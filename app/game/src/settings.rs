@@ -287,7 +287,7 @@ pub struct Args {
     pub infinite_lives: bool,
     /// Play-test aid: Claw has this powerup at the start of every level
     /// and after every respawn, as if he had just picked it up: invisible,
-    /// invulnerable, catnip, fire, ice, lightning or plasma, optionally
+    /// invulnerable, catnip, fire, ice or lightning, optionally
     /// with its length in seconds (default 30). For this run only; not
     /// saved.
     #[arg(long, value_name = "NAME[:SECONDS]", value_parser = parse_powerup)]
@@ -1957,13 +1957,10 @@ mod tests {
         // line gave one.
         let header = |text: &str| claw_sim::InputScript::parse_with_aids(text).unwrap().header;
         let mut s = resolve("--install /i --replay r.csv").unwrap();
-        s.follow_header(&header("# powerup = plasma:12\n0,0,0\n"));
-        assert_eq!(
-            s.powerup.map(|p| p.to_string()).as_deref(),
-            Some("plasma:12")
-        );
+        s.follow_header(&header("# powerup = ice:12\n0,0,0\n"));
+        assert_eq!(s.powerup.map(|p| p.to_string()).as_deref(), Some("ice:12"));
         let mut s = resolve("--install /i --replay r.csv --powerup fire").unwrap();
-        s.follow_header(&header("# powerup = plasma:12\n0,0,0\n"));
+        s.follow_header(&header("# powerup = ice:12\n0,0,0\n"));
         assert_eq!(s.powerup, Some(fire));
         let mut s = resolve("--install /i --replay r.csv").unwrap();
         s.follow_header(&header("0,0,0\n"));

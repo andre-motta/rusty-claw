@@ -2187,7 +2187,7 @@ mod tests {
             let mut session = aided(aids, None);
             session.frame(Duration::from_millis(400));
             let mut given = Vec::new();
-            for _ in 0..9 {
+            for _ in 0..8 {
                 let p = session.cycle_powerup().expect("an aid is on");
                 session.frame(Duration::from_millis(40));
                 assert_eq!(session.sim().stats().powerup_kind, p.kind, "{p}");
@@ -2202,14 +2202,13 @@ mod tests {
                     "fire:30",
                     "ice:30",
                     "lightning:30",
-                    "plasma:30",
                     "none",
                     "invisible:30"
                 ]
             );
             // Each one is noted where it was given.
             let d = session.directives();
-            assert_eq!(d.len(), 9);
+            assert_eq!(d.len(), 8);
             assert!(d.windows(2).all(|w| w[0].tick < w[1].tick));
             assert!(session.powerup_key_used());
         }
