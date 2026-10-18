@@ -4,10 +4,10 @@
 //! ```text
 //! claw-bot --install PATH --level N --out ROUTE.csv
 //!          [--tuning default|original] [--nodes N] [--budget-min M]
-//!          [--seed S] [--hints FILE] [--from-route FILE --from-tick T]
+//!          [--seed S|level] [--hints FILE] [--from-route FILE --from-tick T]
 //!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--threads N]
-//!          [--cache-games N] [--no-shadows] [--margin-samples N]
-//!          [--intro any|play|skip] [--carry FILE] [--quiet]
+//!          [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot]
+//!          [--intro any|play|skip] [--carry FILE] [--goal X,Y] [--quiet]
 //! ```
 //!
 //! The route is an input script (`tick,held_mask,pressed_mask`, one row
@@ -21,11 +21,17 @@
 //! expanded nodes, and the thread count only spreads the work.
 //! `--budget-min` is a wall-time safety stop that ends the search with a
 //! failure. `--seed` is the state of the game's shared random stream at the
-//! route's time zero (a reference trace's `rng_at_t0`), and breaks ties.
+//! route's time zero (a reference trace's `rng_at_t0`), and breaks ties;
+//! `--seed level` takes the state the level's set-up leaves the stream in,
+//! which is where a level started from its beginning starts.
 //! Keys down when the level starts count only once released and pressed
 //! again, so a route's first press comes after its first tick.
 //! `--hints` names a file of `x,y` waypoints, one per line, written from
 //! the level's geometry; the file's name is recorded in the header.
+//! With `--hints-on-foot` a waypoint counts as reached only with Claw on
+//! his feet, on a ladder or on a rope near it (within twice the usual
+//! distance), so the next stretch of the search never starts in the
+//! middle of a jump.
 //! `--from-route` starts from the game after the first T ticks of another
 //! route, which lead the new one. When the prefix changed its held mask
 //! less than two ticks before T, the new part first keeps that mask for
@@ -62,6 +68,11 @@
 //! recording of a game's later level starts with); the route's header
 //! repeats them, so a replay starts the level the same way.
 //!
+//! `--goal X,Y` ends the route where Claw first comes within
+//! [`GOAL_RADIUS`] px of (X, Y) instead of at the level's end: a leg of a
+//! longer route, which `--from-route` then continues, so a long level can
+//! be searched a stretch at a time. Its report counts the goal as the win.
+//!
 //! No route is written whose held mask changes twice less than two ticks
 //! apart.
 //!
@@ -80,16 +91,28 @@ use claw_bot::{Goal, SearchConfig, search_report};
 use claw_sim::{Carry, InputScript, ScriptHeader, Sim, SimLevel, StartState};
 
 const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
-[--tuning default|original] [--nodes N] [--budget-min M] [--seed S] [--hints FILE] \
+[--tuning default|original] [--nodes N] [--budget-min M] [--seed S|level] [--hints FILE] \
 [--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
-[--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] \
-[--intro any|play|skip] [--carry FILE] [--quiet]";
+[--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot] \
+[--intro any|play|skip] [--carry FILE] [--goal X,Y] [--quiet]";
+
+/// The random state a route starts from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Seed {
+    /// This state.
+    Value(u32),
+    /// The state the level's set-up leaves the stream in.
+    Level,
+}
 
 /// Priority cost of a fragile move, px.
 const DEFAULT_FRAGILE_COST: i64 = 400;
 
 /// Ticks a jump press keeps from a landing with the default tuning.
 const DEFAULT_LAND_GAP: u64 = 2;
+
+/// How near Claw must come to a `--goal` point, px.
+pub const GOAL_RADIUS: i32 = 48;
 
 #[derive(Debug)]
 struct Args {
@@ -99,7 +122,7 @@ struct Args {
     tuning: TuningName,
     nodes: u64,
     budget_min: Option<f64>,
-    seed: u32,
+    seed: Seed,
     hints: Option<PathBuf>,
     from_route: Option<PathBuf>,
     from_tick: Option<usize>,
@@ -109,9 +132,11 @@ struct Args {
     threads: usize,
     cache_games: usize,
     shadows: bool,
+    hints_on_foot: bool,
     margin_samples: usize,
     intro: Intro,
     carry: Option<PathBuf>,
+    goal: Option<(i32, i32)>,
     quiet: bool,
 }
 
@@ -124,7 +149,7 @@ impl Default for Args {
             tuning: TuningName::Default,
             nodes: SearchConfig::default().nodes,
             budget_min: None,
-            seed: 1,
+            seed: Seed::Value(1),
             hints: None,
             from_route: None,
             from_tick: None,
@@ -134,9 +159,11 @@ impl Default for Args {
             threads: 1,
             cache_games: SearchConfig::default().cached_sims,
             shadows: true,
+            hints_on_foot: false,
             margin_samples: 40,
             intro: Intro::Any,
             carry: None,
+            goal: None,
             quiet: false,
         }
     }
@@ -154,6 +181,10 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         }
         if flag == "--no-shadows" {
             a.shadows = false;
+            continue;
+        }
+        if flag == "--hints-on-foot" {
+            a.hints_on_foot = true;
             continue;
         }
         let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -174,17 +205,18 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                 }
                 a.budget_min = Some(m);
             }
-            "--seed" => a.seed = v.parse().map_err(|_| num("seed"))?,
+            "--seed" => {
+                a.seed = if v == "level" {
+                    Seed::Level
+                } else {
+                    Seed::Value(v.parse().map_err(|_| num("seed"))?)
+                }
+            }
             "--hints" => a.hints = Some(PathBuf::from(&v)),
             "--from-route" => a.from_route = Some(PathBuf::from(&v)),
             "--from-tick" => a.from_tick = Some(v.parse().map_err(|_| num("tick"))?),
-            "--start" => {
-                a.start = Some(
-                    v.split_once(',')
-                        .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
-                        .ok_or_else(|| num("start point"))?,
-                );
-            }
+            "--start" => a.start = Some(point(&v).ok_or_else(|| num("start point"))?),
+            "--goal" => a.goal = Some(point(&v).ok_or_else(|| num("goal point"))?),
             "--land-gap" => a.land_gap = Some(v.parse().map_err(|_| num("landing gap"))?),
             "--fragile-cost" => {
                 a.fragile_cost = v.parse().map_err(|_| num("fragile cost"))?;
@@ -214,6 +246,12 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         ));
     }
     Ok(a)
+}
+
+/// Reads `x,y`.
+fn point(v: &str) -> Option<(i32, i32)> {
+    v.split_once(',')
+        .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
 }
 
 /// The game a route starts from: the level start (with `carry`, the
@@ -337,7 +375,16 @@ fn run(a: Args) -> Result<bool, String> {
         }
         None => None,
     };
-    let mut start = start_sim(sim_level, a.tuning, a.seed, a.start, carry.as_ref());
+    let seed = match a.seed {
+        Seed::Value(s) => s,
+        Seed::Level => {
+            let s =
+                start_sim(sim_level.clone(), a.tuning, 1, None, carry.as_ref()).rng_after_set_up();
+            eprintln!("claw-bot: the level's set-up leaves the random state at {s}");
+            s
+        }
+    };
+    let mut start = start_sim(sim_level, a.tuning, seed, a.start, carry.as_ref());
 
     let mut prefix = InputScript::default();
     let mut prefix_hints = None;
@@ -346,7 +393,7 @@ fn run(a: Args) -> Result<bool, String> {
             .map_err(|e| format!("reading {}: {e}", path.display()))?;
         let script = InputScript::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         prefix_hints = Header::parse(&text).hints;
-        prefix_matches(&script.header, level_no, a.tuning, a.seed)
+        prefix_matches(&script.header, level_no, a.tuning, seed)
             .map_err(|e| format!("{}: {e}", path.display()))?;
         if t > script.ticks.len() {
             return Err(format!(
@@ -387,7 +434,7 @@ fn run(a: Args) -> Result<bool, String> {
         start_held,
         start_held_for,
         nodes: a.nodes,
-        seed: u64::from(a.seed),
+        seed: u64::from(seed),
         hints,
         threads: a.threads,
         land_gap: a.land_gap.unwrap_or(match a.tuning {
@@ -397,13 +444,22 @@ fn run(a: Args) -> Result<bool, String> {
         fragile_cost: a.fragile_cost,
         cached_sims: a.cache_games,
         shadows: a.shadows,
+        hint_on_foot: a.hints_on_foot,
         intro: a.intro,
         wall_limit: a.budget_min.map(|m| Duration::from_secs_f64(m * 60.0)),
         log_every: if a.quiet { 0 } else { 500 },
         ..SearchConfig::default()
     };
+    let goal = match a.goal {
+        Some((x, y)) => Goal::Reach {
+            x,
+            y,
+            radius: GOAL_RADIUS,
+        },
+        None => Goal::LevelComplete,
+    };
     let began = Instant::now();
-    let found = match search_report(&start, Goal::LevelComplete, &scfg) {
+    let found = match search_report(&start, goal.clone(), &scfg) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("claw-bot: no route: {e}");
@@ -425,7 +481,7 @@ fn run(a: Args) -> Result<bool, String> {
     let header = Header {
         level: level_no,
         tuning: a.tuning,
-        seed: a.seed,
+        seed,
         mid_air_hit_fix: false,
         hints: route_hints(a.hints.as_deref(), prefix_hints),
         start: a.start,
@@ -437,15 +493,15 @@ fn run(a: Args) -> Result<bool, String> {
     let fresh = start_sim(
         start.level().clone(),
         a.tuning,
-        a.seed,
+        seed,
         a.start,
         carry.as_ref(),
     );
-    let played = route::play(&fresh, &script, &Goal::LevelComplete);
+    let played = route::play(&fresh, &script, &goal);
     if !played.won() {
         return Err("the route found does not win when played from the start".into());
     }
-    let margin = route::margin(&fresh, &script, &Goal::LevelComplete, a.margin_samples);
+    let margin = route::margin(&fresh, &script, &goal, a.margin_samples);
     let mut stats = found.stats.clone();
     stats.ticks = script.ticks.len() as u64;
     stats.health_lost = played.health_lost;
@@ -457,9 +513,14 @@ fn run(a: Args) -> Result<bool, String> {
     )
     .map_err(|e| format!("writing {}: {e}", json.display()))?;
     eprintln!(
-        "claw-bot: route of {} ticks ({:.1} s of play), level complete at tick {}, {} nodes, {} segments, {} deaths, {} health lost, margin {}/{} early and {}/{} late, {:.0} s; wrote {} and {}",
+        "claw-bot: route of {} ticks ({:.1} s of play), {} at tick {}, {} nodes, {} segments, {} deaths, {} health lost, margin {}/{} early and {}/{} late, {:.0} s; wrote {} and {}",
         script.ticks.len(),
         script.ticks.len() as f64 * 0.018,
+        if a.goal.is_some() {
+            "goal reached"
+        } else {
+            "level complete"
+        },
         done_at,
         stats.expanded,
         stats.segments,
@@ -519,6 +580,8 @@ mod tests {
         assert_eq!(a.land_gap, Some(3));
         assert_eq!(args("--cache-games 1536").map(|a| a.cache_games), Ok(1536));
         assert!(!args("--no-shadows").unwrap().shadows);
+        assert!(args("--hints-on-foot").unwrap().hints_on_foot);
+        assert!(!a.hints_on_foot);
         assert!(a.shadows);
         assert_eq!(a.fragile_cost, DEFAULT_FRAGILE_COST);
         assert_eq!(args("--fragile-cost 0").map(|a| a.fragile_cost), Ok(0));
@@ -527,6 +590,12 @@ mod tests {
         assert_eq!(s.start, Some((10355, 2051)));
         assert!(args("--start 10").is_err());
         assert!(args("--start 1,2 --from-route p.csv --from-tick 3").is_err());
+        assert_eq!(
+            args("--goal 4851,3340").map(|a| a.goal),
+            Ok(Some((4851, 3340)))
+        );
+        assert_eq!(a.goal, None);
+        assert!(args("--goal 4851").is_err());
         assert_eq!(a.intro, Intro::Any);
         assert_eq!(args("--intro skip").map(|a| a.intro), Ok(Intro::Skip));
         assert_eq!(args("--intro play").map(|a| a.intro), Ok(Intro::Play));
@@ -539,7 +608,9 @@ mod tests {
         assert_eq!(a.tuning, TuningName::Original);
         assert_eq!(a.nodes, 5000);
         assert_eq!(a.budget_min, Some(30.0));
-        assert_eq!(a.seed, 7);
+        assert_eq!(a.seed, Seed::Value(7));
+        assert_eq!(args("--seed level").map(|a| a.seed), Ok(Seed::Level));
+        assert!(args("--seed levels").is_err());
         assert_eq!(a.from_tick, Some(100));
         assert_eq!(a.threads, 4);
         assert!(a.quiet);

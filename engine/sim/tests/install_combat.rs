@@ -134,12 +134,14 @@ fn shots(sim: &Sim) -> Vec<ProjectileSpec> {
     let mut v: Vec<(u32, ProjectileSpec)> = sim
         .objects()
         .all()
-        .filter_map(|(id, o)| match &o.data {
-            ObjectData::Projectile(ProjectileData { spec: Some(s), .. }) => Some((id, *s)),
+        .filter_map(|(_, o)| match &o.data {
+            ObjectData::Projectile(ProjectileData { spec: Some(s), .. }) => Some((o.serial, *s)),
             _ => None,
         })
         .collect();
-    v.sort_by_key(|(id, _)| *id);
+    // In the order they were made: a new object may take a lower slot,
+    // and id, freed by a removed one.
+    v.sort_by_key(|(serial, _)| *serial);
     v.into_iter().map(|(_, s)| s).collect()
 }
 

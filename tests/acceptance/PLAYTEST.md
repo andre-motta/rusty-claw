@@ -124,19 +124,20 @@ hazards, Claw's rope swing and the two thieves.
 3. Rope swing, grab: jump or fall into the lower end of a swinging rope: Claw catches it and hangs just below the end. Standing or climbing under a rope's end, he does not catch it.
 4. Rope swing, swing: hanging on, Claw swings with the rope and turns to face the way it swings at each end of the swing; he passes through walls and floors with it, as in the original.
 5. Rope swing, let go: press jump: Claw leaps from where he hangs with no push from the swing, and Left or Right steers the leap. He cannot catch the same rope again for half a second (another rope at once). Cross the first pit on its two ropes, one to the next.
-6. Rope swing, get hit: let a shot or an enemy hit Claw while he swings: he takes the damage and drops, and the rope may catch him again at once, cutting the hurt short, as in the original.
+6. Rope swing, get hit: let a shot or an enemy hit Claw while he swings: he takes the damage (10 for a thief's knife or arrow) and shows the hurt pose for a single frame, then the rope catches him again at once, so he stays on it, as in the original.
 
 7. Thieves: while Claw is level with a cutthroat on screen with nothing between them, it stands still and throws a knife about every 2 s, slashes with its sword when Claw comes close, and never walks up to him; a robber thief shoots arrows the same way. Each shouts once when it first sees Claw.
 8. A knife or an arrow that reaches Claw costs 10 health and is gone; one that reaches a wall stops there.
 9. Knock a thief out and lift it with Z: Claw carries it and throws it as he does an officer, and a thrown thief hurts the enemies it lands on. A beaten thief drops the loot it carries and stops attacking once it starts to fall.
+10. Watch a route or a recording in the window (`--replay FILE.csv`): the level music and the game's sounds play from the level's start as in play, the boss and powerup tunes come in where play would start them, and sound carries on after the recording ends and the keyboard takes over. Where the recording paused or opened a menu, the sounds stop and the music holds, then both carry on as in play. The Pause key and switching to another window pause the sound as in play; `--no-audio` (or `audio = off`) keeps the replay silent.
 
 ## Milestone 3, LEVEL4 early
 
 Failures only, as above: note the line, what happened instead, and where.
 Start the fourth level with `make run-game ARGS="--install PATH --level 4"`,
 or play on from the third level. This section covers the springy ferns,
-the stepping stones over the goo, and the level's floor spikes and goo;
-Katherine's room comes later.
+the stepping stones over the goo, the level's floor spikes and goo, and
+Katherine, the level's boss.
 
 1. Ferns, standing: land on a fern and stand still: about a third of a second later it bends with its spring sound and throws Claw straight up, far higher than his own jump, to the same height on every throw (the first fern, just right of the start, throws him back onto itself again and again). Some ferns throw lower or higher than others, as in the original.
 2. Ferns, walking off: land on a fern and walk off its edge at once: Claw drops off without being thrown, and the fern still bends on its own.
@@ -145,6 +146,10 @@ Katherine's room comes later.
 5. Stepping stones, the clock rows: each stone sinks into the goo and rises again on its own beat, a row sinking as a wave; a stone stops holding Claw the moment it starts to sink, and holds him again once it is halfway back up. Arrive late and Claw drops through into the goo and dies. The stones make no sound.
 6. Stepping stones, the ones that wait: a stone that waits for Claw sinks a moment after he lands on it (jump on at once to keep going), stays under for about a second and comes back up, ready again.
 7. Floor spikes: each spike rises and sinks on its beat, as on the third level, and hurts only while up; goo pools kill Claw and swallow enemies dropped in, drawn in front of whatever sinks.
+8. Katherine, introduction: jump into the door to Katherine's clearing: the boss music starts, Claw stands frozen while the camera visits her, both speak, the banner drops and leaves, and when both move again she attacks at once with her whip from about 160 px. The boss meter shows full and falls with every blow that lands; she blocks most sword blows and somersaults over Claw now and then, as in the original.
+9. Katherine, jump-in: jump with Right held on the first moment in her clearing (the jump-in): no introduction and no freeze. She wakes while Claw is in the air and fights normally, and Claw comes down on her and loses 5 health. Walking back into the spot where Claw arrived later starts the whole introduction mid-fight; her next hit unfreezes Claw.
+10. Katherine, lift: stand close in front of her, more than about 20 px and less than about 85 px between you, and press Lift: Claw picks her up and throws her, and she bounces, rests, loses a little health and gets up to fight again. Pressed right up against her, Lift does nothing.
+11. Katherine, the gem: defeat her: the gem rises to a point above the clearing's floor, Claw is held until it lands, and a plain jump from the floor under it collects it and ends the level.
 
 ## Milestone 3, LEVEL5 early
 
@@ -213,5 +218,3 @@ the bear sailors and the bear hug, and the crabs, their nests and their bombs.
 10. Crabs, snipping: stand next to a crab: it crouches, then charges or snips; a snip costs 5 health. Hitting a crab while it is out of its shell (charging, snipping or throwing) kills it at once.
 11. Crabs, knocking shells: swing at a crab that is hiding or crouched: it slides about 37 px away per standing swing, with one small boink, and does not die; only the magic claw kills a crab fully withdrawn into its shell.
 12. Crab bombs: a dark bomber crab lobs a bomb at Claw at most every 4 s; it bounces and explodes 1 s after the throw, or at once if it touches him (5 health). The blast also kills crabs caught out of their shells, the thrower included.
-||||||| b750384
-<!-- Wolvington's room: his play-test lines go here. -->

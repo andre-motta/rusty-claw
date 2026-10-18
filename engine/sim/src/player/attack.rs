@@ -1020,7 +1020,9 @@ fn shot_origin(c: &Ctx) -> (i32, i32) {
 
 /// Launches `spec`; mirrors the shot's picture when Claw faces left and
 /// `mirror` asks for it. A shot that is `tagged` (pistol and magic shots,
-/// as in the original) carries Claw's attack count. Returns the shot.
+/// as in the original) carries Claw's attack count. Its first logic call
+/// only sets it up ([`logic::projectile::hold_first_call`]). Returns the
+/// shot.
 fn spawn_shot(c: &mut Ctx, spec: ProjectileSpec, mirror: bool, tagged: bool) -> Option<ObjectId> {
     let id = if tagged {
         let serial = c.p.attack.serial;
@@ -1034,6 +1036,9 @@ fn spawn_shot(c: &mut Ctx, spec: ProjectileSpec, mirror: bool, tagged: bool) -> 
     {
         o.draw_flags |= draw_flags::MIRROR;
     }
+    // Seen for the pistol shot and dynamite; the magic and sword shots
+    // leave through this same launch and are taken to wait the same way.
+    logic::projectile::hold_first_call(c.objects, id);
     Some(id)
 }
 

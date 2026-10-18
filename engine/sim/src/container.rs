@@ -7,6 +7,8 @@
 //! re-sort. Destruction and re-sorting requested during an update pass take
 //! effect at the end of the pass.
 
+use std::collections::VecDeque;
+
 use crate::object::{Object, ObjectId, Rect, engine_state, flags};
 
 /// One effect of the pair-collision pass.
@@ -35,10 +37,38 @@ pub enum CollisionEvent {
     },
 }
 
+/// Bits of an [`ObjectId`] that hold its slot; the bits above hold the
+/// slot's generation.
+const SLOT_BITS: u32 = 20;
+/// Mask of the slot bits of an id.
+const SLOT_MASK: u32 = (1 << SLOT_BITS) - 1;
+/// Last generation a slot reaches; a slot whose object goes at this
+/// generation is not used again, so an id never names two objects.
+const LAST_GENERATION: u32 = u32::MAX >> SLOT_BITS;
+
+/// One place of the container: its object, if any, and how many objects
+/// it held before.
+#[derive(Debug, Clone, Default)]
+struct Slot {
+    generation: u32,
+    object: Option<Object>,
+}
+
 /// All objects of a level.
+///
+/// The slot of a removed object takes a later new one, the slot freed
+/// earliest first. An id carries its slot's generation, so the id of a
+/// removed object never names the object that took its slot: looking it
+/// up finds nothing, as before the slot was taken again.
 #[derive(Debug, Clone, Default)]
 pub struct Container {
-    objects: Vec<Option<Object>>,
+    slots: Vec<Slot>,
+    /// Slots without an object, in the order they were freed.
+    free: VecDeque<u32>,
+    /// Ids in the order the objects were made; ids of removed objects
+    /// stay until the next compaction.
+    order: Vec<ObjectId>,
+    live: usize,
     head: Option<ObjectId>,
     next_serial: u32,
 }
@@ -56,18 +86,42 @@ impl Container {
         obj.prev = None;
         obj.next = None;
         obj.listed = false;
-        self.objects.push(Some(obj));
-        (self.objects.len() - 1) as ObjectId
+        let index = match self.free.pop_front() {
+            Some(i) => i,
+            None => {
+                let i = u32::try_from(self.slots.len())
+                    .ok()
+                    .filter(|&i| i <= SLOT_MASK)
+                    .expect("fewer objects at once than the container holds");
+                self.slots.push(Slot::default());
+                i
+            }
+        };
+        let slot = &mut self.slots[index as usize];
+        slot.object = Some(obj);
+        let id = slot.generation << SLOT_BITS | index;
+        self.order.push(id);
+        self.live += 1;
+        id
+    }
+
+    fn slot(&self, id: ObjectId) -> Option<&Slot> {
+        self.slots
+            .get((id & SLOT_MASK) as usize)
+            .filter(|s| s.generation == id >> SLOT_BITS)
     }
 
     /// The object with this id, if it exists.
     pub fn get(&self, id: ObjectId) -> Option<&Object> {
-        self.objects.get(id as usize).and_then(Option::as_ref)
+        self.slot(id).and_then(|s| s.object.as_ref())
     }
 
     /// The object with this id, if it exists.
     pub fn get_mut(&mut self, id: ObjectId) -> Option<&mut Object> {
-        self.objects.get_mut(id as usize).and_then(Option::as_mut)
+        self.slots
+            .get_mut((id & SLOT_MASK) as usize)
+            .filter(|s| s.generation == id >> SLOT_BITS)
+            .and_then(|s| s.object.as_mut())
     }
 
     fn obj(&self, id: ObjectId) -> &Object {
@@ -99,23 +153,23 @@ impl Container {
         out
     }
 
-    /// Every object that exists, listed or dormant, by id.
+    /// Every object that exists, listed or dormant, in the order they
+    /// were made.
     pub fn all(&self) -> impl Iterator<Item = (ObjectId, &Object)> {
-        self.objects
+        self.order
             .iter()
-            .enumerate()
-            .filter_map(|(i, o)| o.as_ref().map(|o| (i as ObjectId, o)))
+            .filter_map(|&id| self.get(id).map(|o| (id, o)))
     }
 
     /// Number of objects that exist.
     pub fn len(&self) -> usize {
-        self.objects.iter().filter(|o| o.is_some()).count()
+        self.live
     }
 
-    /// Number of slots: every id handed out so far, including those of
-    /// objects since removed (ids are never reused).
+    /// Number of slots: the most objects that existed at once, plus the
+    /// slots retired after their last generation.
     pub fn slots(&self) -> usize {
-        self.objects.len()
+        self.slots.len()
     }
 
     /// True when no object exists.
@@ -200,7 +254,25 @@ impl Container {
     pub fn remove(&mut self, id: ObjectId) -> Option<Object> {
         self.get(id)?;
         self.unlink(id);
-        self.objects.get_mut(id as usize).and_then(Option::take)
+        let index = id & SLOT_MASK;
+        let slot = &mut self.slots[index as usize];
+        let obj = slot.object.take();
+        if slot.generation < LAST_GENERATION {
+            slot.generation += 1;
+            self.free.push_back(index);
+        }
+        self.live -= 1;
+        // Drop the ids of removed objects from the making order once they
+        // outnumber the live ones.
+        if self.order.len() > 2 * self.live + 64 {
+            let slots = &self.slots;
+            self.order.retain(|&id| {
+                slots
+                    .get((id & SLOT_MASK) as usize)
+                    .is_some_and(|s| s.generation == id >> SLOT_BITS && s.object.is_some())
+            });
+        }
+        obj
     }
 
     /// Runs the end of an update pass: destroys the objects in `destroy`
@@ -365,6 +437,58 @@ mod tests {
         c.finish_pass(&[d], &[e], &mut |_, _| {});
         assert_eq!(c.listed(), vec![a, e]);
         assert!(c.get(d).is_none());
+    }
+
+    #[test]
+    fn removed_slots_are_taken_again_by_new_objects() {
+        let mut c = Container::new();
+        let a = c.add(obj(0));
+        let b = c.add(obj(0));
+        let d = c.add(obj(0));
+        c.insert(b);
+        c.remove(b);
+        c.remove(a);
+        // The slot freed first is taken first.
+        let e = c.add(obj(0));
+        let f = c.add(obj(0));
+        assert_eq!(c.slots(), 3);
+        assert_eq!(c.len(), 3);
+        assert_eq!(
+            (e & SLOT_MASK, f & SLOT_MASK),
+            (b & SLOT_MASK, a & SLOT_MASK)
+        );
+        // The ids of the removed objects name nothing.
+        assert!(c.get(a).is_none() && c.get(b).is_none());
+        assert!(c.get_mut(b).is_none());
+        assert!(c.remove(b).is_none());
+        assert_eq!(c.len(), 3);
+        // The making order stays, whatever the slots.
+        let serials: Vec<u32> = c.all().map(|(_, o)| o.serial).collect();
+        assert_eq!(serials, vec![2, 3, 4]);
+        let ids: Vec<ObjectId> = c.all().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec![d, e, f]);
+        assert!(c.listed().is_empty());
+    }
+
+    #[test]
+    fn a_slot_is_retired_after_its_last_generation() {
+        let mut c = Container::new();
+        let mut id = c.add(obj(0));
+        let first = id;
+        for _ in 0..LAST_GENERATION {
+            c.remove(id);
+            id = c.add(obj(0));
+        }
+        assert_eq!(c.slots(), 1);
+        assert_eq!(id >> SLOT_BITS, LAST_GENERATION);
+        assert!(c.get(first).is_none());
+        c.remove(id);
+        let next = c.add(obj(0));
+        assert_eq!((c.slots(), next), (2, 1));
+        assert!(c.get(id).is_none());
+        assert_eq!(c.all().count(), 1);
+        // The making order holds only live ids once compacted.
+        assert!(c.order.len() <= 2 * c.len() + 64);
     }
 
     #[test]

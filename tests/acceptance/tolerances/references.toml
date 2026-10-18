@@ -378,7 +378,9 @@ tolerance = "exact"
 # second. It starts as the routes of `level1/bot-v2` and `level1/bot-v3`
 # do, and first differs at 3217 ms the same way, 20 px lower in the jump
 # off the ladder; the runs go different ways from there, and Claw's
-# health first differs at 39584 ms.
+# health first differs at 39584 ms. Since the catnip's glitter sets
+# itself up on its first call, the game's run (already on its own way)
+# loses a life at 83134 ms, where the original's does not.
 [[compare]]
 reference = "level1/bot-v4"
 clock = "c60"
@@ -392,6 +394,7 @@ known.cam_x = 3867
 known.score = 4300
 known.events = 7560
 known.health = 39584
+known.lives = 83134
 
 # The bot's route of the first level with rules 18 to 20 (the
 # tests/acceptance/routes/level1-original.csv of that time, original

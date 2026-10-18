@@ -64,7 +64,7 @@ use std::time::{Duration, Instant};
 
 use claw_sim::claw_frame::GameEvent;
 use claw_sim::logic::world_boss::fight;
-use claw_sim::logic::{boss_stage, enemy, pickup, platform};
+use claw_sim::logic::{ObjectData, boss_stage, enemy, floor_spike, pickup, platform};
 use claw_sim::player::special::BOSS_END;
 use claw_sim::player::state;
 use claw_sim::{Buttons, InputScript, Sim, TickInput};
@@ -101,6 +101,12 @@ pub struct SearchConfig {
     pub hints: Vec<(i32, i32)>,
     /// Distance at which a hint counts as reached, px.
     pub hint_radius: i32,
+    /// A hint counts as reached only with Claw on his feet, on a ladder
+    /// or on a rope, within twice [`hint_radius`](Self::hint_radius) of it
+    /// (a point in the air above a floor counts from the floor), never in
+    /// the middle of a jump or a fall: the next segment then starts from
+    /// where he can stay.
+    pub hint_on_foot: bool,
     /// Threads that play the children of a node (1 plays them in turn).
     /// The result does not depend on it.
     pub threads: usize,
@@ -191,6 +197,7 @@ impl Default for SearchConfig {
             seed: 1,
             hints: Vec::new(),
             hint_radius: 48,
+            hint_on_foot: false,
             threads: 1,
             cached_sims: 512,
             wall_limit: None,
@@ -426,6 +433,9 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
     targets.push(Target { field, point: None });
     let arena = Arena {
         door: boss.as_ref().map(|b| b.end.door),
+        boss_side: boss
+            .as_ref()
+            .map_or(0, |b| if b.end.boss.0 < b.end.room.0 { -1 } else { 1 }),
     };
     let mut s = Search {
         cfg,
@@ -458,7 +468,7 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
 
 /// The bosses whose defeat ends a level, by logic name.
 pub fn is_boss(logic: &str) -> bool {
-    enemy::raux::NAMES.contains(&logic)
+    enemy::raux::NAMES.contains(&logic) || enemy::katherine::NAMES.contains(&logic)
 }
 
 /// Record fields of the boss room's door: where it leads, x and y.
@@ -519,6 +529,10 @@ pub fn boss_stage(sim: &Sim) -> BossStage {
         BossStage::Door
     }
 }
+
+/// How finely the search tells apart the moments of a floor spike's
+/// cycle, ms.
+pub const SPIKE_STEP_MS: i64 = 100;
 
 /// The distance of the gem stage's start, px: any state of the fight is
 /// guided as at least this far from the goal.
@@ -929,6 +943,7 @@ impl Search<'_> {
             tick: node.ticks,
             timing: node.timing,
             land_gap: self.cfg.land_gap,
+            hint_on_foot: self.cfg.hint_on_foot,
             check_fragile: self.cfg.fragile_cost > 0,
             intro: if self.boss.is_some() {
                 self.cfg.intro
@@ -1064,6 +1079,7 @@ struct From {
     tick: u64,
     timing: Timing,
     land_gap: u64,
+    hint_on_foot: bool,
     check_fragile: bool,
     intro: Intro,
 }
@@ -1073,6 +1089,14 @@ struct From {
 /// with a gap of 0.
 fn within(a: Option<u64>, b: u64, gap: u64) -> bool {
     gap > 0 && a.is_some_and(|a| a.abs_diff(b) <= gap)
+}
+
+/// True when Claw is on his feet, on a ladder or on a rope.
+fn on_foot(sim: &Sim) -> bool {
+    matches!(
+        actions::phase(sim),
+        actions::Phase::Ground | actions::Phase::Climb | actions::Phase::Swing
+    )
 }
 
 /// Plays `action` on a copy of the games of `parent`, which start as
@@ -1129,7 +1153,11 @@ fn play(
             done |= near(&sim, x, y, radius);
         }
         if let Some((x, y, r)) = hint {
-            reached |= near(&sim, x, y, r);
+            reached |= if from.hint_on_foot {
+                near(&sim, x, y, 2 * r) && on_foot(&sim)
+            } else {
+                near(&sim, x, y, r)
+            };
         }
         if died || dying(&sim) || sim.stats().lives < lives {
             outcome = Outcome::Dead;
@@ -1264,7 +1292,11 @@ fn played_on(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> Option<Si
 /// The coarse state of a game the search treats as one: Claw's position to
 /// 8 px, his state, facing, running and attacking, his health to 10
 /// points, and the platforms (position to 16 px and state) and enemies
-/// (alive or not) within about a screen of him.
+/// (alive or not) within about a screen of him. Springboards and stepping
+/// stones count with where they are in their cycles (state and frame, and
+/// a stone that keeps to the clock its time in its cycle to a tenth of a
+/// second), so a wait on a springboard for its throw, or beside a stone
+/// for it to come up, is progress.
 ///
 /// The key is a fixed hash of those values (64-bit FNV-1a), so it is the
 /// same with every toolchain and on every machine, and so are the routes
@@ -1285,13 +1317,50 @@ pub fn state_key(sim: &Sim) -> u64 {
         i64::from(sim.stats().health / 10),
         i64::from(sim.stats().lives),
     ]);
+    // Struck, or in another state that takes no steering, Claw waits for
+    // it to end: a wait through it is progress, so the time tells the
+    // states apart (they end soon, so this never grows far).
+    if actions::phase(sim) == actions::Phase::Busy {
+        k.add(&[
+            6,
+            i64::from(c.frame),
+            (sim.tick() / actions::STEP as u64) as i64,
+        ]);
+    }
     let objects = sim.objects();
+    let clock = sim.tick() as i64 * i64::from(claw_sim::tuning::TICK_MS);
     for id in objects.listed() {
         let Some(o) = objects.get(id) else { continue };
         if o.x.abs_diff(c.x) > 700 || o.y.abs_diff(c.y) > 500 {
             continue;
         }
-        if o.type_flags & platform::PLATFORM != 0 {
+        if let ObjectData::SpringBoard(d) = &o.data {
+            // A wait on a springboard for its throw is progress: where it
+            // is in its cycle.
+            k.add(&[
+                7,
+                i64::from(id),
+                i64::from(o.state),
+                i64::from(o.frame),
+                i64::from(d.armed),
+            ]);
+        } else if let ObjectData::SteppingStone(d) = &o.data {
+            // A wait for a stone to come up is progress: where it is in
+            // its sink and rise and, for a stone that keeps to the clock,
+            // in its cycle, to a tenth of a second.
+            let into = if d.period > 0 {
+                (clock - i64::from(d.phase)).rem_euclid(i64::from(d.period)) / SPIKE_STEP_MS
+            } else {
+                0
+            };
+            k.add(&[
+                8,
+                i64::from(id),
+                i64::from(o.state),
+                i64::from(o.frame),
+                into,
+            ]);
+        } else if o.type_flags & platform::PLATFORM != 0 {
             k.add(&[
                 1,
                 i64::from(id),
@@ -1301,6 +1370,20 @@ pub fn state_key(sim: &Sim) -> u64 {
             ]);
         } else if let Some(d) = enemy::data_of(o) {
             k.add(&[2, i64::from(id), i64::from(d.dead)]);
+        } else if let ObjectData::Rope(r) = &o.data {
+            // Where the rope is in its swing decides where a grab or a
+            // release takes Claw.
+            k.add(&[4, i64::from(id), i64::from(r.frame / 2)]);
+        } else if let ObjectData::FloorSpike(d) = &o.data {
+            // A wait for a spike to sink is progress: where the spike is
+            // in its cycle, to a tenth of a second.
+            let into = (clock - i64::from(d.phase)).rem_euclid(i64::from(d.period.max(1)));
+            k.add(&[
+                5,
+                i64::from(id),
+                i64::from(floor_spike::dangerous(o)),
+                into / SPIKE_STEP_MS,
+            ]);
         }
     }
     // In a boss fight: the flag, the boss's health, place and state, and,
