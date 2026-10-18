@@ -299,32 +299,35 @@ fn guard_of(sim: &Sim, id: Option<ObjectId>) -> Option<Guard> {
     })
 }
 
-/// The product state a reference run's state name stands for.
+/// The product state a reference run's state name stands for. The run
+/// names a state with a short prefix and an upper-case word; only the word
+/// after the first `_` is read.
 fn state_named(name: &str) -> Option<EnemyState> {
-    Some(match name {
-        "LS_IDLE" => EnemyState::Idle,
-        "LS_IDLE2" => EnemyState::Idle2,
-        "LS_HOME" => EnemyState::Home,
-        "LS_STRIKE" => EnemyState::Strike,
-        "LS_PACING" => EnemyState::Pace,
-        "LS_HITLOW" => EnemyState::HitLow,
-        "LS_HITHIGH" => EnemyState::HitHigh,
-        "LS_DEAD" => EnemyState::Dead,
-        "LS_PAUSE" => EnemyState::Pause,
-        "LS_FALLING" => EnemyState::Falling,
-        "LS_ADVANCE" => EnemyState::Advance,
-        "LS_FASTADVANCE" => EnemyState::FastAdvance,
-        "LS_JUMP" => EnemyState::Jump,
-        "LS_JUMPBACK" => EnemyState::JumpBack,
-        "LS_JUMPATCLAW" => EnemyState::JumpAtClaw,
-        "LS_MOVEBACK" => EnemyState::MoveBack,
-        "LS_MOVEAHEAD" => EnemyState::MoveAhead,
-        "LS_BLOCK" => EnemyState::Block,
-        "LS_LIFTED" => EnemyState::Lifted,
-        "LS_FLAILING" => EnemyState::Flailing,
-        "LS_THROWN" => EnemyState::Thrown,
-        "LS_BOUNCE" => EnemyState::Bounce,
-        "LS_DROPPED" => EnemyState::Dropped,
+    let word = name.split_once('_').map_or(name, |(_, w)| w);
+    Some(match word {
+        "IDLE" => EnemyState::Idle,
+        "IDLE2" => EnemyState::Idle2,
+        "HOME" => EnemyState::Home,
+        "STRIKE" => EnemyState::Strike,
+        "PACING" => EnemyState::Pace,
+        "HITLOW" => EnemyState::HitLow,
+        "HITHIGH" => EnemyState::HitHigh,
+        "DEAD" => EnemyState::Dead,
+        "PAUSE" => EnemyState::Pause,
+        "FALLING" => EnemyState::Falling,
+        "ADVANCE" => EnemyState::Advance,
+        "FASTADVANCE" => EnemyState::FastAdvance,
+        "JUMP" => EnemyState::Jump,
+        "JUMPBACK" => EnemyState::JumpBack,
+        "JUMPATCLAW" => EnemyState::JumpAtClaw,
+        "MOVEBACK" => EnemyState::MoveBack,
+        "MOVEAHEAD" => EnemyState::MoveAhead,
+        "BLOCK" => EnemyState::Block,
+        "LIFTED" => EnemyState::Lifted,
+        "FLAILING" => EnemyState::Flailing,
+        "THROWN" => EnemyState::Thrown,
+        "BOUNCE" => EnemyState::Bounce,
+        "DROPPED" => EnemyState::Dropped,
         _ => return None,
     })
 }
