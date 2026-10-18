@@ -4,8 +4,9 @@
 //! thief ([`robberthief`]), and the seagull ([`seagull`]), the first
 //! flyer. Katherine ([`katherine`]), the town guards ([`townguard`]),
 //! Wolvington ([`wolvington`]), the red-tail pirates
-//! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]) and the crabs
-//! ([`crab`]) are declared but not built yet.
+//! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
+//! ([`crab`]) and Gabriel with his bomb ([`gabriel`]) are declared but not
+//! built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -58,6 +59,7 @@ use crate::tuning::TICK_MS;
 pub mod bear_sailor;
 pub mod crab;
 pub mod cutthroat;
+pub mod gabriel;
 pub mod goo;
 pub mod human;
 pub mod katherine;
@@ -181,7 +183,8 @@ pub mod field {
 /// runs a state of an existing name reuses its number. New names take
 /// numbers in blocks: 2000-2021 the first level's enemies, 2022-2029 every
 /// boss, 2030-2049 the shared human states, 2050-2059 the punk rat,
-/// 2060-2069 cannons, 2070-2089 Raux and 2100-2119 the third level's
+/// 2060-2069 cannons (with the turn of the eighth level's deck cannon),
+/// 2070-2089 Raux and 2100-2119 the third level's
 /// thieves (reserved, no state yet: see [`cutthroat::STATE_BLOCK`]),
 /// 2120-2139 the fourth level's (Katherine's somersault, see
 /// [`katherine::STATE_BLOCK`]) and 2140-2159 the fifth level's (the town
@@ -190,8 +193,9 @@ pub mod field {
 /// (Wolvington's five attacks, see [`wolvington::STATE_BLOCK`]) and
 /// 2180-2199 the seventh level's (the bear's hug and the pirate's boss
 /// mode from 2180, the crabs' states from 2190, see
-/// [`bear_sailor::STATE_BLOCK`]); later families take blocks of 20 from
-/// 2200.
+/// [`bear_sailor::STATE_BLOCK`]) and 2200-2219 the eighth level's
+/// (Gabriel's attacks, hits and death acts, see [`gabriel::STATE_BLOCK`]);
+/// later families take blocks of 20 from 2220.
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -262,6 +266,9 @@ pub enum EnemyState {
     Recoil = 2050,
     /// Firing upwards (a cannon).
     VertFiring = 2060,
+    /// Turning the barrel up or back down (the eighth level's deck cannon,
+    /// see [`crate::logic::cannon_switch::cannon`]).
+    Rotate = 2061,
     /// Leaping over Claw to the far end of its ground (Raux).
     JumpOver = 2070,
     /// Somersaulting over Claw to land on his far side (Katherine).
@@ -314,11 +321,29 @@ pub enum EnemyState {
     Nudge = 2197,
     /// Throwing a bomb (the bomber crabs).
     Launch = 2198,
+    /// Lobbing three bombs to his left (Gabriel).
+    MultiBomb = 2200,
+    /// Calling a pirate in (Gabriel).
+    ThugAttack = 2201,
+    /// Pulling the lever that fires his cannon (Gabriel).
+    CannonAttack = 2202,
+    /// Struck by a cannonball (Gabriel).
+    CannonHit = 2203,
+    /// Shrugging off a blow, unhurt (Gabriel).
+    Blocked = 2204,
+    /// The first of his four death acts (Gabriel).
+    DeadAct1 = 2205,
+    /// The second death act: the fall from the deck (Gabriel).
+    DeadAct2 = 2206,
+    /// The third death act (Gabriel).
+    DeadAct3 = 2207,
+    /// The last death act, which ends the fight (Gabriel).
+    DeadAct4 = 2208,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 57] = [
+    pub const ALL: [EnemyState; 67] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -351,6 +376,7 @@ impl EnemyState {
         EnemyState::JumpOffSpringboard,
         EnemyState::Recoil,
         EnemyState::VertFiring,
+        EnemyState::Rotate,
         EnemyState::JumpOver,
         EnemyState::Flip,
         EnemyState::FlipLand,
@@ -376,6 +402,15 @@ impl EnemyState {
         EnemyState::Tumble,
         EnemyState::Nudge,
         EnemyState::Launch,
+        EnemyState::MultiBomb,
+        EnemyState::ThugAttack,
+        EnemyState::CannonAttack,
+        EnemyState::CannonHit,
+        EnemyState::Blocked,
+        EnemyState::DeadAct1,
+        EnemyState::DeadAct2,
+        EnemyState::DeadAct3,
+        EnemyState::DeadAct4,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -422,6 +457,7 @@ impl EnemyState {
             EnemyState::JumpOffSpringboard => "JumpOffSpringboard",
             EnemyState::Recoil => "Recoil",
             EnemyState::VertFiring => "VertFiring",
+            EnemyState::Rotate => "Rotate",
             EnemyState::JumpOver => "JumpOver",
             EnemyState::Flip => "Flip",
             EnemyState::FlipLand => "FlipLand",
@@ -447,6 +483,15 @@ impl EnemyState {
             EnemyState::Tumble => "Tumble",
             EnemyState::Nudge => "Nudge",
             EnemyState::Launch => "Launch",
+            EnemyState::MultiBomb => "MultiBomb",
+            EnemyState::ThugAttack => "ThugAttack",
+            EnemyState::CannonAttack => "CannonAttack",
+            EnemyState::CannonHit => "CannonHit",
+            EnemyState::Blocked => "Blocked",
+            EnemyState::DeadAct1 => "DeadAct1",
+            EnemyState::DeadAct2 => "DeadAct2",
+            EnemyState::DeadAct3 => "DeadAct3",
+            EnemyState::DeadAct4 => "DeadAct4",
         }
     }
 }
@@ -866,6 +911,7 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::RedTailPirate => Some(&redtail_pirate::CLASS),
         GameLogic::BearSailor => Some(&bear_sailor::CLASS),
         GameLogic::HermitCrab => Some(&crab::CLASS),
+        GameLogic::Gabriel => Some(&gabriel::CLASS),
         _ => None,
     }
 }
@@ -900,7 +946,7 @@ impl ObjectData {
     /// The enemy data this holds: plain enemy data, or the enemy data
     /// inside a family's own data (the punk rat's, Raux's, the thieves',
     /// Katherine's, the town guards', the seagull's, Wolvington's, the
-    /// red-tail pirates', the bear sailors' and the crabs').
+    /// red-tail pirates', the bear sailors', the crabs' and Gabriel's).
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -915,6 +961,7 @@ impl ObjectData {
             ObjectData::RedTailPirate(d) => Some(&d.enemy),
             ObjectData::BearSailor(d) => Some(&d.enemy),
             ObjectData::HermitCrab(d) => Some(&d.enemy),
+            ObjectData::Gabriel(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -934,6 +981,7 @@ impl ObjectData {
             ObjectData::RedTailPirate(d) => Some(&mut d.enemy),
             ObjectData::BearSailor(d) => Some(&mut d.enemy),
             ObjectData::HermitCrab(d) => Some(&mut d.enemy),
+            ObjectData::Gabriel(d) => Some(&mut d.enemy),
             _ => None,
         }
     }

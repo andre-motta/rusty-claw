@@ -19,7 +19,10 @@
 //!   falls by 30 with every hop ([`jump_back_chance`]), so after three
 //!   hops it stands its ground;
 //! - on the seventh level it never parries: every hit goes through, and a
-//!   low hit makes it flinch for 19 ticks.
+//!   low hit makes it flinch for 19 ticks. On the eighth and thirteenth
+//!   levels it parries some of Claw's sword blows and blocks some of his
+//!   shots ([`block_chances`]; the eighth level's only once
+//!   [`LEVEL8_BUILT`] is set).
 //!
 //! It has [`HEALTH`] health (two sword blows or two pistol shots), its
 //! strikes and its touch cost Claw [`DAMAGE`], it can be lifted and
@@ -88,13 +91,28 @@
 //!   human hit rule's;
 //! - lifted: one of 0..5, then the shared lift's one of 0..100.
 //!
+//! # The eighth level's boss fight
+//!
+//! While Gabriel is there and not defeated ([`in_gabriel_fight`]), a pirate
+//! takes the boss fight's mode when it is built: wider range boxes
+//! ([`GABRIEL_RANGES`]), always awake; the pirates Gabriel calls in run
+//! along his deck at [`GABRIEL_ATTACK_SPEED`] and leap down at Claw
+//! ([`enter_gabriel_attack`]); every pirate dies at once when Gabriel is
+//! defeated, and a pirate's death lowers his count of live pirates. The
+//! hooks for these ([`take_gabriel_mode`], [`gabriel_mode_step`],
+//! [`enter_gabriel_attack`], [`gabriel_pirate_died`]) sit where the
+//! pirate's rules call them and do nothing yet ([`LEVEL8_BUILT`] is
+//! false); without Gabriel built they are never reached anyway.
+//!
 //! # Defaults taken
 //!
 //! - The eighth and thirteenth levels' differences (the parry of Claw's
 //!   sword and the block of his shots, [`block_chances`], and the boss
 //!   fight's mode) are kept where the code branches on the level number,
 //!   and are confirmed with those levels; the seventh level runs none of
-//!   them, and the boss fight's mode is not built.
+//!   them. The eighth level's parry and block wait for [`LEVEL8_BUILT`],
+//!   and the pistol block keeps the rule above, which no reference run has
+//!   shown yet.
 //! - The "on screen" test of its alert under a widened view follows the
 //!   rule the soldier's sight test uses.
 //!
@@ -235,6 +253,22 @@ pub const FAR_STRIKE_BELOW: i32 = 60;
 /// strike (always, since the draw is at most 120).
 pub const MOVE_AHEAD_BAND: i32 = 30;
 
+/// Whether the eighth level's rules run yet: the parry and the shot block
+/// there ([`blocks_on`]) and the boss fight's mode (see the module
+/// documentation).
+pub const LEVEL8_BUILT: bool = false;
+
+/// The first two range boxes (half width, half height) of a pirate in the
+/// boss fight's mode; the other three are [`RANGES`]'.
+pub const GABRIEL_RANGES: [(i32, i32); 2] = [(10000, 10000), (5000, 5000)];
+
+/// The run along Gabriel's deck of a pirate he called in, px/s (to the
+/// left): twice its running speed.
+pub const GABRIEL_ATTACK_SPEED: i32 = 2 * FAST_ADVANCE_SPEED;
+
+/// How far above the dock the leap of a pirate Gabriel called in aims, px.
+pub const GABRIEL_LEAP_RISE: i32 = 400;
+
 /// The hop-back chance in 100 after `hops` hops: 90, 60, 30, then 0.
 pub fn jump_back_chance(hops: u32) -> i32 {
     let fall = JUMP_BACK_CHANCE_STEP.saturating_mul(hops.min(10) as i32);
@@ -250,6 +284,13 @@ pub fn block_chances(level: u32) -> Option<(i32, i32)> {
         13 => Some((50, 75)),
         _ => None,
     }
+}
+
+/// The parry and block chances that run now on level `level`: those of
+/// [`block_chances`], the eighth level's only once [`LEVEL8_BUILT`] is
+/// set.
+pub fn blocks_on(level: u32) -> Option<(i32, i32)> {
+    block_chances(level).filter(|_| level != 8 || LEVEL8_BUILT)
 }
 
 /// The strike box for a Claw who crouches (`crouching`) or not, facing
@@ -348,6 +389,9 @@ fn handler(s: EnemyState) -> Option<Handler> {
 /// backing off need). A landing after a throw during the call sets the
 /// taunt.
 pub fn tick(w: &mut World, id: ObjectId) {
+    if gabriel_mode_step(w, id) {
+        return;
+    }
     let before = data(w, id).map(|d| d.bounces);
     human::tick(w, id);
     let after = data(w, id).map(|d| d.bounces);
@@ -408,7 +452,48 @@ pub fn construct(w: &mut World, id: ObjectId) {
             ..RedTailPirateData::default()
         });
     }
+    if in_gabriel_fight(w) {
+        take_gabriel_mode(w, id);
+    }
     human::go_idle(w, id);
+}
+
+// ----------------------------------------------------------------------
+// The eighth level's boss fight
+
+/// True while Gabriel is there and not defeated (see
+/// [`World::gabriel_link`]).
+pub fn in_gabriel_fight(w: &World) -> bool {
+    w.gabriel_fights()
+}
+
+/// A pirate built while Gabriel fights takes the boss fight's mode: the
+/// range boxes [`GABRIEL_RANGES`], always awake. Not built yet: nothing.
+pub fn take_gabriel_mode(w: &mut World, id: ObjectId) {
+    let _ = (w, id);
+}
+
+/// The boss fight's step at the start of each call, before the shared
+/// steps: with Gabriel defeated the pirate dies at once (true: the call
+/// ends there); while it runs Gabriel's attack or its leap the shared
+/// steps are skipped. Not built yet: nothing, and false.
+pub fn gabriel_mode_step(w: &mut World, id: ObjectId) -> bool {
+    let _ = (w, id);
+    false
+}
+
+/// Gabriel sends a pirate he called in on his attack
+/// ([`EnemyState::GabrielAttack`]): it runs left along his deck at
+/// [`GABRIEL_ATTACK_SPEED`], then leaps down at Claw aiming
+/// [`GABRIEL_LEAP_RISE`] px above the dock. Not built yet: nothing.
+pub fn enter_gabriel_attack(w: &mut World, id: ObjectId) {
+    let _ = (w, id);
+}
+
+/// A pirate died while Gabriel fights: his count of live pirates falls by
+/// one. Not built yet: nothing.
+pub fn gabriel_pirate_died(w: &mut World, id: ObjectId) {
+    let _ = (w, id);
 }
 
 // ----------------------------------------------------------------------
@@ -691,7 +776,7 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
     }
     let roll = rand(w, 101);
     let _hit_line = rand(w, 101);
-    if let Some((parry, shot_block)) = block_chances(w.level_number())
+    if let Some((parry, shot_block)) = blocks_on(w.level_number())
         && blocked(w, id, attacker, roll, parry, shot_block)
     {
         return;
@@ -764,6 +849,16 @@ mod tests {
         for level in [1, 6, 9, 14] {
             assert_eq!(block_chances(level), None, "{level}");
         }
+    }
+
+    #[test]
+    fn the_eighth_levels_rules_wait_until_built() {
+        assert_eq!(blocks_on(7), None);
+        assert_eq!(blocks_on(13), Some((50, 75)));
+        assert_eq!(blocks_on(8), LEVEL8_BUILT.then_some((25, 25)));
+        // Gabriel's pirates run at twice their running speed.
+        assert_eq!(GABRIEL_ATTACK_SPEED, 480);
+        assert!(GABRIEL_RANGES.iter().all(|r| r.0 > RANGES[0].0));
     }
 
     #[test]

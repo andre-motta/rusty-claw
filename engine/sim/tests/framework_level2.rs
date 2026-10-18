@@ -120,7 +120,7 @@ fn declared_families_stay_inert_placeholders_until_built() {
 }
 
 /// Every enemy state with its fixed number and name.
-const STATES: [(EnemyState, i32, &str); 57] = [
+const STATES: [(EnemyState, i32, &str); 67] = [
     (EnemyState::Idle, 2000, "Idle"),
     (EnemyState::Home, 2001, "Home"),
     (EnemyState::Strike, 2002, "Strike"),
@@ -153,6 +153,7 @@ const STATES: [(EnemyState, i32, &str); 57] = [
     (EnemyState::JumpOffSpringboard, 2036, "JumpOffSpringboard"),
     (EnemyState::Recoil, 2050, "Recoil"),
     (EnemyState::VertFiring, 2060, "VertFiring"),
+    (EnemyState::Rotate, 2061, "Rotate"),
     (EnemyState::JumpOver, 2070, "JumpOver"),
     (EnemyState::Flip, 2120, "Flip"),
     (EnemyState::FlipLand, 2121, "FlipLand"),
@@ -178,6 +179,15 @@ const STATES: [(EnemyState, i32, &str); 57] = [
     (EnemyState::Tumble, 2196, "Tumble"),
     (EnemyState::Nudge, 2197, "Nudge"),
     (EnemyState::Launch, 2198, "Launch"),
+    (EnemyState::MultiBomb, 2200, "MultiBomb"),
+    (EnemyState::ThugAttack, 2201, "ThugAttack"),
+    (EnemyState::CannonAttack, 2202, "CannonAttack"),
+    (EnemyState::CannonHit, 2203, "CannonHit"),
+    (EnemyState::Blocked, 2204, "Blocked"),
+    (EnemyState::DeadAct1, 2205, "DeadAct1"),
+    (EnemyState::DeadAct2, 2206, "DeadAct2"),
+    (EnemyState::DeadAct3, 2207, "DeadAct3"),
+    (EnemyState::DeadAct4, 2208, "DeadAct4"),
 ];
 
 #[test]
@@ -192,8 +202,8 @@ fn every_state_number_is_pinned_and_gaps_are_no_state() {
     // The blocks: bosses 2022-2029, human states 2030-2049, the punk rat
     // 2050-2059, cannons 2060-2069, Raux 2070-2089, the fourth level
     // 2120-2139, the fifth level 2140-2159, the sixth level 2160-2179,
-    // the seventh level 2180-2199.
-    let blocks: [(i32, i32); 10] = [
+    // the seventh level 2180-2199, the eighth level 2200-2219.
+    let blocks: [(i32, i32); 11] = [
         (2000, 2021),
         (2022, 2029),
         (2030, 2049),
@@ -204,6 +214,7 @@ fn every_state_number_is_pinned_and_gaps_are_no_state() {
         (2140, 2159),
         (2160, 2179),
         (2180, 2199),
+        (2200, 2219),
     ];
     for (_, id, name) in STATES {
         assert!(
@@ -212,7 +223,7 @@ fn every_state_number_is_pinned_and_gaps_are_no_state() {
         );
     }
     let known: Vec<i32> = STATES.iter().map(|s| s.1).collect();
-    for id in 1990..2220 {
+    for id in 1990..2240 {
         if !known.contains(&id) {
             assert_eq!(EnemyState::from_id(id), None, "{id} is a gap");
         }
