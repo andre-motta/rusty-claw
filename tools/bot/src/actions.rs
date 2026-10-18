@@ -198,6 +198,8 @@ pub enum Phase {
     Air,
     /// On a ladder.
     Climb,
+    /// Hanging from a swinging rope.
+    Swing,
     /// Busy: struck, attacking, lifting or in another state that takes no
     /// steering.
     Busy,
@@ -214,6 +216,7 @@ pub fn phase(sim: &Sim) -> Phase {
     match o.state {
         state::JUMP | state::FALL => Phase::Air,
         state::CLIMB => Phase::Climb,
+        state::SWING => Phase::Swing,
         state::STAND
         | state::MOVE_LEFT
         | state::MOVE_RIGHT
@@ -280,7 +283,7 @@ fn fight_choices(sim: &Sim) -> Vec<Action> {
             });
         }
         Phase::Air => out.push(Action::Attack),
-        Phase::Climb | Phase::Busy => {}
+        Phase::Climb | Phase::Swing | Phase::Busy => {}
     }
     out
 }
@@ -323,6 +326,20 @@ pub fn choices(sim: &Sim) -> Vec<Action> {
         Phase::Climb => {
             out.extend([Action::Up, Action::Down]);
             for dir in [1i8, -1] {
+                for hold in [holds[1], holds[3]] {
+                    out.push(Action::Jump {
+                        dir,
+                        hold: hold as u8,
+                        up: false,
+                    });
+                }
+            }
+        }
+        Phase::Swing => {
+            // Let go at the right moment: a short wait times the release,
+            // and the jump that lets go steers either way or neither.
+            out.push(Action::Short);
+            for dir in [1i8, -1, 0] {
                 for hold in [holds[1], holds[3]] {
                     out.push(Action::Jump {
                         dir,

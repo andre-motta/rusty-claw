@@ -1,7 +1,7 @@
 //! How the game's state grows along a level, on your own install (skipped
-//! without `CLAW_INSTALL`): the numbers that decide whether the object
-//! container reuses the slots of removed objects and whether the
-//! activation grids keep a cell for every place of the level.
+//! without `CLAW_INSTALL`): the numbers that show the object container
+//! stays small by reusing the slots of removed objects, and that decide
+//! whether the activation grids keep a cell for every place of the level.
 //!
 //! Every committed original-speeds route (`routes/level<N>-original.csv`)
 //! is played. Until the third level has one, the search bot plays it from
@@ -10,9 +10,11 @@
 //! way), and the level is also left idle as long as the first level's
 //! route. For each run the test prints:
 //!
-//! - the object slots at the end against the level's records (every
-//!   object made while the level runs takes a new slot, and the slot
-//!   stays when the object goes);
+//! - the object slots at the end against the level's records (an object
+//!   made while the level runs takes the slot of one that went before,
+//!   when there is one, so the slots follow the most objects at once
+//!   rather than every object made: one catnip alone sheds a sparkle a
+//!   tick for as long as it lasts);
 //! - the bytes one copy of the whole game allocates (the copy the search
 //!   bot makes of every game it keeps) and the time it takes, at the
 //!   start and at the end;
@@ -22,8 +24,7 @@
 //!
 //! It holds the rules those decisions were taken on: slots at the end at
 //! most twice the records, a copy at the end at most twice the bytes of
-//! one at the start (the slot container stays as it is while both hold).
-//! The third level's node rate against the first level's (the grids stay
+//! one at the start. The third level's node rate against the first level's (the grids stay
 //! dense while it is at least half) is printed, not asserted: the rates are
 //! wall-clock numbers that move with the build profile and the machine's
 //! load, so read them from a release build run alone.
