@@ -33,10 +33,20 @@
 //! the next edge is seen, and each edge takes effect one call late: the
 //! call that sees it only picks the next state. The test is
 //! `(clock - phase) mod period <= up half`, unsigned, so before its phase a
-//! spike counts from 2^32 (see [`super::platform::toggle_on`]). With the default
-//! halves a spike is dangerous for 52 or 53 ticks of every 3 s, from the
-//! 32nd call after the clock enters its up half to the first call after it
-//! leaves it.
+//! spike counts from 2^32 (see [`super::platform::toggle_on`]). The rise
+//! steps through the spike's own image set, one image every 100 ms, so its
+//! length follows the set: with the third level's six images a spike is
+//! dangerous from the 32nd call after the clock enters its up half, with
+//! the fourth level's five images from the 26th, and in both until the
+//! first call after the clock leaves it (with the default halves and six
+//! images, 52 or 53 ticks of every 3 s).
+//!
+//! Each record may set its own halves (speed x for the up half, speed y
+//! for the down half) and, for `FloorSpike`, its phase; the strike box
+//! comes from whatever set the record names, so the fourth level's
+//! `LEVEL_FLOORSPIKES`, whose retracted image is 16 x 7 px, strikes in
+//! (-7, -3, 8, 12) where the third level's `LEVEL_FLOORSPIKES2` strikes in
+//! (-8, -5, 7, 12).
 //!
 //! A sound plays only when the spike was on screen in the previous tick:
 //! its current frame's box, placed as it is drawn, overlapping the game
