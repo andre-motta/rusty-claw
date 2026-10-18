@@ -177,7 +177,9 @@ pub struct Sim {
 /// the activation index.
 struct Runner<'a> {
     cfg: &'a SimConfig,
-    level: &'a SimLevel,
+    /// The level, shared with clones of the game until a logic changes a
+    /// cell of its main plane (see [`World::set_main_cell`]).
+    level: &'a mut Arc<SimLevel>,
     claw: &'a mut Claw,
     camera: &'a mut Camera,
     camera_point: &'a mut (i32, i32),
@@ -282,8 +284,11 @@ impl Runner<'_> {
     /// Hands the camera point a logic asked for through
     /// [`World::set_camera_override`] to the camera's override, the same
     /// one Claw's code sets: called after every logic call, so the later of
-    /// two writes wins as if both wrote it directly.
+    /// two writes wins as if both wrote it directly. The main-plane cells
+    /// the call wrote are written into the level here too, so the next
+    /// call's tile queries see them.
     fn take_camera_request(&mut self) {
+        self.apply_tile_edits();
         if let Some(point) = self.out.boss.take_camera() {
             *self.camera_override = point;
         }
@@ -299,6 +304,19 @@ impl Runner<'_> {
                 logic::sound::claw_say(&mut w, &v.key, v.force);
             }
             self.take_camera_request();
+        }
+    }
+
+    /// Writes the main-plane cells logics asked for since the last call
+    /// ([`World::set_main_cell`]) into the level, in request order. A
+    /// level shared with clones of the game is copied first, so the
+    /// clones keep their own cells.
+    fn apply_tile_edits(&mut self) {
+        let edits = self.out.take_tile_edits();
+        for (col, row, tile) in edits {
+            if self.level.map.cell(col, row) != tile {
+                Arc::make_mut(self.level).map.set_cell(col, row, tile);
+            }
         }
     }
 
@@ -627,7 +645,7 @@ impl Sim {
         (
             Runner {
                 cfg: &self.cfg,
-                level: &self.level,
+                level: &mut self.level,
                 claw: &mut self.claw,
                 camera: &mut self.camera,
                 camera_point: &mut self.camera_point,

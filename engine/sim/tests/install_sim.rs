@@ -56,9 +56,17 @@ fn install_spawn_follows_the_start_point_in_every_level() {
         assert_eq!(o.state, state::STAND, "LEVEL{n}");
         assert_eq!(sim.claw().spawn_point, want, "LEVEL{n}");
         assert_eq!(sim.camera().current, want, "LEVEL{n}");
-        idle(&mut sim, 200);
-        let o = sim.player().unwrap();
-        assert_eq!((o.x, o.y), want, "LEVEL{n} stays put");
+        // He stays put until something hurts him (on the sixth level a
+        // seagull patrols above the start and dives at him).
+        let health = sim.stats().health;
+        for _ in 0..200 {
+            sim.step(TickInput::default());
+            if sim.stats().health < health {
+                break;
+            }
+            let o = sim.player().unwrap();
+            assert_eq!((o.x, o.y), want, "LEVEL{n} stays put");
+        }
     }
 }
 
