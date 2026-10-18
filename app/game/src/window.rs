@@ -1608,8 +1608,11 @@ impl App {
         } else {
             self.frame_inner(event_loop);
         }
-        self.follow_holds();
+        // The cues first: those of ticks before a recorded pause start
+        // before the pause cuts them; the mixer holds any started while
+        // paused until the resume.
         self.play_outputs();
+        self.follow_holds();
         self.update_title();
     }
 
