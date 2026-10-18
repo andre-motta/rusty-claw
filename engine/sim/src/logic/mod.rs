@@ -53,6 +53,7 @@ use crate::object::{LogicKind, Object, ObjectId, flags};
 use crate::registry::{REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
 
 pub mod boss_stage;
+pub mod break_plank;
 pub mod cannon;
 pub mod checkpoint;
 pub mod crates;
@@ -60,6 +61,7 @@ pub mod decor;
 pub mod effect;
 pub mod enemy;
 pub mod floor_spike;
+pub mod jump_switch;
 pub mod keg;
 pub mod path_elevator;
 pub mod pickup;
@@ -69,6 +71,7 @@ pub mod rope;
 pub mod sound;
 pub mod sound_object;
 pub mod springboard;
+pub mod statue;
 pub mod stepping_stone;
 pub mod world;
 pub mod world_boss;
@@ -128,10 +131,22 @@ pub enum GameLogic {
     SteppingStone,
     /// Katherine, the boss of the fourth level.
     Katherine,
+    /// The first town guard, with a sword and a truncheon.
+    TownGuard1,
+    /// The second, heavier town guard, who parries.
+    TownGuard2,
+    /// The seagull, the flying enemy that dives at Claw.
+    Seagull,
+    /// Rows of planks that give way under Claw.
+    BreakPlank,
+    /// Invisible markers that launch an enemy to a chosen point.
+    JumpSwitch,
+    /// Breakable statues that release a fan of treasure.
+    Statue,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 24] = [
+pub const ALL: [GameLogic; 30] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -156,6 +171,12 @@ pub const ALL: [GameLogic; 24] = [
     GameLogic::SpringBoard,
     GameLogic::SteppingStone,
     GameLogic::Katherine,
+    GameLogic::TownGuard1,
+    GameLogic::TownGuard2,
+    GameLogic::Seagull,
+    GameLogic::BreakPlank,
+    GameLogic::JumpSwitch,
+    GameLogic::Statue,
 ];
 
 /// A logic's own data, by family.
@@ -208,6 +229,16 @@ pub enum ObjectData {
     SteppingStone(stepping_stone::SteppingStoneData),
     /// Katherine.
     Katherine(enemy::katherine::KatherineData),
+    /// A town guard, either one.
+    TownGuard(enemy::townguard::TownGuardData),
+    /// A seagull.
+    Seagull(enemy::seagull::SeagullData),
+    /// A plank row's spawner or one of its pieces.
+    BreakPlank(break_plank::BreakPlankData),
+    /// A jump switch.
+    JumpSwitch(jump_switch::JumpSwitchData),
+    /// A statue.
+    Statue(statue::StatueData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -238,6 +269,12 @@ macro_rules! dispatch {
             GameLogic::SpringBoard => springboard::$f($($arg),*),
             GameLogic::SteppingStone => stepping_stone::$f($($arg),*),
             GameLogic::Katherine => enemy::katherine::$f($($arg),*),
+            GameLogic::TownGuard1 => enemy::townguard::guard1::$f($($arg),*),
+            GameLogic::TownGuard2 => enemy::townguard::guard2::$f($($arg),*),
+            GameLogic::Seagull => enemy::seagull::$f($($arg),*),
+            GameLogic::BreakPlank => break_plank::$f($($arg),*),
+            GameLogic::JumpSwitch => jump_switch::$f($($arg),*),
+            GameLogic::Statue => statue::$f($($arg),*),
         }
     };
 }
@@ -270,6 +307,12 @@ macro_rules! constant {
             GameLogic::SpringBoard => springboard::$c,
             GameLogic::SteppingStone => stepping_stone::$c,
             GameLogic::Katherine => enemy::katherine::$c,
+            GameLogic::TownGuard1 => enemy::townguard::guard1::$c,
+            GameLogic::TownGuard2 => enemy::townguard::guard2::$c,
+            GameLogic::Seagull => enemy::seagull::$c,
+            GameLogic::BreakPlank => break_plank::$c,
+            GameLogic::JumpSwitch => jump_switch::$c,
+            GameLogic::Statue => statue::$c,
         }
     };
 }
@@ -304,6 +347,12 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::SpringBoard => springboard::BUILT,
         GameLogic::SteppingStone => stepping_stone::BUILT,
         GameLogic::Katherine => enemy::katherine::BUILT,
+        GameLogic::TownGuard1 => enemy::townguard::guard1::BUILT,
+        GameLogic::TownGuard2 => enemy::townguard::guard2::BUILT,
+        GameLogic::Seagull => enemy::seagull::BUILT,
+        GameLogic::BreakPlank => break_plank::BUILT,
+        GameLogic::JumpSwitch => jump_switch::BUILT,
+        GameLogic::Statue => statue::BUILT,
         _ => true,
     }
 }
@@ -378,8 +427,8 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 }
 
 /// `carrier` lifted `id`. Kegs, crates and the human enemies Claw can
-/// carry (officers, soldiers, cutthroats, robber thieves and Katherine,
-/// see [`enemy::lift`]) react; other families ignore it.
+/// carry (officers, soldiers, cutthroats, robber thieves, Katherine and
+/// the town guards, see [`enemy::lift`]) react; other families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
@@ -389,7 +438,9 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
             | GameLogic::Soldier
             | GameLogic::CutThroat
             | GameLogic::RobberThief
-            | GameLogic::Katherine,
+            | GameLogic::Katherine
+            | GameLogic::TownGuard1
+            | GameLogic::TownGuard2,
         ) => enemy::lift::lifted(w, id, carrier),
         _ => {}
     }
@@ -405,7 +456,9 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
             | GameLogic::Soldier
             | GameLogic::CutThroat
             | GameLogic::RobberThief
-            | GameLogic::Katherine,
+            | GameLogic::Katherine
+            | GameLogic::TownGuard1
+            | GameLogic::TownGuard2,
         ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
@@ -422,6 +475,8 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
                 | GameLogic::CutThroat
                 | GameLogic::RobberThief
                 | GameLogic::Katherine
+                | GameLogic::TownGuard1
+                | GameLogic::TownGuard2
         )
     ) {
         enemy::lift::wind_up(w, id);
@@ -438,7 +493,9 @@ pub fn dropped(w: &mut World, id: ObjectId) {
             | GameLogic::Soldier
             | GameLogic::CutThroat
             | GameLogic::RobberThief
-            | GameLogic::Katherine,
+            | GameLogic::Katherine
+            | GameLogic::TownGuard1
+            | GameLogic::TownGuard2,
         ) => enemy::lift::dropped(w, id),
         _ => {}
     }

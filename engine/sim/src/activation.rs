@@ -18,9 +18,10 @@
 //!   presentation draws dormant objects in the extra width frozen.
 //! - [`ActivationMode::Widened`]: every window grows by the extra half view
 //!   width, so everything on a wide screen is live, except breakable
-//!   objects, which keep the original window around the centre a 640x480
-//!   view would have; that keeps every crate and keg waking exactly where it
-//!   would in the original. This changes gameplay and is recorded in
+//!   objects and jump switches, which keep the original window around the
+//!   centre a 640x480 view would have; that keeps every crate and keg
+//!   waking exactly where it would in the original, and every guard
+//!   launched by a switch only where the original launches it. This changes gameplay and is recorded in
 //!   traces.
 //!
 //! The small objects' window (class 2) is a measured value: the original
@@ -73,6 +74,11 @@ pub const BREAKABLE_LOGICS: [&str; 9] = [
     "FrontStatue",
     "BehindStatue",
 ];
+
+/// Other logics that keep the original window in widened mode: the jump
+/// switches, which a pacing guard sets off with no help from Claw, so
+/// waking one earlier would launch guards before Claw arrives.
+pub const ORIGINAL_WINDOW_LOGICS: [&str; 1] = ["JumpSwitch"];
 
 /// Off-screen margin of the small objects' window (class 2) in the
 /// original and frozen-edge modes, px: half extents 415 x 311 around the
@@ -133,7 +139,11 @@ impl ActivationConfig {
             margins: ORIGINAL_MARGINS,
             far_margin: (320, 220),
             cells: [(500, 250), (1000, 1000), (250, 125)],
-            exceptions: BREAKABLE_LOGICS.iter().map(|s| s.to_string()).collect(),
+            exceptions: BREAKABLE_LOGICS
+                .iter()
+                .chain(&ORIGINAL_WINDOW_LOGICS)
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 
