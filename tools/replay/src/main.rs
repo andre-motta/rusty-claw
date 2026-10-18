@@ -6,7 +6,7 @@
 //! claw-replay --install PATH [--level N | --custom FILE.WWD] --script ROUTE.csv
 //!             [--trace OUT.csv] [--tuning default|original] [--seed N]
 //!             [--res WxH] [--aspect pillarbox|frozen|widened]
-//!             [--start X,Y] [--logics on|off] [--mid-air-hit-fix on|off]
+//!             [--start X,Y] [--checkpoint X,Y] [--logics on|off] [--mid-air-hit-fix on|off]
 //!             [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]]
 //!             [--expect-complete]
 //!             [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
@@ -60,6 +60,13 @@
 //! its state at the script's time zero, as for a segment of a level in a
 //! reference store (`make compare` reads the start point from the store).
 //!
+//! `--checkpoint X,Y` sets the point Claw respawns at to (X, Y) at the
+//! script's time zero (after `--start` has settled him), a place no
+//! checkpoint of the level need give him: a diagnostic set-up, for
+//! comparing a reference run that moved his respawn point the same way.
+//! A script's `# checkpoint X,Y` comment line stands in for the flag when
+//! it is not given. The run is still plain play and can be compared.
+//!
 //! `--expect-complete` checks that the level ends (a level-complete event)
 //! within the script.
 //!
@@ -88,13 +95,17 @@ use claw_sim::{InputScript, Sim, SimConfig, SimLevel, StartState};
 
 const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FILE.WWD] \
 --script ROUTE.csv [--trace OUT.csv] [--tuning default|original] [--seed N] [--res WxH] \
-[--aspect pillarbox|frozen|widened] [--start X,Y] [--logics on|off] \
+[--aspect pillarbox|frozen|widened] [--start X,Y] [--checkpoint X,Y] [--logics on|off] \
 [--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]] \
 [--expect-complete] \
 [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]";
 
 /// The key of the mid-air hit jump fix in a script's comment line.
 const BEHAVIOUR_KEY: &str = "mid_air_hit_fix";
+
+/// The key of the respawn point set at time zero in a script's comment
+/// line.
+const CHECKPOINT_KEY: &str = "checkpoint";
 
 /// Rows of each trace shown before a divergence.
 const CONTEXT_ROWS: usize = 5;
@@ -110,6 +121,7 @@ struct Args {
     aspect: Option<AspectPolicy>,
     seed: Option<u32>,
     start: Option<(i32, i32)>,
+    checkpoint: Option<(i32, i32)>,
     logics: Option<bool>,
     mid_air_hit_fix: Option<bool>,
     aids: PlayAids,
@@ -172,11 +184,14 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
             }
             "--start" => {
                 let v = value()?;
-                let p = v
-                    .split_once(',')
-                    .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
-                    .ok_or_else(|| format!("bad start {v:?}, expected X,Y"))?;
+                let p = parse_point(&v).ok_or_else(|| format!("bad start {v:?}, expected X,Y"))?;
                 a.start = Some(p);
+            }
+            "--checkpoint" => {
+                let v = value()?;
+                let p =
+                    parse_point(&v).ok_or_else(|| format!("bad checkpoint {v:?}, expected X,Y"))?;
+                a.checkpoint = Some(p);
             }
             "--logics" => {
                 let v = value()?;
@@ -217,6 +232,35 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         return Err(format!("--report needs --compare\n{USAGE}"));
     }
     Ok(a)
+}
+
+/// `X,Y` as a point.
+fn parse_point(v: &str) -> Option<(i32, i32)> {
+    let (x, y) = v.split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
+/// The respawn point a script's `# checkpoint X,Y` comment line sets at
+/// time zero (the last such line counts); `None` without one. An `=`
+/// between the key and the point is accepted.
+fn script_checkpoint(text: &str) -> Result<Option<(i32, i32)>, String> {
+    for l in text.lines().rev() {
+        let Some(rest) = l.trim().strip_prefix('#') else {
+            continue;
+        };
+        let rest = rest.trim();
+        let Some(v) = rest.strip_prefix(CHECKPOINT_KEY) else {
+            continue;
+        };
+        if !v.starts_with([' ', '=', '\t']) {
+            continue;
+        }
+        let v = v.trim().trim_start_matches('=').trim();
+        return parse_point(v)
+            .map(Some)
+            .ok_or_else(|| format!("bad checkpoint line {l:?}, expected # checkpoint X,Y"));
+    }
+    Ok(None)
 }
 
 fn parse_on_off(v: &str) -> Option<bool> {
@@ -290,6 +334,10 @@ fn run(args: Args) -> Result<Outcome, String> {
             }
         ));
     }
+    let checkpoint = match args.checkpoint {
+        Some(p) => Some(p),
+        None => script_checkpoint(&text).map_err(|e| format!("{}: {e}", script_path.display()))?,
+    };
     let fix = args
         .mid_air_hit_fix
         .or(script_behaviour(&text))
@@ -359,6 +407,9 @@ fn run(args: Args) -> Result<Outcome, String> {
     if let Some((x, y)) = args.start {
         settle_at(&mut sim, x, y);
     }
+    if let Some(p) = checkpoint {
+        sim.set_checkpoint(Some(p));
+    }
     let mut rows = Vec::with_capacity(script.ticks.len());
     let mut completed = false;
     let mut directives = script.directives().iter().peekable();
@@ -394,7 +445,7 @@ fn run(args: Args) -> Result<Outcome, String> {
         );
     }
     eprintln!(
-        "claw-replay: {} ticks, {} directives ({} commands), tuning {}, seed {}, mid-air hit fix {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}{}",
+        "claw-replay: {} ticks, {} directives ({} commands), tuning {}, seed {}, mid-air hit fix {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}{}{}",
         rows.len(),
         script.directives().len(),
         commands,
@@ -412,6 +463,9 @@ fn run(args: Args) -> Result<Outcome, String> {
         inert,
         d.dropped_records,
         carried.unwrap_or_default(),
+        checkpoint
+            .map(|(x, y)| format!(", respawn point set to {x},{y} at time zero"))
+            .unwrap_or_default(),
         args.trace
             .as_ref()
             .map(|p| format!(", trace {}", p.display()))
@@ -522,7 +576,8 @@ mod tests {
 
     #[test]
     fn parses_the_documented_arguments() {
-        let a = args("--install /i --level 1 --script s.csv --trace t.csv --res 3440x1440 --aspect widened --seed 7 --start 6272,3150 --logics off").unwrap();
+        let a = args("--install /i --level 1 --script s.csv --trace t.csv --res 3440x1440 --aspect widened --seed 7 --start 6272,3150 --checkpoint 6300,3150 --logics off").unwrap();
+        assert_eq!(a.checkpoint, Some((6300, 3150)));
         assert_eq!(a.logics, Some(false));
         assert!(args("--logics maybe").is_err());
         assert_eq!(a.start, Some((6272, 3150)));
@@ -559,6 +614,53 @@ mod tests {
         assert_eq!(load_tolerances("exact").unwrap(), Tolerances::exact());
         assert_eq!(load_tolerances("feel").unwrap(), Tolerances::feel());
         assert!(load_tolerances("/nonexistent/tolerances.toml").is_err());
+    }
+
+    #[test]
+    fn the_respawn_point_comes_from_the_flag_or_the_script() {
+        let a = args("--install /i --script s.csv --checkpoint 40600,7245").unwrap();
+        assert_eq!(a.checkpoint, Some((40600, 7245)));
+        assert!(args("--checkpoint 40600").is_err());
+        assert!(args("--checkpoint a,b").is_err());
+        assert_eq!(
+            args("--install /i --script s.csv").unwrap().checkpoint,
+            None
+        );
+        assert_eq!(
+            script_checkpoint("# level 10\n# checkpoint 40600,7245\ntick,a,b\n0,0,0\n"),
+            Ok(Some((40600, 7245)))
+        );
+        assert_eq!(
+            script_checkpoint("# checkpoint = 1, 2\n# checkpoint 3,4\n"),
+            Ok(Some((3, 4))),
+            "the last line counts"
+        );
+        assert_eq!(script_checkpoint("# checkpoints are flags\n"), Ok(None));
+        assert_eq!(script_checkpoint("# level 10\ntick,a,b\n"), Ok(None));
+        assert!(script_checkpoint("# checkpoint here\n").is_err());
+    }
+
+    #[test]
+    fn a_respawn_point_set_at_time_zero_is_where_claw_respawns() {
+        use claw_sim::{SimConfig, TileMap};
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (300, 880));
+        let mut sim = Sim::new(level, SimConfig::default());
+        sim.set_checkpoint(Some((1500, 880)));
+        sim.end_life();
+        for _ in 0..400 {
+            sim.step(Default::default());
+            if sim.player().is_some_and(|c| c.x == 1500) {
+                break;
+            }
+        }
+        assert_eq!(
+            sim.player().map(|c| c.x),
+            Some(1500),
+            "respawned at the set point"
+        );
     }
 
     #[test]
