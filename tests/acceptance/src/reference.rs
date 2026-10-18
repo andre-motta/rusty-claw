@@ -998,7 +998,7 @@ mod tests {
                 "powerup_key = used",
             ),
             (
-                "# level 1\n0,0,0\n@1 command powerup plasma:30\n",
+                "# level 1\n0,0,0\n@1 command powerup fire:30\n",
                 "powerup_key = used",
             ),
         ] {
