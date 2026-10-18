@@ -1,7 +1,8 @@
 //! Enemies: the officer, the soldier, the rat, the punk rat ([`punkrat`])
 //! and Raux ([`raux`]), on shared enemy behaviour and the shared human
 //! states ([`human`]), with the cutthroat ([`cutthroat`]) and the robber
-//! thief ([`robberthief`]). Katherine ([`katherine`]) is declared but not
+//! thief ([`robberthief`]). Katherine ([`katherine`]), the town guards
+//! ([`townguard`]) and the seagull ([`seagull`]) are declared but not
 //! built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
@@ -63,8 +64,10 @@ pub mod punkrat;
 pub mod rat;
 pub mod raux;
 pub mod robberthief;
+pub mod seagull;
 pub mod soldier;
 pub mod states;
+pub mod townguard;
 
 pub use states::{enter_hit, enter_pause, enter_strike, go_home, human_home_tick, start_pacing};
 
@@ -175,7 +178,10 @@ pub mod field {
 /// 2060-2069 cannons, 2070-2089 Raux and 2100-2119 the third level's
 /// thieves (reserved, no state yet: see [`cutthroat::STATE_BLOCK`]),
 /// 2120-2139 the fourth level's (Katherine's somersault, see
-/// [`katherine::STATE_BLOCK`]); later families take blocks of 20 from 2140.
+/// [`katherine::STATE_BLOCK`]) and 2140-2159 the fifth level's (the town
+/// guards' second idle and parry and the seagull's climb back and flinch,
+/// see [`townguard::STATE_BLOCK`]); later families take blocks of 20 from
+/// 2160.
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -252,11 +258,19 @@ pub enum EnemyState {
     Flip = 2120,
     /// Landing from the somersault (Katherine).
     FlipLand = 2121,
+    /// The second idle pose, after a random wait (the town guards).
+    Idle2 = 2140,
+    /// Parrying a blow, unhurt (the second town guard).
+    Block = 2141,
+    /// Flying back up to its patrol height after a dive (the seagull).
+    Withdraw = 2142,
+    /// Flinching from a hit, then back to what it was doing (the seagull).
+    GenericHit = 2143,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 35] = [
+    pub const ALL: [EnemyState; 39] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -292,6 +306,10 @@ impl EnemyState {
         EnemyState::JumpOver,
         EnemyState::Flip,
         EnemyState::FlipLand,
+        EnemyState::Idle2,
+        EnemyState::Block,
+        EnemyState::Withdraw,
+        EnemyState::GenericHit,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -341,6 +359,10 @@ impl EnemyState {
             EnemyState::JumpOver => "JumpOver",
             EnemyState::Flip => "Flip",
             EnemyState::FlipLand => "FlipLand",
+            EnemyState::Idle2 => "Idle2",
+            EnemyState::Block => "Block",
+            EnemyState::Withdraw => "Withdraw",
+            EnemyState::GenericHit => "GenericHit",
         }
     }
 }
@@ -745,6 +767,9 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::CutThroat => Some(&cutthroat::CLASS),
         GameLogic::RobberThief => Some(&robberthief::CLASS),
         GameLogic::Katherine => Some(&katherine::CLASS),
+        GameLogic::TownGuard1 => Some(&townguard::guard1::CLASS),
+        GameLogic::TownGuard2 => Some(&townguard::guard2::CLASS),
+        GameLogic::Seagull => Some(&seagull::CLASS),
         _ => None,
     }
 }
@@ -777,8 +802,8 @@ pub(crate) fn obj_mut<'a>(w: &'a mut World, id: ObjectId) -> &'a mut Object {
 
 impl ObjectData {
     /// The enemy data this holds: plain enemy data, or the enemy data
-    /// inside a family's own data (the punk rat's, Raux's, the thieves'
-    /// and Katherine's).
+    /// inside a family's own data (the punk rat's, Raux's, the thieves',
+    /// Katherine's, the town guards' and the seagull's).
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -787,6 +812,8 @@ impl ObjectData {
             ObjectData::CutThroat(d) => Some(&d.enemy),
             ObjectData::RobberThief(d) => Some(&d.enemy),
             ObjectData::Katherine(d) => Some(&d.enemy),
+            ObjectData::TownGuard(d) => Some(&d.enemy),
+            ObjectData::Seagull(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -800,6 +827,8 @@ impl ObjectData {
             ObjectData::CutThroat(d) => Some(&mut d.enemy),
             ObjectData::RobberThief(d) => Some(&mut d.enemy),
             ObjectData::Katherine(d) => Some(&mut d.enemy),
+            ObjectData::TownGuard(d) => Some(&mut d.enemy),
+            ObjectData::Seagull(d) => Some(&mut d.enemy),
             _ => None,
         }
     }

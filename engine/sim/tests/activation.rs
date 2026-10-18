@@ -1,5 +1,5 @@
 //! Activation windows: the original sizes, the widened mode with its
-//! breakable exceptions near both plane edges, the leave pass, and level
+//! breakable and jump switch exceptions near both plane edges, the leave pass, and level
 //! objects in the simulation.
 
 mod common;
@@ -138,10 +138,13 @@ fn widened_windows_with_breakable_exceptions_near_both_edges() {
         object("FrontStatue", 2, 3000, 1600 + 312),
         object("TreasurePowerup", 2, 3000 + 917, 1600),
         object("TreasurePowerup", 2, 3000, 1600 + 289),
+        // A jump switch keeps the original window too.
+        object("JumpSwitch", 2, 3000 - 415, 1600),
+        object("JumpSwitch", 2, 3000 - 416, 1600),
     ];
     assert_eq!(
         live_after_enter(cfg, &objs, (3000, 1600)),
-        vec![true, false, true, false, true, false]
+        vec![true, false, true, false, true, false, true, false]
     );
 }
 

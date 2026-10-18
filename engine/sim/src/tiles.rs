@@ -265,6 +265,16 @@ impl TileMap {
         }
     }
 
+    /// A cell's tile number: -1 for an empty cell and for a cell outside
+    /// the plane.
+    pub fn cell(&self, col: i32, row: i32) -> i32 {
+        if col >= 0 && row >= 0 && col < self.w_tiles && row < self.h_tiles {
+            self.cells[(row * self.w_tiles + col) as usize]
+        } else {
+            -1
+        }
+    }
+
     /// Fills a rectangle of cells (inclusive tile coordinates).
     pub fn fill_cells(&mut self, cols: (i32, i32), rows: (i32, i32), tile: i32) {
         for r in rows.0..=rows.1 {
@@ -342,6 +352,22 @@ impl TileMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cell_reads_back_what_was_written() {
+        let mut map = TileMap::from_ascii(64, &["..", "#="]);
+        let solid = map.cell(0, 1);
+        assert!(solid >= 0);
+        assert_eq!(map.cell(0, 0), -1, "empty");
+        assert_eq!(map.cell(2, 0), -1, "outside");
+        assert_eq!(map.cell(-1, 1), -1, "outside");
+        map.set_cell(1, 0, solid);
+        assert_eq!(map.cell(1, 0), solid);
+        assert_eq!(map.attr(64 + 10, 10), SOLID);
+        map.set_cell(1, 0, -1);
+        assert_eq!(map.cell(1, 0), -1);
+        assert_eq!(map.attr(64 + 10, 10), CLEAR);
+    }
 
     #[test]
     fn lookups_clamp_to_the_edges() {
