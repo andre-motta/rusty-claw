@@ -53,7 +53,11 @@
 //!   hurts Claw (and is gone), breaks crates it passes and flies on, and
 //!   cannot hurt powder kegs or enemies; nothing can hit it. It is removed
 //!   on the tick after it touches a wall, when it leaves its activation
-//!   window or when it leaves the level.
+//!   window or when it leaves the level. A ball fired straight up (the
+//!   eighth level's deck cannon with its barrel up) meets no wall: it
+//!   rises through solid ground, which stops nothing that starts its move
+//!   inside it, and through the one-way floors, which stop only a fall;
+//!   the only enemy it can hurt is Gabriel, whom any enemy shot reaches.
 //! - The rat's bomb flies straight when thrown sideways and falls under
 //!   1500 px/s² when dropped. It goes off where it lands or touches a
 //!   wall. A bomb thrown sideways hurts Claw in flight and goes off on him
@@ -441,8 +445,17 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 /// A projectile that hit Claw and goes off instead of disappearing (its
 /// special flags ask for this): a rat bomb explodes where it is, even when
 /// it is already exploding (its explosion starts again, and its box grows
-/// again when it arms). Other projectiles do nothing.
+/// again when it arms); one of Gabriel's bombs in flight explodes where it
+/// is ([`crate::logic::enemy::gabriel::bomb::impact`]). Other projectiles
+/// do nothing.
 pub fn impact(w: &mut World, id: ObjectId) {
+    if matches!(
+        w.objects.get(id).map(|o| &o.data),
+        Some(ObjectData::GabrielBomb(_))
+    ) {
+        crate::logic::enemy::gabriel::bomb::impact(w, id);
+        return;
+    }
     let Some((mut d, class)) = load(w, id) else {
         return;
     };
@@ -619,8 +632,11 @@ pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
     };
     o.speed_x = vx as i32;
     o.speed_y = vy as i32;
-    if class != Class::Dynamite && motion::overlaps_solid(w, &o) {
-        // Launched inside a wall: it hits on its first tick.
+    let straight_up_or_down = class == Class::CannonBall && spec.vx == 0;
+    if class != Class::Dynamite && !straight_up_or_down && motion::overlaps_solid(w, &o) {
+        // Launched inside a wall: it hits on its first tick. A cannonball
+        // fired straight up or down has no wall to meet: it flies on
+        // through solid ground (see the module documentation).
         d.last_result = res::HIT;
     }
     let (x, y, z) = (o.x, o.y, o.z);
