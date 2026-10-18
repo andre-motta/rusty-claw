@@ -181,7 +181,14 @@ and the sound effects are unaffected.
 
 In the config file, `audio = off` does the same. The sound options set the
 sound and music volumes and turn music, speech and ambient sounds on or
-off. Replays, benchmarks and headless runs are always silent.
+off.
+
+A replay watched in the window (`--replay FILE.csv`) plays the sound and
+music as the game does, from the level's start through the handover to
+the keyboard, with your sound settings; its sounds pause where the
+recording paused or opened a menu. `--no-audio` or `audio = off` keeps it
+silent. Replays that write a trace (`--trace`), benchmarks and headless
+runs are always silent.
 
 ## Settings and saved games
 
@@ -336,8 +343,11 @@ made with a play-test aid on names it in its header, and the replay plays
 with it (see [Play-test aids](#play-test-aids)); `claw-replay` accepts the
 same `--invincible`, `--infinite-lives` and `--powerup` flags.
 
+A replay in the window plays the game's sound and music (see
+[Sound and music](#sound-and-music)); add `--no-audio` to watch it silently.
+
 ```sh
-# play and record, then watch the recording
+# play and record, then watch (and hear) the recording
 rusty-claw --install PATH --level 1 --record game.csv
 rusty-claw --install PATH --level 1 --replay game.csv
 # no window: write one trace row per tick, with a simulated 144 Hz display
