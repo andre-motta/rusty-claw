@@ -22,6 +22,10 @@
 //! Each crate of a stack breaks on any accepted hit and releases its one
 //! item with a random hop; the crates above it then fall 40 px under
 //! gravity onto the one below, with one small bounce when they land fast.
+//!
+//! Statues ([`super::statue`]) are single crates with a different drop
+//! and no removal; they share the hit rule, the break sound and the break
+//! animation from here.
 
 use claw_frame::SoundChannel;
 
@@ -208,8 +212,8 @@ pub fn dropped(w: &mut World, id: ObjectId) {
     let _ = (w, id);
 }
 
-/// Removes a pistol shot that hit a crate.
-fn absorb_shot(w: &mut World, attacker: ObjectId) {
+/// Removes a pistol shot that hit a crate (or a statue).
+pub(crate) fn absorb_shot(w: &mut World, attacker: ObjectId) {
     if w.objects
         .get(attacker)
         .is_some_and(|a| a.type_flags == types::PISTOL_SHOT)
@@ -218,8 +222,9 @@ fn absorb_shot(w: &mut World, attacker: ObjectId) {
     }
 }
 
-/// Plays one of the two break sounds, chosen at random.
-fn break_sound(w: &mut World, id: ObjectId) {
+/// Plays one of the two break sounds, chosen at random (a crate's or a
+/// statue's). Draws: one of 0..100.
+pub(crate) fn break_sound(w: &mut World, id: ObjectId) {
     let key = if w.rng.below(100) < 50 {
         "GAME_CRATEBREAK"
     } else {
