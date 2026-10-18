@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 
 use claw_frame::{Buttons, TickInput};
 
+use crate::player::powerup_aid::AidPowerup;
 use crate::tuning::{PlayAids, TICK_MS};
 
 /// Length of a tick in microseconds.
@@ -81,24 +82,31 @@ impl InputLatch {
 ///   `# level N`, `# tuning default|original` and `# seed N` (the state of
 ///   the shared random stream at time zero), and the play-test aids it was
 ///   played with, `# invincible = on|off` and `# infinite_lives = on|off`
-///   (see [`PlayAids`]; off when absent). An `=` between the key and the
-///   value is accepted. The words `level`, `tuning`, `seed`, `invincible`
-///   and `infinite_lives` are reserved: a `#` line whose first word is one
-///   of them is read as that header key and must hold a valid value, so a
-///   comment never starts with them. Every other line starting with `#` is
-///   a comment.
+///   (see [`PlayAids`]; off when absent), `# powerup = NAME:SECONDS` (the
+///   powerup Claw was given at the level start and after every respawn,
+///   see [`crate::player::powerup_aid`]; `none` or absent for none) and
+///   `# powerup_key = used|unused` (whether the play-test key that gives
+///   powerups was used; unused when absent). An `=` between the key and
+///   the value is accepted. The words `level`, `tuning`, `seed`,
+///   `invincible`, `infinite_lives`, `powerup` and `powerup_key` are
+///   reserved: a `#` line whose first word is one of them is read as that
+///   header key and must hold a valid value, so a comment never starts
+///   with them. Every other line starting with `#` is a comment.
 /// - Directives, lines starting with `@`, which take effect at the tick
 ///   boundary before row `<tick>`:
 ///   - `@<tick> pause <wall_ms> [held=<mask>]`;
 ///   - `@<tick> menu <help|ingame|pause> <wall_ms> [keys=<list>]`, the list
 ///     being key names separated by commas;
-///   - `@<tick> command end_life`.
+///   - `@<tick> command end_life`;
+///   - `@<tick> command powerup <NAME:SECONDS|none>`, a powerup given with
+///     the play-test key (see [`ScriptCommand::Powerup`]).
 ///
 /// A directive kind this reader does not know is an error, never skipped, so
 /// a route can never be played differently from how it was written.
 ///
-/// A script played with a play-test aid on is not a route: it says nothing
-/// about how the level plays. [`InputScript::parse`] refuses it, so routes,
+/// A script played with a play-test aid on (a powerup aid or a powerup
+/// command included) is not a route: it says nothing about how the level
+/// plays. [`InputScript::parse`] refuses it, so routes,
 /// the bot and the comparisons with reference traces only ever take plain
 /// play; the game's replays read it with [`InputScript::parse_with_aids`]
 /// and play it with the aids it names.
@@ -126,6 +134,13 @@ pub struct ScriptHeader {
     /// `# invincible = on` and `# infinite_lives = on`: the play-test aids
     /// the script was played with; both off when it names none.
     pub aids: PlayAids,
+    /// `# powerup = NAME:SECONDS`: the powerup play-test aid the script was
+    /// played with (see [`crate::SimConfig::start_powerup`]); `None` when
+    /// it names none.
+    pub powerup: Option<AidPowerup>,
+    /// `# powerup_key = used`: the play-test key that gives powerups was
+    /// used (its powerups are the script's `powerup` commands).
+    pub powerup_key: bool,
 }
 
 /// The movement tuning named by a script's `# tuning` key.
@@ -238,6 +253,10 @@ impl MenuScreen {
 pub enum ScriptCommand {
     /// `end_life`: Claw gives up the current life.
     EndLife,
+    /// `powerup <NAME:SECONDS|none>`: the play-test key gave Claw a
+    /// powerup, or ended his with `none` (see [`crate::Sim::give_powerup`]).
+    /// A play-test aid: [`InputScript::parse`] refuses a script with one.
+    Powerup(AidPowerup),
 }
 
 impl ScriptCommand {
@@ -245,14 +264,33 @@ impl ScriptCommand {
     pub fn name(self) -> &'static str {
         match self {
             ScriptCommand::EndLife => "end_life",
+            ScriptCommand::Powerup(_) => "powerup",
         }
     }
 
-    fn from_name(name: &str) -> Option<ScriptCommand> {
-        match name {
-            "end_life" => Some(ScriptCommand::EndLife),
-            _ => None,
+    /// The command named `name` with the words after it, `args`.
+    fn parse(name: &str, args: &[&str]) -> Result<ScriptCommand, String> {
+        let c = match name {
+            "end_life" => ScriptCommand::EndLife,
+            "powerup" => {
+                let arg = args
+                    .first()
+                    .ok_or("powerup command needs a powerup, NAME:SECONDS or none")?;
+                return match args.get(1) {
+                    Some(extra) => Err(format!("unexpected {extra:?} in command directive")),
+                    None => AidPowerup::parse(arg).map(ScriptCommand::Powerup),
+                };
+            }
+            _ => {
+                return Err(format!(
+                    "unknown command {name:?}, expected end_life or powerup"
+                ));
+            }
+        };
+        if let Some(extra) = args.first() {
+            return Err(format!("unexpected {extra:?} in command directive"));
         }
+        Ok(c)
     }
 }
 
@@ -276,6 +314,9 @@ impl Directive {
                 if !keys.is_empty() {
                     s.push_str(&format!(" keys={}", keys.join(",")));
                 }
+            }
+            DirectiveKind::Command(ScriptCommand::Powerup(p)) => {
+                s.push_str(&format!("command powerup {p}"));
             }
             DirectiveKind::Command(c) => s.push_str(&format!("command {}", c.name())),
         }
@@ -345,12 +386,7 @@ impl Directive {
                 let name = rest
                     .first()
                     .ok_or("command directive needs a command name")?;
-                let c = ScriptCommand::from_name(name)
-                    .ok_or_else(|| format!("unknown command {name:?}, expected end_life"))?;
-                if let Some(extra) = rest.get(1) {
-                    return Err(format!("unexpected {extra:?} in command directive"));
-                }
-                DirectiveKind::Command(c)
+                DirectiveKind::Command(ScriptCommand::parse(name, &rest[1..])?)
             }
             other => {
                 return Err(format!(
@@ -415,20 +451,40 @@ pub fn aids_refusal(aids: PlayAids) -> String {
     )
 }
 
+/// The message of [`InputScript::parse`] refusing a script with the
+/// play-test aids of `header` on: the aid lines of
+/// [`ScriptHeader::aid_lines`].
+pub fn play_aid_refusal(header: &ScriptHeader) -> String {
+    format!(
+        "the script was played with a play-test aid on ({}); routes, the bot and comparisons \
+         with reference traces take plain play only (replay it in the game, or with \
+         claw-replay without --compare)",
+        header.aid_lines().join(", ")
+    )
+}
+
+/// The header key of the powerup play-test aid.
+pub const POWERUP_KEY: &str = "powerup";
+/// The header key naming the use of the play-test key that gives powerups.
+pub const POWERUP_KEY_USED: &str = "powerup_key";
+
 /// Header key names.
-const HEADER_KEYS: [&str; 5] = [
+const HEADER_KEYS: [&str; 7] = [
     "level",
     "tuning",
     "seed",
     PlayAids::NAMES[0],
     PlayAids::NAMES[1],
+    POWERUP_KEY,
+    POWERUP_KEY_USED,
 ];
 
 impl ScriptHeader {
     /// Reads a `#` comment line into the header if it is a header key:
     /// `Ok(true)` when it was one, `Ok(false)` for a plain comment.
-    /// `aids_seen` marks the aid keys ([`PlayAids::NAMES`]) read so far.
-    fn read(&mut self, comment: &str, aids_seen: &mut [bool; 2]) -> Result<bool, String> {
+    /// `aids_seen` marks the aid keys ([`PlayAids::NAMES`], then
+    /// [`POWERUP_KEY`] and [`POWERUP_KEY_USED`]) read so far.
+    fn read(&mut self, comment: &str, aids_seen: &mut [bool; 4]) -> Result<bool, String> {
         let mut words = comment.split_whitespace();
         let Some(key) = words.next() else {
             return Ok(false);
@@ -469,6 +525,29 @@ impl ScriptHeader {
             };
             if let Some(switch) = self.aids.switch_mut(key) {
                 *switch = on;
+            }
+            return Ok(true);
+        }
+        if key == POWERUP_KEY || key == POWERUP_KEY_USED {
+            let i = if key == POWERUP_KEY { 2 } else { 3 };
+            if aids_seen[i] {
+                return Err(dup());
+            }
+            aids_seen[i] = true;
+            if key == POWERUP_KEY {
+                let p = AidPowerup::parse(value)
+                    .map_err(|e| format!("bad {key} {value:?} in header: {e}"))?;
+                self.powerup = (!p.is_none()).then_some(p);
+            } else {
+                self.powerup_key = match value {
+                    "used" => true,
+                    "unused" => false,
+                    _ => {
+                        return Err(format!(
+                            "bad {key} {value:?} in header, expected used or unused"
+                        ));
+                    }
+                };
             }
             return Ok(true);
         }
@@ -517,8 +596,33 @@ impl ScriptHeader {
         if let Some(seed) = self.seed {
             out.push_str(&format!("# seed {seed}\n"));
         }
-        for name in self.aids.names() {
-            out.push_str(&format!("# {name} = on\n"));
+        for line in self.aid_lines() {
+            out.push_str(&format!("# {line}\n"));
+        }
+        out
+    }
+
+    /// True when the header names a play-test aid on: an aid of
+    /// [`ScriptHeader::aids`], a powerup aid or the powerup key.
+    pub fn any_aid(&self) -> bool {
+        self.aids.any() || self.powerup.is_some() || self.powerup_key
+    }
+
+    /// The play-test aids the header names on, as their header lines
+    /// without the `#` (`invincible = on`, `powerup = fire:30`,
+    /// `powerup_key = used`), in that order.
+    pub fn aid_lines(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .aids
+            .names()
+            .iter()
+            .map(|n| format!("{n} = on"))
+            .collect();
+        if let Some(p) = self.powerup {
+            out.push(format!("{POWERUP_KEY} = {p}"));
+        }
+        if self.powerup_key {
+            out.push(format!("{POWERUP_KEY_USED} = used"));
         }
         out
     }
@@ -531,15 +635,23 @@ impl InputScript {
     /// number of rows.
     ///
     /// A script that names an aid on (`# invincible = on`,
-    /// `# infinite_lives = on`) is refused: routes, the bot and the
-    /// comparisons with reference traces take plain play only. The game's
-    /// replays read such a recording with [`InputScript::parse_with_aids`].
+    /// `# infinite_lives = on`, `# powerup = ...`, `# powerup_key = used`)
+    /// or gives a powerup with a `powerup` command is refused: routes, the
+    /// bot and the comparisons with reference traces take plain play only.
+    /// The game's replays read such a recording with
+    /// [`InputScript::parse_with_aids`].
     pub fn parse(text: &str) -> Result<InputScript, ScriptError> {
         let (script, line) = InputScript::read_text(text)?;
         if let Some(line) = line {
+            let mut header = script.header;
+            // A powerup command is the powerup key's.
+            header.powerup_key |= script
+                .directives
+                .iter()
+                .any(|d| matches!(d.kind, DirectiveKind::Command(ScriptCommand::Powerup(_))));
             return Err(ScriptError {
                 line,
-                message: aids_refusal(script.header.aids),
+                message: play_aid_refusal(&header),
             });
         }
         Ok(script)
@@ -554,13 +666,13 @@ impl InputScript {
     }
 
     /// Parses the text form; with the script, the line of the first header
-    /// key that turns an aid on, if any.
+    /// key that turns an aid on or the first powerup command, if any.
     fn read_text(text: &str) -> Result<(InputScript, Option<usize>), ScriptError> {
         let mut ticks = Vec::new();
         let mut header = ScriptHeader::default();
         let mut directives: Vec<(usize, Directive)> = Vec::new();
         let mut header_seen = false;
-        let mut aids_seen = [false; 2];
+        let mut aids_seen = [false; 4];
         let mut aid_line = None;
         for (i, raw) in text.lines().enumerate() {
             let line = raw.trim();
@@ -572,15 +684,19 @@ impl InputScript {
                 continue;
             }
             if let Some(comment) = line.strip_prefix('#') {
-                let aids = header.aids;
+                let before = header;
                 header.read(comment, &mut aids_seen).map_err(err)?;
-                if header.aids != aids && header.aids.any() {
+                if header.aid_lines() != before.aid_lines() && header.any_aid() {
                     aid_line.get_or_insert(i + 1);
                 }
                 continue;
             }
             if line.starts_with('@') {
-                directives.push((i + 1, Directive::parse(line).map_err(err)?));
+                let d = Directive::parse(line).map_err(err)?;
+                if matches!(d.kind, DirectiveKind::Command(ScriptCommand::Powerup(_))) {
+                    aid_line.get_or_insert(i + 1);
+                }
+                directives.push((i + 1, d));
                 continue;
             }
             if !header_seen {

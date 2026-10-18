@@ -986,6 +986,27 @@ mod tests {
             assert!(e.contains(&format!("{aid} = on")), "{e}");
             assert!(e.contains("route.csv"), "{e}");
         }
+        // The powerup aid and the powerup key, the latter also from a
+        // powerup command alone.
+        for (text, line) in [
+            (
+                "# level 1\n# powerup = fire:30\n0,0,0\n",
+                "powerup = fire:30",
+            ),
+            (
+                "# level 1\n# powerup_key = used\n0,0,0\n",
+                "powerup_key = used",
+            ),
+            (
+                "# level 1\n0,0,0\n@1 command powerup plasma:30\n",
+                "powerup_key = used",
+            ),
+        ] {
+            std::fs::write(&path, text).unwrap();
+            let e = read_route(&path).unwrap_err();
+            assert!(e.contains("play-test aid"), "{e}");
+            assert!(e.contains(line), "{e}");
+        }
     }
 
     const META: &str = r#"

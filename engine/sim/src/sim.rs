@@ -15,6 +15,7 @@ use crate::level::{ObjectSpec, SimLevel};
 use crate::logic::{self, BossState, Outbox, World};
 use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags};
 use crate::physics::Platform;
+use crate::player::powerup_aid::AidPowerup;
 use crate::player::stats::{Carry, PlayerStats, StartState, TREASURE_KINDS};
 use crate::player::{self, Claw, Ctx};
 use crate::registry::{CAMERA_LOGIC, PLAYER_LOGIC, REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
@@ -45,6 +46,11 @@ pub struct SimConfig {
     /// The play-test aids, both off by default (see [`PlayAids`]). With
     /// both off the game plays exactly as without them.
     pub aids: PlayAids,
+    /// The powerup play-test aid: a powerup Claw is given at the level's
+    /// start (at the boundary before its first tick) and after every
+    /// respawn, as a pickup gives it (see [`player::powerup_aid`]). None
+    /// by default, and the game then plays exactly as without it.
+    pub start_powerup: Option<AidPowerup>,
 }
 
 impl Default for SimConfig {
@@ -92,6 +98,7 @@ impl SimConfig {
             level_logics: true,
             fuse_clock: FuseClock::Original,
             aids: PlayAids::NONE,
+            start_powerup: None,
         }
     }
 }
@@ -155,6 +162,9 @@ pub struct Sim {
     /// [`Sim::end_life`] was called: Claw dies at the start of the next
     /// tick.
     end_life: bool,
+    /// The powerup [`Sim::give_powerup`] (or the level start's
+    /// [`SimConfig::start_powerup`]) gives at the start of the next tick.
+    give_powerup: Option<AidPowerup>,
     /// Claw respawned since the last tick: the death's circles end with
     /// the next tick.
     respawned: bool,
@@ -488,10 +498,12 @@ impl Sim {
             last_audio: Vec::new(),
             last_events: Vec::new(),
             end_life: false,
+            give_powerup: None,
             respawned: false,
             ended: false,
             level,
         };
+        sim.give_powerup = sim.cfg.start_powerup;
         let level = sim.level.clone();
         for spec in &level.objects {
             sim.load_record(spec, plane);
@@ -697,6 +709,9 @@ impl Sim {
             left if left <= TICK_MS => 0,
             left => left - TICK_MS,
         };
+        if let Some(p) = self.give_powerup.take() {
+            self.apply_powerup(p);
+        }
         if std::mem::take(&mut self.end_life) {
             self.apply_end_life();
         }
@@ -793,9 +808,16 @@ impl Sim {
             self.claw.respawn_pending = false;
             return;
         };
+        let start_powerup = self.cfg.start_powerup;
         {
             let (mut runner, objects, _) = self.parts();
-            runner.with_claw(objects, id, player::death::respawn_between_ticks);
+            runner.with_claw(objects, id, |c| {
+                player::death::respawn_between_ticks(c);
+                // The powerup play-test aid gives its powerup again.
+                if let Some(p) = start_powerup {
+                    player::death::set_powerup(c, p.kind, p.ms);
+                }
+            });
             runner.list_spawned(objects);
         }
         let followed = self.objects.get(id).map(|o| Followed {
@@ -887,6 +909,20 @@ impl Sim {
         let Some(id) = self.player else { return };
         let (mut runner, objects, _) = self.parts();
         runner.with_claw(objects, id, player::death::end_life);
+        runner.list_spawned(objects);
+    }
+
+    /// Gives Claw powerup `p` now, before any logic of the tick (see
+    /// [`Sim::give_powerup`]).
+    fn apply_powerup(&mut self, p: AidPowerup) {
+        let Some(id) = self.player else { return };
+        let (mut runner, objects, _) = self.parts();
+        runner.with_claw(objects, id, |c| {
+            // A dying or dead Claw takes no powerup, as he takes no pickup.
+            if c.p.stats.health > 0 {
+                player::death::set_powerup(c, p.kind, p.ms);
+            }
+        });
         runner.list_spawned(objects);
     }
 
@@ -1329,6 +1365,22 @@ impl Sim {
     /// True when [`Sim::end_life`] waits for the next tick.
     pub fn end_life_pending(&self) -> bool {
         self.end_life
+    }
+
+    /// Gives Claw powerup `p` at the start of the next tick, before any
+    /// logic of that tick runs, as a pickup gives it (the powerup tune, its
+    /// voice line, its look and its timer; the same one again adds its
+    /// time), or ends the running one with [`AidPowerup::NONE`]. This is
+    /// the powerup play-test aid (see [`player::powerup_aid`]); a dying or
+    /// dead Claw takes none. Called again before the next tick, the last
+    /// call wins.
+    pub fn give_powerup(&mut self, p: AidPowerup) {
+        self.give_powerup = Some(p);
+    }
+
+    /// The powerup [`Sim::give_powerup`] gives at the next tick, if any.
+    pub fn powerup_pending(&self) -> Option<AidPowerup> {
+        self.give_powerup
     }
 
     /// Lets `ms` of a help screen's time reach the dynamite fuse, at the

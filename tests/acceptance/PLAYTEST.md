@@ -5,8 +5,9 @@ game). Note only what fails: the line, what happened instead, and where.
 Where a line says "as in the original", compare with the original game.
 
 For hard levels, the play-test aids (`--invincible`, `--infinite-lives`, or
-the Gameplay page) let you reach and repeat any part of a level; a run with
-an aid on says nothing about how hard the level is.
+the Gameplay page) let you reach and repeat any part of a level, and
+`--powerup NAME` or F6 (with an aid on) give any powerup; a run with an aid
+on says nothing about how hard the level is.
 
 1. Strike an officer standing, crouching and in the air: each blow lands when the sword or fist reaches him, he flinches and slides back, and he dies as quickly as in the original.
 2. Let an officer strike you: one hit sound and pain line, a short push back, then a moment in which he cannot hurt you again.
@@ -37,7 +38,7 @@ an aid on says nothing about how hard the level is.
 27. Charge a keg throw on a crumbling peg until it gives way: the keg drops from Claw's hands as he falls; after any throw the keg never stays in his hands.
 28. Get hit with speech switched off in the options: the hit sound still plays and Claw's pain line is silent.
 29. Take catnip and let it run out: every sparkle around Claw disappears at once when it ends.
-30. Take an invisibility power-up (on the second or third level): Claw is drawn see-through, the scenery showing through him, until the power-up timer runs out, then solid again. Take the invulnerability power-up (third level): Claw is a dark silhouette whose shade flickers about ten times a second, until its timer runs out. Losing a life ends either look at once; `--invincible` never changes how Claw looks.
+30. Start the first level with a play-test aid on (`--invincible`), then press F6 once for each powerup in turn; each press names the powerup in the middle of the screen, switches to the powerup tune and starts its status bar timer at 30 seconds. INVISIBLE: Claw is drawn see-through, the scenery showing through him, and enemies do not attack him, as in the original. INVULNERABLE: Claw is a dark silhouette whose shade flickers about ten times a second, and shots and blows leave his health alone (play with `--infinite-lives` alone to see that, since `--invincible` hides it). CATNIP: Claw walks and climbs faster and jumps higher, sparkles trail him, and his blows hurt twice as much. FIRE SWORD, ICE SWORD, LIGHTNING SWORD: every swipe sends that sword's shot with its sound, and the shot hurts an officer. PLASMA SWORD: the powerup swipe plays and sends no shot. NO POWERUP: the look ends at once, the sparkles go and the level tune comes back. Losing a life ends any look at once; `--powerup fire` gives the fire sword again at the start and after the respawn, and F6 does nothing without an aid on.
 31. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
 32. Watch a rat walk into a wall: it stays against the wall for good, its walk playing on the spot, until it throws a bomb at Claw, as in the original.
 33. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.

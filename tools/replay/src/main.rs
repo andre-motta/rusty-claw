@@ -7,7 +7,8 @@
 //!             [--trace OUT.csv] [--tuning default|original] [--seed N]
 //!             [--res WxH] [--aspect pillarbox|frozen|widened]
 //!             [--start X,Y] [--logics on|off] [--mid-air-hit-fix on|off]
-//!             [--invincible] [--infinite-lives] [--expect-complete]
+//!             [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]]
+//!             [--expect-complete]
 //!             [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
 //! ```
 //!
@@ -21,8 +22,12 @@
 //! A recording the game made with a play-test aid on names it in its
 //! header (`# invincible = on`, `# infinite_lives = on`) and replays with
 //! it; `--invincible` and `--infinite-lives` turn an aid on as the game's
-//! flags of the same names do. A run with an aid on is not plain play, so
-//! `--compare` refuses it.
+//! flags of the same names do. The powerup aid is named the same way
+//! (`# powerup = fire:30`, the powerup given at the start and after every
+//! respawn, which `--powerup` also gives), and a powerup given with the
+//! game's play-test key is a `powerup` command played at its tick boundary
+//! (with `# powerup_key = used` in the header). A run with an aid on is not
+//! plain play, so `--compare` refuses it.
 //!
 //! A route or recording of a later level of one game starts from the
 //! progress the game carried into it, named in its `# start_score = ...`
@@ -32,7 +37,7 @@
 //! applied.
 //!
 //! The script's `@` directive lines are played at their tick boundaries: a
-//! command (`end_life`) takes effect before its tick, and a pause or a menu
+//! command (`end_life`, `powerup`) takes effect before its tick, and a pause or a menu
 //! changes nothing in the game (play stops and goes on where it stopped;
 //! its wall time only matters to a game running in real time).
 //!
@@ -74,6 +79,7 @@ use std::process::ExitCode;
 use claw_assets::{Install, LevelData, LevelSource, Source};
 use claw_sim::claw_frame::{AspectPolicy, GameEvent, ViewConfig};
 use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
+use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Tolerances, TraceRow};
@@ -83,7 +89,8 @@ use claw_sim::{InputScript, Sim, SimConfig, SimLevel, StartState};
 const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FILE.WWD] \
 --script ROUTE.csv [--trace OUT.csv] [--tuning default|original] [--seed N] [--res WxH] \
 [--aspect pillarbox|frozen|widened] [--start X,Y] [--logics on|off] \
-[--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--expect-complete] \
+[--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]] \
+[--expect-complete] \
 [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]";
 
 /// The key of the mid-air hit jump fix in a script's comment line.
@@ -106,6 +113,7 @@ struct Args {
     logics: Option<bool>,
     mid_air_hit_fix: Option<bool>,
     aids: PlayAids,
+    powerup: Option<AidPowerup>,
     tuning: Option<ScriptTuning>,
     expect_complete: bool,
     compare: Option<PathBuf>,
@@ -139,6 +147,10 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                 a.level = Some(v.parse().map_err(|_| format!("bad level {v:?}"))?);
             }
             "--custom" => a.custom = Some(value()?),
+            "--powerup" => {
+                let v = value()?;
+                a.powerup = Some(AidPowerup::parse(&v).map_err(|e| format!("--powerup: {e}"))?);
+            }
             "--script" => a.script = Some(PathBuf::from(value()?)),
             "--trace" => a.trace = Some(PathBuf::from(value()?)),
             "--res" => {
@@ -256,13 +268,22 @@ fn run(args: Args) -> Result<Outcome, String> {
     let header = script.header;
     let carry = parse_start_lines(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
     let aids = args.aids.union(header.aids);
-    if args.compare.is_some() && aids.any() {
-        let names: Vec<String> = aids.names().iter().map(|n| format!("{n} = on")).collect();
+    let powerup = args.powerup.or(header.powerup).filter(|p| !p.is_none());
+    let powerup_commands = script
+        .directives()
+        .iter()
+        .any(|d| matches!(d.kind, DirectiveKind::Command(ScriptCommand::Powerup(_))));
+    // Every play-test aid of the run, from the script and the command line.
+    let mut run_aids = header;
+    run_aids.aids = aids;
+    run_aids.powerup = powerup;
+    run_aids.powerup_key |= powerup_commands;
+    if args.compare.is_some() && run_aids.any_aid() {
         return Err(format!(
             "--compare takes plain play only, and this run has a play-test aid on ({}; from {}): \
              a run with an aid says nothing about the game's own play",
-            names.join(", "),
-            if header.aids.any() {
+            run_aids.aid_lines().join(", "),
+            if header.any_aid() || powerup_commands {
                 "the script's header"
             } else {
                 "the command line"
@@ -327,6 +348,7 @@ fn run(args: Args) -> Result<Outcome, String> {
     }
     cfg.tuning.behaviour.fix_double_jump = fix;
     cfg.aids = aids;
+    cfg.start_powerup = powerup;
     let carried = carry.as_ref().map(|c| {
         format!(
             ", carried in: score {}, health {}, lives {}",
@@ -346,6 +368,7 @@ fn run(args: Args) -> Result<Outcome, String> {
             if let DirectiveKind::Command(c) = d.kind {
                 match c {
                     ScriptCommand::EndLife => sim.end_life(),
+                    ScriptCommand::Powerup(p) => sim.give_powerup(p),
                 }
                 commands += 1;
             }
@@ -364,10 +387,10 @@ fn run(args: Args) -> Result<Outcome, String> {
     let d = sim.diagnostics();
     let unknown: usize = d.unknown_logics.values().sum();
     let inert: usize = d.inert_logics.values().sum();
-    if aids.any() {
+    if run_aids.any_aid() {
         eprintln!(
             "claw-replay: play-test aids on: {}",
-            aids.names().join(", ")
+            run_aids.aid_lines().join(", ")
         );
     }
     eprintln!(
@@ -591,6 +614,47 @@ mod tests {
         let e = run(a).unwrap_err();
         std::fs::remove_dir_all(&dir).unwrap();
         e
+    }
+
+    #[test]
+    fn the_powerup_aid_comes_from_the_flag_or_the_script_and_is_never_compared() {
+        let a = args("--install /i --script s.csv --powerup lightning:20").unwrap();
+        assert_eq!(
+            a.powerup.map(|p| p.to_string()).as_deref(),
+            Some("lightning:20")
+        );
+        assert!(args("--install /i --script s.csv --powerup sword").is_err());
+        assert_eq!(args("--install /i --script s.csv").unwrap().powerup, None);
+        let plain = "tick,held_mask,pressed_mask\n0,0,0\n";
+        // From the command line.
+        let e = run_script(
+            "powerup-flag",
+            plain,
+            "--powerup fire --compare ref.csv --tolerance exact",
+        );
+        assert!(e.contains("plain play only"), "{e}");
+        assert!(e.contains("powerup = fire:30"), "{e}");
+        assert!(e.contains("command line"), "{e}");
+        // From the script: its header, or a powerup command alone.
+        for (name, text, line) in [
+            (
+                "powerup-header",
+                "# powerup = catnip:30\ntick,held_mask,pressed_mask\n0,0,0\n",
+                "powerup = catnip:30",
+            ),
+            (
+                "powerup-command",
+                "tick,held_mask,pressed_mask\n0,0,0\n@1 command powerup ice:30\n",
+                "powerup_key = used",
+            ),
+        ] {
+            let e = run_script(name, text, "--compare ref.csv --tolerance exact");
+            assert!(e.contains(line), "{name}: {e}");
+            assert!(e.contains("header"), "{name}: {e}");
+            // Replayed: the run stops at the missing install.
+            let e = run_script(&format!("{name}-replay"), text, "");
+            assert!(e.contains("opening install"), "{name}: {e}");
+        }
     }
 
     #[test]
