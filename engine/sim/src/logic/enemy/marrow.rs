@@ -18,8 +18,7 @@
 //! carries him to the far ledge while the slabs slide open under anyone
 //! still on the bridge. His going Home works only once the fight is on
 //! (the boss fight flag at 2): after an intro skip he only idles, paces
-//! and reacts, and the reference speedrun kills that passive Marrow with
-//! the sword.
+//! and reacts, and the sword can still kill that passive Marrow.
 //!
 //! # Random draws, in order
 //!
