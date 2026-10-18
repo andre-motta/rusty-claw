@@ -6,16 +6,26 @@
 //! solid, holds no death tile, and the [`HEADROOM`] cells above it are not
 //! mostly solid either, so Claw fits), and it gives
 //! support when Claw can stand
-//! there: a solid or ground top under it, a ladder, or the track of one of
-//! the level's elevators or pegs. Moves between neighbouring open cells
-//! follow what Claw can do, generously:
+//! there: a solid or ground top under it, a ladder, the track of one of
+//! the level's elevators or pegs, the route of a path elevator, the swing
+//! of a rope (Claw hangs from its end and lets go with a jump from
+//! anywhere along it), the top of a springboard or the top of a stepping
+//! stone (which is there only part of the time, so the search still times
+//! the hop). Above every springboard is its throw: the cells up to the
+//! throw's height over its top, and a jump's width to either side, where
+//! Claw rises and steers after it throws him. Moves between neighbouring
+//! open cells follow what Claw can do, generously:
 //!
 //! - down: always (falling), except through a one-way floor (a ground
 //!   tile, which Claw stands on and cannot drop through);
 //! - up: only within a jump's reach above support in the same column, or
-//!   on a ladder;
+//!   on a ladder, or within a jump's reach and Claw's height below one
+//!   (he catches a ladder with his body, so a jump from the floor reaches
+//!   a ladder that ends higher than his feet can), or in a springboard's
+//!   throw;
 //! - sideways: only within a jump's reach above support somewhere within
-//!   a jump's width, so a gap can be crossed but open sky cannot.
+//!   a jump's width, or in a springboard's throw, so a gap can be crossed
+//!   but open sky cannot.
 //!
 //! A [`DistanceField`] holds the cost of the cheapest path from every cell
 //! to a target, in pixels. The graph never claims less than the level
@@ -26,15 +36,29 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use claw_sim::SimLevel;
-use claw_sim::logic::platform;
+use claw_sim::logic::{path_elevator, platform, rope, springboard, stepping_stone};
+use claw_sim::player::swing;
 use claw_sim::tiles::{CLIMB, DEATH, GROUND, SOLID};
 
 /// Size of a graph cell, px.
 pub const CELL: i32 = 16;
 
-/// Cells above an open cell that must not be mostly solid: Claw moves
-/// only standing (112 px tall) or in the air, never crouching.
+/// Cells above an open cell that must not be mostly solid for Claw to
+/// stand in it (112 px tall).
 pub const HEADROOM: i32 = 6;
+
+/// Cells above a low cell that must not be mostly solid: Claw fits there
+/// crouching (50 px tall), as on a platform that carries him under a low
+/// rock.
+pub const LOW_HEADROOM: i32 = 3;
+
+/// Claw's height, px: a jump catches a ladder whose foot is this much
+/// above the top of the jump's reach.
+pub const BODY: i32 = 96;
+
+/// How far below a rope's end Claw's feet hang, px: he hangs
+/// [`swing::HANG_Y`] below it, and his feet are about 60 px below that.
+const ROPE_FEET: i32 = swing::HANG_Y + 60;
 
 /// Distance of a cell with no path to the target.
 pub const UNREACHABLE: u32 = u32::MAX;
@@ -63,12 +87,19 @@ const TRACK: [usize; 4] = [51, 52, 53, 54];
 const TRACK_WIDTH: usize = 61;
 const TRACK_HEIGHT: usize = 62;
 
+/// Record fields of a path elevator: its built-in route, and the first of
+/// the sixteen that hold its legs.
+const PATH_BUILT_IN: usize = 15;
+const PATH_LEGS: usize = 19;
+
 /// The coarse graph of a level.
 #[derive(Debug, Clone)]
 pub struct Grid {
     cols: i32,
     rows: i32,
     open: Vec<bool>,
+    /// The cell is open only for a crouching Claw (see [`LOW_HEADROOM`]).
+    low: Vec<bool>,
     climb: Vec<bool>,
     /// The cell holds a one-way floor (and no ladder): nothing falls out
     /// of it downward.
@@ -78,7 +109,15 @@ pub struct Grid {
     air: Vec<u16>,
     /// The least `air` within a jump's width to either side.
     env: Vec<u16>,
+    /// Cells up to the nearest ladder cell above in the same column,
+    /// through open cells (0 on a ladder), saturating; `u16::MAX` with
+    /// none before a closed cell.
+    to_ladder: Vec<u16>,
+    /// The cell is in a springboard's throw: Claw rises through it and
+    /// steers across it.
+    thrown: Vec<bool>,
     reach_cells: u16,
+    body_cells: u16,
 }
 
 impl Grid {
@@ -127,13 +166,18 @@ impl Grid {
                 support[i] = open[i] && (ladder || ground || below);
             }
         }
-        // No room for Claw under a solid cell close above.
+        // No room for Claw under a solid cell close above; crouching room
+        // under one a little higher.
+        let mut low = vec![false; n];
         for r in 0..rows {
             for c in 0..cols {
                 let i = (r * cols + c) as usize;
-                if open[i]
-                    && (1..=HEADROOM).any(|k| r >= k && solid_cell[((r - k) * cols + c) as usize])
-                {
+                let solid_above = |k: i32| r >= k && solid_cell[((r - k) * cols + c) as usize];
+                if open[i] && (1..=HEADROOM).any(solid_above) {
+                    if !(1..=LOW_HEADROOM).any(solid_above) {
+                        low[i] = true;
+                        continue;
+                    }
                     open[i] = false;
                     climb[i] = false;
                     floor[i] = false;
@@ -145,13 +189,37 @@ impl Grid {
             cols,
             rows,
             open,
+            low,
             climb,
             floor,
             air: Vec::new(),
             env: Vec::new(),
+            to_ladder: Vec::new(),
+            thrown: vec![false; n],
             reach_cells: (reach.jump_height / CELL).max(1) as u16,
+            body_cells: (BODY / CELL) as u16,
         };
         grid.mark_platforms(level, &mut support);
+        grid.mark_path_elevators(level, &mut support);
+        grid.mark_ropes(level, &mut support);
+        grid.mark_stepping_stones(level, &mut support);
+        grid.mark_springboards(level, &mut support, reach);
+        grid.to_ladder = vec![u16::MAX; n];
+        for c in 0..cols {
+            let mut above = u16::MAX;
+            for r in 0..rows {
+                let i = grid.index(c, r);
+                let v = if !grid.open[i] {
+                    u16::MAX
+                } else if grid.climb[i] {
+                    0
+                } else {
+                    above.saturating_add(1)
+                };
+                grid.to_ladder[i] = v;
+                above = v;
+            }
+        }
         grid.air = vec![u16::MAX; n];
         for c in 0..cols {
             let mut below = u16::MAX;
@@ -222,6 +290,123 @@ impl Grid {
                 }
                 yy += CELL;
             }
+        }
+    }
+
+    /// Marks the cells around every path elevator's route as support.
+    fn mark_path_elevators(&self, level: &SimLevel, support: &mut [bool]) {
+        for spec in &level.objects {
+            if !path_elevator::NAMES.contains(&spec.logic.as_str()) {
+                continue;
+            }
+            let r = &spec.record;
+            let legs = path_elevator::built_in(r[PATH_BUILT_IN])
+                .or_else(|| path_elevator::record_legs(&r[PATH_LEGS..PATH_LEGS + 16]))
+                .unwrap_or_default();
+            let (mut x, mut y) = (r[5], r[6]);
+            let mut points = vec![(x, y)];
+            for &(dir, d) in &legs {
+                let mut done = 0;
+                while done < d {
+                    let step = (d - done).min(CELL);
+                    done += step;
+                    let (dx, dy) = path_elevator::along(dir, step);
+                    x += dx;
+                    y += dy;
+                    points.push((x, y));
+                }
+            }
+            for (px, py) in points {
+                self.mark_band(px - 2 * CELL, px + 2 * CELL, py - 3 * CELL, py, support);
+            }
+        }
+    }
+
+    /// Marks where Claw's feet are while he hangs from a rope, along its
+    /// whole swing, as support.
+    fn mark_ropes(&self, level: &SimLevel, support: &mut [bool]) {
+        for spec in &level.objects {
+            if !rope::NAMES.contains(&spec.logic.as_str()) {
+                continue;
+            }
+            let (x, y) = (spec.record[5], spec.record[6]);
+            for &(ex, ey) in &rope::END {
+                for ex in [ex, -ex] {
+                    let (fx, fy) = (x + ex, y + ey + ROPE_FEET);
+                    self.mark_band(
+                        fx - swing::HANG_X,
+                        fx + swing::HANG_X,
+                        fy - CELL,
+                        fy,
+                        support,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Marks where Claw stands on every stepping stone as support.
+    fn mark_stepping_stones(&self, level: &SimLevel, support: &mut [bool]) {
+        let rect = stepping_stone::surface(level.number);
+        for spec in &level.objects {
+            if !stepping_stone::NAMES.contains(&spec.logic.as_str()) {
+                continue;
+            }
+            let (x, y) = (spec.record[5], spec.record[6]);
+            let top = y + rect.top;
+            self.mark_band(x + rect.left, x + rect.right, top - CELL, top, support);
+        }
+    }
+
+    /// Marks where Claw stands on every springboard as support, and the
+    /// cells of its throw (see [`Grid::thrown`]): from its top up to the
+    /// throw's height, as wide as its top and a jump's width either side.
+    fn mark_springboards(&mut self, level: &SimLevel, support: &mut [bool], reach: Reach) {
+        let rect = springboard::surface(level.number);
+        let mut thrown = std::mem::take(&mut self.thrown);
+        for spec in &level.objects {
+            if !springboard::NAMES.contains(&spec.logic.as_str()) {
+                continue;
+            }
+            let r = &spec.record;
+            let (x, top) = (r[5], r[6] + rect.top);
+            let height = springboard::height_of(r[springboard::HEIGHT_FIELD]);
+            self.mark_band(x + rect.left, x + rect.right, top - CELL, top, support);
+            let (left, right) = (
+                x + rect.left - reach.jump_width,
+                x + rect.right + reach.jump_width,
+            );
+            let mut yy = top - height;
+            while yy <= top {
+                let mut xx = left;
+                while xx <= right {
+                    if let Some(i) = self.cell_index(xx, yy)
+                        && self.open[i]
+                    {
+                        thrown[i] = true;
+                    }
+                    xx += CELL;
+                }
+                yy += CELL;
+            }
+        }
+        self.thrown = thrown;
+    }
+
+    /// Marks the open cells of a box as support.
+    fn mark_band(&self, left: i32, right: i32, top: i32, bottom: i32, support: &mut [bool]) {
+        let mut yy = top;
+        while yy <= bottom {
+            let mut xx = left;
+            while xx <= right {
+                if let Some(i) = self.cell_index(xx, yy)
+                    && self.open[i]
+                {
+                    support[i] = true;
+                }
+                xx += CELL;
+            }
+            yy += CELL;
         }
     }
 
@@ -317,15 +502,25 @@ impl Grid {
             let (c, r) = ((b as i32) % self.cols, (b as i32) / self.cols);
             // Moves that end in b: sideways from a neighbour, up from the
             // cell below, down from the cell above.
-            let sideways = self.env[b] <= self.reach_cells;
+            let sideways = self.env[b] <= self.reach_cells || self.thrown[b];
             let below = (r + 1 < self.rows).then(|| self.index(c, r + 1));
-            let rising = self.air[b] <= self.reach_cells
-                || self.climb[b]
-                || below.is_some_and(|i| self.climb[i]);
+            let rising = !self.low[b]
+                && (self.air[b] <= self.reach_cells
+                    || self.thrown[b]
+                    || self.climb[b]
+                    || below.is_some_and(|i| self.climb[i])
+                    || (self.to_ladder[b] <= self.body_cells
+                        && self.air[b] <= self.reach_cells + self.body_cells));
             let mut relax = |a: usize, cost: u32, heap: &mut BinaryHeap<Reverse<(u32, usize)>>| {
                 if !self.open[a] {
                     return;
                 }
+                // Crouching is slow going.
+                let cost = if self.low[a] || self.low[b] {
+                    2 * cost
+                } else {
+                    cost
+                };
                 let nd = d + cost;
                 if nd < dist[a] {
                     dist[a] = nd;
@@ -395,6 +590,7 @@ impl DistanceField {
 mod tests {
     use super::*;
     use claw_sim::TileMap;
+    use claw_sim::level::ObjectSpec;
 
     fn level(rows: &[&str]) -> SimLevel {
         SimLevel::synthetic(TileMap::from_ascii(64, rows), (100, 100))
@@ -440,8 +636,8 @@ mod tests {
 
     #[test]
     fn a_gap_too_low_for_claw_is_closed() {
-        // 16 px tiles: a ceiling over the right half of the floor, 80 px
-        // above it (too low for Claw), then 112 px.
+        // 16 px tiles: a ceiling over the right half of the floor, 48 px
+        // above it (too low for Claw, even crouching), then 112 px.
         let gap = |n: usize| {
             let mut rows = vec![".".repeat(40); 8];
             rows[7 - n].replace_range(20..40, &"#".repeat(20));
@@ -452,7 +648,7 @@ mod tests {
         };
         // Feet on the floor (row 8 is the floor, row 7 the feet cell).
         let feet = 7 * 16 + 8;
-        let g = gap(5);
+        let g = gap(3);
         assert!(g.is_open(100, feet));
         assert!(!g.is_open(500, feet));
         let f = g.field_to(600, feet, 8);
@@ -502,5 +698,163 @@ mod tests {
         assert!(!g.is_open(3 * 64 + 10, 2 * 64 + 10));
         let f = g.field_to(600, 120, 20);
         assert_ne!(f.at(60, 120), UNREACHABLE);
+    }
+
+    /// 16 px tiles: a floor at the bottom (feet in row 28) and a high
+    /// floor on the right in row 5, with a ladder up to it whose foot is
+    /// `foot` rows above the lower floor's feet row.
+    fn ladder_level(foot: usize) -> SimLevel {
+        let mut rows = vec![".".repeat(40); 30];
+        rows[29] = "#".repeat(40);
+        rows[5].replace_range(22..40, &"#".repeat(18));
+        for row in rows.iter_mut().take(29 - foot).skip(1) {
+            row.replace_range(21..22, "H");
+        }
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        SimLevel::synthetic(TileMap::from_ascii(16, &rows), (40, 40))
+    }
+
+    #[test]
+    fn a_jump_catches_a_ladder_above_its_reach_with_claws_body() {
+        let feet = 28 * 16 + 8;
+        let reach = Reach::default();
+        // The foot of the ladder 192 px up: past the jump's 160 px, but
+        // Claw's body is there at the top of the jump.
+        let g = Grid::build(&ladder_level(12), reach);
+        let f = g.field_to(30 * 16, 4 * 16 + 8, 16);
+        assert_ne!(f.at(21 * 16 + 8, feet), UNREACHABLE);
+        // 288 px up is out of reach.
+        let g = Grid::build(&ladder_level(18), reach);
+        let f = g.field_to(30 * 16, 4 * 16 + 8, 16);
+        assert_eq!(f.at(21 * 16 + 8, feet), UNREACHABLE);
+    }
+
+    /// 16 px tiles: floor on both sides of a death pit 480 px wide (feet
+    /// in row 28), with `objects` placed.
+    fn pit_level(objects: Vec<ObjectSpec>) -> SimLevel {
+        let mut row = "#".repeat(10);
+        row.push_str(&"x".repeat(30));
+        row.push_str(&"#".repeat(10));
+        let mut rows = vec![".".repeat(50); 29];
+        rows.push(row);
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let mut level = SimLevel::synthetic(TileMap::from_ascii(16, &rows), (40, 40));
+        level.objects = objects;
+        level
+    }
+
+    #[test]
+    fn a_rope_or_a_path_elevator_crosses_a_pit_too_wide_to_jump() {
+        let feet = 28 * 16 + 8;
+        let field = |level: &SimLevel| {
+            Grid::build(level, Reach::default())
+                .field_to(45 * 16, feet, 16)
+                .at(5 * 16, feet)
+        };
+        assert_eq!(field(&pit_level(Vec::new())), UNREACHABLE);
+        // A rope over the middle whose end swings 100 px above the floor's
+        // feet at the bottom of its swing.
+        let rope = ObjectSpec::at("AniRope", 25 * 16, feet - 100 - 87 - ROPE_FEET, 0);
+        assert_ne!(field(&pit_level(vec![rope])), UNREACHABLE);
+        // A path elevator going across and back at the floor's height.
+        let mut lift = ObjectSpec::at("PathElevator", 10 * 16, feet + 8, 0);
+        lift.record[PATH_LEGS..PATH_LEGS + 4].copy_from_slice(&[6, 480, 4, 480]);
+        assert_ne!(field(&pit_level(vec![lift])), UNREACHABLE);
+    }
+
+    /// 16 px tiles on the fourth level (whose springboards are ferns): a
+    /// floor (feet in row 28) and, from column 24 on, a cliff whose top is
+    /// row 5 (feet in row 4), 384 px above the floor, with `objects`.
+    fn cliff_level(objects: Vec<ObjectSpec>) -> SimLevel {
+        let mut rows = vec![".".repeat(40); 30];
+        rows[29] = "#".repeat(40);
+        for row in rows.iter_mut().skip(5) {
+            row.replace_range(24..40, &"#".repeat(16));
+        }
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let mut level = SimLevel::synthetic(TileMap::from_ascii(16, &rows), (40, 40));
+        level.number = 4;
+        level.objects = objects;
+        level
+    }
+
+    #[test]
+    fn a_springboard_throws_claw_up_a_cliff_too_high_to_jump() {
+        let (floor, top) = (28 * 16 + 8, 4 * 16 + 8);
+        let field = |level: &SimLevel| {
+            Grid::build(level, Reach::default())
+                .field_to(30 * 16, top, 16)
+                .at(5 * 16, floor)
+        };
+        assert_eq!(field(&cliff_level(Vec::new())), UNREACHABLE);
+        // A fern on the floor by the cliff, its top on the floor's top.
+        let fern = |height: i32| {
+            let rect = springboard::surface(4);
+            let mut f = ObjectSpec::at("SpringBoard", 21 * 16, 29 * 16 - rect.top, 0);
+            f.record[springboard::HEIGHT_FIELD] = height;
+            f
+        };
+        // The usual throw (450 px) clears the cliff; a throw of 200 px
+        // does not.
+        assert_ne!(field(&cliff_level(vec![fern(0)])), UNREACHABLE);
+        let low = cliff_level(vec![fern(200)]);
+        assert_eq!(field(&low), UNREACHABLE);
+        // The throw's cells: up to its height over the fern's top, and a
+        // jump's width beside it.
+        let g = Grid::build(&low, Reach::default());
+        let thrown = |x: i32, y: i32| g.thrown[g.cell_index(x, y).unwrap()];
+        assert!(thrown(21 * 16, 29 * 16 - 190));
+        assert!(!thrown(21 * 16, 29 * 16 - 220));
+        assert!(thrown(21 * 16 - 32 - 180, 20 * 16));
+        assert!(!thrown(21 * 16 - 32 - 210, 20 * 16));
+    }
+
+    #[test]
+    fn a_stepping_stone_splits_a_pit_too_wide_to_jump() {
+        let feet = 28 * 16 + 8;
+        let field = |stones: &[i32]| {
+            let rect = stepping_stone::surface(4);
+            let objects = stones
+                .iter()
+                .map(|&x| ObjectSpec::at("SteppingStone2", x, 29 * 16 - rect.top, 0))
+                .collect();
+            let mut level = pit_level(objects);
+            level.number = 4;
+            Grid::build(&level, Reach::default())
+                .field_to(45 * 16, feet, 16)
+                .at(5 * 16, feet)
+        };
+        assert_eq!(field(&[]), UNREACHABLE);
+        // A stone in the middle of the pit leaves two gaps a jump crosses.
+        assert_ne!(field(&[25 * 16]), UNREACHABLE);
+        // A stone near one side leaves the other gap too wide.
+        assert_eq!(field(&[12 * 16]), UNREACHABLE);
+    }
+
+    #[test]
+    fn claw_crouches_under_a_low_rock_but_never_stands_or_jumps_into_it() {
+        // 16 px tiles, feet in row 28: a rock over columns 15 to 24 whose
+        // underside is `gap` rows above the feet row.
+        let field = |gap: usize| {
+            let mut rows = vec![".".repeat(40); 30];
+            rows[29] = "#".repeat(40);
+            for r in rows.iter_mut().take(29 - gap) {
+                r.replace_range(15..25, &"#".repeat(10));
+            }
+            let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+            let g = Grid::build(
+                &SimLevel::synthetic(TileMap::from_ascii(16, &rows), (40, 40)),
+                Reach::default(),
+            );
+            let feet = 28 * 16 + 8;
+            (g.field_to(35 * 16, feet, 16).at(5 * 16, feet), g)
+        };
+        // Four free rows (64 px): room to crouch, at twice the cost.
+        let (d, g) = field(4);
+        assert_ne!(d, UNREACHABLE);
+        assert!(d > 30 * 16, "{d}");
+        assert!(g.is_open(20 * 16, 28 * 16 + 8));
+        // Two free rows: no room at all.
+        assert_eq!(field(2).0, UNREACHABLE);
     }
 }

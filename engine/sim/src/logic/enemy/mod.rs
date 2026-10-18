@@ -1,12 +1,11 @@
 //! Enemies: the officer, the soldier, the rat, the punk rat ([`punkrat`])
 //! and Raux ([`raux`]), on shared enemy behaviour and the shared human
 //! states ([`human`]), with the cutthroat ([`cutthroat`]) and the robber
-//! thief ([`robberthief`]), and the seagull ([`seagull`]), the first
-//! flyer. Katherine ([`katherine`]), the town guards ([`townguard`]),
-//! Wolvington ([`wolvington`]), the red-tail pirates
+//! thief ([`robberthief`]), the seagull ([`seagull`]), the first flyer,
+//! Katherine ([`katherine`]), the boss of the fourth level, the town guards
+//! ([`townguard`]), Wolvington ([`wolvington`]), the red-tail pirates
 //! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
-//! ([`crab`]) and Gabriel with his bomb ([`gabriel`]) are declared but not
-//! built yet.
+//! ([`crab`]) and Gabriel with his bomb ([`gabriel`]).
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -1688,7 +1687,9 @@ pub const BURST_DEPTH: i32 = 8501;
 /// A hit burst at the enemy's x and at the height of the middle of the
 /// attacker's attack box (kept inside the enemy's hit box), each moved by
 /// up to 4 px at random. Draws: the height's, then the x's (then the
-/// burst's own).
+/// burst's own). The enemy owns the burst, so an enemy that was not drawn
+/// in the last frame (off screen) gets no burst and makes no draw for its
+/// size (see [`crate::logic::effect::spawn_hit_burst`]).
 pub fn hit_burst(w: &mut World, id: ObjectId, attacker: ObjectId) {
     let (x, y, z, hit) = {
         let o = obj(w, id);
@@ -1715,7 +1716,7 @@ pub fn hit_burst(w: &mut World, id: ObjectId, attacker: ObjectId) {
         x + dx,
         mid + dy,
         z.saturating_add(BURST_DEPTH),
-        None,
+        Some(id),
         false,
     );
 }

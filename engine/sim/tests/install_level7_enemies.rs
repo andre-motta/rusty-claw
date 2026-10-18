@@ -841,7 +841,9 @@ fn install_level7_the_bear_stops_99_px_away_and_strikes_or_pauses() {
     // blows.
     assert_eq!((rows[35].x - rows[35].ex), 99);
     let strikes = entries(&rows, EnemyState::Strike);
-    assert_eq!(strikes[..3], [36, 86, 389]);
+    // The third blow comes after Claw's respawn: it lands on row 612, the
+    // row the original's run loses its first health after coming back.
+    assert_eq!(strikes[..3], [36, 86, 596]);
     // Live on its 16th row (Claw hit on that row), Home on its 35th.
     for &s in &strikes[..2] {
         assert_eq!(live_rows(&rows, s, bear_sailor::STRIKE), [16], "{s}");

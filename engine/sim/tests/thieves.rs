@@ -205,20 +205,22 @@ fn count(cues: &[String], key: &str) -> usize {
     cues.iter().filter(|k| *k == key).count()
 }
 
-/// The projectiles that exist, by object.
+/// The projectiles that exist, by object, in the order they were made (by
+/// creation number: a new object may take a lower slot, and id, freed by
+/// a removed one).
 fn shots(sim: &Sim) -> Vec<(ObjectId, ProjectileSpec)> {
-    let mut v: Vec<(ObjectId, ProjectileSpec)> = sim
+    let mut v: Vec<(u32, ObjectId, ProjectileSpec)> = sim
         .objects()
         .all()
         .filter_map(|(id, o)| match &o.data {
             ObjectData::Projectile(ProjectileData {
                 spec: Some(spec), ..
-            }) => Some((id, *spec)),
+            }) => Some((o.serial, id, *spec)),
             _ => None,
         })
         .collect();
     v.sort_unstable_by_key(|s| s.0);
-    v
+    v.into_iter().map(|(_, id, spec)| (id, spec)).collect()
 }
 
 /// The projectiles that appeared since `seen` was last updated.

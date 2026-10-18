@@ -410,6 +410,7 @@ impl Ctx<'_> {
                 tuning: self.t,
                 tick: self.tick,
                 now_ms: self.now_ms,
+                dt_ms: self.dt_ms,
                 pulse: self.pulse,
                 view: self.view,
                 out: &mut *self.out,

@@ -618,7 +618,7 @@ fn sleeping_coin(sim: &mut Sim, x: i32, y: i32) -> ObjectId {
 }
 
 #[test]
-fn the_respawn_runs_an_update_pass_before_and_after_the_objects_around_claw_wake() {
+fn the_respawn_runs_a_pass_at_the_death_then_one_after_the_objects_around_claw_wake() {
     // Death tiles far from the level start, and a rat walking near them.
     let mut rows = vec![".".repeat(200); 15];
     let mut floor = "#".repeat(200);
@@ -680,18 +680,68 @@ fn the_respawn_runs_an_update_pass_before_and_after_the_objects_around_claw_wake
     // they are always awake or within the camera's reach.
     assert_eq!(goodie(&sim, awake).age_ms, age + 2 * 18, "two calls");
     assert_eq!(goodie(&sim, near).age_ms, age + 2 * 18, "two calls");
-    // The camera moved to the start first: the rat by the death tiles was
-    // put to sleep before the first pass and did not run.
+    // The rat by the death tiles was still awake for the first pass and
+    // took a step in it, then went to sleep before the second.
     let o = obj(&sim, rat);
-    assert_eq!((o.x, o.y, o.state), (walking.x, walking.y, walking.state));
-    assert_eq!(
-        enemy::data_of(o).map(|d| (d.vx, d.last_move_ms)),
-        enemy::data_of(&walking).map(|d| (d.vx, d.last_move_ms)),
-        "not run in the respawn"
-    );
+    assert_eq!((o.y, o.state), (walking.y, walking.state));
+    assert_ne!(o.x, walking.x, "run in the first pass");
+    assert!(!sim.objects().listed().contains(&rat), "asleep after it");
     // The sleeping coin by the start woke between the passes: it ran once.
     assert!(sim.objects().listed().contains(&asleep), "woken");
     assert_eq!(goodie(&sim, asleep).age_ms, slept_age + 18, "one call");
+}
+
+#[test]
+fn the_respawns_update_passes_count_no_time() {
+    // Death tiles 300 px from the start, inside the camera's reach, and a
+    // cycling sign by the start.
+    let mut rows = vec![".".repeat(200); 15];
+    let mut floor = "#".repeat(200);
+    floor.replace_range(20..23, "xxx");
+    rows.push(floor);
+    rows.push("#".repeat(200));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600));
+    let mut sign = ObjectSpec::at("AniCycle", 1100, 900, 0);
+    sign.image_set = "LEVEL_ARROWSIGN_RIGHT".into();
+    sign.frame = 1;
+    level.objects.push(sign);
+    level
+        .images
+        .insert("LEVEL_ARROWSIGN_RIGHT".into(), ImageFrames::range(1, 3));
+    level.images.insert(COINS.into(), ImageFrames::range(1, 4));
+    let mut sim = pressing_sim(level, SimConfig::default());
+    let (start, _) = die(&mut sim);
+    let sign = find(&sim, "AniCycle")[0];
+    assert!(sim.objects().listed().contains(&sign), "awake by the death");
+    // A coin by the start waiting out a time delay.
+    let coin = sim.with_world(|w| {
+        let id = pickup::spawn_drop(w, 1050, 300, pickup::COIN_CODE).unwrap();
+        w.objects.get_mut(id).unwrap().time_delay = 100;
+        id
+    });
+    let camera = sim.camera().current;
+    let sign_before = format!("{:?}", obj(&sim, sign));
+    let coin_age = goodie(&sim, coin).age_ms;
+    assert!(
+        (camera.0 - start.0).abs() < 500,
+        "within the camera's reach"
+    );
+    assert!(sim.respawn_now());
+    // The camera has not moved towards the respawned Claw, the sign's
+    // animation stands still and the coin's time delay has not run down.
+    assert_eq!(sim.camera().current, camera, "no camera step");
+    assert_eq!(
+        format!("{:?}", obj(&sim, sign)),
+        sign_before,
+        "nothing moved"
+    );
+    assert_eq!(obj(&sim, coin).time_delay, 100);
+    assert_eq!(goodie(&sim, coin).age_ms, coin_age, "not run");
+    // The next tick takes the camera's first 9 px step.
+    sim.step(TickInput::default());
+    let now = sim.camera().current;
+    assert_eq!(now.0, camera.0 - 9, "one step towards {start:?}");
 }
 
 #[test]

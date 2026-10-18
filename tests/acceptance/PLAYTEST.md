@@ -124,19 +124,20 @@ hazards, Claw's rope swing and the two thieves.
 3. Rope swing, grab: jump or fall into the lower end of a swinging rope: Claw catches it and hangs just below the end. Standing or climbing under a rope's end, he does not catch it.
 4. Rope swing, swing: hanging on, Claw swings with the rope and turns to face the way it swings at each end of the swing; he passes through walls and floors with it, as in the original.
 5. Rope swing, let go: press jump: Claw leaps from where he hangs with no push from the swing, and Left or Right steers the leap. He cannot catch the same rope again for half a second (another rope at once). Cross the first pit on its two ropes, one to the next.
-6. Rope swing, get hit: let a shot or an enemy hit Claw while he swings: he takes the damage and drops, and the rope may catch him again at once, cutting the hurt short, as in the original.
+6. Rope swing, get hit: let a shot or an enemy hit Claw while he swings: he takes the damage (10 for a thief's knife or arrow) and shows the hurt pose for a single frame, then the rope catches him again at once, so he stays on it, as in the original.
 
 7. Thieves: while Claw is level with a cutthroat on screen with nothing between them, it stands still and throws a knife about every 2 s, slashes with its sword when Claw comes close, and never walks up to him; a robber thief shoots arrows the same way. Each shouts once when it first sees Claw.
 8. A knife or an arrow that reaches Claw costs 10 health and is gone; one that reaches a wall stops there.
 9. Knock a thief out and lift it with Z: Claw carries it and throws it as he does an officer, and a thrown thief hurts the enemies it lands on. A beaten thief drops the loot it carries and stops attacking once it starts to fall.
+10. Watch a route or a recording in the window (`--replay FILE.csv`): the level music and the game's sounds play from the level's start as in play, the boss and powerup tunes come in where play would start them, and sound carries on after the recording ends and the keyboard takes over. Where the recording paused or opened a menu, the sounds stop and the music holds, then both carry on as in play. The Pause key and switching to another window pause the sound as in play; `--no-audio` (or `audio = off`) keeps the replay silent.
 
 ## Milestone 3, LEVEL4 early
 
 Failures only, as above: note the line, what happened instead, and where.
 Start the fourth level with `make run-game ARGS="--install PATH --level 4"`,
 or play on from the third level. This section covers the springy ferns,
-the stepping stones over the goo, and the level's floor spikes and goo;
-Katherine's room comes later.
+the stepping stones over the goo, the level's floor spikes and goo, and
+Katherine, the level's boss.
 
 1. Ferns, standing: land on a fern and stand still: about a third of a second later it bends with its spring sound and throws Claw straight up, far higher than his own jump, to the same height on every throw (the first fern, just right of the start, throws him back onto itself again and again). Some ferns throw lower or higher than others, as in the original.
 2. Ferns, walking off: land on a fern and walk off its edge at once: Claw drops off without being thrown, and the fern still bends on its own.
@@ -145,6 +146,10 @@ Katherine's room comes later.
 5. Stepping stones, the clock rows: each stone sinks into the goo and rises again on its own beat, a row sinking as a wave; a stone stops holding Claw the moment it starts to sink, and holds him again once it is halfway back up. Arrive late and Claw drops through into the goo and dies. The stones make no sound.
 6. Stepping stones, the ones that wait: a stone that waits for Claw sinks a moment after he lands on it (jump on at once to keep going), stays under for about a second and comes back up, ready again.
 7. Floor spikes: each spike rises and sinks on its beat, as on the third level, and hurts only while up; goo pools kill Claw and swallow enemies dropped in, drawn in front of whatever sinks.
+8. Katherine, introduction: jump into the door to Katherine's clearing: the boss music starts, Claw stands frozen while the camera visits her, both speak, the banner drops and leaves, and when both move again she attacks at once with her whip from about 160 px. The boss meter shows full and falls with every blow that lands; she blocks most sword blows and somersaults over Claw now and then, as in the original.
+9. Katherine, jump-in: jump with Right held on the first moment in her clearing (the jump-in): no introduction and no freeze. She wakes while Claw is in the air and fights normally, and Claw comes down on her and loses 5 health. Walking back into the spot where Claw arrived later starts the whole introduction mid-fight; her next hit unfreezes Claw.
+10. Katherine, lift: stand close in front of her, more than about 20 px and less than about 85 px between you, and press Lift: Claw picks her up and throws her, and she bounces, rests, loses a little health and gets up to fight again. Pressed right up against her, Lift does nothing.
+11. Katherine, the gem: defeat her: the gem rises to a point above the clearing's floor, Claw is held until it lands, and a plain jump from the floor under it collects it and ends the level.
 
 ## Milestone 3, LEVEL5 early
 
@@ -222,8 +227,6 @@ or play on from the seventh level. This section covers the level's
 pirates and Gabriel's room at the end: Gabriel on his deck, his bombs, the
 pirates he calls in, his cannon with its lever and the button on the mast.
 
-<!-- The eighth level's pirates: their play-test line goes here. -->
-
 1. Gabriel, the introduction: walk through the door and stand still: the camera pans up to Gabriel on his raised deck, his line, Claw's line, the name banner, then the fight, about 13.7 s after you arrive. He never comes down to fight you.
 2. Gabriel, the bombs: from his idle pose (about 2.4 or 2.6 s) he sometimes says a line, waits half a second and lobs three bombs to his left on three of four lanes, the nearest lane landing near his ship and the farthest at the dock's west end; each bomb explodes when it comes down to the dock (5 health in the air and in the blast), and a bomb that hits you in the air explodes there.
 3. Gabriel, the pirates: sometimes he calls a red-tail pirate: it appears on his deck behind him, runs left along the deck, leaps down onto the dock and fights you there; with two of his pirates alive he only waits another idle pose. When Gabriel is beaten, his pirates fall at once.
@@ -235,3 +238,4 @@ pirates he calls in, his cannon with its lever and the button on the mast.
 9. Gabriel, the lift-and-drown kill (with Catnip): with Catnip, the skip jump lands Claw on the deck beside him (his touch costs 10). Lift him (he keeps his idle picture while carried) and throw him onto the dock (4 off his health); for 1.5 s after he lands he cannot be lifted, then lift him again on the dock and hold the throw key for a full throw west: he flies into the water, is gone, and the gem rises from the water to above the dock.
 10. Gabriel, after a throw he survives: on the dock he gets up, pauses a few times, and then stays in his strike pose for good: he never bombs, calls a pirate or pulls the lever again, and his strike hurts you only if you stand right on him.
 11. Gabriel, the cannon after a lost life: strike the button, then lose a life before he fires: after the respawn the cannon shows its barrel down and the button blinks, but every later lever pull still fires straight up into him, and the cannon never turns down again.
+12. Red-tail pirates on this level: stand next to one and keep swinging the sword: about one swing in four is parried (the pirate raises its sword with a clang and takes no damage, then fights on); the other swings hurt it as on the seventh level, and two hits kill it. In Gabriel's fight his bomb blasts also hurt the pirates he calls in: they flinch.

@@ -11,6 +11,15 @@
 //! takes one motion step through the tile physics, at most 24 px per axis.
 //! It does not move in the tick it is launched.
 //!
+//! A shot Claw launches waits one more call ([`hold_first_call`]): its
+//! first logic call only sets its attack box, which stays unset until
+//! then, and it moves, animates, sheds sparkles and checks its fuse from
+//! its second call. A pistol shot, listed just before Claw, so first moves
+//! two ticks after the tick it is fired in; a stick of dynamite, listed
+//! just after him, has its first call in the tick it is thrown when the
+//! update pass still reaches it there, and then moves from the next. The
+//! enemies' and the cannons' shots keep their timing.
+//!
 //! - Straight shots (Claw's pistol shot at 700 px/s, his magic claw and the
 //!   sword shots at 700 px/s, the soldier's musket ball at 500 px/s) fly
 //!   without gravity and are removed on the tick after they touch a wall,
@@ -339,6 +348,9 @@ pub struct ProjectileData {
     /// his attack count, so a shot that passes through several enemies
     /// hits each of them once.
     pub attack_serial: u32,
+    /// A shot of Claw's whose first logic call has not come yet: the
+    /// attack box that call sets (see [`hold_first_call`]).
+    pub held_attack_rect: Option<Rect>,
 }
 
 /// What to launch.
@@ -385,6 +397,25 @@ pub fn spawn_tagged(w: &mut World, spec: ProjectileSpec, serial: u32) -> Option<
     Some(id)
 }
 
+/// Makes the first logic call of projectile `id`, launched by Claw, only
+/// set it up: its attack box stays unset until that call sets it, and
+/// nothing else happens in that call (no motion, animation, sparkles or
+/// fuse check); it flies from its second call. Claw's pistol shots and
+/// thrown dynamite are seen doing this; his magic and sword shots come
+/// from the same launch and are assumed to do the same.
+pub fn hold_first_call(objects: &mut Container, id: ObjectId) {
+    let Some(o) = objects.get_mut(id) else {
+        return;
+    };
+    let rect = o.attack_rect;
+    if let ObjectData::Projectile(d) = &mut o.data
+        && d.class.is_some()
+    {
+        d.held_attack_rect = Some(rect);
+        o.attack_rect = Rect::UNSET;
+    }
+}
+
 /// The data of projectile `o`, if it is one.
 pub fn data(o: &Object) -> Option<&ProjectileData> {
     match &o.data {
@@ -414,7 +445,7 @@ pub fn tick(w: &mut World, id: ObjectId) {
     else {
         return;
     };
-    let Some((d, class)) = load(w, id) else {
+    let Some((mut d, class)) = load(w, id) else {
         return;
     };
     if destroying {
@@ -422,6 +453,14 @@ pub fn tick(w: &mut World, id: ObjectId) {
         if let Some(f) = d.flare {
             w.destroy(f);
         }
+        return;
+    }
+    if let Some(rect) = d.held_attack_rect.take() {
+        // A shot of Claw's: this first call only sets its attack box.
+        if let Some(o) = w.objects.get_mut(id) {
+            o.attack_rect = rect;
+        }
+        store(w, id, d);
         return;
     }
     match (d.phase, class) {

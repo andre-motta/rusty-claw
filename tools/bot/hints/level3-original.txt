@@ -1,0 +1,79 @@
+# Waypoints for the third level at the original speeds, from the level's
+# geometry: over the spike pits on the pillar tops and the moving platform
+# to the cliff, down the shaft to the cave and its floor, up through the
+# moving platforms and the ladder to the flag on the block, along the
+# floor to the first save point, up the ladder to the grassy shelves and
+# the pillar top, down the narrow shaft to the flag, down the shaft on its
+# left to the low tunnel, up the big shaft on its small and large
+# platforms to the ledge on its right, up the ladder, the sliding
+# platform, the leaves and the second sliding platform to the rock top,
+# up the tree's ladders and shelves, across on the rope to the second save
+# point, down onto the one-way platform (crouching under the hanging
+# rock), down the ladder to the flag in the pit, and up the last shaft on
+# its ladders and sliding platforms to the shelf below the end.
+7900,6400
+8615,6540
+9000,6540
+9700,6420
+10200,7600
+9982,7790
+9600,8550
+10350,8200
+11170,8400
+11300,8130
+11406,8100
+12400,8100
+13300,7400
+13849,6950
+14600,6500
+15358,6820
+15640,6650
+15900,6280
+16700,6280
+16880,6150
+17050,5900
+17042,7200
+16950,8010
+17450,8010
+17700,7760
+17876,7500
+17760,7250
+17876,6870
+18015,6760
+17877,6550
+18016,6469
+18162,6380
+18300,5720
+18820,5600
+19320,5480
+19250,5230
+19900,5195
+20355,5100
+20380,4910
+20200,4770
+20125,4380
+19900,4190
+19850,4050
+20000,3880
+20390,3700
+20500,3310
+20350,3050
+20300,2910
+21000,2920
+21600,3200
+21712,3440
+22000,5450
+22300,5780
+22700,5780
+22900,5520
+23075,5800
+23075,6300
+23161,7080
+23830,6720
+23700,6620
+23520,6480
+23700,6370
+23830,6230
+23700,6110
+23650,5700
+23800,5400
