@@ -172,6 +172,10 @@ fn the_registry_keeps_each_names_activation_class() {
 }
 
 #[test]
+// The data literals below end in `..Default::default()` so they keep
+// compiling when the pirate, the bear and the crab gain their own fields;
+// until then the update has nothing to fill.
+#[allow(clippy::needless_update)]
 fn the_pirate_and_the_bear_are_human_classes_and_the_crab_a_plain_one() {
     for (g, name, human) in [
         (GameLogic::RedTailPirate, "RedTailPirate", true),
@@ -189,12 +193,15 @@ fn the_pirate_and_the_bear_are_human_classes_and_the_crab_a_plain_one() {
     for mut d in [
         ObjectData::RedTailPirate(redtail_pirate::RedTailPirateData {
             enemy: enemy_data.clone(),
+            ..Default::default()
         }),
         ObjectData::BearSailor(bear_sailor::BearSailorData {
             enemy: enemy_data.clone(),
+            ..Default::default()
         }),
         ObjectData::HermitCrab(crab::HermitCrabData {
             enemy: enemy_data.clone(),
+            ..Default::default()
         }),
     ] {
         assert_eq!(d.enemy(), Some(&enemy_data));
