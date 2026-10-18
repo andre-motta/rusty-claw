@@ -668,6 +668,7 @@ impl World<'_> {
                 tick: self.tick,
                 now_ms: self.now_ms,
                 dt_ms: TICK_MS,
+                move_ms: TICK_MS,
                 pulse: self.pulse,
                 view,
                 level_logics: true,

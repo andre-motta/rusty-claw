@@ -5,7 +5,8 @@
 # jump, a second jump into the blast and a jump from the air once struck,
 # which clears the pillar. From its top: across on the rope over the pit,
 # up the steps and the ladder to the shelves, and on as the
-# original-speeds route goes.
+# original-speeds route goes. A waypoint marked `foot` counts only with
+# Claw standing, climbing or hanging near it.
 16060,6660
 16740,6730
 16880,6600
@@ -14,15 +15,15 @@
 17042,7200
 16950,8010
 17450,8010
-17700,7760
-17876,7500
-17760,7250
-17876,6870
-18015,6760
-17877,6550
-18016,6469
-18162,6380
-18300,5720
+17700,7760 foot
+17760,7420 foot
+17760,7100 foot
+17876,6900 foot
+18015,6760 foot
+17877,6550 foot
+18016,6469 foot
+18162,6380 foot
+18300,5720 foot
 18820,5600
 19320,5480
 19250,5230
@@ -49,10 +50,13 @@
 23075,6300
 23161,7080
 23830,6720
-23700,6620
-23520,6480
-23700,6370
-23830,6230
-23700,6110
+24020,6607 foot
+23820,6618 foot
+23519,6470
+23650,6367 foot
+24031,6230
+23990,6095 foot
+23720,6103 foot
+23847,5975
 23650,5700
 23800,5400

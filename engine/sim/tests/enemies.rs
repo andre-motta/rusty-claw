@@ -424,6 +424,118 @@ fn a_walking_rat_turns_at_its_limits_without_turning_its_sprite() {
     ));
 }
 
+/// Puts the rat `id` on x `x` with the fraction `carry` carried from its
+/// last move, walking at `vx` in `state`.
+fn place_walker(sim: &mut Sim, id: ObjectId, x: i32, carry: f64, vx: f64, state: EnemyState) {
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(id).unwrap();
+        o.x = x;
+        o.state = state as i32;
+        let y = o.y;
+        let d = enemy::data_mut(w, id).unwrap();
+        d.carry = (carry, 0.0);
+        d.moved_to = Some((x, y));
+        d.vx = vx;
+    });
+}
+
+#[test]
+fn a_walker_turns_only_when_exactly_on_its_limit() {
+    // On the left limit's pixel with 0.52 px still to go a rat walks on
+    // (its next move clamps it onto the limit, and it turns a tick
+    // later), and it turns once it stands exactly on the limit. The same
+    // on the right.
+    let mut sim = sim_with(arena(vec![bounded("Rat", 3000, 926, 2950, 3100)]), 7);
+    send_claw_away(&mut sim);
+    let id = first(&sim, GameLogic::Rat);
+    for (x, vx, walking, turned) in [
+        (2950, -60.0, EnemyState::MoveLeft, EnemyState::MoveRight),
+        (3100, 60.0, EnemyState::MoveRight, EnemyState::MoveLeft),
+    ] {
+        let fraction = if vx < 0.0 { 0.52 } else { -0.52 };
+        place_walker(&mut sim, id, x, fraction, vx, walking);
+        sim.with_world(|w| match walking {
+            EnemyState::MoveLeft => states::walk_left_tick(w, id),
+            _ => states::walk_right_tick(w, id),
+        });
+        assert_eq!(state_of(&sim, id), Some(walking), "{x}: a fraction away");
+        place_walker(&mut sim, id, x, 0.0, vx, walking);
+        sim.with_world(|w| match walking {
+            EnemyState::MoveLeft => states::walk_left_tick(w, id),
+            _ => states::walk_right_tick(w, id),
+        });
+        assert_eq!(state_of(&sim, id), Some(turned), "{x}: on the limit");
+        assert_eq!(data(&sim, id).vx, -vx, "{x}: turned at its speed");
+    }
+}
+
+#[test]
+fn the_rat_touches_claw_at_a_single_point() {
+    let mut sim = sim_with(arena(vec![record("Rat", 1200, 926)]), 7);
+    sim.step(TickInput::default());
+    let id = first(&sim, GameLogic::Rat);
+    let o = obj(&sim, id);
+    assert_eq!(o.attack_rect, rat::TOUCH_BOX);
+    assert_eq!(rat::TOUCH_BOX, Rect::new(0, 0, 0, 0));
+    assert!(
+        o.hit_rect.is_set() && o.hit_rect != o.attack_rect,
+        "hit box: the picture"
+    );
+}
+
+#[test]
+fn an_enemy_sees_claw_only_once_a_frame_has_shown_it() {
+    // An object is made not shown.
+    let made = Object::new(0, 0, 0, 0, Arc::from("Rat"), LogicKind::Inert);
+    assert!(!made.drawn_last_frame);
+    // A stationary rat 200 px from Claw on his floor, nothing between
+    // them; Claw lands and the camera comes down to him.
+    let mut rec = record("Rat", 1200, 926);
+    rec.record[enemy::field::USER_0] = 1;
+    let mut sim = sim_with(arena(vec![rec]), 7);
+    let id = first(&sim, GameLogic::Rat);
+    idle(&mut sim, 60);
+    let sees = |sim: &mut Sim| sim.with_world(|w| enemy::sees_claw(w, id));
+    let in_view = |sim: &mut Sim| {
+        sim.with_world(|w| {
+            let o = w.objects.get(id).unwrap().clone();
+            w.on_screen(&o)
+        })
+    };
+    // The frame after the last tick showed it: it sees Claw.
+    assert!(obj(&sim, id).drawn_last_frame);
+    assert!(in_view(&mut sim) && sees(&mut sim));
+    // What counts is that frame, not where its picture is now.
+    let set_drawn = |sim: &mut Sim, drawn: bool| {
+        sim.with_world(|w| w.objects.get_mut(id).unwrap().drawn_last_frame = drawn);
+    };
+    set_drawn(&mut sim, false);
+    assert!(
+        in_view(&mut sim) && !sees(&mut sim),
+        "in view now, not shown"
+    );
+    let x = obj(&sim, id).x;
+    sim.with_world(|w| w.objects.get_mut(id).unwrap().x = x + 2000);
+    set_drawn(&mut sim, true);
+    assert!(
+        !in_view(&mut sim) && sees(&mut sim),
+        "shown, out of view now"
+    );
+    // The next frame does not show it out there, nor a hidden enemy.
+    sim.step(TickInput::default());
+    assert!(!obj(&sim, id).drawn_last_frame, "out of view");
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(id).unwrap();
+        o.x = x;
+        o.draw_flags |= draw_flags::HIDDEN;
+    });
+    sim.step(TickInput::default());
+    assert!(!obj(&sim, id).drawn_last_frame, "hidden");
+    sim.with_world(|w| w.objects.get_mut(id).unwrap().draw_flags &= !draw_flags::HIDDEN);
+    sim.step(TickInput::default());
+    assert!(obj(&sim, id).drawn_last_frame, "shown again");
+}
+
 /// A corridor six tiles wide between two walls on a flat floor (the left
 /// wall's right edge at x 2624, the right wall's left edge at x 3008).
 fn corridor(objects: Vec<ObjectSpec>) -> SimLevel {

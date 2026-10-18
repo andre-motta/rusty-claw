@@ -977,6 +977,13 @@ fn init_pickup(w: &mut World, id: ObjectId) {
         if let Some(o) = w.objects.get_mut(id) {
             data_mut(o).glitter = Some(g);
         }
+        // The end-of-level pickup's glitter makes its first call (and its
+        // start delay's draw) as it is made, inside the pickup's own call;
+        // any other pickup's glitter makes it in its own first turn of an
+        // update pass.
+        if &*logic == END_OF_LEVEL_LOGIC {
+            glitter_tick(w, g);
+        }
     }
 }
 
@@ -1045,7 +1052,8 @@ fn fly(w: &mut World, id: ObjectId) {
 /// Makes the glitter of pickup `owner`. It is not run when it is made: its
 /// first call, with the draw of its start delay, comes when the update pass
 /// reaches it, in the same pass when it lands after the object the pass
-/// visits next, else in the next tick.
+/// visits next, else in the next tick. The end-of-level pickup runs its
+/// glitter's first call itself, as it makes it (see `init_pickup`).
 fn spawn_glitter(w: &mut World, owner: ObjectId) -> ObjectId {
     let (x, y, z) = w.objects.get(owner).map_or((0, 0, 0), |o| (o.x, o.y, o.z));
     let mut g = new_object(GLITTER, x, y, z + 1);

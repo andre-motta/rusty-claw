@@ -360,6 +360,12 @@ pub struct Ctx<'a> {
     /// [`crate::Sim::step`]). Claw's movement, timers and animation advance
     /// by it.
     pub dt_ms: u32,
+    /// Game time Claw's movement covers, ms: [`Ctx::dt_ms`], except in the
+    /// two update passes of a respawn, where the frame time is 0 but his
+    /// movement still counts a whole 18 ms tick (a walk started there
+    /// moves him in each pass, while his animation and timers stand
+    /// still).
+    pub move_ms: u32,
     /// The tick is a frame pulse tick (see [`World::pulse`]).
     pub pulse: bool,
     /// The logic view in level pixels.
@@ -389,9 +395,9 @@ impl Ctx<'_> {
         self.dt_ms as i32
     }
 
-    /// [`Ctx::dt_ms`] in seconds, for the movement.
+    /// [`Ctx::move_ms`] in seconds, for the movement.
     pub fn dt_s(&self) -> f64 {
-        f64::from(self.dt_ms) * 0.001
+        f64::from(self.move_ms) * 0.001
     }
 
     /// Runs `f` with a [`World`] in which Claw's object is back in its

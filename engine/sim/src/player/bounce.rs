@@ -86,6 +86,7 @@ pub(super) fn with_ctx<R>(w: &mut World, id: ObjectId, f: impl FnOnce(&mut Ctx) 
             tick: w.tick,
             now_ms: w.now_ms,
             dt_ms: TICK_MS,
+            move_ms: TICK_MS,
             pulse: w.pulse,
             view: v,
             level_logics: true,

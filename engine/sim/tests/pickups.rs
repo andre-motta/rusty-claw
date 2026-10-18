@@ -1731,3 +1731,39 @@ fn the_map_piece_picture_follows_the_level_number() {
         assert_eq!(obj(&sim, g).image_set, picture, "level {number}");
     }
 }
+
+#[test]
+fn the_end_of_level_pickups_glitter_starts_as_it_is_made() {
+    // A pickup made in play (as the gem a boss drops becomes the
+    // end-of-level pickup) makes its glitter in its first call. The
+    // end-of-level pickup's glitter makes its own first call at once,
+    // drawing its start delay inside the pickup's call; any other pickup's
+    // glitter waits for its turn in an update pass.
+    let mut sim = Sim::new(level(vec![]), SimConfig::default());
+    step(&mut sim, 2);
+    for (name, set, runs) in [
+        (pickup::END_OF_LEVEL_LOGIC, "GAME_MAPPIECE", true),
+        ("TreasurePowerup", "GAME_TREASURE_CROSSES_RED", false),
+    ] {
+        let id = sim.with_world(|w| {
+            let mut o = logic::new_object(name, 1400, 930, 0);
+            o.image_set = set.into();
+            w.spawn(o)
+        });
+        let before = sim.rng_state();
+        sim.with_world(|w| pickup::tick(w, id));
+        let g = data(obj(&sim, id)).glitter.expect("it glitters");
+        let o = obj(&sim, g);
+        if runs {
+            assert_ne!(o.state, pstate::INIT, "{name}: run when made");
+            assert_eq!(o.image_set, "GAME_GREENGLITTER");
+            let mut r = Rng::new(before);
+            let delay = r.below(pickup::GLITTER_MAX_DELAY_MS + 1);
+            assert_eq!(sim.rng_state(), r.state(), "{name}: the delay's draw");
+            assert_eq!(o.time_delay, delay);
+        } else {
+            assert_eq!(o.state, pstate::INIT, "{name}: not run yet");
+            assert_eq!(sim.rng_state(), before, "{name}: no draw yet");
+        }
+    }
+}
