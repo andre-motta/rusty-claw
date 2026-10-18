@@ -107,6 +107,10 @@ pub struct SearchConfig {
     /// the middle of a jump or a fall: the next segment then starts from
     /// where he can stay.
     pub hint_on_foot: bool,
+    /// The hints, by index into [`hints`](Self::hints), that count as
+    /// reached only on foot as [`hint_on_foot`](Self::hint_on_foot) makes
+    /// every hint count; the others count anywhere near them.
+    pub foot_hints: Vec<usize>,
     /// Threads that play the children of a node (1 plays them in turn).
     /// The result does not depend on it.
     pub threads: usize,
@@ -198,6 +202,7 @@ impl Default for SearchConfig {
             hints: Vec::new(),
             hint_radius: 48,
             hint_on_foot: false,
+            foot_hints: Vec::new(),
             threads: 1,
             cached_sims: 512,
             wall_limit: None,
@@ -404,9 +409,11 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
     let mut targets: Vec<Target> = cfg
         .hints
         .iter()
-        .map(|&(x, y)| Target {
+        .enumerate()
+        .map(|(i, &(x, y))| Target {
             field: grid.field_to(x, y + feet, cfg.hint_radius),
             point: Some((x, y, cfg.hint_radius)),
+            on_foot: cfg.hint_on_foot || cfg.foot_hints.contains(&i),
         })
         .collect();
     // Claw takes a pickup with any part of his body: his feet may be up to
@@ -430,7 +437,11 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
         },
         Goal::Reach { x, y, radius } => grid.field_to(x, y + feet, radius.max(8)),
     };
-    targets.push(Target { field, point: None });
+    targets.push(Target {
+        field,
+        point: None,
+        on_foot: false,
+    });
     let arena = Arena {
         door: boss.as_ref().map(|b| b.end.door),
         boss_side: boss
@@ -581,6 +592,8 @@ struct Target {
     field: DistanceField,
     /// The hint point and its radius; `None` for the goal.
     point: Option<(i32, i32, i32)>,
+    /// The hint counts as reached only on foot.
+    on_foot: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -943,7 +956,7 @@ impl Search<'_> {
             tick: node.ticks,
             timing: node.timing,
             land_gap: self.cfg.land_gap,
-            hint_on_foot: self.cfg.hint_on_foot,
+            hint_on_foot: self.targets[self.target].on_foot,
             check_fragile: self.cfg.fragile_cost > 0,
             intro: if self.boss.is_some() {
                 self.cfg.intro

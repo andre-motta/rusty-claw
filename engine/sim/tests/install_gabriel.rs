@@ -960,16 +960,15 @@ fn trace_firsts(cmp: &Comparison) -> BTreeMap<String, u64> {
 ///   button's foot): the original shows no hit burst for an enemy it did
 ///   not draw and makes no draw for its size; this build still shows it.
 ///   The rule comes with the third level's route work, merged later.
-/// - The gem glitter's first draw a tick late, when the gem out of the
-///   water becomes the end-of-level pickup: the rule comes with the third
-///   level's route work, merged later.
 /// - The full throw into the water: at one tick of his flight his exact
 ///   height lands on the whole pixel 5262 in this build's arithmetic, a
 ///   hair below it in the original's (5261); the next tick agrees again.
 /// - The cannon death (the diagnostic run): the gem rising out of him
 ///   moves in the tick it is made in this build (it is listed after
 ///   Claw), where the original's first call only leads the camera; the
-///   camera and Claw's release follow a tick early.
+///   camera and Claw's release follow a tick early, and so does the draw
+///   of the gem's glitter, which makes its first call as the gem becomes
+///   the end-of-level pickup (44226 ms).
 /// - c60 (the default tuning played tick by tick): the walk into the door
 ///   ends a pixel short of the original's 60 frames per second walk (the
 ///   checkpoint event), the introduction's delays count 18 ms ticks against
@@ -1013,14 +1012,15 @@ const KNOWN: &[Known] = &[
             ("lives", 41508),
         ],
     ),
-    // The hit burst off screen, then the gem out of him.
+    // The gem out of him: the camera, then his gem's first call and its
+    // glitter's draw a tick early.
     (
         "boss-button-normal-kill-c18",
         "c18",
         &[
-            ("rng", 29736),
             ("cam_y", 42192),
             ("cam_x", 42606),
+            ("rng", 44226),
             ("state_id", 44226),
         ],
     ),
@@ -1152,7 +1152,7 @@ const KNOWN: &[Known] = &[
     (
         "boss-intro-skip-end-life-c18",
         "c18",
-        &[("rng", 5436), ("y", 6300), ("his_state", 9504)],
+        &[("rng", 5436), ("y", 6300), ("his_state", 9522)],
     ),
     // The walk's last pixel and the introduction's delays.
     (
@@ -1219,12 +1219,8 @@ const KNOWN: &[Known] = &[
             ("held", 16500),
         ],
     ),
-    // The full throw's whole pixel, then the gem glitter's first draw.
-    (
-        "boss-lift-drown-c18",
-        "c18",
-        &[("his_y", 10260), ("rng", 15336)],
-    ),
+    // The full throw's whole pixel.
+    ("boss-lift-drown-c18", "c18", &[("his_y", 10260)]),
     // Claw's idle line.
     ("boss-lift-throw", "c18", &[("rng", 19404)]),
     // Claw with Catnip in the room a tick early: the introduction runs.

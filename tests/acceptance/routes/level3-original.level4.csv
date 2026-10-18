@@ -3,14 +3,14 @@
 # seed 1617999171
 # mid_air_hit_fix = off
 # hints level4-original
-# start_score = 83900
-# start_health = 40
+# start_score = 99200
+# start_health = 25
 # start_lives = 7
 # start_pistol = 0
 # start_magic = 5
 # start_dynamite = 3
 # start_weapon = pistol
-# start_treasure_game = 159, 3, 11, 1, 3, 1, 1, 1, 0
+# start_treasure_game = 167, 3, 9, 2, 4, 1, 2, 1, 0
 tick,held_mask,pressed_mask
 0,0x0,0x0
 1,0x0,0x0

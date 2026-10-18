@@ -17,7 +17,9 @@
 //!    its activation window): that step covers the whole time since the
 //!    last step, so a woken walker first makes up the way it did not walk
 //!    while asleep, up to the 24 px step limit (a rat asleep for 3.7 s
-//!    moves 24 px, then stops on its patrol limit).
+//!    moves 24 px, then stops on its patrol limit). A step with no game
+//!    time since the last one, as in a respawn's update passes, covers
+//!    none and moves nothing.
 //! 4. The new position is clamped to the patrol limits: a walker that
 //!    would cross a limit stops exactly on it.
 //! 5. The object moves there through the tiles and platforms. When the
@@ -110,11 +112,17 @@ pub fn integrate(w: &mut World, id: ObjectId) {
 
 /// The time the step at `now` covers, s: one tick, or after a gap (the
 /// enemy slept, so no step ran for more than a tick) the whole time since
-/// the last step, which only the [`STEP_LIMIT`] of the move bounds.
-/// Records `now` as the time of the last step.
+/// the last step, which only the [`STEP_LIMIT`] of the move bounds. A step
+/// with no game time since the last one covers none: a second step in the
+/// same moment, as in the update passes of a respawn, where the clock
+/// stands still, moves nothing. The first step covers one tick. Records
+/// `now` as the time of the last step.
 fn step_seconds(d: &mut EnemyData, now: u64) -> f64 {
-    let since = d.last_move_ms.map_or(0, |t| now.saturating_sub(t));
-    d.last_move_ms = Some(now);
+    let last = d.last_move_ms.replace(now);
+    let since = last.map_or(0, |t| now.saturating_sub(t));
+    if last.is_some() && since == 0 {
+        return 0.0;
+    }
     let ms = if since > u64::from(TICK_MS) {
         since
     } else {
@@ -371,6 +379,22 @@ mod tests {
         let mut v = -2000.0;
         assert_eq!(axis_step(&mut v, 0.0), -24.0);
         assert_eq!(v, -2000.0);
+    }
+
+    #[test]
+    fn a_step_covers_the_game_time_since_the_last_one() {
+        let mut d = EnemyData::default();
+        let tick = 18.0 * 0.001;
+        // The first step covers one tick.
+        assert_eq!(step_seconds(&mut d, 1000), tick);
+        assert_eq!(step_seconds(&mut d, 1018), tick);
+        // A second step in the same moment (a respawn's update passes,
+        // with the clock standing still) covers none.
+        assert_eq!(step_seconds(&mut d, 1018), 0.0);
+        assert_eq!(step_seconds(&mut d, 1018), 0.0);
+        // The next tick covers one tick again, and a gap all of it.
+        assert_eq!(step_seconds(&mut d, 1036), tick);
+        assert_eq!(step_seconds(&mut d, 1136), 100.0 * 0.001);
     }
 
     #[test]

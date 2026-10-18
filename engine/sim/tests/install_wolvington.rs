@@ -472,14 +472,15 @@ const STORES: &[(&str, &[&str])] = &[
 /// - c18 end of life: the in-game menu opened to end the life puts the
 ///   original's frame pulse a tick later from there on (18018 ms; the
 ///   replay plays no time for the menu), Claw's death fall is a pixel off
-///   from 18900 ms, and the respawn's update passes, which take no time in
-///   the original, still move Wolvington by a step of his walk in this
-///   build (19710 ms: he walks on one step ahead from his place).
+///   from 18900 ms, and on the tick after the respawn Wolvington stands a
+///   pixel left of the original's (19710 ms: 34957 against 34958, where
+///   he is put back; the respawn's passes no longer move him, but this
+///   build's tick still does, by a pixel).
 /// - c18 Catnip held 20 ticks: he wakes in the air, fights, and kills
-///   Claw; Claw's death fall is a pixel off (21492 ms), the respawn's
-///   passes move Wolvington one step on (22302 ms), and the introduction
-///   Claw runs again by walking into the stager's box ends that much
-///   later (23094 ms).
+///   Claw; Claw's death fall, his respawn and Wolvington's place after it
+///   follow the original's, but the fight flag of the introduction Claw
+///   runs again by walking into the stager's box reaches 2 two ticks
+///   before the original's (23094 ms; not traced yet).
 /// - c60 (the default tuning played tick by tick): the camera pans to
 ///   him at 7 px per 18 ms tick against 6 px per frame (850 ms), and the
 ///   introduction's delays count 18 ms ticks against frames of 16 and 17
@@ -515,13 +516,7 @@ const KNOWN: &[Known] = &[
     (
         "boss-intro-skip-catnip-full",
         "c18",
-        &[
-            ("y", 21492),
-            ("cam_x", 22302),
-            ("cam_y", 22302),
-            ("his_x", 22302),
-            ("boss_fight", 23094),
-        ],
+        &[("boss_fight", 23094)],
     ),
     (
         "boss-intro-normal",
