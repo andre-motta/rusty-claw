@@ -1,9 +1,9 @@
 //! Enemies: the officer, the soldier, the rat, the punk rat ([`punkrat`])
 //! and Raux ([`raux`]), on shared enemy behaviour and the shared human
 //! states ([`human`]), with the cutthroat ([`cutthroat`]) and the robber
-//! thief ([`robberthief`]). Katherine ([`katherine`]), the town guards
-//! ([`townguard`]) and the seagull ([`seagull`]) are declared but not
-//! built yet.
+//! thief ([`robberthief`]), and the seagull ([`seagull`]), the first
+//! flyer. Katherine ([`katherine`]) and the town guards ([`townguard`])
+//! are declared but not built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -511,6 +511,9 @@ pub struct EnemyFields {
     pub vy: f64,
     /// Vertical acceleration, px/s^2.
     pub ay: f64,
+    /// The height a dive ends below (the seagull: where Claw stood when
+    /// it dived).
+    pub target_y: i32,
     /// Sub-pixel position carried to the next tick.
     pub carry: (f64, f64),
     /// Where the last movement step left the object; a move made by
@@ -597,6 +600,7 @@ impl Default for EnemyFields {
             vx: 0.0,
             vy: 0.0,
             ay: GRAVITY,
+            target_y: 0,
             carry: (0.0, 0.0),
             moved_to: None,
             last_move_ms: None,

@@ -50,6 +50,7 @@ pub struct Outbox {
     shake_ms: Option<u32>,
     voice: Vec<VoiceRequest>,
     frame_time_reset: bool,
+    tile_edits: Vec<(i32, i32, i32)>,
     pub(crate) boss: BossState,
 }
 
@@ -183,6 +184,12 @@ impl Outbox {
     /// Takes the voice requests, in request order.
     pub(crate) fn take_voice(&mut self) -> Vec<VoiceRequest> {
         std::mem::take(&mut self.voice)
+    }
+
+    /// Takes the main-plane cell writes (column, row, tile), in request
+    /// order (see [`World::set_main_cell`]).
+    pub(crate) fn take_tile_edits(&mut self) -> Vec<(i32, i32, i32)> {
+        std::mem::take(&mut self.tile_edits)
     }
 }
 
@@ -366,6 +373,28 @@ impl World<'_> {
     /// Claw's object.
     pub fn claw_object(&self) -> Option<&Object> {
         self.claw_id.and_then(|id| self.objects.get(id))
+    }
+
+    /// Writes `tile` (-1 for none) into the main-plane cell (`col`, `row`),
+    /// as the breaking planks do when they give way and when their row is
+    /// restored. The write reaches the level as soon as the current logic
+    /// call returns, so every later mover of the tick (Claw among them)
+    /// meets the changed cell; [`World::main_cell`] reads it back at once.
+    /// Cells outside the plane are left alone.
+    pub fn set_main_cell(&mut self, col: i32, row: i32, tile: i32) {
+        self.out.tile_edits.push((col, row, tile));
+    }
+
+    /// The tile number of the main-plane cell (`col`, `row`), with the
+    /// writes of the current call (see [`World::set_main_cell`]); -1 for an
+    /// empty cell or one outside the plane.
+    pub fn main_cell(&self, col: i32, row: i32) -> i32 {
+        self.out
+            .tile_edits
+            .iter()
+            .rev()
+            .find(|e| (e.0, e.1) == (col, row))
+            .map_or_else(|| self.level.map.cell(col, row), |e| e.2)
     }
 
     /// The level's retail number (see [`SimLevel::number`]).
