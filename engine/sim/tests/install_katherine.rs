@@ -4,8 +4,9 @@
 //! against the reference traces of the same routes, in the same trace
 //! format: the jump into the door with the introduction, the jump-in entry
 //! that skips it (with Right, and straight up), the walk back into the
-//! stager's box after a skip, lifting Katherine, and the end of a life in
-//! the middle of the fight.
+//! stager's box after a skip, the late trigger, lifting Katherine (after
+//! the introduction and after a skip), the fight with and without the
+//! introduction, and the end of a life in the middle of the fight.
 //!
 //! Each route starts under the door into her clearing: Claw is put there
 //! on the level's first tick and left there until the route's time zero
@@ -325,6 +326,10 @@ const STORES: &[(&str, &[&str])] = &[
     ("boss-intro-skip-up-c18", &["c18"]),
     ("boss-intro-normal-lift", &["c18", "c60"]),
     ("boss-intro-normal-end-life", &["c18", "c60"]),
+    ("boss-intro-normal-fight", &["c18"]),
+    ("boss-intro-skip-fight-c18", &["c18"]),
+    ("boss-intro-skip-late-c18", &["c18"]),
+    ("boss-intro-skip-lift-c18", &["c18"]),
 ];
 
 /// A store, a clock, and the first divergence (ms) of each column known
@@ -332,14 +337,15 @@ const STORES: &[(&str, &[&str])] = &[
 /// listed must not leave it earlier. What they come from:
 ///
 /// - c18: the walk through the door, the whole introduction, her fight
-///   (whips, stabs, somersaults, blocks), lifting and throwing her, the
-///   jump-in skip, the late trigger after it and her blows that end
-///   Claw's freeze follow the original step for step, the random stream
-///   included, and so does her reset when Claw respawns. Only Claw's own
-///   death fall (1 px higher on some steps: `y` from 26406 to 30240 ms by
-///   route) and the camera after his respawn (it moves on each of the
-///   respawn's update passes: `cam_x` on the respawn step) leave the
-///   traces, and both come back.
+///   (whips, stabs, somersaults, blocks, flinches, steps back), lifting
+///   and throwing her, the jump-in skip, the late trigger after it, the
+///   fight after a skip and her blows that end Claw's freeze follow the
+///   original step for step, the random stream included, and so does her
+///   reset when Claw respawns, near her clearing or far from it. Only
+///   Claw's own death fall (1 px higher on some steps: `y` from 26406 to
+///   30564 ms by route) and the camera after his respawn (it moves on
+///   each of the respawn's update passes: `cam_x` on the respawn step)
+///   leave the traces, and both come back.
 /// - c18 end of life: the in-game menu opened before the life ends puts
 ///   the original's frame pulse a tick earlier from then on (14418 ms);
 ///   the replay plays no time for that menu, so her rolls come a tick
@@ -397,6 +403,12 @@ const KNOWN: &[Known] = &[
         "boss-intro-skip-return-c18",
         "c18",
         &[("y", 26406), ("cam_x", 27216)],
+    ),
+    ("boss-intro-skip-fight-c18", "c18", &[("y", 30564)]),
+    (
+        "boss-intro-skip-lift-c18",
+        "c18",
+        &[("y", 30240), ("cam_x", 31050)],
     ),
     (
         "boss-intro-skip-up-c18",

@@ -26,9 +26,11 @@
 //! - The leap ([`EnemyState::Flip`]) aims 200 to 400 px past Claw on his
 //!   far side, on her own height; a wall on the way or no floor there
 //!   refuses it. In the air and until her landing ends she cannot be hit.
-//!   She leaves from her exact position, which standing still sits a
-//!   changing part of a pixel below her whole pixel, so her flights match
-//!   the original's pixel for pixel.
+//!   She leaves from her exact position, which standing sits a changing
+//!   part of a pixel below her whole pixel once gravity pulls on her (from
+//!   her first step back, flight or reset on; built on her floor she
+//!   stands exactly on her pixel until then), so her flights match the
+//!   original's pixel for pixel.
 //! - When Claw, facing her within 100 px, swings at her, she leaps away on
 //!   one tick in five while she is free (the pulse tick's roll below 200),
 //!   in place of what she chose that tick.
@@ -54,6 +56,18 @@
 //! time), and Home on the next tick: no wait. Her defeat goes through
 //! [`crate::logic::World::boss_defeated`], which launches the gem to the
 //! point her record's speed fields name.
+//!
+//! # When Claw respawns
+//!
+//! Claw's respawn resets her on her first call after it, in the first of
+//! the respawn's update passes ([`reset`]): back at her place on her
+//! floor with full health, in the state she was in. The respawn's passes
+//! take no game time for her ([`between_ticks`]): she makes her draws and
+//! her decisions on where Claw now is (a pacing or running Katherine goes
+//! Home, Home may whip, leap or pace), but what takes time waits for the
+//! tick's own call: a strike under way ends there, not in a pass, and she
+//! does not move in the passes. So wherever Claw comes back, she ends the
+//! respawn's tick at her place, and Home when she was striking.
 //!
 //! # After a skipped introduction
 //!
@@ -127,6 +141,8 @@ use super::{
     motion, obj, obj_mut, on_screen, play, rand, say, scaled, set_anim, set_anim_now, set_state,
     take_damage,
 };
+use claw_frame::TransitionKind;
+
 use crate::logic::world_boss::fight;
 use crate::logic::{ObjectData, World, boss_stage};
 use crate::object::{ObjectId, Rect, engine_state, flags};
@@ -316,6 +332,12 @@ pub struct KatherineData {
     /// How far below her whole-pixel height she really stands, px (see
     /// [`next_stand_fraction`]); 0 while she is not standing.
     pub stand_y: f64,
+    /// Whether gravity pulls on her while she stands, so that [`Self::stand_y`]
+    /// changes from tick to tick. Built on her floor, she stands exactly on
+    /// her pixel (through her strikes, blocks, flinches and pacing) until
+    /// her first step back, her first flight or Claw's first respawn; from
+    /// then on it stays so.
+    pub falls: bool,
 }
 
 fn handler(s: EnemyState) -> Option<Handler> {
@@ -388,19 +410,57 @@ fn run(w: &mut World, id: ObjectId) {
         super::tick(w, id, &CLASS);
         return;
     }
+    let no_time = between_ticks(w);
     super::pre_tick(w, id, &CLASS);
     pre_tick(w, id);
     let s = super::state(w, id).unwrap_or_default();
-    if let Some(h) = handler(s).or_else(|| states::shared_handler(s, true)) {
+    if (!no_time || decides(s))
+        && let Some(h) = handler(s).or_else(|| states::shared_handler(s, true))
+    {
         h(w, id);
     }
-    post_tick(w, id);
+    post_tick(w, id, no_time);
+}
+
+/// True while Claw's respawn runs between two ticks (its opening circle
+/// is up until the next tick starts): the respawn's update passes, which
+/// take no game time. In those calls she makes her pre-tick's draws and
+/// her decisions (the states of [`decides`] and a scheduled call), but
+/// nothing that takes time happens: a strike, a flinch, a block, a step
+/// back or a landing does not go on and she does not move. So a strike
+/// that would end in the respawn's tick ends in the tick's own call.
+///
+/// Inferred: this is what gives the original's random draws, states and
+/// positions on the respawn steps of her clearing's runs, with Claw coming
+/// back near her (she goes Home from pacing and decides at once) and far
+/// from her (her strike ends in that step and she paces from the next).
+pub fn between_ticks(w: &World) -> bool {
+    w.out
+        .transition()
+        .is_some_and(|t| t.kind == TransitionKind::Circle && !t.closing)
+}
+
+/// The states whose call is a decision on where Claw is, which she makes
+/// in the respawn's update passes too (see [`between_ticks`]): waiting
+/// for the fight, idle, Home, pacing, walking and running at Claw.
+pub fn decides(s: EnemyState) -> bool {
+    matches!(
+        s,
+        EnemyState::Startup
+            | EnemyState::Idle
+            | EnemyState::Home
+            | EnemyState::Pace
+            | EnemyState::Advance
+            | EnemyState::FastAdvance
+    )
 }
 
 /// The post-tick: a block's release before a scheduled call (as
 /// [`human::run`] does), the scheduled call or the dodge's leap, then the
 /// movement step, noting where it started and whether a wall stopped it.
-fn post_tick(w: &mut World, id: ObjectId) {
+/// With `no_time` (the respawn's update passes, see [`between_ticks`])
+/// there is no movement step.
+fn post_tick(w: &mut World, id: ObjectId, no_time: bool) {
     let flip = own_mut(w, id).is_some_and(|k| std::mem::take(&mut k.flip_due));
     let deferred = data_mut(w, id).and_then(|d| d.deferred.take());
     if flip || deferred.is_some() {
@@ -424,6 +484,9 @@ fn post_tick(w: &mut World, id: ObjectId) {
             None => {}
         }
     }
+    if no_time {
+        return;
+    }
     let (x, stood) = {
         let o = obj(w, id);
         (o.x, o.physics_type == ptype::STAND)
@@ -442,11 +505,18 @@ fn post_tick(w: &mut World, id: ObjectId) {
         d.human.tile_hit = vx != 0.0 && d.vx == -0.5 * vx;
     }
     if let Some(k) = own_mut(w, id) {
-        k.stand_y = if stood && stands {
-            next_stand_fraction(k.stand_y, ay)
+        if stood && stands {
+            k.stand_y = if k.falls {
+                next_stand_fraction(k.stand_y, ay)
+            } else {
+                0.0
+            };
         } else {
-            0.0
-        };
+            k.stand_y = 0.0;
+            if !stands {
+                k.falls = true;
+            }
+        }
     }
 }
 
@@ -594,14 +664,20 @@ fn claw_respawned(w: &World, id: ObjectId) -> bool {
 /// The reset when Claw respawns: back where she was placed with full
 /// health; standing, she is put straight down on the floor below that
 /// point (her level record places her 8 px above it, and the original
-/// shows her on the floor at the end of the respawn's step). Her state,
-/// speed, timers and busy flag stay as they are.
+/// shows her on the floor at the end of the respawn's step), exactly on
+/// her pixel with gravity pulling on her from then on (so one tick's fall
+/// below it at the end of the respawn's tick, see [`next_stand_fraction`]).
+/// Her state, speed, timers and busy flag stay as they are.
 pub fn reset(w: &mut World, id: ObjectId) {
     let attempt = w.attempt();
     let Some(b) = data(w, id).and_then(|d| d.human.boss) else {
         return;
     };
     with_boss(w, id, |b| b.attempt = attempt);
+    if let Some(k) = own_mut(w, id) {
+        k.stand_y = 0.0;
+        k.falls = true;
+    }
     let map = &w.level.map;
     let Some(o) = w.objects.get_mut(id) else {
         return;
@@ -672,6 +748,7 @@ pub fn construct(w: &mut World, id: ObjectId) {
             enemy,
             flip_due: false,
             stand_y: 0.0,
+            falls: false,
         });
     }
     set_state(w, id, EnemyState::Startup);
@@ -771,6 +848,11 @@ pub fn home_tick(w: &mut World, id: ObjectId) {
         4 => {
             if rand(w, 100) < 50 {
                 human::enter_move_back(w, id);
+                if super::state(w, id) == Some(EnemyState::MoveBack)
+                    && let Some(k) = own_mut(w, id)
+                {
+                    k.falls = true;
+                }
             } else {
                 let sound = STAB_SOUNDS[usize::from(rand(w, 100) >= 50)];
                 start_strike(w, id, STAB, STAB_ANIM, sound);

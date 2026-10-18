@@ -4,14 +4,15 @@
 //! hit box, her somersault over Claw (and the walls and gaps that refuse
 //! it), her dodge, blocks and flinches, Claw lifting and throwing her
 //! (and the 20 px in front of him where he cannot), her death and its
-//! report, the reset when Claw respawns, and the order of her random
-//! draws.
+//! report, the reset when Claw respawns and the respawn's update passes
+//! (which take no time for her), when gravity starts to pull on her
+//! standing, and the order of her random draws.
 
 mod common;
 
 use std::sync::Arc;
 
-use claw_frame::{AudioCue, TickInput};
+use claw_frame::{AudioCue, Point, ScreenTransition, TickInput, TransitionKind};
 use claw_sim::activation::ActivationConfig;
 use claw_sim::anim::Animation;
 use claw_sim::level::ObjectSpec;
@@ -636,6 +637,135 @@ fn standing_her_exact_height_cycles_under_her_pixel() {
     assert_eq!(seen, [324, 648, 972, 0, 324, 648, 972, 0]);
 }
 
+/// Her own data.
+fn her(sim: &Sim, id: ObjectId) -> katherine::KatherineData {
+    match &obj(sim, id).data {
+        ObjectData::Katherine(k) => k.clone(),
+        d => panic!("not her data: {d:?}"),
+    }
+}
+
+#[test]
+fn built_on_her_floor_she_stands_exactly_on_her_pixel_until_she_steps_back() {
+    // Waiting for the fight, striking or waiting at Home, gravity does not
+    // pull on her: her exact height is her pixel's.
+    let (mut sim, id) = with_claw(3, -40, fight::NONE, 12);
+    let k = her(&sim, id);
+    assert!(!k.falls);
+    assert_eq!(k.stand_y, 0.0);
+    // Her first step back starts it, and it keeps going from then on.
+    home_with(&mut sim, id, 4, 0x1FFF_FFFF, stream_with(100, 0..50));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::MoveBack));
+    assert!(her(&sim, id).falls);
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        sim.step(TickInput::default());
+        assert_eq!(obj(&sim, id).physics_type, ptype::STAND);
+        seen.push((her(&sim, id).stand_y * 1000.0).round() as i32);
+    }
+    assert_eq!(seen, [324, 648, 972, 0]);
+}
+
+/// The opening circle of Claw's respawn, up while the respawn runs
+/// between two ticks.
+fn opening_circle() -> ScreenTransition {
+    ScreenTransition {
+        kind: TransitionKind::Circle,
+        closing: false,
+        start_tick: 0,
+        duration_ms: 500,
+        center: Point { x: 0.0, y: 0.0 },
+    }
+}
+
+#[test]
+fn in_the_respawns_passes_her_strike_and_her_movement_wait_for_the_tick() {
+    let (mut sim, id) = in_fight(-157);
+    home_with(&mut sim, id, 2, 399, stream_with(100, 0..50));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Strike));
+    // Up to the call that ends the whip.
+    for n in 0.. {
+        assert!(n < 100, "the whip ends");
+        let mut probe = sim.clone();
+        probe.with_world(|w| katherine::tick(w, id));
+        if state_of(&probe, id) != Some(EnemyState::Strike) {
+            break;
+        }
+        sim.with_world(|w| katherine::tick(w, id));
+    }
+    let x = obj(&sim, id).x;
+    sim.with_world(|w| enemy::data_mut(w, id).unwrap().vx = 100.0);
+    // In the respawn's two passes the whip goes on and she does not move;
+    // her draws are made.
+    for _ in 0..2 {
+        let before = sim.rng().state();
+        sim.with_world(|w| {
+            w.out.set_transition(Some(opening_circle()));
+            assert!(katherine::between_ticks(w));
+            katherine::tick(w, id);
+        });
+        assert_eq!(state_of(&sim, id), Some(EnemyState::Strike));
+        assert_eq!(obj(&sim, id).x, x, "no movement");
+        assert!(draws_between(before, sim.rng().state()) >= 1);
+    }
+    // The tick's own call ends it.
+    sim.with_world(|w| {
+        enemy::data_mut(w, id).unwrap().vx = 0.0;
+        w.out.set_transition(None);
+        assert!(!katherine::between_ticks(w));
+        katherine::tick(w, id);
+    });
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Home));
+    // The death's closing circle is no respawn pass.
+    sim.with_world(|w| {
+        w.out.set_transition(Some(ScreenTransition {
+            closing: true,
+            ..opening_circle()
+        }));
+        assert!(!katherine::between_ticks(w));
+    });
+}
+
+#[test]
+fn her_decisions_are_made_in_the_respawns_passes() {
+    for s in [
+        EnemyState::Startup,
+        EnemyState::Idle,
+        EnemyState::Home,
+        EnemyState::Pace,
+        EnemyState::Advance,
+        EnemyState::FastAdvance,
+    ] {
+        assert!(katherine::decides(s), "{s:?}");
+    }
+    for s in [
+        EnemyState::Strike,
+        EnemyState::HitLow,
+        EnemyState::HitHigh,
+        EnemyState::BlockLow,
+        EnemyState::MoveBack,
+        EnemyState::Flip,
+        EnemyState::FlipLand,
+        EnemyState::Lifted,
+        EnemyState::Thrown,
+        EnemyState::Dead,
+    ] {
+        assert!(!katherine::decides(s), "{s:?}");
+    }
+    // Pacing with Claw back in range, she goes Home in a pass, and stays
+    // where she is.
+    let (mut sim, id) = in_fight(-157);
+    sim.with_world(|w| enemy::states::start_pacing(w, id));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Pace));
+    let x = obj(&sim, id).x;
+    sim.with_world(|w| {
+        w.out.set_transition(Some(opening_circle()));
+        katherine::tick(w, id);
+    });
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Home));
+    assert_eq!(obj(&sim, id).x, x);
+}
+
 // ----------------------------------------------------------------------
 // The dodge
 
@@ -888,6 +1018,11 @@ fn claws_respawn_puts_her_back_on_her_floor_with_full_health_in_her_state() {
     assert!((o.x - AT.0).abs() <= 8, "near her place: {}", o.x);
     assert_eq!(o.health, 100);
     assert_eq!(state_of(&sim, id), state, "her state is kept");
+    // Put exactly on her pixel, with gravity pulling on her from then on:
+    // one tick's fall below it after the call.
+    let k = her(&sim, id);
+    assert!(k.falls);
+    assert_eq!((k.stand_y * 1000.0).round(), 324.0);
     // Once per respawn.
     sim.with_world(|w| {
         w.objects.get_mut(id).unwrap().health = 40;

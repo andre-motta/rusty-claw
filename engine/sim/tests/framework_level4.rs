@@ -338,13 +338,34 @@ fn install_level4_boss_stage_binds_around_katherine() {
         assert_eq!(d.inert_logics.get(name), None, "{name} runs");
     }
     sim.teleport_player(target.0, target.1);
+    let her = sim
+        .objects()
+        .all()
+        .find(|(_, o)| &*o.logic == "Katherine")
+        .map(|(id, _)| id)
+        .expect("Katherine is placed");
     let mut staging = None;
     let mut on = None;
+    let mut meter = None;
     for t in 1..=900 {
         sim.step(TickInput::default());
         if !built {
             assert_eq!(sim.boss().current(), None, "no boss is built");
             assert_eq!(sim.hud().boss_meter, None);
+        } else {
+            // Once she is set up (when Claw's arrival wakes her) she is the
+            // current boss.
+            if matches!(
+                sim.objects().get(her).unwrap().data,
+                ObjectData::Katherine(_)
+            ) {
+                assert_eq!(sim.boss().current(), Some(her), "she is the boss");
+            }
+            if let Some(m) = sim.hud().boss_meter {
+                assert_eq!(m.max, katherine::METER_MAX);
+                assert_eq!(m.value, sim.objects().get(her).unwrap().health);
+                meter.get_or_insert(t);
+            }
         }
         match sim.boss().fight() {
             fight::STAGING => {
@@ -357,9 +378,15 @@ fn install_level4_boss_stage_binds_around_katherine() {
             _ => {}
         }
     }
-    println!("LEVEL4 introduction: staging from tick {staging:?}, fight on at {on:?}");
+    println!(
+        "LEVEL4 introduction: staging from tick {staging:?}, health bar from {meter:?}, fight on at {on:?}"
+    );
     assert!(staging.is_some(), "the introduction starts");
     assert!(on.is_some(), "the fight comes on");
+    if built {
+        assert_eq!(sim.boss().current(), Some(her), "she is the boss");
+        assert!(meter.is_some(), "the bar reads her health");
+    }
 }
 
 #[test]

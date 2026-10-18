@@ -863,6 +863,13 @@ fn install_level4_jump_in_at_60_fps_wakes_katherine_too() {
     // The original at 60 frames per second: she goes idle 1000 ms after
     // time zero and Claw takes 5 at 1017 ms. The default tuning plays that
     // feel within two ticks: she wakes through the same 500 ms rule.
+    //
+    // The order of the two is not the original's: she wakes through the
+    // 500 ms rule counted in 18 ms ticks, at 1026 ms, while the default
+    // tuning's jump-in arc, a few px lower than the original's at 60
+    // frames per second, brings Claw down on her at 990 ms, before she is
+    // awake. Her touch hurts him either way and the fight starts the same;
+    // the arc belongs to Claw's jump, not to her.
     let j = jump_in4(level, ScriptTuning::Default, true, 400);
     println!(
         "jump-in at 60 fps: clearing {}, Katherine woke {:?}, Claw hurt {:?}",
@@ -878,6 +885,7 @@ fn install_level4_jump_in_at_60_fps_wakes_katherine_too() {
         "hurt at {} ms",
         end_ms(hurt)
     );
+    assert_eq!((end_ms(hurt), end_ms(t)), (990, 1026), "hurt, then awake");
     assert_eq!(j.trigger, None);
 }
 
