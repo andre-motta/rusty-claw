@@ -15,7 +15,8 @@
 //! - the level is won (the level complete event), Claw never dies, and no
 //!   tick moves him further than walking, running, falling or riding can
 //!   (nothing moves him but the input), except the boss room's door, which
-//!   takes him into the room;
+//!   takes him into the room, and a rope's grab, which hangs him from its
+//!   end;
 //! - on a level that ends with a boss, the boss is defeated before the
 //!   level is won, and the boss's introduction plays (the fight flag goes
 //!   0, 1, 2) unless the route is an intro-skip route (`introskip` in its
@@ -54,6 +55,7 @@ use claw_game::saves::SaveStore;
 use claw_game::session::{LevelRecording, Session, script_behaviour};
 use claw_game::settings::{LevelChoice, Settings, UserDirs};
 use claw_sim::logic::world_boss::fight;
+use claw_sim::player::state;
 use claw_sim::trace::TraceRow;
 use claw_sim::{InputScript, Sim, SimConfig, StartState, Tuning};
 use claw_ui::menu::MenuInput;
@@ -69,8 +71,9 @@ const MAX_STEP_PX: i32 = 48;
 
 /// The state of the shared random stream at time zero in the reference
 /// runs of each level: the level-load state advanced by the draws of the
-/// level's set-up (six on the first level, four on the second).
-const LEVEL_SEEDS: [(u32, u32); 2] = [(1, 4_105_512_405), (2, 1_617_999_171)];
+/// level's set-up (six on the first level, four on the second, eight on
+/// the third).
+const LEVEL_SEEDS: [(u32, u32); 3] = [(1, 4_105_512_405), (2, 1_617_999_171), (3, 714_107_639)];
 
 /// The route header keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -279,11 +282,14 @@ fn install_routes_win_the_same_way_every_time() {
             ..BossRun::default()
         };
         for (i, t) in script.ticks.iter().enumerate() {
+            let swinging = |sim: &Sim| sim.player().is_some_and(|o| o.state == state::SWING);
+            let was_swinging = swinging(&q.sim);
             q.step(t.held.0);
             let now = q.at();
             let moved = (now.0 - at.0).abs().max((now.1 - at.1).abs());
+            let grabbed = !was_swinging && swinging(&q.sim);
             assert!(
-                moved <= MAX_STEP_PX || through_the_door(end.as_ref(), at, now),
+                moved <= MAX_STEP_PX || through_the_door(end.as_ref(), at, now) || grabbed,
                 "{name}: Claw moved {moved} px in tick {i}, from {at:?} to {now:?}"
             );
             at = now;
