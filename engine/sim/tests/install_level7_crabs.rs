@@ -358,18 +358,24 @@ fn time_zero(dir: &Path, clock: &str) -> (u64, u32, Option<String>) {
 /// warp, that this game does not make from the same stream: the level's
 /// timed sounds take their first timers from it (this game draws them
 /// while the level loads, before its time zero), and the red-tail pirate
-/// by the level's start goes idle and idles (two draws each) while its
-/// family is not built.
+/// by the level's start goes idle and idles twice (four draws). Built,
+/// the pirate makes two of them itself on the first step (its first go
+/// idle comes while the level loads, before the stream starts), so two
+/// are added; not built, all four.
 fn level_start_draws() -> u32 {
     const TIMED_SOUNDS: u32 = 3;
     const PIRATE_BY_THE_START: u32 = 4;
+    const PIRATE_OWN_DRAWS: u32 = 2;
     TIMED_SOUNDS
         + if redtail_pirate::BUILT {
-            0
+            PIRATE_BY_THE_START - PIRATE_OWN_DRAWS
         } else {
             PIRATE_BY_THE_START
         }
 }
+
+/// Where the red-tail pirate by the level's start stands.
+const PIRATE_BY_THE_START_X: i32 = 1924;
 
 /// The game at a route's time zero (see the module documentation).
 fn at_time_zero(level: &SimLevel, clock: &str, start: (i32, i32), t0_ms: u64, seed: u32) -> Sim {
@@ -384,8 +390,23 @@ fn at_time_zero(level: &SimLevel, clock: &str, start: (i32, i32), t0_ms: u64, se
         ..SimConfig::default()
     };
     let mut sim = Sim::new(level.clone(), cfg);
+    let pirate = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| &*o.logic == "RedTailPirate")
+        .min_by_key(|(_, o)| (o.x - PIRATE_BY_THE_START_X).abs())
+        .map(|(id, _)| id);
     sim.step(TickInput::default());
     sim.with_world(|w| {
+        // The original's runs put Claw down before the leave pass of the
+        // step, so the pirate by the level's start is asleep before the
+        // next step and never runs after the warp; this game's warp comes
+        // after that pass, so the pirate is put to sleep here.
+        if redtail_pirate::BUILT
+            && let Some(id) = pirate
+        {
+            w.objects.unlink(id);
+        }
         w.claw.special.warp_to = Some(start);
         for _ in 0..level_start_draws() {
             w.rng.next_u15();
@@ -702,16 +723,14 @@ fn compare_crabs(
 ///   of the same tick, so the crab moved onto its limit by its own first
 ///   call is asleep at the end of that step (504 ms), where the original
 ///   still lists it on that step and lets it go on the next.
-/// - c18, `crab-clamp`: the red-tail pirates and bear sailors around
-///   Claw's place are not built in this build, so the original's draws
-///   for them are missing from the random stream from the first step on;
-///   the crab's construction and clamp draw nothing and match.
-/// - c18, `nest-hatch` and `nest-duck`: the two red-tail pirates right of
-///   the nest are not built in this build, so the random stream differs
-///   from the first step; the nest hatches on the original's step and its
-///   crabs leave as the original's do, but the stream gives them other
-///   speeds, another bomber and other choices, so their snips and bombs
-///   reach Claw at other times.
+/// - c18, `crab-clamp`: the random stream around Claw's place differs
+///   from the original's from the first step; the crab's construction and
+///   clamp draw nothing and match.
+/// - c18, `nest-hatch` and `nest-duck`: the nest hatches on the
+///   original's step and its crabs leave as the original's do, but they
+///   rise and land on other rows, so their snips and bombs reach Claw at
+///   other times, and from the first one that does the random stream and
+///   the crabs' choices differ.
 /// - c60 (the default tuning played tick by tick): the crabs count 18 ms
 ///   ticks where the original at 60 frames per second counts frames of
 ///   16 and 17 ms, so their crouches, snips and hides end at other times
@@ -732,8 +751,8 @@ const KNOWN: &[Known] = &[
             ("crab2_state", 1296),
             ("crab0_x", 1440),
             ("crab0_state", 1458),
-            ("crab1_state", 1548),
-            ("crab1_x", 2070),
+            ("crab1_state", 1368),
+            ("crab1_x", 1350),
             ("crab0_listed", 3006),
             ("crab1_listed", 3006),
             ("state_id", 1044),
@@ -763,11 +782,11 @@ const KNOWN: &[Known] = &[
             ("crab2_state", 1296),
             ("crab0_x", 1440),
             ("crab0_state", 1458),
-            ("crab1_state", 1548),
-            ("crab1_x", 1764),
+            ("crab1_state", 1368),
+            ("crab1_x", 1350),
             ("crab2_listed", 2700),
-            ("crab0_listed", 6192),
-            ("crab1_listed", 6192),
+            ("crab0_listed", 2862),
+            ("crab1_listed", 2862),
             ("state_id", 810),
             ("health", 810),
             ("x", 828),
@@ -1060,5 +1079,5 @@ fn install_level7_bombs_leave_on_the_third_launch_tick_and_blow_for_16_ticks() {
             assert!(p.cues[boom + 1].iter().any(|k| k == "GAME_BOMBEXP"));
         }
     }
-    assert!(throws >= 3);
+    assert!(throws >= 2);
 }

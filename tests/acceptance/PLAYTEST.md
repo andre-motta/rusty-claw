@@ -189,3 +189,21 @@ town guards' differences on this level; Wolvington's room comes later.
 9. Town guards on this level: the first guard parries about one sword blow in four and hops back from Claw's sword from the first swing; the second guard parries about one blow in two; a few guards stand guard and never pace.
 
 <!-- Wolvington's room: his play-test lines go here. -->
+
+## Milestone 3, LEVEL7 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the seventh level with `make run-game ARGS="--install PATH --level 7"`,
+or play on from the sixth level. This section covers the red-tail pirates,
+the bear sailors and the bear hug; the crabs come with their own lines.
+
+1. Red-tail pirates, engaging: walk up to a pirate: it comes for you as soon as you are in its reach, with no idle routine first; from 100 to 200 px away it sometimes swings at the air and then waits about two seconds before striking again; up close it never stands and waits, it strikes or steps in or back.
+2. Red-tail pirates, strikes: standing, its cut lands about an eighth of a second into the swing (10 health, a short push back) and it cuts again about every third of a second while you stay close; crouch in front of it and it cuts low instead, a little faster.
+3. Red-tail pirates, the hop back: swing the sword or fire the pistol at a pirate in front of you, close in: it hops back about 100 px from where it stood as your attack starts, before the blow can land; keep attacking and it hops again, at most three times, then it takes the hits. Attacking it from behind, or from further than 100 px, never makes it hop.
+4. Red-tail pirates, hits: it never parries on this level; a blow makes it flinch for about a third of a second, the second sword blow or pistol shot kills it, and it drops its coin.
+5. Bear sailors, approach: a bear runs at you from afar, walks the last stretch and stops about 100 px from a standing Claw; there it stands in its home pose for a third to two thirds of a second, or swings its overhead blow, which lands about 0.3 s into the swing (10 health) and reaches you even standing just in front of it.
+6. Bear sailors, being grabbed: walk to within about 50 px of a bear: it grabs you whatever you are doing, you freeze where you stand for a third of a second, then it pulls you in front of it, facing it, and squeezes; your health drops one point about every tenth of a second with no hit sound or flinch, and you show the three squeezed poses in step with the bear.
+7. Bear sailors, mashing out: while squeezed, press keys: a new press on ten ticks of the squeeze frees you (alternating two keys, about a fifth of a second; one key tapped, about a third of a second); presses during the grab itself do not count, and nine presses are not enough.
+8. Bear sailors, timing out: do nothing: after three seconds and 28 health it lets go, you stand, drop to the floor, and it grabs you again after its next pause if you stay close; a squeeze that empties your health kills you in its arms.
+
+<!-- The crabs' play-test lines go here. -->
