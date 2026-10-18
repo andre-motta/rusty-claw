@@ -29,8 +29,13 @@
 //! also says so in its header (`# invincible = on`,
 //! `# infinite_lives = on`; see [`claw_sim::input::ScriptHeader::aids`]),
 //! and its replay plays with the aid; a recording made with both aids off
-//! has no such line. Routes, the bot and the comparisons with reference
-//! traces refuse a recording with an aid on.
+//! has no such line. The powerup aid is named the same way: the powerup
+//! given at the level start and after every respawn (`# powerup =
+//! fire:30`), and `# powerup_key = used` when the play-test key gave
+//! powerups ([`Session::cycle_powerup`]), each given noted as a `powerup`
+//! command at its tick boundary so the replay gives it there too. Routes,
+//! the bot and the comparisons with reference traces refuse a recording
+//! with an aid on.
 //!
 //! # Pauses, menus and commands
 //!
@@ -144,6 +149,7 @@ use claw_frame::{
 };
 use claw_sim::input::{MenuScreen, ScriptCommand, ScriptTuning};
 use claw_sim::player::death::{CLOSE_MS, HOLD_MS, OPEN_MS};
+use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::trace::TraceRow;
 use claw_sim::tuning::FuseClock;
 use claw_sim::{
@@ -312,6 +318,7 @@ fn menu_time(kind: &DirectiveKind) -> Option<u32> {
 fn apply_command(sim: &mut Sim, c: ScriptCommand) {
     match c {
         ScriptCommand::EndLife => sim.end_life(),
+        ScriptCommand::Powerup(p) => sim.give_powerup(p),
     }
 }
 
@@ -357,6 +364,9 @@ pub struct Session {
     circles_us: Option<u64>,
     /// Deaths' circles take frame time (see [`Session::with_death_circles`]).
     death_circles: bool,
+    /// The powerup the play-test key gave last (or the level's start
+    /// powerup), where [`Session::cycle_powerup`] goes on from.
+    powerup_cycle: AidPowerup,
 }
 
 impl std::fmt::Debug for Session {
@@ -373,6 +383,7 @@ impl Session {
     /// Starts playing `sim` from its current state.
     pub fn new(sim: Sim) -> Session {
         let first = sim.snapshot();
+        let powerup_cycle = sim.config().start_powerup.unwrap_or(AidPowerup::NONE);
         Session {
             sim,
             driver: FrameDriver::new(first),
@@ -399,6 +410,7 @@ impl Session {
             resume_input: None,
             circles_us: None,
             death_circles: false,
+            powerup_cycle,
         }
     }
 
@@ -492,6 +504,46 @@ impl Session {
             tick: self.ticks as usize,
             kind: DirectiveKind::Command(ScriptCommand::EndLife),
         });
+    }
+
+    /// Gives Claw powerup `p` at the start of the next tick (the powerup
+    /// play-test key; see [`Sim::give_powerup`]), noted as a command.
+    pub fn give_powerup(&mut self, p: AidPowerup) {
+        self.sim.give_powerup(p);
+        self.directives.log.push(Directive {
+            tick: self.ticks as usize,
+            kind: DirectiveKind::Command(ScriptCommand::Powerup(p)),
+        });
+    }
+
+    /// The play-test key that gives powerups: gives the powerup after the
+    /// one it gave last in this level (or the one the level started with)
+    /// for its default length, in the order of
+    /// [`claw_sim::player::powerup_aid::AID_POWERUPS`], then none (ending
+    /// the running one), then the first again (see
+    /// [`AidPowerup::next_in_cycle`]). Returns what it gave.
+    ///
+    /// It does nothing (and returns `None`) unless a play-test aid is on
+    /// in the level: invincibility, infinite lives or a start powerup.
+    pub fn cycle_powerup(&mut self) -> Option<AidPowerup> {
+        let cfg = self.sim.config();
+        if !(cfg.aids.any() || cfg.start_powerup.is_some()) {
+            return None;
+        }
+        let next = AidPowerup::next_in_cycle(self.powerup_cycle);
+        self.powerup_cycle = next;
+        self.give_powerup(next);
+        Some(next)
+    }
+
+    /// True when a powerup was given with the play-test key in this level
+    /// (live or replayed): a `powerup` command among
+    /// [`Session::directives`].
+    pub fn powerup_key_used(&self) -> bool {
+        self.directives
+            .log
+            .iter()
+            .any(|d| matches!(d.kind, DirectiveKind::Command(ScriptCommand::Powerup(_))))
     }
 
     /// A pause or a menu screen stops play from now on, until
@@ -1648,8 +1700,8 @@ impl LevelRecording {
     /// `cfg` as the recording was played: its movement tuning and seed
     /// when its header names them, the mid-air hit jump fix (off when it
     /// does not say), the fuse clock (the original's when it does not
-    /// say) and the play-test aids its header names on (with those of
-    /// `cfg`).
+    /// say), the play-test aids its header names on (with those of `cfg`)
+    /// and the powerup aid its header names (`cfg`'s when it names none).
     pub fn sim_config(&self, mut cfg: SimConfig) -> SimConfig {
         if let Some(t) = self.script.header.tuning {
             cfg.tuning = t.tuning();
@@ -1660,6 +1712,9 @@ impl LevelRecording {
         cfg.tuning.behaviour.fix_double_jump = self.fix.unwrap_or(false);
         cfg.fuse_clock = self.switches.fuse_clock.unwrap_or(FuseClock::Original);
         cfg.aids = cfg.aids.union(self.script.header.aids);
+        if let Some(p) = self.script.header.powerup {
+            cfg.start_powerup = Some(p);
+        }
         cfg
     }
 
@@ -2091,5 +2146,140 @@ mod tests {
             (Some("a-1".to_string()), Some(7))
         );
         assert_eq!(script_game("# seed 3\n"), (None, None));
+    }
+
+    /// A session on `level()` with the play-test aids `aids` and the start
+    /// powerup `start`.
+    fn aided(aids: claw_sim::tuning::PlayAids, start: Option<AidPowerup>) -> Session {
+        let cfg = SimConfig {
+            aids,
+            start_powerup: start,
+            ..SimConfig::default()
+        };
+        Session::new(Sim::new(level(), cfg))
+    }
+
+    const INVINCIBLE: claw_sim::tuning::PlayAids = claw_sim::tuning::PlayAids {
+        invincible: true,
+        infinite_lives: false,
+    };
+
+    #[test]
+    fn the_powerup_key_does_nothing_without_an_aid() {
+        let mut session = aided(claw_sim::tuning::PlayAids::NONE, None);
+        session.frame(Duration::from_millis(400));
+        assert_eq!(session.cycle_powerup(), None);
+        session.frame(Duration::from_millis(40));
+        assert_eq!(session.sim().stats().powerup_kind, 0);
+        assert!(session.directives().is_empty());
+        assert!(!session.powerup_key_used());
+    }
+
+    #[test]
+    fn the_powerup_key_gives_every_powerup_in_turn_then_none() {
+        for aids in [
+            INVINCIBLE,
+            claw_sim::tuning::PlayAids {
+                invincible: false,
+                infinite_lives: true,
+            },
+        ] {
+            let mut session = aided(aids, None);
+            session.frame(Duration::from_millis(400));
+            let mut given = Vec::new();
+            for _ in 0..9 {
+                let p = session.cycle_powerup().expect("an aid is on");
+                session.frame(Duration::from_millis(40));
+                assert_eq!(session.sim().stats().powerup_kind, p.kind, "{p}");
+                given.push(p.to_string());
+            }
+            assert_eq!(
+                given,
+                [
+                    "invisible:30",
+                    "invulnerable:30",
+                    "catnip:30",
+                    "fire:30",
+                    "ice:30",
+                    "lightning:30",
+                    "plasma:30",
+                    "none",
+                    "invisible:30"
+                ]
+            );
+            // Each one is noted where it was given.
+            let d = session.directives();
+            assert_eq!(d.len(), 9);
+            assert!(d.windows(2).all(|w| w[0].tick < w[1].tick));
+            assert!(session.powerup_key_used());
+        }
+    }
+
+    #[test]
+    fn the_powerup_key_goes_on_from_the_start_powerup() {
+        // The start powerup is an aid on its own.
+        let fire = AidPowerup::parse("fire").unwrap();
+        let mut session = aided(claw_sim::tuning::PlayAids::NONE, Some(fire));
+        session.frame(Duration::from_millis(400));
+        assert_eq!(session.sim().stats().powerup_kind, fire.kind);
+        let p = session.cycle_powerup().unwrap();
+        assert_eq!(p.name(), "ice");
+    }
+
+    #[test]
+    fn a_recording_with_the_powerup_aid_names_it_and_replays_the_same() {
+        let catnip = AidPowerup::parse("catnip:90").unwrap();
+        let mut session = aided(INVINCIBLE, Some(catnip));
+        let recorder = Recorder::new();
+        session.set_before_tick(recorder.hook());
+        session.record_trace();
+        session.frame(Duration::from_millis(300));
+        session.cycle_powerup();
+        session.frame(Duration::from_millis(300));
+        session.cycle_powerup();
+        session.frame(Duration::from_millis(300));
+        let text = recorder.script(&session).to_csv();
+        for line in [
+            "# invincible = on",
+            "# powerup = catnip:90",
+            "# powerup_key = used",
+            "command powerup fire:30",
+            "command powerup ice:30",
+        ] {
+            assert!(text.contains(line), "{line} in\n{text}");
+        }
+        // Never a route.
+        let e = InputScript::parse(&text).unwrap_err();
+        assert!(e.message.contains("powerup = catnip:90"), "{e}");
+        // Replayed with the aid and the key's powerups where they were given.
+        let rec = LevelRecording::parse(&text).unwrap();
+        let cfg = rec.sim_config(SimConfig::default());
+        assert_eq!(cfg.start_powerup, Some(catnip));
+        let mut replay = Session::new(Sim::new(level(), cfg)).with_replay(rec.script.clone());
+        replay.record_trace();
+        while replay.replaying() {
+            replay.frame(Duration::from_millis(17));
+        }
+        let rows = |t: &[TraceRow], source: &str| -> Vec<String> {
+            t.iter()
+                .map(|r| r.to_csv().replace(&format!(",{source},"), ","))
+                .collect()
+        };
+        let n = session.trace().len();
+        assert_eq!(
+            rows(&replay.trace()[..n], "script"),
+            rows(session.trace(), "keyboard")
+        );
+        assert_eq!(
+            replay.sim().stats().powerup_kind,
+            AidPowerup::parse("ice").unwrap().kind
+        );
+        // A recording without the aid has none of these lines.
+        let mut plain = aided(claw_sim::tuning::PlayAids::NONE, None);
+        let recorder = Recorder::new();
+        plain.set_before_tick(recorder.hook());
+        plain.frame(Duration::from_millis(100));
+        let text = recorder.script(&plain).to_csv();
+        assert!(!text.contains("powerup"), "{text}");
     }
 }

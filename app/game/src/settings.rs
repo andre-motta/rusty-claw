@@ -98,6 +98,14 @@
 //! `# infinite_lives = on`, see [`claw_sim::input::ScriptHeader::aids`]).
 //! A run with an aid on says nothing about how hard a level is.
 //!
+//! The powerup aid, `--powerup NAME[:SECONDS]`, is command line only: Claw
+//! has that powerup at every level start and after every respawn (see
+//! [`claw_sim::player::powerup_aid`]). A replay gives the powerup its
+//! recording names (`# powerup = fire:30`) unless the command line gives
+//! one. While any aid is on, the play-test key (F6 by default, the
+//! `powerup` action) gives the next powerup in turn (see
+//! [`crate::session::Session::cycle_powerup`]).
+//!
 //! The front layer switch (`front_layer`, also in the Display menu) only
 //! changes what is drawn: off, the level's front plane is left out.
 
@@ -115,7 +123,8 @@ use claw_audio::AudioSettings;
 use claw_frame::{
     AspectPolicy, DEFAULT_FPS_CAP, DEFAULT_LOGIC_HEIGHT, DEFAULT_LOGIC_WIDTH, ScaleMode, ViewConfig,
 };
-use claw_sim::input::ScriptTuning;
+use claw_sim::input::{POWERUP_KEY, ScriptTuning};
+use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::tuning::{FuseClock, PlayAids};
 use claw_sim::{ScriptHeader, SimConfig};
 
@@ -276,6 +285,13 @@ pub struct Args {
     /// goes on from the checkpoint. For this run only; not saved.
     #[arg(long)]
     pub infinite_lives: bool,
+    /// Play-test aid: Claw has this powerup at the start of every level
+    /// and after every respawn, as if he had just picked it up: invisible,
+    /// invulnerable, catnip, fire, ice, lightning or plasma, optionally
+    /// with its length in seconds (default 30). For this run only; not
+    /// saved.
+    #[arg(long, value_name = "NAME[:SECONDS]", value_parser = parse_powerup)]
+    pub powerup: Option<AidPowerup>,
     /// Wait for the display's refresh: on or off.
     #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
     pub vsync: Option<bool>,
@@ -369,6 +385,11 @@ pub fn parse_pause_input(s: &str) -> Result<PauseInput, String> {
         .ok_or_else(|| format!("expected original or release_all, got {s:?}"))
 }
 
+/// Reads `--powerup NAME[:SECONDS]` (see [`AidPowerup::parse`]).
+pub fn parse_powerup(s: &str) -> Result<AidPowerup, String> {
+    AidPowerup::parse(s)
+}
+
 /// Parses a fuse clock switch: `original` or `frozen`.
 pub fn parse_fuse_clock(s: &str) -> Result<FuseClock, String> {
     FuseClock::from_name(s.trim()).ok_or_else(|| format!("expected original or frozen, got {s:?}"))
@@ -439,6 +460,10 @@ pub struct Settings {
     pub fuse_clock: FuseClock,
     /// The play-test aids, both off by default.
     pub aids: PlayAids,
+    /// The powerup play-test aid: the powerup Claw has at every level start
+    /// and respawn (see [`SimConfig::start_powerup`]). Command line only,
+    /// none by default.
+    pub powerup: Option<AidPowerup>,
     /// Wait for the display refresh.
     pub vsync: bool,
     /// Frame-rate cap when the display refresh does not pace drawing, and
@@ -534,6 +559,7 @@ impl Settings {
             pause_input: PauseInput::Original,
             fuse_clock: FuseClock::Original,
             aids: PlayAids::NONE,
+            powerup: None,
             vsync: true,
             fps_cap: Some(DEFAULT_FPS_CAP),
             interpolation: true,
@@ -716,6 +742,10 @@ impl Settings {
             s.aids.infinite_lives = true;
             s.from_command_line.insert(PlayAids::INFINITE_LIVES);
         }
+        if let Some(p) = args.powerup {
+            s.powerup = (!p.is_none()).then_some(p);
+            s.from_command_line.insert(POWERUP_KEY);
+        }
         if let Some(p) = args.pause_input {
             s.pause_input = p;
             s.from_command_line.insert("pause_input");
@@ -741,7 +771,8 @@ impl Settings {
     /// Takes the movement tuning, the seed and the play-test aids a
     /// replayed script's header names; keys the header does not have leave
     /// the settings as they are. An aid the header names is turned on (one
-    /// the command line turned on stays on).
+    /// the command line turned on stays on), and so is the powerup aid it
+    /// names unless the command line gave one.
     pub fn follow_header(&mut self, header: &ScriptHeader) {
         if header.tuning.is_some() {
             self.tuning = header.tuning;
@@ -750,6 +781,9 @@ impl Settings {
             self.seed = header.seed;
         }
         self.aids = self.aids.union(header.aids);
+        if header.powerup.is_some() && !self.from_command_line.contains(POWERUP_KEY) {
+            self.powerup = header.powerup;
+        }
     }
 
     /// Plays level recording `rec` as it was recorded: its level
@@ -931,7 +965,8 @@ impl Settings {
     /// The movement tuning and the seed follow [`Settings::tuning`] and
     /// [`Settings::seed`], the mid-air hit jump fix follows
     /// [`Settings::mid_air_hit_fix`], the fuse clock
-    /// [`Settings::fuse_clock`] and the play-test aids [`Settings::aids`].
+    /// [`Settings::fuse_clock`], the play-test aids [`Settings::aids`] and
+    /// the powerup aid [`Settings::powerup`].
     pub fn sim_config(&self, size: (u32, u32)) -> SimConfig {
         let mut cfg = self.view_sim_config(size);
         if let Some(t) = self.tuning {
@@ -943,6 +978,7 @@ impl Settings {
         cfg.tuning.behaviour.fix_double_jump = self.mid_air_hit_fix;
         cfg.fuse_clock = self.fuse_clock;
         cfg.aids = self.aids;
+        cfg.start_powerup = self.powerup;
         cfg
     }
 
@@ -1885,5 +1921,52 @@ mod tests {
         assert!(Settings::resolve(&Args::default(), Some(&file)).is_err());
         let file = ConfigFile::parse("install = /i\nfps_cap = fast\n", "cfg").unwrap();
         assert!(Settings::resolve(&Args::default(), Some(&file)).is_err());
+    }
+
+    #[test]
+    fn the_powerup_aid_is_a_command_line_option_for_the_run() {
+        use claw_sim::player::powerup_aid::AidPowerup;
+        let resolve = |s: &str| Settings::resolve(&args(s), None);
+        let fire = AidPowerup::parse("fire").unwrap();
+        let s = resolve("--install /i").unwrap();
+        assert_eq!(
+            (s.powerup, s.sim_config((640, 480)).start_powerup),
+            (None, None)
+        );
+        let s = resolve("--install /i --powerup fire").unwrap();
+        assert_eq!(s.powerup, Some(fire));
+        assert_eq!(s.powerup.unwrap().ms, 30_000);
+        assert_eq!(s.sim_config((640, 480)).start_powerup, Some(fire));
+        let s = resolve("--install /i --powerup Catnip:90").unwrap();
+        assert_eq!(
+            s.powerup.map(|p| p.to_string()).as_deref(),
+            Some("catnip:90")
+        );
+        assert_eq!(
+            resolve("--install /i --powerup none").unwrap().powerup,
+            None
+        );
+        for bad in ["sword", "fire:0", "fire:x", ""] {
+            let argv = ["rusty-claw", "--install", "/i", "--powerup", bad];
+            assert!(Args::try_parse_from(argv).is_err(), "{bad:?}");
+        }
+        // Replays and benchmarks take it from the command line too.
+        let s = resolve("--install /i --bench 5 --powerup ice").unwrap();
+        assert_eq!(s.powerup.map(AidPowerup::name), Some("ice"));
+        // A replay gives the powerup its header names, unless the command
+        // line gave one.
+        let header = |text: &str| claw_sim::InputScript::parse_with_aids(text).unwrap().header;
+        let mut s = resolve("--install /i --replay r.csv").unwrap();
+        s.follow_header(&header("# powerup = plasma:12\n0,0,0\n"));
+        assert_eq!(
+            s.powerup.map(|p| p.to_string()).as_deref(),
+            Some("plasma:12")
+        );
+        let mut s = resolve("--install /i --replay r.csv --powerup fire").unwrap();
+        s.follow_header(&header("# powerup = plasma:12\n0,0,0\n"));
+        assert_eq!(s.powerup, Some(fire));
+        let mut s = resolve("--install /i --replay r.csv").unwrap();
+        s.follow_header(&header("0,0,0\n"));
+        assert_eq!(s.powerup, None);
     }
 }

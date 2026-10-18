@@ -896,6 +896,8 @@ impl Recorder {
         // with them.
         let mut header = session.header();
         header.aids = session.sim().config().aids;
+        header.powerup = session.sim().config().start_powerup;
+        header.powerup_key = session.powerup_key_used();
         InputScript {
             ticks,
             header,

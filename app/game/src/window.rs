@@ -54,9 +54,10 @@ use claw_render::{
     Anchor, FrameInput, Gpu, ImageId, LevelGraphics, Offscreen, Renderer, Scene, SceneBuilder,
     ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
 };
-use claw_sim::Sim;
 use claw_sim::input::MenuScreen;
-use claw_ui::hud::{Hud, HudArt};
+use claw_sim::player::powerup_aid::AidPowerup;
+use claw_sim::{Sim, SimConfig};
+use claw_ui::hud::{Hud, HudArt, marker_layout, marker_lines};
 use claw_ui::menu::command::{MenuKind, Page, VideoSetting};
 use claw_ui::menu::decor::{SPARKLE, Sparkles};
 use claw_ui::menu::draw::{self, FontArt, MenuSprite};
@@ -189,16 +190,29 @@ impl StatusLayer {
         self.transition
     }
 
+    /// Names powerup `p`, just given with the play-test key, on screen for
+    /// [`POWERUP_MESSAGE_MS`] of game time, as a message.
+    pub fn show_powerup(&mut self, p: AidPowerup) {
+        self.hud.messages.show(p.label(), POWERUP_MESSAGE_MS);
+    }
+
+    /// The message on screen, if any.
+    pub fn message(&self) -> Option<&str> {
+        self.hud.messages.text()
+    }
+
     /// Fills the screen layer and the transition of `input`, a frame of
     /// `sim` in a presentation of `presentation` game pixels.
     pub fn apply(&mut self, input: &mut FrameInput<'_>, sim: &Sim, presentation: (u32, u32)) {
         input.screen = self.hud.layout(&sim.hud(), presentation, input.time_ms);
         // A small marker while a play-test aid is on.
-        let aids = sim.config().aids;
-        input.screen.extend(self.hud.aid_marker_layout(
-            aids.invincible,
-            aids.infinite_lives,
+        let lines = aid_marker_lines(sim.config());
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        input.screen.extend(marker_layout(
+            self.hud.art(),
+            &lines,
             presentation,
+            self.hud.placement,
         ));
         if let Some(c) = self.circles {
             // No game time passes: the frame's time moves on with the
@@ -213,6 +227,25 @@ impl StatusLayer {
         }
         input.transition = self.transition;
     }
+}
+
+/// How long the name of a powerup given with the play-test key stays on
+/// screen, ms of game time.
+pub const POWERUP_MESSAGE_MS: u32 = 2000;
+
+/// The lines of the play-test aid marker for a level played with `cfg`:
+/// `INVINCIBLE`, `INFINITE LIVES` and, with the powerup aid, `POWERUP`
+/// and the powerup's name (`POWERUP FIRE SWORD`), each when on; none with
+/// every aid off.
+pub fn aid_marker_lines(cfg: &SimConfig) -> Vec<String> {
+    let mut lines: Vec<String> = marker_lines(cfg.aids.invincible, cfg.aids.infinite_lives)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    if let Some(p) = cfg.start_powerup {
+        lines.push(format!("POWERUP {}", p.label()));
+    }
+    lines
 }
 
 /// What the window does.
@@ -1243,6 +1276,7 @@ impl App {
             Command::Quit | Command::Pause | Command::Help => {
                 self.game_key(event_loop, cmd, from_pad);
             }
+            Command::CyclePowerup => self.cycle_powerup(),
             Command::ToggleFullscreen => {
                 if let Some(live) = &self.live {
                     let full = live.window.fullscreen().is_none();
@@ -1296,6 +1330,25 @@ impl App {
                     f.view_changed(|s| s.interpolation = interp);
                 }
             }
+        }
+    }
+
+    /// The play-test key that gives powerups (see
+    /// [`Session::cycle_powerup`]): only while play shows (not under a
+    /// screen or the menu, nor once the level is won), and only with a
+    /// play-test aid on in the level. The powerup's name shows on screen.
+    fn cycle_powerup(&mut self) {
+        let in_play = self
+            .flow
+            .as_ref()
+            .is_none_or(|f| f.screen() == Screen::Play && !f.completing());
+        let Some(level) = &mut self.level else { return };
+        if !in_play || level.session.sim().level_ended() {
+            return;
+        }
+        if let Some(p) = level.session.cycle_powerup() {
+            level.status.show_powerup(p);
+            eprintln!("rusty-claw: play-test powerup {p}");
         }
     }
 
@@ -2170,5 +2223,22 @@ mod tests {
                 assert_eq!(n, 1, "{presentation:?} at {x},{y}");
             }
         }
+    }
+
+    #[test]
+    fn the_aid_marker_names_the_powerup_aid() {
+        use claw_sim::tuning::PlayAids;
+        let mut cfg = SimConfig::default();
+        assert!(aid_marker_lines(&cfg).is_empty());
+        cfg.start_powerup = Some(AidPowerup::parse("lightning").unwrap());
+        assert_eq!(aid_marker_lines(&cfg), ["POWERUP LIGHTNING SWORD"]);
+        cfg.aids = PlayAids {
+            invincible: true,
+            infinite_lives: true,
+        };
+        assert_eq!(
+            aid_marker_lines(&cfg),
+            ["INVINCIBLE", "INFINITE LIVES", "POWERUP LIGHTNING SWORD"]
+        );
     }
 }

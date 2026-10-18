@@ -4,7 +4,7 @@
 //! rusty-claw --install PATH [--level N | --custom FILE.WWD] [--res WxH]
 //!            [--fullscreen] [--aspect fill|centered|4:3] [--scale fit|integer]
 //!            [--widen-activation] [--mid-air-hit-fix on|off]
-//!            [--invincible] [--infinite-lives]
+//!            [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]]
 //!            [--vsync on|off] [--fps-cap N | --uncapped]
 //!            [--no-interp] [--no-audio] [--record FILE.csv]
 //!            [--replay FILE.csv [--trace OUT.csv] [--render-hz HZ]]
@@ -30,9 +30,15 @@
 //!
 //! The play-test aids `--invincible` (Claw takes no damage; death tiles and
 //! pits still end his life) and `--infinite-lives` (a death never costs a
-//! life) are on for that run only. A recording made with an aid on names
-//! it in its header (`# invincible = on`, `# infinite_lives = on`) and a
-//! replay plays it with that aid, as does `--bench-route`.
+//! life) are on for that run only, as is `--powerup NAME[:SECONDS]` (Claw
+//! has that powerup, as if just picked up, at every level start and after
+//! every respawn). While any of them is on, F6 gives Claw the next powerup
+//! in turn (invisible, invulnerable, catnip, fire, ice, lightning and
+//! plasma sword, then none) and names it on screen. A recording made with
+//! an aid on names it in its header (`# invincible = on`,
+//! `# infinite_lives = on`, `# powerup = fire:30`, `# powerup_key = used`)
+//! and a replay plays it with that aid and gives the powerups of the key
+//! where they were given, as does `--bench-route`.
 //!
 //! A replay plays the level its recording names (`# level N`) from the
 //! start it was recorded with: a later level of a recorded game starts
@@ -87,10 +93,19 @@ Play-test aids, off by default, for trying out hard levels:
   --invincible                       Claw takes no damage (death tiles and pits
                                      still end his life)
   --infinite-lives                   a death never lowers the lives count
-They are also on the Gameplay page (Options, Gameplay) and in the config file;
-on the command line they apply to that run only. A run with an aid on says
-nothing about how hard a level is: recordings name the aids, and routes, the
-bot and comparisons with reference traces refuse them.
+  --powerup NAME[:SECONDS]           Claw has this powerup at the start of every
+                                     level and after every respawn, as if just
+                                     picked up: invisible, invulnerable, catnip,
+                                     fire, ice, lightning or plasma (the swords),
+                                     for SECONDS (default 30)
+  F6 (while any aid is on)           give the next powerup in that order, then
+                                     none, for 30 seconds; its name shows on
+                                     screen (try each look and effect in turn)
+The first two are also on the Gameplay page (Options, Gameplay) and in the
+config file; on the command line the aids apply to that run only. A run with
+an aid on says nothing about how hard a level is: recordings name the aids
+and the powerups F6 gave, and routes, the bot and comparisons with reference
+traces refuse them.
 
 Saved games are kept in $XDG_DATA_HOME/rusty-claw/saves/default/ (by default
 ~/.local/share/rusty-claw/saves/default/). Options changed in the menus are

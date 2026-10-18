@@ -27,6 +27,7 @@
 //! - [`special`]: the hit reaction, lifting, throwing and freezing states;
 //! - [`hit`]: what happens when something touches Claw;
 //! - [`death`]: dying, the death states and the powerup timer;
+//! - [`powerup_aid`]: the play-test aid that gives any powerup;
 //! - [`progress`]: starting a level from a carried state or a save, and
 //!   handing the progress on;
 //! - [`swing`]: hanging from a rope.
@@ -57,6 +58,7 @@ pub mod attack;
 pub mod death;
 pub mod hit;
 pub mod look;
+pub mod powerup_aid;
 pub mod progress;
 pub mod special;
 pub mod stats;

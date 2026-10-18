@@ -113,6 +113,7 @@ The game pauses when its window loses focus.
 | 1, 2, 3 | select and fire the pistol, magic or dynamite |
 | Z | lift an object in front of Claw; again to throw it (hold to throw farther) |
 | Escape, P or Pause | the in-game menu |
+| F6 | play-test aid: the next powerup, only while an aid is on (see [Play-test aids](#play-test-aids)) |
 | F7 | smooth motion between game ticks on or off |
 | F8 | fit or integer scaling |
 | F9 | aspect: fill, centered, 4:3 |
@@ -220,7 +221,8 @@ pad_jump = "South"         # pad_<action>: pad button names
 
 The bindable actions are `left`, `right`, `up`, `down`, `jump`, `attack`,
 `projectile`, `toggle`, `lift`, `pistol`, `magic`, `dynamite`, `quit`,
-`fullscreen`, `window_size`, `aspect`, `scale`, `interpolation` and `pause`.
+`fullscreen`, `window_size`, `aspect`, `scale`, `interpolation`, `pause`,
+`help` and `powerup`.
 
 By default a hit that ends while Claw is in the air leaves him able to jump
 again before he lands, as in the original; speedruns rely on it, and any
@@ -232,8 +234,8 @@ change.
 
 ### Play-test aids
 
-Two aids help with trying out the hard parts of a level. Both are off by
-default:
+Three aids help with trying out the hard parts of a level and every
+powerup. All are off by default:
 
 - `--invincible`: Claw takes no damage from enemies, shots, hazards,
   explosions or bosses. He never goes into the hurt reaction and is never
@@ -241,17 +243,33 @@ default:
   still end his life.
 - `--infinite-lives`: losing a life never lowers the lives count, so play
   goes on from the last checkpoint.
+- `--powerup NAME[:SECONDS]`: Claw has that powerup at the start of every
+  level and again after every respawn, given as a pickup gives it (its
+  tune, voice line, look and status bar timer). NAME is `invisible`,
+  `invulnerable`, `catnip`, `fire`, `ice`, `lightning` or `plasma` (the
+  four swords); SECONDS defaults to 30, the length of a pickup that names
+  none. For example `--powerup fire` or `--powerup catnip:90`.
 
-The same two switches are on the Gameplay page (Options, then Gameplay) and
-in the config file (`invincible = on`, `infinite_lives = on`). Like the
-other gameplay switches they apply from the next level started. A flag on
-the command line turns its aid on for that run only and is not saved. A
-small marker in the bottom-left corner of the screen names each aid that
-is on.
+While any of these aids is on, F6 gives Claw the next powerup in that order
+for 30 seconds, then none (ending the running one), then the first again,
+and names it in the middle of the screen for two seconds: press it in turn
+to see each powerup's look and effect. With every aid off F6 does nothing.
+F6 is the `powerup` action (`key_powerup` in the config file); F9 stays the
+aspect key.
+
+The first two switches are also on the Gameplay page (Options, then
+Gameplay) and in the config file (`invincible = on`, `infinite_lives = on`).
+Like the other gameplay switches they apply from the next level started.
+The powerup aid is command line only. A flag on the command line turns its
+aid on for that run only and is not saved. A small marker in the
+bottom-left corner of the screen names each aid that is on (`POWERUP FIRE
+SWORD` for `--powerup fire`).
 
 A run with an aid on says nothing about how hard a level is. A recording
 made with one says so in its header (`# invincible = on`,
-`# infinite_lives = on`), and `--replay` plays it with that aid. Routes, the
+`# infinite_lives = on`, `# powerup = fire:30`, and `# powerup_key = used`
+when F6 gave a powerup, each one noted where it was given), and `--replay`
+plays it with that aid and those powerups. Routes, the
 search bot and the comparisons with the original (`make compare`,
 `claw-replay --compare`) refuse such a recording, with a message that says
 why.
@@ -313,7 +331,7 @@ Recordings made before this option existed were played with the fix on and
 have no such line, so replay them with `--mid-air-hit-fix on`. A recording
 made with a play-test aid on names it in its header, and the replay plays
 with it (see [Play-test aids](#play-test-aids)); `claw-replay` accepts the
-same `--invincible` and `--infinite-lives` flags.
+same `--invincible`, `--infinite-lives` and `--powerup` flags.
 
 ```sh
 # play and record, then watch the recording
