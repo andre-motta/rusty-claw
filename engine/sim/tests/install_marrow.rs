@@ -334,11 +334,6 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// tolerance, per store and clock; a column not listed must stay within
 /// it, and one listed must not leave it earlier. What they come from:
 ///
-/// - c18, the skip and a long stand on the left ledge (18180 ms): Claw's
-///   idle animation, which comes after 20 s of standing still, says one of
-///   his idle lines with a draw from the shared random stream; that rule
-///   comes with the fourth level's rules, merged later (with it this store
-///   holds exactly). From that draw on Marrow's pacing turns differ.
 /// - c18, the ride (38268 ms) and the diagnostic run (7362 ms): after
 ///   Claw's death the parrot climbs from its perch again, and at one row of
 ///   the climb its height lands a hair under a whole pixel in the
@@ -361,11 +356,6 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   meets the right ledge's wall and he falls onto the spikes, so that
 ///   route does not reach Marrow at this clock.
 const KNOWN: &[Known] = &[
-    (
-        "boss-intro-skip-c18",
-        "c18",
-        &[("rng", 18180), ("marrow_x", 18558), ("marrow_state", 18558)],
-    ),
     ("boss-normal-ride-c18", "c18", &[("parrot_y", 38268)]),
     (
         "boss-skip-death-fight-c18",

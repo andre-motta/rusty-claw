@@ -155,12 +155,7 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// tolerance, per store and clock; a column not listed must stay within
 /// it, and one listed must not leave it earlier. What they come from:
 ///
-/// - c18, saw-stand, 16290 ms (rng): Claw has stood still since he was
-///   put down, and about 17 s on his idle animation reaches the picture on
-///   which he says one of his idle lines, which draws from the random
-///   stream. The idle line is not built (his idle animation plays,
-///   silent). Every other column at the 18 ms step is exact, on every
-///   store.
+/// - Every column at the 18 ms step is exact, on every store.
 /// - c60 (the default tuning played tick by tick), the belts: a belt's
 ///   push moves Claw by the whole pixels of each step's share, so the
 ///   step length sets the drift: 2 or 3 px a frame at 60 frames per
@@ -195,7 +190,6 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   tuning also ends 4 px shorter. Each arrow reaches Claw later in the
 ///   replay, the first 69 ms later (1083 ms).
 const KNOWN: &[Known] = &[
-    ("saw-stand", "c18", &[("rng", 16290)]),
     ("belt-stand", "c60", &[("x", 3083), ("cam_x", 3083)]),
     (
         "belt-with",
