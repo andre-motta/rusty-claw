@@ -2,8 +2,10 @@
 //! and Raux ([`raux`]), on shared enemy behaviour and the shared human
 //! states ([`human`]), with the cutthroat ([`cutthroat`]) and the robber
 //! thief ([`robberthief`]), and the seagull ([`seagull`]), the first
-//! flyer. Katherine ([`katherine`]), the town guards ([`townguard`]) and
-//! Wolvington ([`wolvington`]) are declared but not built yet.
+//! flyer. Katherine ([`katherine`]), the town guards ([`townguard`]),
+//! Wolvington ([`wolvington`]), the red-tail pirates
+//! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]) and the crabs
+//! ([`crab`]) are declared but not built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -53,6 +55,8 @@ use crate::physics::ptype;
 use crate::tiles::SOLID;
 use crate::tuning::TICK_MS;
 
+pub mod bear_sailor;
+pub mod crab;
 pub mod cutthroat;
 pub mod goo;
 pub mod human;
@@ -63,6 +67,7 @@ pub mod officer;
 pub mod punkrat;
 pub mod rat;
 pub mod raux;
+pub mod redtail_pirate;
 pub mod robberthief;
 pub mod seagull;
 pub mod soldier;
@@ -181,9 +186,12 @@ pub mod field {
 /// 2120-2139 the fourth level's (Katherine's somersault, see
 /// [`katherine::STATE_BLOCK`]) and 2140-2159 the fifth level's (the town
 /// guards' second idle and parry and the seagull's climb back and flinch,
-/// see [`townguard::STATE_BLOCK`]) and 2160-2179 the sixth level's
-/// (Wolvington's five attacks, see [`wolvington::STATE_BLOCK`]); later
-/// families take blocks of 20 from 2180.
+/// see [`townguard::STATE_BLOCK`]), 2160-2179 the sixth level's
+/// (Wolvington's five attacks, see [`wolvington::STATE_BLOCK`]) and
+/// 2180-2199 the seventh level's (the bear's hug and the pirate's boss
+/// mode from 2180, the crabs' states from 2190, see
+/// [`bear_sailor::STATE_BLOCK`]); later families take blocks of 20 from
+/// 2200.
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -279,11 +287,38 @@ pub enum EnemyState {
     SwordThrust = 2163,
     /// Sprinting at Claw into an uppercut (Wolvington).
     Sprint = 2164,
+    /// Grabbing Claw for a hug (the bear sailor).
+    StartHug = 2180,
+    /// Holding Claw in a hug and squeezing him (the bear sailor).
+    Hug = 2181,
+    /// Letting Claw go from a hug (the bear sailor; no rule enters it).
+    Release = 2182,
+    /// The attack a pirate makes in the eighth level's boss fight (the
+    /// red-tail pirate; never entered on the seventh level).
+    GabrielAttack = 2183,
+    /// Facing Claw and choosing between hiding and crouching (the crabs).
+    Regroup = 2190,
+    /// Withdrawn into the shell (the crabs).
+    Hide = 2191,
+    /// Crouched in the shell, then choosing what to do (the crabs).
+    Defense = 2192,
+    /// Choosing between charging, snipping and going back (the crabs).
+    Attack = 2193,
+    /// Charging at Claw (the crabs).
+    MovingAttack = 2194,
+    /// Snipping at Claw (the crabs).
+    Snip = 2195,
+    /// Falling out of a nest until it lands (the crabs).
+    Tumble = 2196,
+    /// Knocked aside in its shell (the crabs).
+    Nudge = 2197,
+    /// Throwing a bomb (the bomber crabs).
+    Launch = 2198,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 44] = [
+    pub const ALL: [EnemyState; 57] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -328,6 +363,19 @@ impl EnemyState {
         EnemyState::Uppercut,
         EnemyState::SwordThrust,
         EnemyState::Sprint,
+        EnemyState::StartHug,
+        EnemyState::Hug,
+        EnemyState::Release,
+        EnemyState::GabrielAttack,
+        EnemyState::Regroup,
+        EnemyState::Hide,
+        EnemyState::Defense,
+        EnemyState::Attack,
+        EnemyState::MovingAttack,
+        EnemyState::Snip,
+        EnemyState::Tumble,
+        EnemyState::Nudge,
+        EnemyState::Launch,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -386,6 +434,19 @@ impl EnemyState {
             EnemyState::Uppercut => "Uppercut",
             EnemyState::SwordThrust => "SwordThrust",
             EnemyState::Sprint => "Sprint",
+            EnemyState::StartHug => "StartHug",
+            EnemyState::Hug => "Hug",
+            EnemyState::Release => "Release",
+            EnemyState::GabrielAttack => "GabrielAttack",
+            EnemyState::Regroup => "Regroup",
+            EnemyState::Hide => "Hide",
+            EnemyState::Defense => "Defense",
+            EnemyState::Attack => "Attack",
+            EnemyState::MovingAttack => "MovingAttack",
+            EnemyState::Snip => "Snip",
+            EnemyState::Tumble => "Tumble",
+            EnemyState::Nudge => "Nudge",
+            EnemyState::Launch => "Launch",
         }
     }
 }
@@ -802,6 +863,9 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::TownGuard2 => Some(&townguard::guard2::CLASS),
         GameLogic::Seagull => Some(&seagull::CLASS),
         GameLogic::Wolvington => Some(&wolvington::CLASS),
+        GameLogic::RedTailPirate => Some(&redtail_pirate::CLASS),
+        GameLogic::BearSailor => Some(&bear_sailor::CLASS),
+        GameLogic::HermitCrab => Some(&crab::CLASS),
         _ => None,
     }
 }
@@ -835,7 +899,8 @@ pub(crate) fn obj_mut<'a>(w: &'a mut World, id: ObjectId) -> &'a mut Object {
 impl ObjectData {
     /// The enemy data this holds: plain enemy data, or the enemy data
     /// inside a family's own data (the punk rat's, Raux's, the thieves',
-    /// Katherine's, the town guards', the seagull's and Wolvington's).
+    /// Katherine's, the town guards', the seagull's, Wolvington's, the
+    /// red-tail pirates', the bear sailors' and the crabs').
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -847,6 +912,9 @@ impl ObjectData {
             ObjectData::TownGuard(d) => Some(&d.enemy),
             ObjectData::Seagull(d) => Some(&d.enemy),
             ObjectData::Wolvington(d) => Some(&d.enemy),
+            ObjectData::RedTailPirate(d) => Some(&d.enemy),
+            ObjectData::BearSailor(d) => Some(&d.enemy),
+            ObjectData::HermitCrab(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -863,6 +931,9 @@ impl ObjectData {
             ObjectData::TownGuard(d) => Some(&mut d.enemy),
             ObjectData::Seagull(d) => Some(&mut d.enemy),
             ObjectData::Wolvington(d) => Some(&mut d.enemy),
+            ObjectData::RedTailPirate(d) => Some(&mut d.enemy),
+            ObjectData::BearSailor(d) => Some(&mut d.enemy),
+            ObjectData::HermitCrab(d) => Some(&mut d.enemy),
             _ => None,
         }
     }
