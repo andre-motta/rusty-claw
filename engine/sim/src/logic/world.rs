@@ -10,6 +10,7 @@ use claw_frame::{AudioCue, GameEvent, PaletteFade, RemovedBody, ScreenTransition
 use crate::anim::{Animation, FRAME_SOUND_IN_VIEW, FRAME_SOUND_POSITIONAL};
 use crate::container::Container;
 use crate::level::SimLevel;
+use crate::logic::enemy::marrow::MarrowLink;
 use crate::logic::sound;
 use crate::logic::world_boss::BossState;
 use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags};
@@ -39,7 +40,8 @@ pub struct VoiceRequest {
 /// the end of the tick is carried out then, so none outlives its tick.
 ///
 /// The boss fight state ([`BossState`], see [`super::world_boss`]) is a
-/// state too: it lasts the whole level and starts cleared with it.
+/// state too: it lasts the whole level and starts cleared with it. So is
+/// the Marrow link ([`MarrowLink`], see [`World::marrow_link`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Outbox {
     audio: Vec<AudioCue>,
@@ -52,6 +54,7 @@ pub struct Outbox {
     frame_time_reset: bool,
     tile_edits: Vec<(i32, i32, i32)>,
     pub(crate) boss: BossState,
+    pub(crate) marrow: Option<MarrowLink>,
     falling: Vec<ObjectId>,
     removed_bodies: Vec<RemovedBody>,
 }
@@ -143,6 +146,12 @@ impl Outbox {
     /// The boss fight state.
     pub fn boss(&self) -> &BossState {
         &self.boss
+    }
+
+    /// The Marrow link, while Marrow's object exists (see
+    /// [`World::marrow_link`]).
+    pub fn marrow(&self) -> Option<&MarrowLink> {
+        self.marrow.as_ref()
     }
 
     /// The frame clock was restarted in this tick (a save, see

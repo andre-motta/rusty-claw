@@ -70,6 +70,7 @@ pub mod goo_vent;
 pub mod ground_blower;
 pub mod jump_switch;
 pub mod keg;
+pub mod marrow_floor;
 pub mod path_elevator;
 pub mod pickup;
 pub mod platform;
@@ -196,10 +197,16 @@ pub enum GameLogic {
     SawBlade,
     /// Skull cannons that fire a cannonball every three seconds.
     SkullCannon,
+    /// Marrow, the boss of the tenth level.
+    Marrow,
+    /// Marrow's parrot, which swoops at Claw and carries Marrow.
+    Parrot,
+    /// The two slabs that bridge the spike pit of Marrow's room.
+    MarrowFloor,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 51] = [
+pub const ALL: [GameLogic; 54] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -251,6 +258,9 @@ pub const ALL: [GameLogic; 51] = [
     GameLogic::ConveyorBelt,
     GameLogic::SawBlade,
     GameLogic::SkullCannon,
+    GameLogic::Marrow,
+    GameLogic::Parrot,
+    GameLogic::MarrowFloor,
 ];
 
 /// A logic's own data, by family.
@@ -355,6 +365,12 @@ pub enum ObjectData {
     SawBlade(saw_blade::SawData),
     /// A skull cannon.
     SkullCannon(skull_cannon::SkullCannonData),
+    /// Marrow.
+    Marrow(enemy::marrow::MarrowData),
+    /// Marrow's parrot.
+    Parrot(enemy::parrot::ParrotData),
+    /// A slab of Marrow's trap floor.
+    MarrowFloor(marrow_floor::FloorData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -412,6 +428,9 @@ macro_rules! dispatch {
             GameLogic::ConveyorBelt => conveyor_belt::$f($($arg),*),
             GameLogic::SawBlade => saw_blade::$f($($arg),*),
             GameLogic::SkullCannon => skull_cannon::$f($($arg),*),
+            GameLogic::Marrow => enemy::marrow::$f($($arg),*),
+            GameLogic::Parrot => enemy::parrot::$f($($arg),*),
+            GameLogic::MarrowFloor => marrow_floor::$f($($arg),*),
         }
     };
 }
@@ -471,6 +490,9 @@ macro_rules! constant {
             GameLogic::ConveyorBelt => conveyor_belt::$c,
             GameLogic::SawBlade => saw_blade::$c,
             GameLogic::SkullCannon => skull_cannon::$c,
+            GameLogic::Marrow => enemy::marrow::$c,
+            GameLogic::Parrot => enemy::parrot::$c,
+            GameLogic::MarrowFloor => marrow_floor::$c,
         }
     };
 }
@@ -532,6 +554,9 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::ConveyorBelt => conveyor_belt::BUILT,
         GameLogic::SawBlade => saw_blade::BUILT,
         GameLogic::SkullCannon => skull_cannon::BUILT,
+        GameLogic::Marrow => enemy::marrow::BUILT,
+        GameLogic::Parrot => enemy::parrot::BUILT,
+        GameLogic::MarrowFloor => marrow_floor::BUILT,
         _ => true,
     }
 }
@@ -756,6 +781,8 @@ impl Look {
 ///   for themselves ([`dart_trap::first_look`],
 ///   [`conveyor_belt::first_look`], [`saw_blade::first_look`],
 ///   [`skull_cannon::first_look`]).
+/// - The slabs of Marrow's trap floor answer for themselves
+///   ([`marrow_floor::first_look`]).
 ///
 /// It reads the object and the level only, on copies: nothing in the game
 /// changes, no logic runs and no random number is drawn.
@@ -768,6 +795,7 @@ pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
         LogicKind::Game(GameLogic::ConveyorBelt) => conveyor_belt::first_look(level, o),
         LogicKind::Game(GameLogic::SawBlade) => saw_blade::first_look(level, o),
         LogicKind::Game(GameLogic::SkullCannon) => skull_cannon::first_look(level, o),
+        LogicKind::Game(GameLogic::MarrowFloor) => marrow_floor::first_look(level, o),
         _ => None,
     }
 }

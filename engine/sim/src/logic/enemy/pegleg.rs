@@ -24,7 +24,9 @@
 //!
 //! - Built: the health and damage above, going by sight, liftable; the
 //!   range boxes [`RANGES`]; then dropped to the floor and Home (not
-//!   idle).
+//!   idle). Going idle (the shared human go idle) plays his idle pose
+//!   ([`IDLE_ANIM`]), as Home does, so an idle PegLeg is drawn, and seen
+//!   on screen, with its pictures.
 //! - Going Home: the shared go Home, his idle picture (not advanced), his
 //!   hit box back, and a draw of 0..1001 nothing reads.
 //! - Home: the picture advances; the alert once, the first time he sees
@@ -106,7 +108,7 @@
 //! enemy behaviour reaches through [`super::data`] and
 //! [`super::with_data`].
 
-use super::human;
+use super::human::{self, HumanAnims, HumanData};
 use super::lift::{self, Carry};
 use super::states::{self, enter_hit, start_pacing};
 use super::{
@@ -225,7 +227,7 @@ pub const LOW_SHOT_ANIM: &str = "LEVEL_PEGLEG_STRIKE2";
 pub const FORWARD_ROLL_ANIM: &str = "LEVEL_PEGLEG_FORWARDROLL";
 /// The backward roll.
 pub const BACKWARD_ROLL_ANIM: &str = "LEVEL_PEGLEG_BACKWARDROLL";
-/// The idle pose, shown in `Home`.
+/// The idle pose, shown in `Home` and while idle.
 pub const IDLE_ANIM: &str = "LEVEL_PEGLEG_IDLE";
 /// The body flying off after death.
 pub const DEATH_ANIM: &str = "LEVEL_PEGLEG_KILLFALL";
@@ -437,6 +439,13 @@ pub fn construct(w: &mut World, id: ObjectId) {
         death_sound: DEATH_SOUND,
         lifted_voice: "",
         smarts: super::smarts(SMARTS),
+        human: HumanData {
+            anims: HumanAnims {
+                idle: IDLE_ANIM,
+                ..HumanAnims::default()
+            },
+            ..HumanData::default()
+        },
         ..human_fields(w, id)
     };
     let body = Body {

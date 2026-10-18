@@ -1254,6 +1254,12 @@ impl Sim {
         self.out.boss()
     }
 
+    /// The Marrow link of the tenth level's boss room, while Marrow's
+    /// object exists (see [`crate::logic::enemy::marrow::MarrowLink`]).
+    pub fn marrow_link(&self) -> Option<&crate::logic::enemy::marrow::MarrowLink> {
+        self.out.marrow()
+    }
+
     /// The camera's scripted point, when one is set (by Claw's code, a
     /// logic or [`Sim::set_camera_point`]).
     pub fn camera_override(&self) -> Option<(i32, i32)> {

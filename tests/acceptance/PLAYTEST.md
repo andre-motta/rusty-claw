@@ -270,3 +270,25 @@ skull cannons have their own lines below.
 11. Saws: sunk saws rise, spin and sink on a steady rhythm and hurt only once fully up; one hit costs 10, and at most two hits fit in one up period; neighbouring saws are offset so there is always a gap; no rise or sink sound, only the hum.
 12. Skull cannons: they fire every 3 seconds whether Claw is near or not; the left-facing ones fire from behind themselves, so the ball passes through the cannon; the ball does not spin; it hits for 10 even when Claw ducks, and jumping over it works.
 13. Dart traps: invisible until Claw stands in a trap's area; then a puff, a blow sound, and an arrow about half a second later from the hole; it hits for 5 and knocks Claw back, and repeats while he stays (about every 1.6 s).
+
+## Milestone 3, LEVEL10 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the tenth level with `make run-game ARGS="--install PATH --level 10"`,
+or play on from the ninth level. This section covers the level up to the
+door into Marrow's room: the hook-handed pirates and PegLegs with their
+tenth-level ways, the dart traps, the pegs, the big trap elevators, the
+seagulls and the vertical warp. Marrow, his parrot and the sliding floor of
+his room are not built yet: past the door they stand still.
+
+1. Hook-handed pirate: he never raises his hook to hold it and never parries. Stand about 100 px from him and he stabs with his dagger about once a second, missing a standing Claw facing him; step in and swing the sword standing: the swing lands (5 of his 10) and he strikes back at once (10 health, Claw is knocked back), and a second swing that lands kills him.
+2. PegLeg, the pairs: stand 150 to 200 px from a PegLeg: each time he aims he fires two shots about half a second apart, the first high and the second low, both leaving about 55 px in front of him; every pair is high then low, and each shot costs 10.
+3. PegLeg, the rolls: come closer than 150 px and he rolls about 150 px away from you in about 0.6 s, then fires a pair. Shoot him with the pistol: it does him no harm and he rolls at you the full 150 px, through where you stand (his touch costs 10), and fires his pair from there, often past you.
+4. Dart traps: the level's traps shoot left, right and down (none up): a puff, a blow sound, and an arrow half a second later that costs 5 and knocks Claw back, again while he stays in the trap's area.
+5. Crumbling pegs: a crumbling peg gives way a moment after Claw lands on it and stays gone until he loses a life; toggle pegs appear and vanish on their own rhythm, four of them with their own longer on and off times.
+6. Big trap elevators: the wide trap elevators carry Claw across their whole surface (about 180 px), the narrow elevators only their own; the one vertical trap elevator rides between its two stops at a steady pace once Claw steps on it.
+7. Seagulls: the nine seagulls patrol and dive at Claw as on the ninth level.
+8. The vertical warp: the disc at the top of the shaft near the level's start (x 4252, y 8348) takes Claw to the middle of the level, just above a checkpoint flag (x 20250, y 7097).
+9. The door into Marrow's room (x 32432, y 7769): walking in takes Claw to the left ledge of the room; the introduction plays and Claw stands again after it.
+
+<!-- Marrow's fight: his lines follow here once he, his parrot and the floor are built. -->
