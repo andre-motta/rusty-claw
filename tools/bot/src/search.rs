@@ -433,6 +433,9 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
     targets.push(Target { field, point: None });
     let arena = Arena {
         door: boss.as_ref().map(|b| b.end.door),
+        boss_side: boss
+            .as_ref()
+            .map_or(0, |b| if b.end.boss.0 < b.end.room.0 { -1 } else { 1 }),
     };
     let mut s = Search {
         cfg,
@@ -465,7 +468,7 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
 
 /// The bosses whose defeat ends a level, by logic name.
 pub fn is_boss(logic: &str) -> bool {
-    enemy::raux::NAMES.contains(&logic)
+    enemy::raux::NAMES.contains(&logic) || enemy::katherine::NAMES.contains(&logic)
 }
 
 /// Record fields of the boss room's door: where it leads, x and y.
@@ -1289,7 +1292,11 @@ fn played_on(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> Option<Si
 /// The coarse state of a game the search treats as one: Claw's position to
 /// 8 px, his state, facing, running and attacking, his health to 10
 /// points, and the platforms (position to 16 px and state) and enemies
-/// (alive or not) within about a screen of him.
+/// (alive or not) within about a screen of him. Springboards and stepping
+/// stones count with where they are in their cycles (state and frame, and
+/// a stone that keeps to the clock its time in its cycle to a tenth of a
+/// second), so a wait on a springboard for its throw, or beside a stone
+/// for it to come up, is progress.
 ///
 /// The key is a fixed hash of those values (64-bit FNV-1a), so it is the
 /// same with every toolchain and on every machine, and so are the routes
@@ -1327,7 +1334,33 @@ pub fn state_key(sim: &Sim) -> u64 {
         if o.x.abs_diff(c.x) > 700 || o.y.abs_diff(c.y) > 500 {
             continue;
         }
-        if o.type_flags & platform::PLATFORM != 0 {
+        if let ObjectData::SpringBoard(d) = &o.data {
+            // A wait on a springboard for its throw is progress: where it
+            // is in its cycle.
+            k.add(&[
+                7,
+                i64::from(id),
+                i64::from(o.state),
+                i64::from(o.frame),
+                i64::from(d.armed),
+            ]);
+        } else if let ObjectData::SteppingStone(d) = &o.data {
+            // A wait for a stone to come up is progress: where it is in
+            // its sink and rise and, for a stone that keeps to the clock,
+            // in its cycle, to a tenth of a second.
+            let into = if d.period > 0 {
+                (clock - i64::from(d.phase)).rem_euclid(i64::from(d.period)) / SPIKE_STEP_MS
+            } else {
+                0
+            };
+            k.add(&[
+                8,
+                i64::from(id),
+                i64::from(o.state),
+                i64::from(o.frame),
+                into,
+            ]);
+        } else if o.type_flags & platform::PLATFORM != 0 {
             k.add(&[
                 1,
                 i64::from(id),

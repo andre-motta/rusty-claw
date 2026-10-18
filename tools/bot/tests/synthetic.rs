@@ -420,3 +420,34 @@ fn the_full_jump_of_each_tuning_reaches_the_full_height() {
         assert!(rise(full - 1) < 145, "{tuning:?}");
     }
 }
+
+/// The coarse states of a game in which Claw stands still beside `object`,
+/// one after each of `waits` waits of the bot.
+fn keys_while_waiting(object: ObjectSpec, waits: usize) -> Vec<u64> {
+    let mut l = level(&room(12, 6), (200, 250));
+    l.number = 4;
+    l.objects = vec![object];
+    let mut s = sim(l);
+    for _ in 0..30 {
+        s.step(Default::default());
+    }
+    let mut keys = Vec::new();
+    for _ in 0..waits {
+        for _ in actions::Action::Wait.masks() {
+            s.step(Default::default());
+        }
+        keys.push(claw_bot::search::state_key(&s));
+    }
+    keys
+}
+
+#[test]
+fn a_wait_for_a_stepping_stone_is_progress() {
+    // A stone that keeps to the clock, up for its first 1.5 s: each wait
+    // of Claw beside it brings the stone's sink nearer, so none is the
+    // same state as the one before.
+    let keys = keys_while_waiting(ObjectSpec::at("SteppingStone2", 400, 300, 0), 10);
+    for w in keys.windows(2) {
+        assert_ne!(w[0], w[1]);
+    }
+}
