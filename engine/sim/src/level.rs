@@ -12,7 +12,7 @@ use claw_assets::{Ani, AssetStore, LevelData, Result, pid, wav};
 
 use crate::anim::Animation;
 use crate::logic;
-use crate::object::Rect;
+use crate::object::{Object, Rect, draw_flags};
 use crate::player::{self, AnimSet};
 use crate::tiles::{TileMap, TileReport};
 use crate::view::PlaneGeometry;
@@ -324,9 +324,9 @@ impl SimLevel {
     /// frame, mirrored and flipped as it is drawn, at its position; `None`
     /// when the level does not know the frame. A mirrored picture is
     /// flipped about its anchor pixel, so its box is the mirrored box one
-    /// pixel further left.
-    pub fn draw_box(&self, o: &crate::object::Object) -> Option<Rect> {
-        use crate::object::draw_flags;
+    /// pixel further left: a soldier facing left whose box reaches the
+    /// view's left edge in the plain mirror does not count as on screen.
+    pub fn draw_box(&self, o: &Object) -> Option<Rect> {
         let mut b = self.frame_box(&o.image_set, o.frame)?;
         if o.draw_flags & draw_flags::MIRROR != 0 {
             let m = b.mirrored();
@@ -341,6 +341,15 @@ impl SimLevel {
             );
         }
         Some(b.translate(o.x, o.y))
+    }
+
+    /// True when `o` is in `view` (level pixels): its draw box overlaps it,
+    /// or, when the level does not know its frame, its position is inside.
+    pub fn in_view(&self, o: &Object, view: &Rect) -> bool {
+        match self.draw_box(o) {
+            Some(b) => b.overlaps(view),
+            None => view.contains(o.x, o.y),
+        }
     }
 
     /// Length of the sound registered under `key`, ms; `None` when no

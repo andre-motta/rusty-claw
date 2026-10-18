@@ -5,9 +5,8 @@
 //! Katherine ([`katherine`]), the boss of the fourth level, the town guards
 //! ([`townguard`]), Wolvington ([`wolvington`]), the red-tail pirates
 //! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
-//! ([`crab`]) and Gabriel with his bomb ([`gabriel`]); the hook-handed
-//! pirate ([`hook_pirate`]) and PegLeg with his bullet ([`pegleg`]) are
-//! declared but not built yet.
+//! ([`crab`]), Gabriel with his bomb ([`gabriel`]), the hook-handed
+//! pirate ([`hook_pirate`]) and PegLeg with his bullet ([`pegleg`]).
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -1333,8 +1332,15 @@ pub fn line_of_sight(w: &World, x1: i32, y: i32, x2: i32, step: i32) -> bool {
 }
 
 /// True when the enemy sees Claw: Claw is not invisible, he is less than
-/// 50 px above or below it, the enemy is on screen, and nothing Solid lies
+/// 50 px above or below it, the enemy was on screen, and nothing Solid lies
 /// on the enemy's row between it and Claw.
+///
+/// On screen here means drawn in the frame shown after the last tick
+/// ([`crate::object::Object::drawn_last_frame`]): with the frame, facing
+/// and position it had then and the view of that frame, not its box now.
+/// An enemy that has just switched to a wider frame reaching into the
+/// view does not see Claw until a frame has shown it there, and a new
+/// enemy sees him only from its second tick.
 pub fn sees_claw(w: &World, id: ObjectId) -> bool {
     if claw_invisible(w) {
         return false;
@@ -1343,7 +1349,9 @@ pub fn sees_claw(w: &World, id: ObjectId) -> bool {
         return false;
     };
     let o = obj(w, id);
-    (cy - o.y).abs() < SIGHT_HEIGHT && w.on_screen(o) && line_of_sight(w, o.x, o.y, cx, SIGHT_STEP)
+    (cy - o.y).abs() < SIGHT_HEIGHT
+        && o.drawn_last_frame
+        && line_of_sight(w, o.x, o.y, cx, SIGHT_STEP)
 }
 
 // ----------------------------------------------------------------------

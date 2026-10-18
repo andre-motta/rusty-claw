@@ -155,13 +155,12 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// tolerance, per store and clock; a column not listed must stay within
 /// it, and one listed must not leave it earlier. What they come from:
 ///
-/// - c18, every store (rng): the hook-handed pirates and the PegLegs
-///   awake around these routes draw from the shared random stream on
-///   every tick in the original, from time zero (or, in the crossfire
-///   shaft, from when one wakes below: 6336 ms standing, 1854 ms with the
-///   camera lowered by the crouch); their own item builds them, and
-///   without them the replay's stream stays where time zero put it. No
-///   object of this item draws, and every other column is exact.
+/// - c18, saw-stand, 16290 ms (rng): Claw has stood still since he was
+///   put down, and about 17 s on his idle animation reaches the picture on
+///   which he says one of his idle lines, which draws from the random
+///   stream. The idle line is not built (his idle animation plays,
+///   silent). Every other column at the 18 ms step is exact, on every
+///   store.
 /// - c60 (the default tuning played tick by tick), the belts: a belt's
 ///   push moves Claw by the whole pixels of each step's share, so the
 ///   step length sets the drift: 2 or 3 px a frame at 60 frames per
@@ -196,18 +195,7 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   tuning also ends 4 px shorter. Each arrow reaches Claw later in the
 ///   replay, the first 69 ms later (1083 ms).
 const KNOWN: &[Known] = &[
-    ("belt-stand", "c18", &[("rng", 18)]),
-    ("belt-with", "c18", &[("rng", 18)]),
-    ("belt-against", "c18", &[("rng", 18)]),
-    ("belt-teeter", "c18", &[("rng", 18)]),
-    ("belt-jump", "c18", &[("rng", 18)]),
-    ("belt-warp", "c18", &[("rng", 90)]),
-    ("saw-stand", "c18", &[("rng", 18)]),
-    ("saw-hit", "c18", &[("rng", 18)]),
-    ("saw-wake", "c18", &[("rng", 18)]),
-    ("skull-shaft", "c18", &[("rng", 6336)]),
-    ("skull-duck", "c18", &[("rng", 1854)]),
-    ("dart-right", "c18", &[("rng", 18)]),
+    ("saw-stand", "c18", &[("rng", 16290)]),
     ("belt-stand", "c60", &[("x", 3083), ("cam_x", 3083)]),
     (
         "belt-with",

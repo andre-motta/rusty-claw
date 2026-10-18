@@ -4,13 +4,17 @@
 # moving platforms and the ladder to the flag on the block, along the
 # floor to the first save point, up the ladder to the grassy shelves and
 # the pillar top, down the narrow shaft to the flag, down the shaft on its
-# left to the low tunnel, up the big shaft on its small and large
-# platforms to the ledge on its right, up the ladder, the sliding
-# platform, the leaves and the second sliding platform to the rock top,
-# up the tree's ladders and shelves, across on the rope to the second save
-# point, down onto the one-way platform (crouching under the hanging
-# rock), down the ladder to the flag in the pit, and up the last shaft on
-# its ladders and sliding platforms to the shelf below the end.
+# left to the low tunnel, up the big shaft standing on its lifts in turn
+# (left, middle, right) to the ledge on its right, up the ladder, the
+# sliding platform, the leaves and the second sliding platform to the rock
+# top, up the tree's ladders and shelves, across on the rope to the second
+# save point, down onto the one-way platform (crouching under the hanging
+# rock), down the ladder to the flag in the pit, and up the last shaft by
+# the ledge and ladders on its right, the ladder on its left and its three
+# sliding platforms to the rope and the shelf below the end. A waypoint
+# marked `foot` counts only with Claw standing, climbing or hanging near
+# it, so the search starts the next stretch from a lift, a ledge or a
+# platform rather than from the middle of a jump past it.
 7900,6400
 8615,6540
 9000,6540
@@ -35,15 +39,15 @@
 17042,7200
 16950,8010
 17450,8010
-17700,7760
-17876,7500
-17760,7250
-17876,6870
-18015,6760
-17877,6550
-18016,6469
-18162,6380
-18300,5720
+17700,7760 foot
+17760,7420 foot
+17760,7100 foot
+17876,6900 foot
+18015,6760 foot
+17877,6550 foot
+18016,6469 foot
+18162,6380 foot
+18300,5720 foot
 18820,5600
 19320,5480
 19250,5230
@@ -70,10 +74,13 @@
 23075,6300
 23161,7080
 23830,6720
-23700,6620
-23520,6480
-23700,6370
-23830,6230
-23700,6110
+24020,6607 foot
+23820,6618 foot
+23519,6470
+23650,6367 foot
+24031,6230
+23990,6095 foot
+23720,6103 foot
+23847,5975
 23650,5700
 23800,5400

@@ -308,10 +308,13 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// - c18, hook-pistol (4392 ms) and hook-pistol-hold (2052 ms), pistol:
 ///   Claw's second shot leaves a row early. Pressed again while his first
 ///   shot's pose still holds, it rewinds the shot's animation, and the
-///   original waits one row more before it leaves (the rule comes with the
-///   third level's route work, merged later). The shot reaches the pirate
-///   a row early, so his flinch or his death and their draws come a row
-///   early too (rng, enemy_state, enemy_x, enemy_y).
+///   original's shot then leaves four rows after the press, the replay's
+///   three (a shot from a fresh pose leaves nine rows after its press in
+///   both). The third level's rules do not cover it: the one about Claw's
+///   shots, that a shot waits one logic call before it moves, delays its
+///   flight, not its leaving, and was already in. The shot reaches the
+///   pirate a row early, so his flinch or his death and their draws come
+///   a row early too (rng, enemy_state, enemy_x, enemy_y).
 /// - c18, peg-engage (13014 ms) and peg-pistol (3726 ms), enemy_x: PegLeg
 ///   walks at 1.08 px and rolls at 4.5 px a tick; where his exact position
 ///   lands on a whole pixel, the original's movement step leaves it a

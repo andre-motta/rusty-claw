@@ -722,7 +722,7 @@ fn install_level9_records_of_the_new_families() {
                 at(r)
             );
             assert_eq!(
-                saw_blade::phase_of(name, r.record[conveyor_belt::SPEED_FIELD]),
+                saw_blade::phase_of(name, r.record[saw_blade::SPEED_FIELD]),
                 saw_blade::phase_of(name, 0),
                 "{name}: the default phase"
             );

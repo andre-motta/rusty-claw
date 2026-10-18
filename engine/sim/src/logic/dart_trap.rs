@@ -258,11 +258,12 @@ fn set_up(level: &SimLevel, o: &mut Object) {
     });
 }
 
-/// The wait after a shot of trap `o`, ms.
+/// The wait after a shot of trap `o`, ms; a negative wait in the record
+/// waits nothing.
 pub fn wait_ms(o: &Object) -> u32 {
     match field(o, WAIT_FIELD) {
         0 => DEFAULT_WAIT_MS,
-        w => w as u32,
+        w => u32::try_from(w).unwrap_or(0),
     }
 }
 
@@ -490,6 +491,21 @@ mod tests {
         assert_eq!(period_ticks(500, true), 53);
         assert_eq!(PUFF_TICKS - PUFF_UP_TICKS, 6);
         assert_eq!(period_ticks(DEFAULT_WAIT_MS, false), 31 + 28);
+    }
+
+    #[test]
+    fn the_wait_comes_from_the_record() {
+        let kind = crate::object::LogicKind::Game(crate::logic::GameLogic::DartTrap);
+        let mut o = Object::new(1, 0, 0, 0, "DartTrap".into(), kind);
+        assert_eq!(wait_ms(&o), DEFAULT_WAIT_MS);
+        let mut record = Box::new([0; 71]);
+        record[WAIT_FIELD] = 1000;
+        o.record = Some(record.clone());
+        assert_eq!(wait_ms(&o), 1000);
+        // A negative wait waits nothing.
+        record[WAIT_FIELD] = -250;
+        o.record = Some(record);
+        assert_eq!(wait_ms(&o), 0);
     }
 
     #[test]
