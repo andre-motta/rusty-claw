@@ -31,7 +31,8 @@
 //! With `--hints-on-foot` a waypoint counts as reached only with Claw on
 //! his feet, on a ladder or on a rope near it (within twice the usual
 //! distance), so the next stretch of the search never starts in the
-//! middle of a jump.
+//! middle of a jump; a `foot` after a waypoint's `x,y` in the file makes
+//! that waypoint alone count that way.
 //! `--from-route` starts from the game after the first T ticks of another
 //! route, which lead the new one. When the prefix changed its held mask
 //! less than two ticks before T, the new part first keeps that mask for
@@ -271,22 +272,45 @@ fn start_sim(
     sim
 }
 
-/// Reads a hints file: one `x,y` per line; blank lines and `#` comments
-/// are skipped.
-fn read_hints(path: &Path) -> Result<Vec<(i32, i32)>, String> {
+/// A hints file's waypoints, and the indices of those marked `foot`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Hints {
+    points: Vec<(i32, i32)>,
+    foot: Vec<usize>,
+}
+
+/// Reads a hints file: one `x,y` per line, which a `foot` after it makes
+/// count only with Claw on his feet, on a ladder or on a rope near it (as
+/// `--hints-on-foot` makes every waypoint count); blank lines and `#`
+/// comments are skipped.
+fn read_hints(path: &Path) -> Result<Hints, String> {
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-    let mut out = Vec::new();
+    parse_hints(&text)
+        .map_err(|line| format!("{} line {line}: expected x,y or x,y foot", path.display()))
+}
+
+/// Parses the text of a hints file; the error is the 1-based number of
+/// the first line that is not a waypoint.
+fn parse_hints(text: &str) -> Result<Hints, usize> {
+    let mut out = Hints::default();
     for (i, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let p = line
+        let (point, foot) = match line.strip_suffix("foot") {
+            Some(point) if point.ends_with(char::is_whitespace) => (point, true),
+            _ => (line, false),
+        };
+        let p = point
             .split_once(',')
             .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
-            .ok_or_else(|| format!("{} line {}: expected x,y", path.display(), i + 1))?;
-        out.push(p);
+            .ok_or(i + 1)?;
+        if foot {
+            out.foot.push(out.points.len());
+        }
+        out.points.push(p);
     }
     Ok(out)
 }
@@ -416,7 +440,7 @@ fn run(a: Args) -> Result<bool, String> {
 
     let hints = match &a.hints {
         Some(p) => read_hints(p)?,
-        None => Vec::new(),
+        None => Hints::default(),
     };
     let (start_held, start_held_for) = held_at_end(&prefix);
     let scfg = SearchConfig {
@@ -424,7 +448,8 @@ fn run(a: Args) -> Result<bool, String> {
         start_held_for,
         nodes: a.nodes,
         seed: u64::from(seed),
-        hints,
+        hints: hints.points,
+        foot_hints: hints.foot,
         threads: a.threads,
         land_gap: a.land_gap.unwrap_or(match a.tuning {
             TuningName::Default => DEFAULT_LAND_GAP,
@@ -537,6 +562,19 @@ mod tests {
 
     fn args(s: &str) -> Result<Args, String> {
         parse_args(s.split_whitespace().map(String::from))
+    }
+
+    #[test]
+    fn a_hint_marked_foot_counts_only_on_foot() {
+        let text = "# shaft\n100,200\n\n300, 400 foot\n500,600\t foot\n700,800\n";
+        let hints = parse_hints(text).unwrap();
+        assert_eq!(
+            hints.points,
+            [(100, 200), (300, 400), (500, 600), (700, 800)]
+        );
+        assert_eq!(hints.foot, [1, 2]);
+        assert_eq!(parse_hints("100,200\n300,400 feet\n"), Err(2));
+        assert_eq!(parse_hints("100\n"), Err(1));
     }
 
     #[test]
