@@ -28,10 +28,6 @@
 //! lifts Marrow (the bridge opens under anyone on it). The slabs never
 //! read the boss fight flag: they open after an intro skip too.
 //!
-//! Not built yet ([`BUILT`] is false): the slabs stay inert placeholders
-//! (drawn closed where the level puts them, no collision, reported as not
-//! implemented), and the calls below do nothing.
-//!
 //! # Measured on the original, at the 18 ms step
 //!
 //! - The room is built inside the passes of the door's warp: on Claw's
@@ -57,9 +53,13 @@
 //! - Dormant before the room wakes, a slab looks as the level places it,
 //!   closed at its record's x ([`first_look`]).
 
-use super::{Look, World};
-use crate::level::SimLevel;
-use crate::object::{Object, ObjectId};
+use claw_frame::SoundChannel;
+
+use super::enemy::{marrow, record};
+use super::platform::{self, PLATFORM, SurfaceKind};
+use super::{Look, ObjectData, World, sound};
+use crate::level::{SimLevel, runtime_image_set};
+use crate::object::{Object, ObjectId, flags};
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["MarrowFloor"];
@@ -74,7 +74,7 @@ pub const IMAGE_SETS: &[&str] = &[IMAGE_SET];
 pub const ANIM_PREFIXES: &[&str] = &[];
 
 /// Whether this family runs its logics yet (see [`super::built`]).
-pub const BUILT: bool = false;
+pub const BUILT: bool = true;
 
 /// Played as a slab starts to open or to close.
 pub const SLIDE_SOUND: &str = "LEVEL_PEGSLIDE";
@@ -89,6 +89,17 @@ pub const OPEN_TICKS: (u32, u32) = (36, 32);
 /// Where the ledge wall stops Claw riding the right slab as it opens
 /// (measured).
 pub const RIGHT_RIDER_STOP_X: i32 = 40959;
+
+/// Record fields a slab reads: the two ends of its track and its
+/// direction (0 or more: it opens toward the low end).
+pub mod field {
+    /// The low end of the track.
+    pub const X_MIN: usize = 51;
+    /// The high end of the track.
+    pub const X_MAX: usize = 53;
+    /// The direction.
+    pub const DIRECTION: usize = 63;
+}
 
 /// A slab's states, kept in the object's state.
 pub mod state {
@@ -124,15 +135,45 @@ pub struct FloorData {
 }
 
 /// How a slab looks before its first call (D44, see
-/// [`super::first_look`]): `None`, as the level places it, closed.
+/// [`super::first_look`]): as the level places it, closed at its
+/// record's x, in its own picture.
 pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
-    let _ = (level, o);
-    None
+    let _ = level;
+    (o.image_set != IMAGE_SET).then(|| {
+        vec![Look {
+            image_set: IMAGE_SET.to_string(),
+            ..Look::of(o)
+        }]
+    })
+}
+
+fn data_mut<'a>(w: &'a mut World, id: ObjectId) -> Option<&'a mut FloorData> {
+    match &mut w.objects.get_mut(id)?.data {
+        ObjectData::MarrowFloor(d) => Some(d),
+        _ => None,
+    }
+}
+
+/// The data of slab `id`, if it is built.
+pub fn data_of<'a>(w: &'a World, id: ObjectId) -> Option<&'a FloorData> {
+    match &w.objects.get(id)?.data {
+        ObjectData::MarrowFloor(d) => Some(d),
+        _ => None,
+    }
 }
 
 /// One logic call.
 pub fn tick(w: &mut World, id: ObjectId) {
-    let _ = (w, id);
+    let Some(s) = w.objects.get(id).map(|o| o.state) else {
+        return;
+    };
+    match s {
+        state::SET_UP => set_up(w, id),
+        state::IDLE => idle_tick(w, id),
+        state::OPENING => move_tick(w, id, true),
+        state::CLOSING => move_tick(w, id, false),
+        _ => {}
+    }
 }
 
 /// `attacker` hit `id`. Nothing hits a slab.
@@ -143,6 +184,157 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
 /// `id` attacked `victim`. A slab attacks nothing.
 pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     let _ = (w, id, victim);
+}
+
+/// The first call: its picture, a platform with the level's big trap
+/// elevator surface, out of pair collision, closed at its record's x;
+/// then idle.
+fn set_up(w: &mut World, id: ObjectId) {
+    let surface = platform::surface(w.level_number(), SurfaceKind::BigElevator);
+    let attempt = w.attempt();
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    o.image_set = runtime_image_set(IMAGE_SET);
+    o.flags |= flags::NO_COLLIDE;
+    o.type_flags = PLATFORM;
+    o.hit_rect = surface;
+    o.data = ObjectData::MarrowFloor(FloorData {
+        closed_x: o.x,
+        attempt,
+        open: false,
+        moved: 0,
+    });
+    enter_idle(w, id);
+}
+
+/// Still: it carries nothing.
+fn enter_idle(w: &mut World, id: ObjectId) {
+    if let Some(o) = w.objects.get_mut(id) {
+        o.platform_move = (0, 0);
+        o.state = state::IDLE;
+    }
+    if let Some(d) = data_mut(w, id) {
+        d.moved = 0;
+    }
+}
+
+/// Marrow's health, while he is linked.
+fn marrow_health(w: &World) -> Option<i32> {
+    let link = w.marrow_link()?;
+    w.objects.get(link.marrow).map(|o| o.health)
+}
+
+/// Idle: with no Marrow nothing; after a death of Claw's the reset; then
+/// the open request starts the opening of a closed slab, its absence the
+/// closing of an open one.
+fn idle_tick(w: &mut World, id: ObjectId) {
+    if w.marrow_link().is_none() {
+        return;
+    }
+    let attempt = w.attempt();
+    if data_of(w, id).is_some_and(|d| d.attempt != attempt) {
+        reset(w, id);
+    }
+    let Some(request) = w.marrow_link().map(|l| l.open_request) else {
+        return;
+    };
+    let open = data_of(w, id).is_some_and(|d| d.open);
+    if request && !open {
+        enter_move(w, id, state::OPENING);
+    } else if !request && open {
+        enter_move(w, id, state::CLOSING);
+    }
+}
+
+/// The reset after a death of Claw's: back at its record's x at once (no
+/// move a rider follows), closed; the floors-open status clear and the
+/// phase health from Marrow's health, which Claw's respawn has restored
+/// (see [`marrow::respawn_reset`]).
+fn reset(w: &mut World, id: ObjectId) {
+    marrow::respawn_reset(w);
+    let attempt = w.attempt();
+    let health = marrow_health(w);
+    let Some(closed_x) = data_of(w, id).map(|d| d.closed_x) else {
+        return;
+    };
+    if let Some(o) = w.objects.get_mut(id) {
+        if o.x != closed_x {
+            o.teleported = true;
+        }
+        o.x = closed_x;
+        o.platform_move = (0, 0);
+    }
+    if let Some(d) = data_mut(w, id) {
+        d.open = false;
+        d.attempt = attempt;
+        d.moved = 0;
+    }
+    if let Some(l) = w.marrow_link_mut() {
+        l.floors_open = false;
+        if let Some(h) = health {
+            l.phase_health = h;
+        }
+    }
+    enter_idle(w, id);
+}
+
+/// Starts opening or closing (`s`): the slide sound; the first step comes
+/// on the next call.
+fn enter_move(w: &mut World, id: ObjectId, s: i32) {
+    if let Some(o) = w.objects.get_mut(id) {
+        o.state = s;
+    }
+    sound::play(w, SLIDE_SOUND, SoundChannel::Effect);
+}
+
+/// Opening (`opening`) or closing: one step toward the end of the move,
+/// which a rider follows; at the end the slab is open (status set) or
+/// closed (status clear, phase health from Marrow's health) and idle, and
+/// the last step carries no rider. With no Marrow it stays where it is.
+fn move_tick(w: &mut World, id: ObjectId, opening: bool) {
+    if w.marrow_link().is_none() {
+        return;
+    }
+    let ms = w.dt_ms;
+    let x_min = record(w, id, field::X_MIN);
+    let x_max = record(w, id, field::X_MAX);
+    let toward_min = (record(w, id, field::DIRECTION) >= 0) == opening;
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    let d = step(o.speed_x, ms);
+    let mv = if toward_min {
+        if o.x > x_min { -d } else { 0 }
+    } else if o.x < x_max {
+        d
+    } else {
+        0
+    };
+    o.x += mv;
+    o.platform_move = (mv, 0);
+    let arrived = if toward_min {
+        o.x <= x_min
+    } else {
+        o.x >= x_max
+    };
+    if let Some(f) = data_mut(w, id) {
+        f.moved = mv;
+    }
+    if !arrived {
+        return;
+    }
+    let health = marrow_health(w);
+    if let Some(f) = data_mut(w, id) {
+        f.open = opening;
+    }
+    if let Some(l) = w.marrow_link_mut() {
+        l.floors_open = opening;
+        if !opening && let Some(h) = health {
+            l.phase_health = h;
+        }
+    }
+    enter_idle(w, id);
 }
 
 #[cfg(test)]

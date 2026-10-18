@@ -271,15 +271,20 @@ skull cannons have their own lines below.
 12. Skull cannons: they fire every 3 seconds whether Claw is near or not; the left-facing ones fire from behind themselves, so the ball passes through the cannon; the ball does not spin; it hits for 10 even when Claw ducks, and jumping over it works.
 13. Dart traps: invisible until Claw stands in a trap's area; then a puff, a blow sound, and an arrow about half a second later from the hole; it hits for 5 and knocks Claw back, and repeats while he stays (about every 1.6 s).
 
-## Milestone 3, LEVEL10 early
+## Milestone 3, LEVEL10
 
 Failures only, as above: note the line, what happened instead, and where.
 Start the tenth level with `make run-game ARGS="--install PATH --level 10"`,
-or play on from the ninth level. This section covers the level up to the
-door into Marrow's room: the hook-handed pirates and PegLegs with their
-tenth-level ways, the dart traps, the pegs, the big trap elevators, the
-seagulls and the vertical warp. Marrow, his parrot and the sliding floor of
-his room are not built yet: past the door they stand still.
+or play on from the ninth level. This section covers the level: the
+hook-handed pirates and PegLegs with their tenth-level ways, the dart traps, the pegs, the big trap elevators, the
+seagulls and the vertical warp, and Marrow's room past the door: Marrow,
+his parrot and the two slabs that can bridge the spike pit between the
+ledges.
+
+To start in front of the door with the tools, `--start 32340,7740` puts
+Claw on the floor of the niche left of it, 92 px from the door (the bot
+and `make replay ARGS="--install PATH --level 10 --start 32340,7740
+--script ROUTE.csv"` take it; the game starts the level at its start).
 
 1. Hook-handed pirate: he never raises his hook to hold it and never parries. Stand about 100 px from him and he stabs with his dagger about once a second, missing a standing Claw facing him; step in and swing the sword standing: the swing lands (5 of his 10) and he strikes back at once (10 health, Claw is knocked back), and a second swing that lands kills him.
 2. PegLeg, the pairs: stand 150 to 200 px from a PegLeg: each time he aims he fires two shots about half a second apart, the first high and the second low, both leaving about 55 px in front of him; every pair is high then low, and each shot costs 10.
@@ -291,4 +296,13 @@ his room are not built yet: past the door they stand still.
 8. The vertical warp: the disc at the top of the shaft near the level's start (x 4252, y 8348) takes Claw to the middle of the level, just above a checkpoint flag (x 20250, y 7097).
 9. The door into Marrow's room (x 32432, y 7769): walking in takes Claw to the left ledge of the room; the introduction plays and Claw stands again after it.
 
-<!-- Marrow's fight: his lines follow here once he, his parrot and the floor are built. -->
+10. Marrow, the room: past the door the two slabs between the ledges slide apart under the ledges in about 0.6 s, uncovering the spike pit; they do so whether or not the introduction runs. The parrot climbs from its perch above Marrow to a line near the top of the room and patrols it, end to end in about 2.1 s.
+11. Marrow, the introduction: stand still after the door: the camera pans right to Marrow on the far ledge, his line, Claw's line, the name banner, then the fight, about 13.5 s after you arrive. Marrow paces on his ledge out of view and does not come for you; the parrot dives at no one before the fight is on.
+12. The parrot's swoops: in the fight, at the end of its line on the side away from you, the parrot often turns down to your height and swoops straight across at you (10 health), flies on to the other end of its line and climbs back. A sword hit on a swoop makes it flinch for about 0.3 s and fly on; it never loses health; the third hit sends it home to its perch.
+13. The bridge: as the parrot settles on its perch the slabs slide together into a bridge below the ledges (about 0.6 s, the right one first). Walk across and jump up onto Marrow's ledge.
+14. Marrow's pistol: whenever you are on his height and on screen he fires every 1 to 4 s: the bullet leaves about 65 px in front of him, crosses the room at about 600 px/s and costs 20. Touching him costs 10. He blocks every pistol shot, stick of dynamite, magic shot and thrown object, which are used up.
+15. Marrow, 25 damage: sword hits cost him 5 of his 100 on the health bar, and some blows are blocked (a clang). After five hits he blocks every blow, then whistles: no hit lands on him, the parrot flies to him, lifts him and carries him in an arc to the ledge away from you while the slabs slide apart under the bridge. Stand on the right slab then: it carries Claw into the ledge wall and slides out from under him, into the spikes. Every 25 damage the loop repeats: three parrot hits close the bridge again.
+16. Marrow, the intro skip: jump with Right on the first tick in the room: there is no introduction and no health bar, Claw lands on the left ledge, and Marrow only stands and paces on his ledge: he never shoots and never comes at you. The parrot patrols high over the open pit and never dives. Walking back into the box by the door plays the whole introduction late.
+17. The dynamite crossing after the skip: throw a stick of dynamite in the air toward the pit, jump off the left ledge's edge into its blast, and press Jump with Right on the tick after the hit's one stand (pausing and stepping helps): Claw jumps out of the blast onto Marrow's ledge. Twenty sword hits of 5 kill the skipped Marrow; between hits he flinches and strikes back, then holds his last pose. Pausing through the crossing changes nothing.
+18. The gem: Marrow's body flies off and the gem rises out of him to a point over the middle of the pit in about 2.7 s while Claw stands frozen; then Claw can move, and a jump from the ledge's edge into the gem ends the level.
+19. A lost life in the room after the skip: Claw comes back with Marrow at full health, the slabs snapped shut and sliding open again. From then on, every 25 damage Marrow blocks every blow and whistles, stays out of reach of every hit for 5 s waiting for a parrot that never comes, then takes blows again.

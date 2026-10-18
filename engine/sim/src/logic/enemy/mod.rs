@@ -6,9 +6,8 @@
 //! ([`townguard`]), Wolvington ([`wolvington`]), the red-tail pirates
 //! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
 //! ([`crab`]), Gabriel with his bomb ([`gabriel`]), the hook-handed
-//! pirate ([`hook_pirate`]) and PegLeg with his bullet ([`pegleg`]);
-//! Marrow ([`marrow`]) and his parrot ([`parrot`]) are declared but not
-//! built yet.
+//! pirate ([`hook_pirate`]), PegLeg with his bullet ([`pegleg`]), and
+//! Marrow ([`marrow`]) with his parrot ([`parrot`]).
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
