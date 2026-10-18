@@ -120,7 +120,7 @@ fn declared_families_stay_inert_placeholders_until_built() {
 }
 
 /// Every enemy state with its fixed number and name.
-const STATES: [(EnemyState, i32, &str); 67] = [
+const STATES: [(EnemyState, i32, &str); 70] = [
     (EnemyState::Idle, 2000, "Idle"),
     (EnemyState::Home, 2001, "Home"),
     (EnemyState::Strike, 2002, "Strike"),
@@ -188,13 +188,33 @@ const STATES: [(EnemyState, i32, &str); 67] = [
     (EnemyState::DeadAct2, 2206, "DeadAct2"),
     (EnemyState::DeadAct3, 2207, "DeadAct3"),
     (EnemyState::DeadAct4, 2208, "DeadAct4"),
+    (EnemyState::RollForward, 2220, "RollForward"),
+    (EnemyState::RollBackward, 2221, "RollBackward"),
+    (EnemyState::HoldHook, 2222, "HoldHook"),
 ];
+
+/// The ninth level's block, whose free numbers its families may still
+/// take.
+const LEVEL9_BLOCK: std::ops::RangeInclusive<i32> = 2220..=2239;
 
 #[test]
 fn every_state_number_is_pinned_and_gaps_are_no_state() {
-    assert_eq!(EnemyState::ALL.len(), STATES.len());
-    for (i, &(s, id, name)) in STATES.iter().enumerate() {
-        assert_eq!(EnemyState::ALL[i], s);
+    // Every state is listed here, except new ones in the ninth level's
+    // block.
+    let listed: Vec<EnemyState> = STATES.iter().map(|s| s.0).collect();
+    for s in EnemyState::ALL {
+        assert!(
+            listed.contains(&s) || LEVEL9_BLOCK.contains(&(s as i32)),
+            "{} is listed",
+            s.name()
+        );
+    }
+    let all: Vec<EnemyState> = EnemyState::ALL
+        .into_iter()
+        .filter(|s| listed.contains(s))
+        .collect();
+    assert_eq!(all, listed, "in number order");
+    for &(s, id, name) in &STATES {
         assert_eq!(s as i32, id, "{name}");
         assert_eq!(s.name(), name);
         assert_eq!(EnemyState::from_id(id), Some(s), "{name}");
@@ -202,8 +222,9 @@ fn every_state_number_is_pinned_and_gaps_are_no_state() {
     // The blocks: bosses 2022-2029, human states 2030-2049, the punk rat
     // 2050-2059, cannons 2060-2069, Raux 2070-2089, the fourth level
     // 2120-2139, the fifth level 2140-2159, the sixth level 2160-2179,
-    // the seventh level 2180-2199, the eighth level 2200-2219.
-    let blocks: [(i32, i32); 11] = [
+    // the seventh level 2180-2199, the eighth level 2200-2219, the ninth
+    // level 2220-2239.
+    let blocks: [(i32, i32); 12] = [
         (2000, 2021),
         (2022, 2029),
         (2030, 2049),
@@ -215,6 +236,7 @@ fn every_state_number_is_pinned_and_gaps_are_no_state() {
         (2160, 2179),
         (2180, 2199),
         (2200, 2219),
+        (2220, 2239),
     ];
     for (_, id, name) in STATES {
         assert!(
@@ -223,8 +245,8 @@ fn every_state_number_is_pinned_and_gaps_are_no_state() {
         );
     }
     let known: Vec<i32> = STATES.iter().map(|s| s.1).collect();
-    for id in 1990..2240 {
-        if !known.contains(&id) {
+    for id in 1990..2260 {
+        if !known.contains(&id) && !LEVEL9_BLOCK.contains(&id) {
             assert_eq!(EnemyState::from_id(id), None, "{id} is a gap");
         }
     }

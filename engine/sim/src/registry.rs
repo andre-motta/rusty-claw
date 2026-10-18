@@ -69,6 +69,11 @@ impl Registry {
             };
             r.register(name, flags, kind);
         }
+        // The hook-handed pirate's name is spelled only in his own module:
+        // activation class 0, as every enemy's.
+        for &name in logic::enemy::hook_pirate::NAMES {
+            r.register(name, 0, logic::runs(name).unwrap_or(LogicKind::Inert));
+        }
         r
     }
 
@@ -329,7 +334,14 @@ mod tests {
     #[test]
     fn standard_registry() {
         let r = Registry::standard();
-        assert_eq!(r.len(), BUILTIN.len());
+        let hook_pirate = logic::enemy::hook_pirate::NAMES;
+        assert_eq!(r.len(), BUILTIN.len() + hook_pirate.len());
+        for &name in hook_pirate {
+            assert!(BUILTIN.iter().all(|&(n, _)| n != name));
+            let e = r.get(name).expect("registered");
+            assert_eq!(e.flags, 0, "activation class 0");
+            assert_eq!(e.kind == LogicKind::Inert, logic::runs(name).is_none());
+        }
         assert_eq!(r.get(PLAYER_LOGIC).unwrap().kind, LogicKind::Player);
         assert_eq!(r.get(CAMERA_LOGIC).unwrap().kind, LogicKind::Camera);
         assert_eq!(r.get("Elevator").unwrap().flags, REG_CLASS_1);

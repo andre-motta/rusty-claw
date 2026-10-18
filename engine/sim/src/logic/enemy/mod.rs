@@ -5,7 +5,9 @@
 //! Katherine ([`katherine`]), the boss of the fourth level, the town guards
 //! ([`townguard`]), Wolvington ([`wolvington`]), the red-tail pirates
 //! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
-//! ([`crab`]) and Gabriel with his bomb ([`gabriel`]).
+//! ([`crab`]) and Gabriel with his bomb ([`gabriel`]); the hook-handed
+//! pirate ([`hook_pirate`]) and PegLeg with his bullet ([`pegleg`]) are
+//! declared but not built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -60,11 +62,13 @@ pub mod crab;
 pub mod cutthroat;
 pub mod gabriel;
 pub mod goo;
+pub mod hook_pirate;
 pub mod human;
 pub mod katherine;
 pub mod lift;
 pub mod motion;
 pub mod officer;
+pub mod pegleg;
 pub mod punkrat;
 pub mod rat;
 pub mod raux;
@@ -193,8 +197,10 @@ pub mod field {
 /// 2180-2199 the seventh level's (the bear's hug and the pirate's boss
 /// mode from 2180, the crabs' states from 2190, see
 /// [`bear_sailor::STATE_BLOCK`]) and 2200-2219 the eighth level's
-/// (Gabriel's attacks, hits and death acts, see [`gabriel::STATE_BLOCK`]);
-/// later families take blocks of 20 from 2220.
+/// (Gabriel's attacks, hits and death acts, see [`gabriel::STATE_BLOCK`])
+/// and 2220-2239 the ninth level's (PegLeg's rolls and the hook hold, see
+/// [`hook_pirate::STATE_BLOCK`]); later families take blocks of 20 from
+/// 2240.
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -338,11 +344,18 @@ pub enum EnemyState {
     DeadAct3 = 2207,
     /// The last death act, which ends the fight (Gabriel).
     DeadAct4 = 2208,
+    /// Rolling towards Claw (PegLeg).
+    RollForward = 2220,
+    /// Rolling away from Claw (PegLeg).
+    RollBackward = 2221,
+    /// Holding the hook out, its whole picture hurting on contact (the
+    /// hook-handed pirate).
+    HoldHook = 2222,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 67] = [
+    pub const ALL: [EnemyState; 70] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -410,6 +423,9 @@ impl EnemyState {
         EnemyState::DeadAct2,
         EnemyState::DeadAct3,
         EnemyState::DeadAct4,
+        EnemyState::RollForward,
+        EnemyState::RollBackward,
+        EnemyState::HoldHook,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -491,6 +507,9 @@ impl EnemyState {
             EnemyState::DeadAct2 => "DeadAct2",
             EnemyState::DeadAct3 => "DeadAct3",
             EnemyState::DeadAct4 => "DeadAct4",
+            EnemyState::RollForward => "RollForward",
+            EnemyState::RollBackward => "RollBackward",
+            EnemyState::HoldHook => "HoldHook",
         }
     }
 }
@@ -911,6 +930,8 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::BearSailor => Some(&bear_sailor::CLASS),
         GameLogic::HermitCrab => Some(&crab::CLASS),
         GameLogic::Gabriel => Some(&gabriel::CLASS),
+        GameLogic::HookPirate => Some(&hook_pirate::CLASS),
+        GameLogic::PegLeg => Some(&pegleg::CLASS),
         _ => None,
     }
 }
@@ -945,7 +966,8 @@ impl ObjectData {
     /// The enemy data this holds: plain enemy data, or the enemy data
     /// inside a family's own data (the punk rat's, Raux's, the thieves',
     /// Katherine's, the town guards', the seagull's, Wolvington's, the
-    /// red-tail pirates', the bear sailors', the crabs' and Gabriel's).
+    /// red-tail pirates', the bear sailors', the crabs', Gabriel's, the
+    /// hook-handed pirates' and PegLegs').
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -961,6 +983,8 @@ impl ObjectData {
             ObjectData::BearSailor(d) => Some(&d.enemy),
             ObjectData::HermitCrab(d) => Some(&d.enemy),
             ObjectData::Gabriel(d) => Some(&d.enemy),
+            ObjectData::HookPirate(d) => Some(&d.enemy),
+            ObjectData::PegLeg(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -981,6 +1005,8 @@ impl ObjectData {
             ObjectData::BearSailor(d) => Some(&mut d.enemy),
             ObjectData::HermitCrab(d) => Some(&mut d.enemy),
             ObjectData::Gabriel(d) => Some(&mut d.enemy),
+            ObjectData::HookPirate(d) => Some(&mut d.enemy),
+            ObjectData::PegLeg(d) => Some(&mut d.enemy),
             _ => None,
         }
     }
