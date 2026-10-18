@@ -152,7 +152,8 @@ Failures only, as above: note the line, what happened instead, and where.
 Start the fifth level with `make run-game ARGS="--install PATH --level 5"`,
 or play on from the fourth level. This section covers the two town guards
 (the lighter first guard and the bulkier second guard), the jump switches
-that launch them, and being hit in mid-air.
+that launch them, being hit in mid-air, the seagulls, the breaking planks
+and the statues.
 
 1. Guards, idle: walk up to a guard and stand still near it without swinging: it plays its idle poses for about two to four seconds before it comes for you, as in the original; step out of its reach and back, and it starts its idle poses over.
 2. Guards, strikes: standing, a guard's cut lands about a third of a second into its swing, with its strike sound, costs 10 health and pushes Claw back a little; it keeps striking while you stay close, sometimes stepping in or backing off first.
@@ -162,4 +163,9 @@ that launch them, and being hit in mid-air.
 6. Lifting a second guard: Z lifts it; while Claw lifts it the guard is drawn in his hands (it does not vanish for a moment), then over his head. Throw it: it bounces twice, rests, gets up and comes back for you.
 7. Jump switches: stand below the raised ledge right of the start, out of the guard's reach, and watch it pace: when it walks onto the switch near the ledge's left end it leaps off through the air and lands on the floor below, then comes for you; it never paces back to its old patrol. A guard Claw has just struck walks over a switch without leaping.
 8. Hit in mid-air: jump into a guard's strike: Claw hangs where he was struck for a moment, stands there in mid-air, then falls; a jump pressed in the moment he stands launches a full jump, as in the original (and as for a soldier's ball, line 25 at the top).
-<!-- The seagulls, the breaking planks and the statues get their lines here with their families. -->
+9. Seagulls: each seagull flies back and forth along its stretch of sky at a steady speed, through walls, turning at the ends. When Claw stands below and ahead of one (a little more than 100 and less than 240 px down, and further away across than down), it screeches and dives in a straight line aimed just above his head, never steering. Its beak knocks him back for 10 health. It then flies up to the end of its stretch and patrols on. It never hurts him outside a dive.
+10. Seagulls, in the air: jump into a dive. The beak knocks Claw out of the air, he hangs for a moment and stands in the air, and a Jump pressed right then gives a full jump.
+11. Seagulls, killing: any blow, shot or thrown object kills a seagull at once with a squawk. It flips, pops up and falls away through the floor, dropping any treasure it carries.
+12. Breaking planks: stand or walk on a plank. After half a second (three quarters on the slow rows, a quarter on the fast ones) it crumbles with a creak, its floor goes about halfway through and Claw drops. The planks beside it then go one after another along the row. Standing in the small gap between the middles of two planks starts nothing. Jumping over a plank starts nothing, but landing on one does. Guards on a row never break it, but they fall when it goes.
+13. Planks after a death: lose a life after breaking a row. When Claw comes back, every plank of the row is whole again and breaks again.
+14. Statues: one sword swing, shot or thrown object breaks a statue. It crumbles over about a second into a pile of rubble that stays, and throws out a fan of treasure that bounces and can be collected. From the right spot, one swing breaks both statues of the pair near the start. Claw walks behind the front statues (drawn over him) and in front of the others, and the front statues' treasure flies in front of him too.
