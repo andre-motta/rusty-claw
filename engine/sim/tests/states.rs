@@ -5,7 +5,7 @@ mod common;
 
 use claw_sim::object::Rect;
 use claw_sim::physics::ptype;
-use claw_sim::player::{RowKind, row_of, state};
+use claw_sim::player::{RowKind, hug, row_of, state};
 use claw_sim::tiles::TileMap;
 use claw_sim::tuning::Behaviour;
 use claw_sim::{Sim, SimConfig, SimLevel, TickInput, Tuning};
@@ -154,7 +154,10 @@ fn later_milestone_states_fall_back_to_stand() {
         state::BEARHUG,
         state::FREEZE,
         state::HIT,
-    ] {
+    ]
+    .into_iter()
+    .filter(|&id| id != state::BEARHUG || !hug::BUILT)
+    {
         let mut sim = pressing_sim(flat_level(), SimConfig::default());
         sim.set_player_state(id);
         sim.step(TickInput::default());

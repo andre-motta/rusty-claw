@@ -31,13 +31,14 @@
 //! - [`progress`]: starting a level from a carried state or a save, and
 //!   handing the progress on;
 //! - [`swing`]: hanging from a rope;
+//! - [`hug`]: held in a bear sailor's hug;
 //! - [`bounce`]: the throw a springboard gives him.
 //!
 //! The rows of the hit (31), lift (5000), throw (5001), death-fall (5004),
-//! death (5005), swing (5007) and freeze (5009) states call into those
-//! submodules, which fall back to standing until they are filled in (or,
-//! once filled in, when Claw is found in the state without what it needs:
-//! a swing with no rope).
+//! death (5005), swing (5007), bear hug (5008) and freeze (5009) states
+//! call into those submodules, which fall back to standing until they are
+//! filled in (or, once filled in, when Claw is found in the state without
+//! what it needs: a swing with no rope).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -59,6 +60,7 @@ pub mod attack;
 pub mod bounce;
 pub mod death;
 pub mod hit;
+pub mod hug;
 pub mod look;
 pub mod powerup_aid;
 pub mod progress;
@@ -1564,10 +1566,6 @@ const fn unused(id: i32) -> StateRow {
     }
 }
 
-const fn fallback(id: i32, name: &'static str) -> StateRow {
-    fallback_via(id, name, fallback_tick)
-}
-
 /// A fallback row whose handler lives in a submodule; the handler falls
 /// back to standing until it is filled in.
 const fn fallback_via(id: i32, name: &'static str, tick: TickFn) -> StateRow {
@@ -1729,7 +1727,7 @@ pub static STATE_TABLE: [StateRow; 43] = [
         on_edge_tick,
     ),
     fallback_via(state::SWING, "Swing", swing::swing_tick),
-    fallback(state::BEARHUG, "Bearhug"),
+    fallback_via(state::BEARHUG, "Bearhug", hug::hug_tick),
     fallback_via(state::FREEZE, "Freeze", special::freeze_tick),
     unused(5010),
 ];
