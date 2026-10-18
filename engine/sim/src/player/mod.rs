@@ -275,6 +275,8 @@ pub struct Claw {
     pub rope_regrab_ms: i32,
     /// How he is drawn while a powerup runs (see [`look`]).
     pub look: look::Look,
+    /// The keys he pressed while held in a hug (see [`hug`]).
+    pub hug: hug::HugData,
 }
 
 impl Default for Claw {
@@ -312,6 +314,7 @@ impl Default for Claw {
             rope: None,
             rope_regrab_ms: 0,
             look: look::Look::default(),
+            hug: hug::HugData::default(),
         }
     }
 }

@@ -59,8 +59,8 @@ pub fn throw(c: &mut Ctx, height: i32) {
 /// Runs `f` on Claw's context, built from a level logic's world: Claw's
 /// object is held out of its slot for the call, as during his own update.
 /// The input is empty and the camera request is dropped: a throw reads
-/// neither.
-fn with_ctx<R>(w: &mut World, id: ObjectId, f: impl FnOnce(&mut Ctx) -> R) -> Option<R> {
+/// neither, and neither does a bear's hug.
+pub(super) fn with_ctx<R>(w: &mut World, id: ObjectId, f: impl FnOnce(&mut Ctx) -> R) -> Option<R> {
     let platforms = crate::sim::platforms(w.objects);
     let mut held = Object::new(0, 0, 0, 0, Arc::from(""), LogicKind::Inert);
     if !w.objects.swap_payload(id, &mut held) {
