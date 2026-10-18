@@ -313,6 +313,11 @@ pub struct Object {
     pub anim: AnimPlayer,
     /// The object jumped this tick (drawn without interpolation).
     pub teleported: bool,
+    /// The object was drawn in the frame shown after the last tick: it was
+    /// in the live list, not hidden, and its draw box overlapped the view
+    /// of that frame (see [`crate::Sim::step`]). False for a new object
+    /// until a frame has shown it. An enemy's sight test reads it.
+    pub drawn_last_frame: bool,
     pub(crate) prev: Option<ObjectId>,
     pub(crate) next: Option<ObjectId>,
     pub(crate) listed: bool,
@@ -364,6 +369,7 @@ impl Object {
             kill_kind: 0,
             anim: AnimPlayer::default(),
             teleported: false,
+            drawn_last_frame: false,
             prev: None,
             next: None,
             listed: false,
