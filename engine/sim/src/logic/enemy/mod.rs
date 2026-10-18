@@ -1156,6 +1156,14 @@ pub fn record_bounds(w: &World, id: ObjectId) -> (i32, i32) {
     )
 }
 
+/// The record's patrol limits up and down.
+pub fn record_bounds_y(w: &World, id: ObjectId) -> (i32, i32) {
+    (
+        limit(record(w, id, field::Y_MIN), UNBOUNDED.0),
+        limit(record(w, id, field::Y_MAX), UNBOUNDED.1),
+    )
+}
+
 // ----------------------------------------------------------------------
 // Building
 
@@ -1214,11 +1222,12 @@ pub struct Body {
 
 /// Gives the enemy its body and `fields`: an enemy that can be hit, is
 /// removed far outside the level and (for human enemies) is told before it
-/// is removed; then it is dropped to the floor below it. A human enemy
-/// placed outside its patrol limits across is first moved onto the nearer
-/// limit (see [`clamp_into_bounds`]).
+/// is removed. Every enemy placed outside its patrol limits is first moved
+/// onto the nearer limit (see [`clamp_on_construction`]); then it is
+/// dropped to the floor below it.
 pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human: bool) {
     let bounds = fields.bounds;
+    let bounds_y = record_bounds_y(w, id);
     let o = obj_mut(w, id);
     o.image_set = crate::level::runtime_image_set(body.image_set);
     o.type_flags = types::ENEMY;
@@ -1239,20 +1248,40 @@ pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human
     o.health = scaled(body.health, HEALTH_FACTOR);
     o.damage = scaled(body.damage, DAMAGE_FACTOR);
     o.data = ObjectData::Enemy(fields.into());
-    if human {
-        clamp_into_bounds(o, bounds);
-    }
+    clamp_on_construction(o, bounds, bounds_y);
     drop_to_floor(w, id);
 }
 
-/// Moves `o` across into its patrol limits `bounds` (min, max), each when
-/// set, before it is dropped to the floor: an enemy placed beside its
-/// range starts on the limit, standing on the floor below it.
+/// The construction step every enemy shares (rats, crabs, seagulls and
+/// punk rats as well as the human enemies and the bosses): one movement
+/// step from where it was placed, whose clamp moves it onto its patrol
+/// limits, across `bounds` and up and down `bounds_y` (each (min, max),
+/// each limit when set). An enemy placed beside its range so starts on
+/// the nearer limit and, once its class drops it, stands on the floor
+/// below that limit; it may now lie outside the activation window that
+/// woke it by its placement point and go back to sleep at the end of the
+/// tick.
 ///
-/// Inferred: in the original such a soldier is on its limit and on the
-/// floor below it right after it is built, before it ever moves, but the
-/// step of its construction that moves it is not known; clamping before
-/// the floor drop gives that result.
+/// The limits up and down are the record's, which every class sees at
+/// this step even when it sets its own afterwards. Provisional: no
+/// enemy met on a compared route is placed outside a range up and down.
+pub fn clamp_on_construction(o: &mut Object, bounds: (i32, i32), bounds_y: (i32, i32)) {
+    clamp_into_bounds(o, bounds);
+    let (lo, hi) = bounds_y;
+    if lo <= hi {
+        o.y = o.y.clamp(lo, hi);
+    }
+}
+
+/// [`clamp_on_construction`] with the record's own limits, for a class
+/// that builds its enemy without [`build`].
+pub fn clamp_on_record_range(w: &mut World, id: ObjectId) {
+    let (bounds, bounds_y) = (record_bounds(w, id), record_bounds_y(w, id));
+    clamp_on_construction(obj_mut(w, id), bounds, bounds_y);
+}
+
+/// Moves `o` across into its patrol limits `bounds` (min, max), each when
+/// set: an enemy placed beside its range starts on the limit.
 pub fn clamp_into_bounds(o: &mut Object, bounds: (i32, i32)) {
     let (lo, hi) = bounds;
     if lo > hi {

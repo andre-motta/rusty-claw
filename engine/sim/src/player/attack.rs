@@ -101,9 +101,26 @@ use crate::logic::{self, projectile::ProjectileSpec};
 use crate::object::{ObjectId, Rect, draw_flags, flags, special as special_flags, types};
 use crate::physics::ptype;
 
-/// Event value of the stand animation that asks for the attack's frame
-/// hook.
+/// Event value of the stand animation that asks for Claw's idle line (a
+/// picture of the idle animation carries it).
 pub const STAND_FRAME_EVENT: i32 = 99;
+
+/// Claw's idle lines, one of which he says when his idle animation
+/// reaches [`STAND_FRAME_EVENT`].
+pub const IDLE_LINES: [&str; 12] = [
+    "CLAW_1054",
+    "CLAW_1056",
+    "CLAW_1057",
+    "CLAW_1058",
+    "CLAW_1062",
+    "CLAW_1110035",
+    "CLAW_1110037",
+    "CLAW_1110038",
+    "CLAW_1110043",
+    "CLAW_1110045",
+    "CLAW_1110056",
+    "CLAW_1110057",
+];
 
 /// Bit of an object's special flags: Claw's punches and kicks reach it
 /// from closer, and the melee choice picks a close blow against it.
@@ -1183,8 +1200,14 @@ pub fn air_attack_running(c: &Ctx) -> bool {
         )
 }
 
-/// Called when the stand animation reports [`STAND_FRAME_EVENT`]. No
-/// animation of the game uses it yet.
+/// Called when the stand animation reports [`STAND_FRAME_EVENT`]: one
+/// draw of `0..12` from the shared random stream picks one of
+/// [`IDLE_LINES`], and Claw says it (not forced: the draw is made even
+/// when the line is refused because another of his lines runs).
 pub fn frame_event(c: &mut Ctx, event: i32) {
-    let _ = (c, event);
+    if event != STAND_FRAME_EVENT {
+        return;
+    }
+    let i = c.rng.below(IDLE_LINES.len() as u32) as usize;
+    c.say(IDLE_LINES[i], false);
 }

@@ -256,6 +256,10 @@ pub fn home_y(w: &World, id: ObjectId) -> i32 {
 /// hit box, its movement box from its first picture, no attack box, depth
 /// 8500 when placed at 0; then it patrols. Draws nothing.
 pub fn construct(w: &mut World, id: ObjectId) {
+    // The construction step every enemy shares moves a bird placed beside
+    // its range onto the nearer limit; its patrol height stays where it
+    // was placed.
+    super::clamp_on_record_range(w, id);
     let fields = EnemyFields {
         bounds: record_bounds(w, id),
         bounds_y: UNBOUNDED,

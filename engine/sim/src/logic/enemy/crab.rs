@@ -422,9 +422,6 @@ pub fn construct(w: &mut World, id: ObjectId) {
     {
         o.frame = lo;
     }
-    // The movement step's clamp moves a crab placed beside its limits onto
-    // the nearer one before it is dropped to the floor.
-    super::clamp_into_bounds(o, bounds);
     let body = Body {
         image_set: image,
         move_rect: MOVE_RECT,

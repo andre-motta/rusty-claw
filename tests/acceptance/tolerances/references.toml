@@ -889,12 +889,10 @@ known.rng = 13104
 
 # Claw standing at the fourth level's start for 30 s while the ferns there
 # rustle off screen, one 18 ms step per frame: equal on every row, the
-# timed bird calls' draws at 13932 ms included, until the original draws
-# from the random stream once more at 21960 ms, a draw the game does not
-# make (its cause is not traced yet; neither the ferns nor the stones
-# draw).
+# timed bird calls' draws at 13932 ms included. His idle animation starts
+# 20 s after the level's start (20016 ms) and the draw of his idle line
+# comes at 21960 ms, in both games.
 [[compare]]
 reference = "level4/spring-rustle"
 clock = "c18"
 tolerance = "exact"
-known.rng = 21960

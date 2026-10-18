@@ -464,11 +464,9 @@ const STORES: &[(&str, &[&str])] = &[
 ///   or 12 ticks and with Catnip held 2 or 7, awake for 13, 16 and 20 and
 ///   with Catnip for 12 and 20), the late trigger, the walk back into the
 ///   stager's box and the fight and the lift after a skip follow the
-///   original step for step, the random stream included.
-/// - c18, Claw standing still for 17 s (the skip with Jump held 2 or 12
-///   ticks, with Catnip held 2 or 7): his idle animation ends at 18018 ms
-///   and the original draws once there (Claw's idle line, which this
-///   build does not pick yet); Wolvington sleeps on in both games.
+///   original step for step, the random stream included; so does Claw
+///   standing still for 17 s after a skip that leaves him asleep, to the
+///   draw of Claw's idle line when his idle animation ends (18018 ms).
 /// - c18 end of life: the in-game menu opened to end the life puts the
 ///   original's frame pulse a tick later from there on (18018 ms; the
 ///   replay plays no time for the menu), Claw's death fall is a pixel off
@@ -491,14 +489,7 @@ const STORES: &[(&str, &[&str])] = &[
 ///   his band, and so he comes Home, a few ticks earlier (1033 ms).
 type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 
-/// The draw of Claw's idle line, after 17 s standing still.
-const IDLE_LINE_DRAW: &[(&str, u64)] = &[("rng", 18018)];
-
 const KNOWN: &[Known] = &[
-    ("boss-intro-skip", "c18", IDLE_LINE_DRAW),
-    ("boss-intro-skip-tap", "c18", IDLE_LINE_DRAW),
-    ("boss-intro-skip-catnip-j7", "c18", IDLE_LINE_DRAW),
-    ("boss-intro-skip-catnip-tap", "c18", IDLE_LINE_DRAW),
     (
         "boss-intro-normal-end-life",
         "c18",

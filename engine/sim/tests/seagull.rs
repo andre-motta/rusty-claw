@@ -72,6 +72,24 @@ fn settle(sim: &mut Sim) -> (i32, i32) {
 }
 
 #[test]
+fn a_seagull_placed_beside_its_range_starts_on_its_limit() {
+    // Placed 100 px right of its range: built on its right limit, so it
+    // patrols back to the left from the start, at the height it was
+    // placed at.
+    let (sim, ids) = game(sky_level(), &[gull(1500, 500, (1100, 1400), false)]);
+    let o = bird(&sim, ids[0]);
+    let (vx, _) = velocity(&sim, ids[0]);
+    assert_eq!(vx, -120.0, "heads left from its right limit");
+    assert!(!enemy::faces_right(o));
+    assert!(
+        (1395..1400).contains(&o.x),
+        "one tick left of 1400: {}",
+        o.x
+    );
+    assert_eq!(o.y, 500);
+}
+
+#[test]
 fn a_seagull_is_built_as_a_flyer_in_front_of_claw() {
     let (sim, ids) = game(sky_level(), &[gull(1600, 500, (1500, 1800), false)]);
     let o = bird(&sim, ids[0]);
