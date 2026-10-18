@@ -5,9 +5,8 @@
 //! Katherine ([`katherine`]), the boss of the fourth level, the town guards
 //! ([`townguard`]), Wolvington ([`wolvington`]), the red-tail pirates
 //! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
-//! ([`crab`]) and Gabriel with his bomb ([`gabriel`]); the hook-handed
-//! pirate ([`hook_pirate`]) and PegLeg with his bullet ([`pegleg`]) are
-//! declared but not built yet.
+//! ([`crab`]), Gabriel with his bomb ([`gabriel`]), the hook-handed
+//! pirate ([`hook_pirate`]) and PegLeg with his bullet ([`pegleg`]).
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
