@@ -176,7 +176,7 @@ Failures only, as above: note the line, what happened instead, and where.
 Start the sixth level with `make run-game ARGS="--install PATH --level 6"`,
 or play on from the fifth level. This section covers the goo vents in the
 sewers, the ground blowers in the streets and on the rooftops, and the
-town guards' differences on this level; Wolvington's room comes later.
+town guards' differences on this level, and Wolvington's room at the end.
 
 1. Goo vents, timing: watch a vent in the sewers (the first two are down below and right of the start): it swells, sprays a flat splash sideways up to about 150 px wide and sinks back, then starts again at once, about every 3.7 s; the splash is up for about 2.4 s of each eruption. It makes no sound of its own (the bubbling is the level's ambient sound).
 2. Goo vents, damage: stand in the splash: each hit costs only 1 health, Claw flinches and is pushed about 27 px away from the vent; still in the splash, he is hit again just under a second later, until the pushes take him out of its reach. Beside the vent out of the splash's reach, or with his feet a little above the floor, he is never hurt.
@@ -188,14 +188,17 @@ town guards' differences on this level; Wolvington's room comes later.
 8. Ground blowers, the hiss: each blower near Claw hisses once per jet, including blowers just off the screen, as in the original.
 9. Town guards on this level: the first guard parries about one sword blow in four and hops back from Claw's sword from the first swing; the second guard parries about one blow in two; a few guards stand guard and never pace.
 
-<!-- Wolvington's room: his play-test lines go here. -->
+10. Wolvington, the normal fight: walk through the door and the introduction runs: the camera pans to him, his line, Claw's line, the name banner, then the fight. He walks or runs in, sprints into an uppercut, or stands and casts magic shots across the room. Crouch under the high shots and jump the low ones. Up close he uppercuts a standing Claw and thrusts low at a crouching one. Close sword swings make him hop back. Each blow takes 5 off his 100 on the health bar.
+11. Wolvington, the intro skip: jump with Right on the first tick in the room (Jump held about 12 ticks). There is no introduction and no health bar, and he stays in his idle pose while you stand on the floor; touching him hurts you and he stays asleep. Holding Jump one tick longer, or the same jump with Catnip, wakes him in mid-air. A blow, a lift, a blocked shot, or walking back into the box by the door wakes him; the box plays the whole introduction first.
+12. Wolvington, lifting him: stand close, facing him, and lift him, asleep or awake. Thrown, he bounces, loses 4, and starts a magic volley as soon as he gets up.
+13. Wolvington, the gem: when he falls, Claw freezes and the gem rises above his place. Once it lands Claw can move. A long jump (Jump held about 11 ticks) collects it and ends the level; a short press falls short.
 
 ## Milestone 3, LEVEL7 early
 
 Failures only, as above: note the line, what happened instead, and where.
 Start the seventh level with `make run-game ARGS="--install PATH --level 7"`,
 or play on from the sixth level. This section covers the red-tail pirates,
-the bear sailors and the bear hug; the crabs come with their own lines.
+the bear sailors and the bear hug, and the crabs, their nests and their bombs.
 
 1. Red-tail pirates, engaging: walk up to a pirate: it comes for you as soon as you are in its reach, with no idle routine first; from 100 to 200 px away it sometimes swings at the air and then waits about two seconds before striking again; up close it never stands and waits, it strikes or steps in or back.
 2. Red-tail pirates, strikes: standing, its cut lands about an eighth of a second into the swing (10 health, a short push back) and it cuts again about every third of a second while you stay close; crouch in front of it and it cuts low instead, a little faster.
@@ -206,4 +209,9 @@ the bear sailors and the bear hug; the crabs come with their own lines.
 7. Bear sailors, mashing out: while squeezed, press keys: a new press on ten ticks of the squeeze frees you (alternating two keys, about a fifth of a second; one key tapped, about a third of a second); presses during the grab itself do not count, and nine presses are not enough.
 8. Bear sailors, timing out: do nothing: after three seconds and 28 health it lets go, you stand, drop to the floor, and it grabs you again after its next pause if you stay close; a squeeze that empties your health kills you in its arms.
 
-<!-- The crabs' play-test lines go here. -->
+9. Crab nests: walk onto the sand hole of a nest (the first is near x 15468): on the hatch you hear a boink and three crabs arc out, one to the left, one slightly left, and one in a random direction. A nest never hatches again, even after Claw dies.
+10. Crabs, snipping: stand next to a crab: it crouches, then charges or snips; a snip costs 5 health. Hitting a crab while it is out of its shell (charging, snipping or throwing) kills it at once.
+11. Crabs, knocking shells: swing at a crab that is hiding or crouched: it slides about 37 px away per standing swing, with one small boink, and does not die; only the magic claw kills a crab fully withdrawn into its shell.
+12. Crab bombs: a dark bomber crab lobs a bomb at Claw at most every 4 s; it bounces and explodes 1 s after the throw, or at once if it touches him (5 health). The blast also kills crabs caught out of their shells, the thrower included.
+||||||| b750384
+<!-- Wolvington's room: his play-test lines go here. -->

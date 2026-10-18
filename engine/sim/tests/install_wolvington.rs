@@ -20,7 +20,9 @@
 //! compared with each reference trace of the route's clocks: tick for
 //! tick, the random stream included, at the original speeds (c18); within
 //! the feel tolerances at the default speeds (c60). On every respawn of
-//! Claw at c18 he must be back at his place on that same step.
+//! Claw at c18 he must be back on his floor, at most 16 px left of his
+//! place, on that same step: the respawn's update passes still move him
+//! here, where in the original they take no game time.
 //!
 //! When the reference runs also list Wolvington's position, state and
 //! health per step (`boss.csv` beside each run, in the folder named by
@@ -252,35 +254,30 @@ fn him(sim: &Sim) -> Option<Him> {
     })
 }
 
-/// The product state a reference run's state name stands for. The run
-/// names a state with a short prefix and an upper-case word; only the word
-/// after the first `_` is read.
-fn state_named(name: &str) -> Option<EnemyState> {
-    let word = name.split_once('_').map_or(name, |(_, w)| w);
-    Some(match word {
-        "STARTUP" => EnemyState::Startup,
-        "IDLE" => EnemyState::Idle,
-        "HOME" => EnemyState::Home,
-        "ADVANCE" => EnemyState::Advance,
-        "FASTADVANCE" => EnemyState::FastAdvance,
-        "PACING" => EnemyState::Pace,
-        "SGATTACK" => EnemyState::MagicVolley,
-        "GATTACK" => EnemyState::MagicShot,
-        "SUPPERCUT" => EnemyState::Uppercut,
-        "SWORDATTACK" => EnemyState::SwordThrust,
-        "RUNUPPERCUT" => EnemyState::Sprint,
-        "HITLOW" => EnemyState::HitLow,
-        "HITHIGH" => EnemyState::HitHigh,
-        "JUMPBACK" => EnemyState::JumpBack,
-        "MOVEBACK" => EnemyState::MoveBack,
-        "BLOCKLOW" => EnemyState::BlockLow,
-        "LIFTED" => EnemyState::Lifted,
-        "FLAILING" => EnemyState::Flailing,
-        "THROWN" => EnemyState::Thrown,
-        "BOUNCE" => EnemyState::Bounce,
-        "DROPPED" => EnemyState::Dropped,
-        "PAUSE" => EnemyState::Pause,
-        "DEAD" => EnemyState::Dead,
+/// The product state a reference run's state number stands for. The runs
+/// number his shared states their own way; his own states are the ones in
+/// [`wolvington::REFERENCE_STATE_IDS`].
+fn state_numbered(id: i32) -> Option<EnemyState> {
+    if let Some(&(state, _)) = wolvington::REFERENCE_STATE_IDS
+        .iter()
+        .find(|(_, n)| *n == id)
+    {
+        return Some(state);
+    }
+    Some(match id {
+        2000 => EnemyState::Idle,
+        2004 => EnemyState::Dead,
+        2008 => EnemyState::Bounce,
+        2009 => EnemyState::Lifted,
+        2010 => EnemyState::Thrown,
+        2011 => EnemyState::Pause,
+        2013 => EnemyState::MoveBack,
+        2017 => EnemyState::Flailing,
+        2020 => EnemyState::JumpBack,
+        2022 => EnemyState::FastAdvance,
+        2023 => EnemyState::Pace,
+        2024 => EnemyState::HitLow,
+        2025 => EnemyState::HitHigh,
         _ => return None,
     })
 }
@@ -294,7 +291,7 @@ fn reference_him(path: &Path) -> Option<Vec<(u64, Option<Him>)>> {
     let col = |name: &str| header.iter().position(|h| *h == name);
     let (t, name, x, y, health) = (
         col("t_ms")?,
-        col("boss_state_name")?,
+        col("boss_state")?,
         col("boss_x")?,
         col("boss_y")?,
         col("boss_health")?,
@@ -307,7 +304,7 @@ fn reference_him(path: &Path) -> Option<Vec<(u64, Option<Him>)>> {
             Some(Him {
                 x: cells.get(x)?.parse().ok()?,
                 y: cells.get(y)?.parse().ok()?,
-                state: state_named(cells.get(name)?)?,
+                state: state_numbered(cells.get(name)?.parse().ok()?)?,
                 health: cells.get(health)?.parse().ok()?,
             })
         })();
