@@ -1342,8 +1342,11 @@ impl App {
             .flow
             .as_ref()
             .is_none_or(|f| f.screen() == Screen::Play && !f.completing());
+        // A replay or a bench run plays its own input: a powerup given there
+        // would leave the recording.
+        let bench = matches!(self.mode, WindowMode::Bench(_));
         let Some(level) = &mut self.level else { return };
-        if !in_play || level.session.sim().level_ended() {
+        if !in_play || bench || level.session.replaying() || level.session.sim().level_ended() {
             return;
         }
         if let Some(p) = level.session.cycle_powerup() {

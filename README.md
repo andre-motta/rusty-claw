@@ -255,7 +255,9 @@ for 30 seconds, then none (ending the running one), then the first again,
 and names it in the middle of the screen for two seconds: press it in turn
 to see each powerup's look and effect. With every aid off F6 does nothing.
 F6 is the `powerup` action (`key_powerup` in the config file); F9 stays the
-aspect key.
+aspect key. A config that bound F6 to another action before must move
+`key_powerup` to a free key first. F6 does nothing during a replay or a
+bench run.
 
 The first two switches are also on the Gameplay page (Options, then
 Gameplay) and in the config file (`invincible = on`, `infinite_lives = on`).
