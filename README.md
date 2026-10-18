@@ -413,7 +413,8 @@ that game carries in (their `# start_score = ...` lines, which replays,
 `claw-replay` and the comparison apply). `claw-bot --seed level` uses the
 random state the level's set-up leaves, as the routes do, and
 `--hints-on-foot` counts a hint point as reached only with Claw on his
-feet, on a ladder or on a rope. They are written by the search bot, `claw-bot`,
+feet, on a ladder or on a rope (a point written `x,y foot` in the hints
+file counts that way on its own). They are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and
 keeps the ones that bring Claw closer to the level's end. Its budget counts
 the positions it tries, not time, so the same arguments always give the
