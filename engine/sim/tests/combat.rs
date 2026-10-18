@@ -747,6 +747,101 @@ fn throw_dynamite(sim: &mut Sim, hold_ticks: usize, extra: u32) -> ProjectileSpe
     log.spec(0)
 }
 
+/// The object with creation number `serial`.
+fn by_serial(sim: &Sim, serial: u32) -> &Object {
+    sim.objects()
+        .all()
+        .find(|(_, o)| o.serial == serial)
+        .map(|(_, o)| o)
+        .expect("the shot")
+}
+
+fn sparkles(sim: &Sim) -> usize {
+    sim.objects()
+        .all()
+        .filter(|(_, o)| &*o.logic == "GlitterBaby")
+        .count()
+}
+
+#[test]
+fn a_shot_claw_launches_only_sets_its_box_on_its_first_call() {
+    // The pistol shot is listed just before Claw: the walk that launched it
+    // has passed it, so its first call comes in the next tick, and it
+    // flies from the tick after.
+    let mut sim = new_sim(3);
+    let mut log = Shots::default();
+    go(&mut sim, &mut log, press(PROJECTILE));
+    while log.len() == 0 {
+        go(&mut sim, &mut log, TickInput::default());
+    }
+    let (serial, spec, _) = log.0[0];
+    let o = by_serial(&sim, serial);
+    assert_eq!((o.x, o.y), (spec.x, spec.y));
+    assert!(
+        !o.attack_rect.is_set(),
+        "no attack box before its first call"
+    );
+    go(&mut sim, &mut log, TickInput::default());
+    let o = by_serial(&sim, serial);
+    assert_eq!((o.x, o.y), (spec.x, spec.y), "its first call moves nothing");
+    assert!(o.attack_rect.is_set(), "and sets its attack box");
+    go(&mut sim, &mut log, TickInput::default());
+    let o = by_serial(&sim, serial);
+    assert_eq!(o.x, spec.x + 12, "700 px/s from its second call");
+    // A stick of dynamite waits the same way: the call that sets its box
+    // moves it not and sheds no sparkle; it flies and sheds from the next.
+    // (Listed just after Claw, that call can come in the throw's own tick
+    // when the walk reaches it; here the camera is next after Claw, so it
+    // comes in the next tick.)
+    let mut sim = new_sim(3);
+    let mut log = Shots::default();
+    set(&mut sim, |w| w.claw.stats.weapon = Weapon::Dynamite);
+    go(&mut sim, &mut log, press(PROJECTILE));
+    for _ in 0..10 {
+        go(&mut sim, &mut log, hold(PROJECTILE));
+    }
+    while log.len() == 0 {
+        go(&mut sim, &mut log, TickInput::default());
+    }
+    let (serial, spec, _) = log.0[0];
+    assert!(spec.power > 0, "thrown");
+    while !by_serial(&sim, serial).attack_rect.is_set() {
+        let o = by_serial(&sim, serial);
+        assert_eq!((o.x, o.y), (spec.x, spec.y));
+        go(&mut sim, &mut log, TickInput::default());
+    }
+    let o = by_serial(&sim, serial);
+    assert_eq!((o.x, o.y), (spec.x, spec.y), "its first call moves nothing");
+    assert_eq!(sparkles(&sim), 0, "and sheds no sparkle");
+    go(&mut sim, &mut log, TickInput::default());
+    let o = by_serial(&sim, serial);
+    assert_ne!((o.x, o.y), (spec.x, spec.y), "flying");
+    assert_eq!(sparkles(&sim), 1, "its first sparkle");
+    // A shot launched by anything else flies from its first call.
+    let mut sim = new_sim(3);
+    let (x, y) = (claw(&sim).x + 200, claw(&sim).y - 40);
+    let id = sim.with_world(|w| {
+        logic::projectile::spawn(
+            w,
+            ProjectileSpec {
+                logic: "Bullet",
+                x,
+                y,
+                vx: -500,
+                damage: 10,
+                type_flags: types::ENEMY_SHOT,
+                hit_type_flags: types::PLAYER,
+                ..ProjectileSpec::default()
+            },
+        )
+        .unwrap()
+    });
+    sim.step(TickInput::default());
+    let o = sim.objects().get(id).unwrap();
+    assert!(o.attack_rect.is_set());
+    assert_eq!(o.x, x - 9, "500 px/s from its first call");
+}
+
 #[test]
 fn dynamite_power_follows_the_charge() {
     // A tap: the shortest charge, power 0.

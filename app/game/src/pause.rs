@@ -42,13 +42,25 @@
 //! [`Pauses::follow`] is the pause and sound side of every effect of the
 //! game flow, the one place both the window and the flow tests carry it
 //! out.
+//!
+//! # Watching a recording
+//!
+//! A watched recording holds play at each pause and menu it recorded, for
+//! as long as they lasted (see [`Session::take_holds`]), and its sounds
+//! follow them as they did when it was recorded ([`ReplayedHolds`]): a
+//! pause or a screen stops the game's sounds and holds the music, its end
+//! lets them carry on, and the end of the in-game menu or the help screen
+//! starts the music again from its start. Help over a pause leaves the
+//! music held until the pause key's next press, as in play.
 
 use std::time::Duration;
+
+use claw_sim::input::MenuScreen;
 
 use crate::audio::{AudioBridge, ViewInfo};
 use crate::flow::{Effect, Screen};
 use crate::keymap::Command;
-use crate::session::Session;
+use crate::session::{HoldChange, Session, Span};
 
 /// How keys held or pressed across a pause or a screen count when play
 /// goes on: a behaviour switch, set by `pause_input` in the settings file,
@@ -103,6 +115,10 @@ pub struct Pauses {
     /// the pause key is pressed again. It stops neither play nor the game's
     /// sounds; it holds the music only (see [`Pauses::apply`]).
     pub flag: bool,
+    /// A pause or menu of a watched recording holds play (see
+    /// [`ReplayedHolds`]): the session holds play on its own, so this
+    /// pauses the game's sounds only.
+    pub replayed: bool,
 }
 
 /// What [`Pauses::apply`] changed.
@@ -134,6 +150,7 @@ impl Pauses {
                 self.menu = false;
                 self.user = false;
                 self.flag = false;
+                self.replayed = false;
             }
             _ => {}
         }
@@ -224,7 +241,7 @@ impl Pauses {
             }
         }
         if let Some(a) = audio {
-            if paused && in_play {
+            if (paused || self.replayed) && in_play {
                 a.pause();
             } else {
                 a.resume();
@@ -232,6 +249,87 @@ impl Pauses {
             a.hold_music(self.flag && in_play);
         }
         change
+    }
+}
+
+/// The sound side of the pauses and menus a watched recording replays:
+/// each one changes the [`Pauses`] as the window changed them when it was
+/// recorded, and [`Pauses::apply`] then brings the sounds in line.
+///
+/// - A pause or a screen stops the game's sounds and holds the music
+///   ([`Pauses::replayed`]); its end lets them carry on.
+/// - The end of a screen (the in-game menu, the help screen) starts the
+///   music again from its start, as closing it in play does.
+/// - Help right after a pause (at the same tick boundary: F1 pressed while
+///   paused) leaves the pause key's flag set ([`Pauses::flag`]): the music
+///   stays held, with the game's sounds playing, until the next replayed
+///   pause, which is that press of the pause key; it clears the flag
+///   without stopping any sound and the music carries on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReplayedHolds {
+    /// The tick boundary where the last replayed pause ended, until the
+    /// next change.
+    pause_ended: Option<u64>,
+    /// The pause that clears the flag is in progress.
+    clearing: bool,
+    /// The tick boundary of a screen that ended, when the music restarts
+    /// for it (see [`ReplayedHolds::follow`]).
+    restart_at: Option<u64>,
+}
+
+impl ReplayedHolds {
+    /// Follows `changes` (in order) in `pauses`. Returns true when the
+    /// music starts again from its start once the pauses are applied: a
+    /// screen ended with the flag not set and no other pause or screen
+    /// began at its boundary (going from the in-game menu to the help
+    /// screen keeps play stopped, so the music waits for the help screen's
+    /// end).
+    pub fn follow(&mut self, changes: &[HoldChange], pauses: &mut Pauses) -> bool {
+        for c in changes {
+            if c.start && self.restart_at == Some(c.tick) {
+                self.restart_at = None;
+            }
+            if self.change(*c, pauses) {
+                self.restart_at = Some(c.tick);
+            }
+        }
+        self.restart_at.take().is_some()
+    }
+
+    /// One change; true when it is a screen's end that restarts the music.
+    fn change(&mut self, c: HoldChange, pauses: &mut Pauses) -> bool {
+        let after_pause = self.pause_ended.take() == Some(c.tick);
+        match (c.span, c.start) {
+            (Span::Pause, true) if pauses.flag => {
+                pauses.flag = false;
+                self.clearing = true;
+                false
+            }
+            (Span::Pause, false) if self.clearing => {
+                self.clearing = false;
+                false
+            }
+            (Span::Pause, true) => {
+                pauses.replayed = true;
+                false
+            }
+            (Span::Pause, false) => {
+                pauses.replayed = false;
+                self.pause_ended = Some(c.tick);
+                false
+            }
+            (Span::Menu(screen), true) => {
+                if screen == MenuScreen::Help && after_pause {
+                    pauses.flag = true;
+                }
+                pauses.replayed = true;
+                false
+            }
+            (Span::Menu(_), false) => {
+                pauses.replayed = false;
+                !pauses.flag
+            }
+        }
     }
 }
 
@@ -281,7 +379,8 @@ pub struct KeyContext {
 ///   help it clears it. Elsewhere it does nothing.
 /// - A gamepad's Start (bound to `pause`) opens the in-game menu as Escape
 ///   does, as the original joystick's menu button. Without menus there is
-///   no menu to open, so it pauses or goes on as the pause key does.
+///   no menu to open, so it pauses or goes on as the pause key does (and
+///   clears the flag a watched recording's help over a pause left set).
 /// - F1 (`help`) opens the help screen in play, paused or not, and from
 ///   the in-game menu.
 pub fn game_key(cmd: Command, ctx: KeyContext) -> GameKey {
@@ -289,6 +388,9 @@ pub fn game_key(cmd: Command, ctx: KeyContext) -> GameKey {
     let Some(screen) = ctx.screen else {
         return match cmd {
             Command::Quit => GameKey::Quit,
+            Command::Pause if (ctx.from_pad || !ctx.modifiers) && p.flag && !p.user => {
+                GameKey::ClearFlag
+            }
             Command::Pause if ctx.from_pad || !ctx.modifiers => GameKey::Pause,
             _ => GameKey::Nothing,
         };
@@ -322,7 +424,9 @@ mod tests {
     use super::*;
 
     use claw_audio::AudioSettings;
-    use claw_sim::{Sim, SimConfig, SimLevel, StartState, TileMap};
+    use claw_sim::{
+        Directive, DirectiveKind, InputScript, Sim, SimConfig, SimLevel, StartState, TileMap,
+    };
 
     use crate::settings::LevelChoice;
 
@@ -398,5 +502,184 @@ mod tests {
             Change::Resumed
         );
         assert!(!s.is_paused() && !audio.is_paused());
+    }
+
+    /// A recording watched in the window: its sounds as the window plays
+    /// them, one frame at a time.
+    struct Watch {
+        s: Session,
+        audio: AudioBridge,
+        p: Pauses,
+        r: ReplayedHolds,
+        /// The times the music started again from its start.
+        restarts: usize,
+    }
+
+    impl Watch {
+        fn new(directives: Vec<Directive>) -> Watch {
+            let mut script = InputScript::from_held(&[0; 60]);
+            script.directives = directives;
+            Watch {
+                s: session().with_replay(script),
+                audio: AudioBridge::silent(AudioSettings::default()),
+                p: Pauses::default(),
+                r: ReplayedHolds::default(),
+                restarts: 0,
+            }
+        }
+
+        /// One frame of `ms`, then the holds it played, as the window
+        /// follows them.
+        fn frame(&mut self, ms: u64) {
+            self.s.frame(Duration::from_millis(ms));
+            let holds = self.s.take_holds();
+            if self.r.follow(&holds, &mut self.p) {
+                self.restarts += 1;
+            }
+            self.p
+                .apply(Some(&mut self.s), Some(&mut self.audio), Duration::ZERO);
+        }
+
+        /// 18 ms frames until a replayed hold holds play.
+        fn until_hold(&mut self) {
+            for _ in 0..100 {
+                self.frame(18);
+                if self.s.holding() {
+                    return;
+                }
+            }
+            panic!("no hold");
+        }
+
+        /// 18 ms frames until tick `n` has run.
+        fn until(&mut self, n: u64) {
+            while self.s.ticks() < n {
+                self.frame(18);
+            }
+        }
+    }
+
+    fn pause(tick: usize, wall_ms: u32) -> Directive {
+        Directive {
+            tick,
+            kind: DirectiveKind::Pause {
+                wall_ms,
+                held: None,
+            },
+        }
+    }
+
+    fn menu(tick: usize, screen: MenuScreen, wall_ms: u32) -> Directive {
+        Directive {
+            tick,
+            kind: DirectiveKind::Menu {
+                screen,
+                wall_ms,
+                keys: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn a_watched_recording_pauses_its_sounds_where_it_paused() {
+        let mut w = Watch::new(vec![
+            pause(5, 100),
+            menu(10, MenuScreen::InGame, 100),
+            // Help over a pause, then the pause key's press that clears
+            // its flag.
+            pause(15, 100),
+            menu(15, MenuScreen::Help, 100),
+            pause(25, 0),
+            // Help from the in-game menu.
+            menu(30, MenuScreen::InGame, 50),
+            menu(30, MenuScreen::Help, 50),
+        ]);
+        // The pause key: the game's sounds stop and the music holds.
+        w.until_hold();
+        assert_eq!(w.s.ticks(), 5);
+        assert!(w.p.replayed && w.audio.is_paused());
+        assert!(!w.s.is_paused(), "the session holds play on its own");
+        // The viewer pausing and going on inside it leaves the sounds
+        // paused for the rest of the recorded pause.
+        w.p.user = true;
+        w.p.apply(Some(&mut w.s), Some(&mut w.audio), Duration::ZERO);
+        w.p.user = false;
+        w.p.apply(Some(&mut w.s), Some(&mut w.audio), Duration::ZERO);
+        assert!(w.audio.is_paused());
+        w.frame(100);
+        assert!(!w.s.holding() && !w.audio.is_paused());
+        assert_eq!(w.restarts, 0, "the music carries on after a pause");
+        // The in-game menu: paused, and the music starts again when it
+        // closes.
+        w.until_hold();
+        assert_eq!(w.s.ticks(), 10);
+        assert!(w.audio.is_paused());
+        w.frame(100);
+        assert!(!w.audio.is_paused());
+        assert_eq!(w.restarts, 1);
+        // Help over a pause: still paused from the pause to the help.
+        w.until_hold();
+        assert_eq!(w.s.ticks(), 15);
+        w.frame(100);
+        assert!(
+            w.s.holding() && w.audio.is_paused(),
+            "help follows the pause"
+        );
+        assert!(w.p.flag);
+        // Help closes: the game's sounds play, the music waits for the
+        // pause key and does not start again.
+        w.frame(100);
+        assert!(!w.s.holding() && !w.audio.is_paused());
+        assert!(w.audio.is_music_held());
+        assert_eq!(w.restarts, 1);
+        // The pause key's press: a pause of no time that clears the flag
+        // without stopping a sound; the music carries on.
+        w.until(26);
+        assert!(!w.p.flag && !w.p.replayed);
+        assert!(!w.audio.is_paused() && !w.audio.is_music_held());
+        assert_eq!(w.restarts, 1);
+        // Help from the in-game menu: play stays stopped from the menu to
+        // the help, and the music starts again once, when help closes.
+        w.until_hold();
+        assert_eq!(w.s.ticks(), 30);
+        w.frame(50);
+        assert!(w.s.holding() && w.audio.is_paused());
+        assert_eq!(w.restarts, 1);
+        w.frame(50);
+        assert!(!w.audio.is_paused());
+        assert_eq!(w.restarts, 2);
+        w.until(60);
+        assert!(!w.s.replaying() && !w.audio.is_paused() && !w.audio.is_music_held());
+    }
+
+    #[test]
+    fn without_menus_the_pause_key_clears_a_replayed_flag() {
+        let ctx = |pauses| KeyContext {
+            screen: None,
+            completing: false,
+            pauses,
+            from_pad: false,
+            modifiers: false,
+        };
+        let flag = Pauses {
+            flag: true,
+            ..Pauses::default()
+        };
+        assert_eq!(game_key(Command::Pause, ctx(flag)), GameKey::ClearFlag);
+        assert_eq!(
+            game_key(Command::Pause, ctx(Pauses::default())),
+            GameKey::Pause
+        );
+        assert_eq!(game_key(Command::Quit, ctx(flag)), GameKey::Quit);
+    }
+
+    #[test]
+    fn leaving_a_level_ends_a_replayed_hold() {
+        let mut p = Pauses {
+            replayed: true,
+            ..Pauses::default()
+        };
+        p.effect(&Effect::EndLevel);
+        assert!(!p.replayed);
     }
 }

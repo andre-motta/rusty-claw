@@ -141,8 +141,6 @@ use super::{
     motion, obj, obj_mut, on_screen, play, rand, say, scaled, set_anim, set_anim_now, set_state,
     take_damage,
 };
-use claw_frame::TransitionKind;
-
 use crate::logic::world_boss::fight;
 use crate::logic::{ObjectData, World, boss_stage};
 use crate::object::{ObjectId, Rect, engine_state, flags};
@@ -422,9 +420,10 @@ fn run(w: &mut World, id: ObjectId) {
     post_tick(w, id, no_time);
 }
 
-/// True while Claw's respawn runs between two ticks (its opening circle
-/// is up until the next tick starts): the respawn's update passes, which
-/// take no game time. In those calls she makes her pre-tick's draws and
+/// True while Claw's respawn runs between two ticks: the respawn's update
+/// passes, which run with a frame time of 0 ([`World::dt_ms`]) and take no
+/// game time (her call never runs in the warp's set-up, the other call
+/// with no frame time). In those calls she makes her pre-tick's draws and
 /// her decisions (the states of [`decides`] and a scheduled call), but
 /// nothing that takes time happens: a strike, a flinch, a block, a step
 /// back or a landing does not go on and she does not move. So a strike
@@ -435,9 +434,7 @@ fn run(w: &mut World, id: ObjectId) {
 /// back near her (she goes Home from pacing and decides at once) and far
 /// from her (her strike ends in that step and she paces from the next).
 pub fn between_ticks(w: &World) -> bool {
-    w.out
-        .transition()
-        .is_some_and(|t| t.kind == TransitionKind::Circle && !t.closing)
+    w.dt_ms == 0
 }
 
 /// The states whose call is a decision on where Claw is, which she makes

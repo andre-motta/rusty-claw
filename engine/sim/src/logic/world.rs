@@ -212,6 +212,10 @@ pub struct World<'a> {
     pub tick: u64,
     /// Simulation time at the start of the tick, ms.
     pub now_ms: u64,
+    /// The frame time of the call, ms: one tick ([`TICK_MS`]), or 0 in the
+    /// two update passes of a respawn and in Claw's call that settles a
+    /// warp, which count no time (animations stand still there).
+    pub dt_ms: u32,
     /// The tick is a frame pulse tick (every third tick, see
     /// [`crate::sim::PULSE_MS`]): enemies make their per-tick roll and a
     /// few random choices only then.
@@ -274,17 +278,18 @@ impl World<'_> {
         true
     }
 
-    /// Advances the animation of `id` by one tick: sets its frame (within
-    /// the frame range of its image set, when the level knows it), moves it
-    /// as the element says and plays the element's sounds. Returns the
-    /// event value (-1 without an animation or object).
+    /// Advances the animation of `id` by the call's frame time
+    /// ([`World::dt_ms`]): sets its frame (within the frame range of its
+    /// image set, when the level knows it), moves it as the element says
+    /// and plays the element's sounds. Returns the event value (-1 without
+    /// an animation or object).
     pub fn advance_anim(&mut self, id: ObjectId) -> i32 {
         let Some(o) = self.objects.get_mut(id) else {
             return -1;
         };
         let mirrored = o.draw_flags & draw_flags::MIRROR != 0;
         let frames = self.level.image_frames(&o.image_set);
-        let e = o.anim.advance_in(TICK_MS, o.frame, mirrored, frames);
+        let e = o.anim.advance_in(self.dt_ms, o.frame, mirrored, frames);
         if let Some(f) = e.frame {
             o.frame = f;
         }

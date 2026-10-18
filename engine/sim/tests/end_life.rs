@@ -97,6 +97,50 @@ fn ending_a_life_while_standing_respawns_at_the_checkpoint() {
 }
 
 #[test]
+fn the_falling_death_reads_its_vertical_step_twice() {
+    let mut sim = game(flat_level(), 3);
+    sim.end_life();
+    sim.step(TickInput::default());
+    assert_eq!(claw(&sim).state, state::DEATH_FALL);
+    // The single read the fall would make without the second one.
+    let mut single = sim.claw().mover;
+    let mut single_y = claw(&sim).y;
+    let mut moved = 0;
+    let mut ahead = false;
+    // One tick in seconds, as the game computes it.
+    let dt = 18.0 * 0.001;
+    while sim.stats().lives == 3 {
+        let (y, height, mut m) = (claw(&sim).y, sim.claw().fall_height, sim.claw().mover);
+        sim.step(TickInput::default());
+        if sim.claw().fall_height == height {
+            // Still in the hold before the fall.
+            assert_eq!(claw(&sim).y, y);
+            single = sim.claw().mover;
+            continue;
+        }
+        moved += 1;
+        m.step(dt);
+        let dy = m.take_y();
+        let dh = m.take_y();
+        assert_eq!(claw(&sim).y, y + dy, "the first read moves the body");
+        assert_eq!(
+            sim.claw().fall_height,
+            height + dh + 1,
+            "the second, the depth"
+        );
+        assert_eq!(sim.claw().mover.y.carry, m.y.carry, "both keep the carry");
+        single.step(dt);
+        single_y += single.take_y();
+        ahead |= claw(&sim).y > single_y;
+        assert!(moved < 200, "the lives step comes");
+    }
+    assert!(
+        ahead,
+        "the second read takes the body further than one read"
+    );
+}
+
+#[test]
 fn ending_a_life_twice_or_while_dying_takes_one_life() {
     let mut sim = game(flat_level(), 3);
     sim.end_life();

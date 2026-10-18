@@ -48,9 +48,16 @@
 //! [`claw_audio::music::soundfont`]); without one, music is off, one
 //! message says how to get a bank, and sound effects are unaffected.
 //!
-//! Only the window's normal play opens an audio device. The headless
+//! The window opens an audio device for normal play and for a replay
+//! watched in it (`--replay` without `--trace`), which plays the game's
+//! sound and music through this same bridge from the level's start through
+//! the handover to the keyboard, with the volumes, switches and SoundFont
+//! of the settings; its sounds pause where the recording paused (see
+//! [`crate::pause::ReplayedHolds`]). With sound off (`--no-audio`,
+//! `audio = off`) a watched replay creates no bridge at all. The headless
 //! benchmark plays through a silent output (with music, so its mixing and
-//! synthesis run); replays and the window benchmark create no bridge.
+//! synthesis run); a replay that writes a trace (`--trace`, no window) and
+//! the window benchmark create no bridge and open no device.
 
 use std::collections::BTreeMap;
 use std::time::Instant;

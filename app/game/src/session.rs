@@ -231,6 +231,19 @@ pub enum Span {
     Menu(MenuScreen),
 }
 
+/// A replayed pause or menu starting or ending its hold on play (see
+/// [`Session::take_holds`]): what the window follows to pause the game's
+/// sounds as they paused when the recording was made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HoldChange {
+    /// The pause or menu replayed.
+    pub span: Span,
+    /// The tick boundary it holds play at: the ticks run before it.
+    pub tick: u64,
+    /// It starts holding play (true) or ends (false).
+    pub start: bool,
+}
+
 /// A pause or menu being played live: where its directive sits in the log,
 /// and what it gathered so far.
 #[derive(Debug, Clone)]
@@ -348,6 +361,10 @@ pub struct Session {
     /// The replayed hold in progress is a screen: with the original rule
     /// the keys down when it ends count as already pressed.
     hold_screen: bool,
+    /// The pause or menu the replayed hold in progress plays.
+    hold_span: Option<Span>,
+    /// Replayed holds started or ended and not yet taken.
+    hold_changes: Vec<HoldChange>,
     /// How keys count across a pause or a screen.
     pause_input: PauseInput,
     /// Buttons down right now, as the key events and
@@ -404,6 +421,8 @@ impl Session {
             hold_us: None,
             hold_menu_ms: None,
             hold_screen: false,
+            hold_span: None,
+            hold_changes: Vec::new(),
             pause_input: PauseInput::default(),
             down: Buttons::NONE,
             stepping: false,
@@ -596,6 +615,13 @@ impl Session {
         self.hold_us.is_some()
     }
 
+    /// The replayed pauses and menus that started or ended holding play
+    /// since the last call, in order (a hold shorter than a frame starts
+    /// and ends in the same call).
+    pub fn take_holds(&mut self) -> Vec<HoldChange> {
+        std::mem::take(&mut self.hold_changes)
+    }
+
     /// Ticks that took keyboard input because a replayed script had no row
     /// left for them; always 0 for a looped script.
     pub fn ticks_past_script(&self) -> u64 {
@@ -776,6 +802,13 @@ impl Session {
                     break;
                 }
                 self.hold_us = None;
+                if let Some(span) = self.hold_span.take() {
+                    self.hold_changes.push(HoldChange {
+                        span,
+                        tick: self.ticks,
+                        start: false,
+                    });
+                }
                 if let Some(ms) = self.hold_menu_ms.take() {
                     self.sim.pass_menu_time(ms);
                 }
@@ -904,12 +937,25 @@ impl Session {
                 }
             };
             let menu_ms = menu_time(&next.kind);
+            let span = match next.kind {
+                DirectiveKind::Menu { screen, .. } => Some(Span::Menu(screen)),
+                DirectiveKind::Pause { .. } => Some(Span::Pause),
+                DirectiveKind::Command(_) => None,
+            };
             let screen = matches!(next.kind, DirectiveKind::Menu { .. });
             d.log.push(next);
             if let Some(us) = hold {
                 self.hold_us = Some(us);
                 self.hold_menu_ms = menu_ms;
                 self.hold_screen = screen;
+                self.hold_span = span;
+                if let Some(span) = span {
+                    self.hold_changes.push(HoldChange {
+                        span,
+                        tick: self.ticks,
+                        start: true,
+                    });
+                }
                 return true;
             }
         }
@@ -1982,6 +2028,51 @@ mod tests {
         assert_eq!(d.next, 1, "the pause is left for the frame to hold");
         assert_eq!(d.log.len(), 1);
         assert_eq!(d.next_hold(), Some(3));
+    }
+
+    #[test]
+    fn replayed_holds_are_reported_where_they_start_and_end() {
+        let at = |tick, kind| Directive { tick, kind };
+        let mut script = InputScript::from_held(&[0; 10]);
+        script.directives = vec![
+            at(2, DirectiveKind::Command(ScriptCommand::EndLife)),
+            at(
+                3,
+                DirectiveKind::Pause {
+                    wall_ms: 30,
+                    held: None,
+                },
+            ),
+            at(
+                3,
+                DirectiveKind::Menu {
+                    screen: MenuScreen::Help,
+                    wall_ms: 0,
+                    keys: Vec::new(),
+                },
+            ),
+        ];
+        let mut session = Session::new(Sim::new(level(), SimConfig::default())).with_replay(script);
+        let change = |span, tick, start| HoldChange { span, tick, start };
+        session.frame(Duration::from_millis(18 * 3 + 5));
+        assert_eq!(
+            session.take_holds(),
+            [change(Span::Pause, 3, true)],
+            "a command is no hold"
+        );
+        assert!(session.take_holds().is_empty(), "taken once");
+        // The pause ends and the help screen of no time starts and ends at
+        // the same boundary, within one frame.
+        session.frame(Duration::from_millis(40));
+        assert_eq!(
+            session.take_holds(),
+            [
+                change(Span::Pause, 3, false),
+                change(Span::Menu(MenuScreen::Help), 3, true),
+                change(Span::Menu(MenuScreen::Help), 3, false),
+            ]
+        );
+        assert!(!session.holding());
     }
 
     #[test]

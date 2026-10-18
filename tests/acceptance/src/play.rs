@@ -104,8 +104,9 @@ pub struct Player {
     /// Treasure Claw took: its kind (powerup code) and points, by the
     /// pickup's id.
     pub treasure: BTreeMap<ObjectId, (i32, i32)>,
-    /// The logic name of every object seen so far, by id (slots are never
-    /// reused, so an id names one object for the whole game).
+    /// The logic name of every object seen so far, by id (an id names one
+    /// object for the whole game, even when a later object takes its
+    /// slot).
     names: BTreeMap<ObjectId, Arc<str>>,
     /// Enemies alive after the last tick.
     alive: BTreeMap<ObjectId, (Arc<str>, Placed)>,
@@ -318,11 +319,8 @@ impl Player {
                 self.treasure.insert(id, (d.kind, d.points));
             }
         }
-        let from = self.names.keys().next_back().map_or(0, |&k| k + 1);
         for (id, o) in self.sim.objects().all() {
-            if id >= from {
-                self.names.insert(id, o.logic.clone());
-            }
+            self.names.entry(id).or_insert_with(|| o.logic.clone());
         }
         let tick = self.sim.tick();
         let mut gone = Vec::new();
