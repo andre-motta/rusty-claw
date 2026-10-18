@@ -401,23 +401,27 @@ made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
 life. Replays, `claw-replay` and the benchmark all follow them.
 
-The routes in `tests/acceptance/routes/` finish the first three levels:
-`level1.csv`, `level2.csv` and `level3.csv` with the default tuning,
-`level1-original.csv`, `level2-original.csv` and `level3-original.csv`
-with the original game's speeds, `level2-introskip.csv` with the jump-in
-that skips Raux's introduction, `level3-boost.csv` with the dynamite boost
-on to the rock pillar past the third level's first save point, and
-`level1-original.level2.csv` and `level2-original.level3.csv`, the next
-level of the game the route before starts, which begin with the progress
-that game carries in (their `# start_score = ...` lines, which replays,
-`claw-replay` and the comparison apply). `claw-bot --seed level` uses the
+The routes in `tests/acceptance/routes/` finish the first four levels:
+`level1.csv`, `level2.csv`, `level3.csv` and `level4.csv` with the default
+tuning, `level1-original.csv`, `level2-original.csv`,
+`level3-original.csv` and `level4-original.csv` with the original game's
+speeds, `level2-introskip.csv` and `level4-introskip.csv` with the jump-in
+that skips Raux's and Katherine's introductions, `level3-boost.csv` with
+the dynamite boost on to the rock pillar past the third level's first save
+point, and `level1-original.level2.csv`, `level2-original.level3.csv` and
+`level3-original.level4.csv`, the next level of the game the route before
+starts, which begin with the progress that game carries in (their
+`# start_score = ...` lines, which replays, `claw-replay` and the
+comparison apply). `claw-bot --seed level` uses the
 random state the level's set-up leaves, as the routes do, and
 `--hints-on-foot` counts a hint point as reached only with Claw on his
 feet, on a ladder or on a rope. They are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and
 keeps the ones that bring Claw closer to the level's end. Its budget counts
 the positions it tries, not time, so the same arguments always give the
-same route.
+same route. A long level can be searched a stretch at a time: `--goal X,Y`
+ends a route where Claw reaches that point, and `--from-route FILE
+--from-tick T` carries on from it.
 
 ```sh
 # watch the bot's route

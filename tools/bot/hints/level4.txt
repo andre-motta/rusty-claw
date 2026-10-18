@@ -1,0 +1,63 @@
+# Waypoints for the fourth level with the default tuning, from the level's
+# geometry (the same as at the original speeds). The jump-in route
+# (level4-introskip.csv) shares the first ten stretches and runs the last
+# with --intro skip. The route is searched a stretch at a time: each
+# stretch below runs with its waypoints as --hints (with --hints-on-foot)
+# and ends at its goal (--goal X,Y), and the next carries on from it (--from-route,
+# --from-tick at its last tick); the last stretch has no goal and ends at
+# the gem. Every stretch uses --seed level and --fragile-cost 100.
+#
+# 1. Along the bottom past the first ferns and over the elevators above the
+#    goo, to the tall fern by the wall: no waypoints, goal 5160,4779.
+# 2. The tall fern throws Claw onto the elevator above it, across the
+#    small blocks to the floor on the left, up the first ladder hanging
+#    from the goo ceiling, across the ladders and up the elevator by the
+#    last one: goal 5080,3300.
+5110,4177
+4600,4180
+3936,4190
+3936,3560
+4128,3560
+4320,3560
+4512,3560
+4704,3600
+# 3. Over the two sliding elevators to the floor before the drop: goal
+#    6780,3808.
+5550,3680
+6100,3457
+6500,3808
+# 4. Down the drop to the first super checkpoint and up the ledges and
+#    crumbling pegs to the ladder: goal 8736,4100.
+7081,5190
+7900,4576
+8500,4448
+# 5. Up the column of ferns and short ladders to the checkpoint, and
+#    across the crumbling pegs over the goo: goal 9400,1890.
+7712,3850
+8032,3500
+8416,3100
+8224,2720
+7840,2330
+8100,1890
+# 6. Through the top of the tower on its ladders: goal 10511,3000.
+10208,1700
+10820,1500
+11040,1770
+# 7. Down to the second super checkpoint: no waypoints, goal 9300,4190.
+# 8. Down a ladder to the bottom and up the column of ferns on the right:
+#    goal 10879,3752.
+10855,5690
+10855,4220
+# 9. Along the ladders under the floor and over the blocks above the goo
+#    to the checkpoint: goal 13529,3620.
+12100,3620
+# 10. The fern by the checkpoint to a ladder, a fern onto the sliding
+#     elevator, the ladders up to the floor before the stepping stones:
+#     goal 14704,1500.
+13600,3100
+13450,2484
+13600,2200
+14240,1700
+# 11. Across the stepping stones, up into the boss room, Katherine and
+#     the gem: no goal.
+15950,1500

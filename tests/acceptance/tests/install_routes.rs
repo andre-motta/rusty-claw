@@ -44,6 +44,11 @@
 //! second read, the respawn's passes counting no time and their order,
 //! the enemy owning its hit burst); under those rules they no longer win,
 //! so their checks are skipped until they are searched again (S2-P5b).
+//! The game from the third level into the fourth waits with them, since
+//! its first level is one of them; its fourth level
+//! (`level3-original.level4.csv`) starts with the progress the third
+//! level's route carried before those rules and is checked on its own, and
+//! it is found again from the new route's progress.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -79,11 +84,17 @@ const MAX_STEP_PX: i32 = 48;
 /// The state of the shared random stream at time zero in the reference
 /// runs of each level: the level-load state advanced by the draws of the
 /// level's set-up (six on the first level, four on the second, eight on
-/// the third).
-const LEVEL_SEEDS: [(u32, u32); 3] = [(1, 4_105_512_405), (2, 1_617_999_171), (3, 714_107_639)];
+/// the third, four on the fourth).
+const LEVEL_SEEDS: [(u32, u32); 4] = [
+    (1, 4_105_512_405),
+    (2, 1_617_999_171),
+    (3, 714_107_639),
+    (4, 1_617_999_171),
+];
 
 /// The routes found before the third level's rules, skipped until they
-/// are searched again (S2-P5b).
+/// are searched again (S2-P5b). A game whose first level is one of them
+/// waits too.
 const SEARCHED_AGAIN_IN_S2_P5B: [&str; 4] = [
     "level2-original.level3.csv",
     "level3-boost.csv",
@@ -597,7 +608,8 @@ fn install_routes_play_one_game_through_the_booty_screen() {
     let games = later_levels();
     assert!(!games.is_empty(), "no route of a game's later level");
     for (first, later, n) in games {
-        if awaits_search(&later.file_name().unwrap().to_string_lossy()) {
+        let file = |p: &Path| p.file_name().unwrap().to_string_lossy().into_owned();
+        if awaits_search(&file(&later)) || awaits_search(&file(&first)) {
             continue;
         }
         let read = |p: &Path| {
