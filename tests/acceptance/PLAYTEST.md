@@ -169,3 +169,23 @@ and the statues.
 12. Breaking planks: stand or walk on a plank. After half a second (three quarters on the slow rows, a quarter on the fast ones) it crumbles with a creak, its floor goes about halfway through and Claw drops. The planks beside it then go one after another along the row. Standing in the small gap between the middles of two planks starts nothing. Jumping over a plank starts nothing, but landing on one does. Guards on a row never break it, but they fall when it goes.
 13. Planks after a death: lose a life after breaking a row. When Claw comes back, every plank of the row is whole again and breaks again.
 14. Statues: one sword swing, shot or thrown object breaks a statue. It crumbles over about a second into a pile of rubble that stays, and throws out a fan of treasure that bounces and can be collected. From the right spot, one swing breaks both statues of the pair near the start. Claw walks behind the front statues (drawn over him) and in front of the others, and the front statues' treasure flies in front of him too.
+
+## Milestone 3, LEVEL6 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the sixth level with `make run-game ARGS="--install PATH --level 6"`,
+or play on from the fifth level. This section covers the goo vents in the
+sewers, the ground blowers in the streets and on the rooftops, and the
+town guards' differences on this level; Wolvington's room comes later.
+
+1. Goo vents, timing: watch a vent in the sewers (the first two are down below and right of the start): it swells, sprays a flat splash sideways up to about 150 px wide and sinks back, then starts again at once, about every 3.7 s; the splash is up for about 2.4 s of each eruption. It makes no sound of its own (the bubbling is the level's ambient sound).
+2. Goo vents, damage: stand in the splash: each hit costs only 1 health, Claw flinches and is pushed about 27 px away from the vent; still in the splash, he is hit again just under a second later, until the pushes take him out of its reach. Beside the vent out of the splash's reach, or with his feet a little above the floor, he is never hurt.
+3. Ground blowers, standing: stand on a blower's nozzle: about once a second the jet hisses and throws Claw straight up, about 450 px (two blowers throw about 400), with no push sideways; standing on the nozzle again after landing, he is thrown again about every 1.5 s (1.4 s on the lower ones).
+4. Ground blowers, walking in: walk back and forth across a nozzle: Claw is thrown only when the jet starts while he is over it, so not on every crossing; thrown out of a walk, he rises as high as from standing.
+5. Ground blowers, jumping in: jump on a nozzle, or fall onto it: when the jet starts while his feet are near the nozzle (within about 20 px of the floor), the throw replaces his own jump and takes him 450 px above where he is then; higher up, the steam column does nothing.
+6. Ground blowers, holding jump: hold Jump on a nozzle through several throws: every throw comes at the same moment and to the same height as standing still.
+7. Ground blowers, carrying: lift a keg (two lie close to blowers) and stand on a nozzle with it: the throw makes Claw let go of it.
+8. Ground blowers, the hiss: each blower near Claw hisses once per jet, including blowers just off the screen, as in the original.
+9. Town guards on this level: the first guard parries about one sword blow in four and hops back from Claw's sword from the first swing; the second guard parries about one blow in two; a few guards stand guard and never pace.
+
+<!-- Wolvington's room: his play-test lines go here. -->

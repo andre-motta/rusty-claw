@@ -26,9 +26,15 @@
 //! breaks. Nothing can hit a vent. It plays no sound and draws no random
 //! number.
 //!
-//! Not built yet ([`BUILT`] is false): vents stay inert placeholders
-//! (drawn, no collision, reported as not implemented), and the calls
-//! below do nothing.
+//! # Timing
+//!
+//! With C the vent's first live call (its set-up), pass n starts on
+//! C + 1 + 205n: the first picture is shown on that call, the fourth on
+//! its 37th call, and the box is set from its 38th call ((-40, -12, 40, 7))
+//! to its 169th; the widest box is up on calls 98 to 109, and the pass
+//! ends on its 205th call, which starts the next pass at once. A vent that
+//! falls asleep keeps its picture and box and goes on from there when it
+//! wakes.
 //!
 //! # Defaults taken
 //!
@@ -37,8 +43,9 @@
 //!   it. Its depth matters to play only in that it runs before Claw, so
 //!   the box a call sets is the one that call's collision pass tests.
 
-use super::World;
-use crate::object::{ObjectId, Rect, types};
+use super::decor::{SpriteAnim, advance_sprite, frames_of};
+use super::{ObjectData, World};
+use crate::object::{Object, ObjectId, Rect, types};
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["GooVent"];
@@ -56,7 +63,7 @@ pub const ANIM: &str = "LEVEL_GOOVENT_GOOVENT";
 pub const ANIM_PREFIXES: &[&str] = &[ANIM];
 
 /// Whether this family runs its logics yet (see [`super::built`]).
-pub const BUILT: bool = false;
+pub const BUILT: bool = true;
 
 /// What a vent is to whatever it touches: a hazard's shot of the level.
 pub const TYPE: u32 = types::LEVEL_SHOT;
@@ -75,6 +82,14 @@ pub const DANGER_TICKS: u32 = 132;
 pub const HARMLESS_LEAD_TICKS: u32 = 37;
 /// Ticks Claw cannot be hurt by a vent again after a hit.
 pub const REHIT_TICKS: u32 = 48;
+
+/// Logic states.
+pub mod state {
+    /// First call: set-up.
+    pub const SET_UP: i32 = 0;
+    /// Erupting, pass after pass.
+    pub const IDLE: i32 = 1;
+}
 
 /// The danger boxes by picture, 4 to 9 (pictures 1 to 3 have none).
 pub const ATTACK_RECTS: [Rect; 6] = [
@@ -105,11 +120,98 @@ pub struct GooVentData {
     pub wait_ms: u32,
     /// Game time the current wait started, ms.
     pub start_ms: u64,
+    /// First and last frame numbers of the vent's image set.
+    pub frames: Option<(i32, i32)>,
+    /// The eruption being played.
+    pub anim: SpriteAnim,
+}
+
+/// The vent data of `o`, when it is one.
+pub fn data_of(o: &Object) -> Option<&GooVentData> {
+    match &o.data {
+        ObjectData::GooVent(d) => Some(d),
+        _ => None,
+    }
+}
+
+/// True when the vent `o` hurts what its box touches in this tick's
+/// collision pass: its box is set.
+pub fn dangerous(o: &Object) -> bool {
+    o.attack_rect.is_set()
+}
+
+/// True while a pass waits to start at game time `now_ms`: the wait
+/// counts as unsigned, so a wait of 0 never holds.
+pub fn waiting(d: &GooVentData, now_ms: u64) -> bool {
+    (now_ms.wrapping_sub(d.start_ms) as u32) < d.wait_ms
 }
 
 /// One logic call.
 pub fn tick(w: &mut World, id: ObjectId) {
-    let _ = (w, id);
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    // The data is held outside the object during the call and put back
+    // after it.
+    let mut d = match std::mem::take(&mut o.data) {
+        ObjectData::GooVent(d) => d,
+        _ => GooVentData::default(),
+    };
+    step(w, id, &mut d);
+    if let Some(o) = w.objects.get_mut(id) {
+        o.data = ObjectData::GooVent(d);
+    }
+}
+
+/// Starts a pass: the eruption from its first picture (not shown until
+/// the next call) and the wait from now.
+fn start_pass(w: &World, d: &mut GooVentData) {
+    d.anim.set(w.level.animations.get(ANIM).cloned());
+    d.start_ms = w.now_ms;
+}
+
+fn set_up(w: &mut World, id: ObjectId, d: &mut GooVentData) {
+    let level = w.level;
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    if o.image_set != IMAGE_SET {
+        o.image_set = IMAGE_SET.to_string();
+    }
+    if let Some((first, _)) = level.image_frames(IMAGE_SET) {
+        o.frame = first;
+    }
+    d.frames = Some(frames_of(level, o, d.frames));
+    o.type_flags = TYPE;
+    o.hit_type_flags = HIT_MASK;
+    d.wait_ms = o.record.as_ref().map_or(0, |r| r[WAIT_FIELD]) as u32;
+    o.state = state::IDLE;
+    start_pass(w, d);
+}
+
+fn step(w: &mut World, id: ObjectId, d: &mut GooVentData) {
+    let Some(s) = w.objects.get(id).map(|o| o.state) else {
+        return;
+    };
+    match s {
+        state::SET_UP => set_up(w, id, d),
+        state::IDLE => {
+            if waiting(d, w.now_ms) {
+                return;
+            }
+            if let Some(o) = w.objects.get_mut(id)
+                && let Some(b) = attack_rect(o.frame)
+            {
+                o.attack_rect = b.unwrap_or(Rect::UNSET);
+            }
+            let frames = d.frames.unwrap_or_default();
+            advance_sprite(w, id, &mut d.anim, frames);
+            if d.anim.is_done() {
+                start_pass(w, d);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `attacker` hit `id`. Nothing hits a vent.
@@ -143,6 +245,23 @@ mod tests {
             assert!(pair[1].bottom >= pair[0].bottom);
             assert_eq!(pair[1].left, -pair[1].right);
         }
+    }
+
+    #[test]
+    fn a_wait_of_zero_never_holds_and_the_wait_counts_unsigned() {
+        let d = |wait_ms, start_ms| GooVentData {
+            wait_ms,
+            start_ms,
+            ..GooVentData::default()
+        };
+        for now in [0, 18, 5000, u64::MAX] {
+            assert!(!waiting(&d(0, 1000), now), "{now}");
+        }
+        assert!(waiting(&d(100, 1000), 1000));
+        assert!(waiting(&d(100, 1000), 1099));
+        assert!(!waiting(&d(100, 1000), 1100));
+        // Before its start the difference wraps to a huge count.
+        assert!(!waiting(&d(100, 1000), 999));
     }
 
     #[test]

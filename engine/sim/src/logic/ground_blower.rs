@@ -27,9 +27,17 @@
 //! It touches nothing else: enemies, kegs and crates rest on or walk over
 //! a blower unaffected, and nothing can hit it. It draws no random number.
 //!
-//! Not built yet ([`BUILT`] is false): blowers stay inert placeholders
-//! (drawn, no collision, reported as not implemented), and the calls
-//! below do nothing.
+//! # Timing
+//!
+//! With C the blower's first live call (its set-up, which already shows
+//! the first picture), loop n shows the first picture on C + 57n and
+//! C + 57n + 1, and those calls test for Claw (all but C itself); the
+//! hiss plays on C + 57n + 6. The blower runs after Claw in each tick, so
+//! the test sees him where his own update left him, a jump he started in
+//! the same tick is replaced by the throw, and his first rising step is
+//! in the next tick. A thrown Claw is usually out of the nozzle box by the
+//! second test call; a Claw whose first rising step is short enough to
+//! leave him inside it is thrown again from there.
 //!
 //! # Defaults taken
 //!
@@ -42,8 +50,10 @@
 //!   springboard's throw does (the throw ends Claw's attack and lift
 //!   first).
 
-use super::World;
-use crate::object::{ObjectId, Rect};
+use super::decor::{SpriteAnim, advance_sprite, frames_of};
+use super::{ObjectData, World};
+use crate::object::{Object, ObjectId, Rect, flags};
+use crate::player;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["GroundBlower"];
@@ -62,7 +72,7 @@ pub const ANIM: &str = "LEVEL_GROUNDBLOWER";
 pub const ANIM_PREFIXES: &[&str] = &[ANIM];
 
 /// Whether this family runs its logics yet (see [`super::built`]).
-pub const BUILT: bool = false;
+pub const BUILT: bool = true;
 
 /// The jet's picture on which a blower throws Claw.
 pub const THROW_FRAME: i32 = 1;
@@ -82,6 +92,14 @@ pub const HIT_MASK: u32 = 0x300_0072;
 /// Ticks of one loop of the jet at the 18 ms step.
 pub const LOOP_TICKS: u32 = 57;
 
+/// Logic states.
+pub mod state {
+    /// First call: set-up.
+    pub const SET_UP: i32 = 0;
+    /// Blowing, loop after loop.
+    pub const IDLE: i32 = 1;
+}
+
 /// The throw's height for a record whose y_max field is `y_max`: the
 /// field when above 0, else [`DEFAULT_HEIGHT`].
 pub fn height_of(y_max: i32) -> i32 {
@@ -100,6 +118,20 @@ pub fn nozzle_box(image_box: Rect) -> Rect {
     )
 }
 
+/// True when two boxes, both with their right and bottom edges excluded,
+/// share at least one pixel.
+pub fn boxes_meet(a: Rect, b: Rect) -> bool {
+    a.is_set()
+        && b.is_set()
+        && a.left.max(b.left) < a.right.min(b.right)
+        && a.top.max(b.top) < a.bottom.min(b.bottom)
+}
+
+/// True when the box `r` has no area (or is unset).
+fn empty(r: Rect) -> bool {
+    !r.is_set() || r.right <= r.left || r.bottom <= r.top
+}
+
 /// A blower's data.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GroundBlowerData {
@@ -107,11 +139,88 @@ pub struct GroundBlowerData {
     pub height: i32,
     /// The nozzle box, relative to the blower, once set up.
     pub nozzle: Option<Rect>,
+    /// First and last frame numbers of the blower's image set.
+    pub frames: Option<(i32, i32)>,
+    /// The jet being played.
+    pub anim: SpriteAnim,
+}
+
+/// The blower data of `o`, when it is one.
+pub fn data_of(o: &Object) -> Option<&GroundBlowerData> {
+    match &o.data {
+        ObjectData::GroundBlower(d) => Some(d),
+        _ => None,
+    }
 }
 
 /// One logic call.
 pub fn tick(w: &mut World, id: ObjectId) {
-    let _ = (w, id);
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    // The data is held outside the object during the call and put back
+    // after it.
+    let mut d = match std::mem::take(&mut o.data) {
+        ObjectData::GroundBlower(d) => d,
+        _ => GroundBlowerData::default(),
+    };
+    step(w, id, &mut d);
+    if let Some(o) = w.objects.get_mut(id) {
+        o.data = ObjectData::GroundBlower(d);
+    }
+}
+
+fn set_up(w: &mut World, id: ObjectId, d: &mut GroundBlowerData) {
+    let level = w.level;
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    d.frames = Some(frames_of(level, o, d.frames));
+    if empty(o.move_rect)
+        && let Some(b) = level.frame_box(&o.image_set, o.frame)
+    {
+        o.move_rect = nozzle_box(b);
+    }
+    d.nozzle = (!empty(o.move_rect)).then_some(o.move_rect);
+    o.type_flags = TYPE;
+    o.hit_type_flags = HIT_MASK;
+    if o.z == 0 {
+        o.z = DEFAULT_Z;
+        o.flags |= flags::RESORT;
+    }
+    d.height = height_of(o.record.as_ref().map_or(0, |r| r[HEIGHT_FIELD]));
+    o.state = state::IDLE;
+    d.anim.set(level.animations.get(ANIM).cloned());
+    advance_sprite(w, id, &mut d.anim, d.frames.unwrap_or_default());
+}
+
+/// True when Claw's movement box, where his last update left him, meets
+/// the nozzle of blower `id`.
+fn claw_over(w: &World, id: ObjectId, d: &GroundBlowerData) -> bool {
+    let (Some(o), Some(claw), Some(nozzle)) = (w.objects.get(id), w.claw_object(), d.nozzle) else {
+        return false;
+    };
+    boxes_meet(
+        claw.move_rect.translate(claw.x, claw.y),
+        nozzle.translate(o.x, o.y),
+    )
+}
+
+fn step(w: &mut World, id: ObjectId, d: &mut GroundBlowerData) {
+    let Some(s) = w.objects.get(id).map(|o| o.state) else {
+        return;
+    };
+    match s {
+        state::SET_UP => set_up(w, id, d),
+        state::IDLE => {
+            advance_sprite(w, id, &mut d.anim, d.frames.unwrap_or_default());
+            let on_nozzle = w.objects.get(id).is_some_and(|o| o.frame == THROW_FRAME);
+            if on_nozzle && claw_over(w, id, d) {
+                player::bounce(w, d.height);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `attacker` hit `id`. Nothing hits a blower.
@@ -136,6 +245,18 @@ mod tests {
             nozzle_box(Rect::new(-11, 76, -4, 79)),
             Rect::new(-16, 66, 21, 89)
         );
+    }
+
+    #[test]
+    fn boxes_meet_without_their_right_and_bottom_edges() {
+        let a = Rect::new(0, 0, 10, 10);
+        assert!(boxes_meet(a, Rect::new(9, 9, 20, 20)));
+        assert!(!boxes_meet(a, Rect::new(10, 0, 20, 10)), "right edge");
+        assert!(!boxes_meet(a, Rect::new(0, 10, 10, 20)), "bottom edge");
+        assert!(!boxes_meet(a, Rect::new(-10, 0, 0, 10)), "left neighbour");
+        assert!(!boxes_meet(a, Rect::UNSET));
+        assert!(!boxes_meet(Rect::UNSET, a));
+        assert!(!boxes_meet(a, Rect::new(5, 5, 5, 8)), "no area");
     }
 
     #[test]
