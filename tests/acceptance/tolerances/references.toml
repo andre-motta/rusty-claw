@@ -783,3 +783,77 @@ known.cam_x = 18
 known.health = 18
 known.rng = 630
 known.score = 4950
+
+# The fourth level's fern routes, one 18 ms step per frame, from Claw put
+# down beside the first fern: standing on it, Jump held throughout,
+# walking on it, and walking off it before the throw. The route starts as
+# soon as Claw has settled, earlier on the level clock than the
+# original's run started (828 ms), and that clock times the level's
+# sounds that come and go and the floor spikes by the fern. Claw's
+# position and state are equal on every row of the first three: thrown
+# on the 21st tick on the fern to 450 px, every time. The original's
+# camera is still catching up with Claw on the first five rows (cam_x),
+# and the timed bird calls draw from the random stream at 13104 ms in the
+# original (13932 ms on its level clock) and some rows later in the game.
+# Walking off, Claw walks over the floor spikes left of the fern: they
+# strike him at 1206 ms in the game and at 2646 ms in the original, and
+# the runs go different ways from there. engine/sim's
+# install_level4_objects plays these routes from the original's level
+# clock, where every column is equal on every row, the camera's first
+# five rows left out.
+[[compare]]
+reference = "level4/spring-stand"
+clock = "c18"
+tolerance = "exact"
+known.cam_x = 18
+known.rng = 13104
+
+[[compare]]
+reference = "level4/spring-hold-jump"
+clock = "c18"
+tolerance = "exact"
+known.cam_x = 18
+known.rng = 13104
+
+[[compare]]
+reference = "level4/spring-walk"
+clock = "c18"
+tolerance = "exact"
+known.cam_x = 18
+
+[[compare]]
+reference = "level4/spring-walk-off"
+clock = "c18"
+tolerance = "exact"
+known.cam_x = 18
+known.state_id = 1206
+known.health = 1206
+known.rng = 1206
+known.x = 1224
+known.y = 1224
+known.cam_y = 1224
+known.physics_type = 1242
+
+# Claw put down on the floor right of the first row of clock stones,
+# standing still while they sink and rise beside him, one 18 ms step per
+# frame: equal on every row but the random stream, which the timed bird
+# calls draw from at 13104 ms in the original and later in the game, as
+# for the fern routes above (install_level4_objects: equal on every row
+# from the original's level clock).
+[[compare]]
+reference = "level4/stones-row"
+clock = "c18"
+tolerance = "exact"
+known.rng = 13104
+
+# Claw standing at the fourth level's start for 30 s while the ferns there
+# rustle off screen, one 18 ms step per frame: equal on every row, the
+# timed bird calls' draws at 13932 ms included, until the original draws
+# from the random stream once more at 21960 ms, a draw the game does not
+# make (its cause is not traced yet; neither the ferns nor the stones
+# draw).
+[[compare]]
+reference = "level4/spring-rustle"
+clock = "c18"
+tolerance = "exact"
+known.rng = 21960

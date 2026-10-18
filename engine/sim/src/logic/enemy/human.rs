@@ -59,8 +59,8 @@
 //! animation ends. A flinch or anything else that changes the state
 //! before the shot frame cancels the shot.
 
-use crate::logic::World;
 use crate::logic::projectile::{self, ProjectileSpec};
+use crate::logic::{World, springboard};
 use crate::object::{ObjectId, Rect, engine_state, flags, types};
 use crate::physics::ptype;
 use crate::tiles::{CLEAR, CLIMB, GROUND, SOLID};
@@ -625,8 +625,7 @@ pub fn idle_tick(w: &mut World, id: ObjectId) {
 /// stays as free as it was and keeps its patrol limits. Draws: one of
 /// 0..100 (below 50: right).
 ///
-/// The springboards themselves (which fire it) come with the levels that
-/// have them.
+/// A springboard under the enemy fires it (see [`platform_step`]).
 pub fn jump_off_springboard(w: &mut World, id: ObjectId) {
     set_state(w, id, EnemyState::JumpOffSpringboard);
     let right = rand(w, 100) < 50;
@@ -652,6 +651,76 @@ pub fn jump_off_springboard(w: &mut World, id: ObjectId) {
     o.flags &= !flags::ON_ELEVATOR;
     o.physics_type = ptype::FLY;
     set_anim(w, id, anim);
+}
+
+/// Special flag of a crumbling peg that a human enemy standing on it may
+/// set crumbling (no peg sets it yet).
+pub const CRUMBLE_ON_ENEMY: u32 = 0x8000;
+/// State of an idle peg or springboard, the only one an enemy can poke.
+pub const PLATFORM_IDLE: i32 = 5;
+/// State an enemy pokes into an idle peg or springboard under it.
+pub const PLATFORM_POKED: i32 = 1111;
+
+/// The platform step of the human pre-tick, with the object below the
+/// enemy (as the physics last left it), in order:
+///
+/// 1. standing on an idle crumbling peg that marks itself
+///    ([`CRUMBLE_ON_ENEMY`]): the peg starts to crumble;
+/// 2. on a springboard raising its launch flag, with the enemy's
+///    springboard flag set (standing on it or not): the launch
+///    ([`jump_off_springboard`]) is scheduled for the post-tick when the
+///    enemy is free;
+/// 3. standing on an idle springboard: the enemy arms it
+///    ([`springboard::state::ENEMY_ARMED`]) and sets its own springboard
+///    flag;
+/// 4. standing on any other platform (or a busy springboard): the enemy
+///    becomes stationary.
+///
+/// True when one of them applied: the pre-tick ends there.
+pub fn platform_step(w: &mut World, id: ObjectId) -> bool {
+    let (standing, below) = {
+        let o = obj(w, id);
+        (o.flags & flags::ON_ELEVATOR != 0, o.object_below)
+    };
+    let Some(b) = below else {
+        return false;
+    };
+    let (bflags, bstate) = w
+        .objects
+        .get(b)
+        .map_or((0, -1), |o| (o.special_flags, o.state));
+    if standing && bflags & CRUMBLE_ON_ENEMY != 0 && bstate == PLATFORM_IDLE {
+        poke(w, b);
+        return true;
+    }
+    if bflags & springboard::special::LAUNCH != 0 && human(w, id).springboard_armed {
+        if let Some(d) = data_mut(w, id)
+            && !d.busy
+        {
+            d.deferred = Some(Deferred::Human(HumanCall::JumpOffSpringboard));
+        }
+        return true;
+    }
+    if standing && bflags & springboard::special::ENEMY_ARMABLE != 0 && bstate == PLATFORM_IDLE {
+        if let Some(d) = data_mut(w, id) {
+            d.human.springboard_armed = true;
+        }
+        poke(w, b);
+        return true;
+    }
+    if standing {
+        if let Some(d) = data_mut(w, id) {
+            d.stationary = true;
+        }
+        return true;
+    }
+    false
+}
+
+fn poke(w: &mut World, platform: ObjectId) {
+    if let Some(o) = w.objects.get_mut(platform) {
+        o.state = PLATFORM_POKED;
+    }
 }
 
 /// JumpOffSpringboard: once it has landed it stops and goes Home.

@@ -30,7 +30,8 @@
 //! - [`powerup_aid`]: the play-test aid that gives any powerup;
 //! - [`progress`]: starting a level from a carried state or a save, and
 //!   handing the progress on;
-//! - [`swing`]: hanging from a rope.
+//! - [`swing`]: hanging from a rope;
+//! - [`bounce`]: the throw a springboard gives him.
 //!
 //! The rows of the hit (31), lift (5000), throw (5001), death-fall (5004),
 //! death (5005), swing (5007) and freeze (5009) states call into those
@@ -55,6 +56,7 @@ use crate::tiles::{CLIMB, DEATH};
 use crate::tuning::{PlayAids, Tuning};
 
 pub mod attack;
+pub mod bounce;
 pub mod death;
 pub mod hit;
 pub mod look;
@@ -64,6 +66,7 @@ pub mod special;
 pub mod stats;
 pub mod swing;
 
+pub use bounce::bounce;
 pub use stats::{Carry, PlayerStats, SavePos, StartState};
 
 /// Animations by registry key.

@@ -1287,8 +1287,9 @@ pub fn pre_tick(w: &mut World, id: ObjectId, class: &Class) {
 /// The human steps of the pre-tick, in order: the liftable flag and the
 /// contact box; a sight-driven enemy that sees Claw stops here; noticing
 /// Claw leaving range (going idle in the post-tick when free); on a
-/// platform, becoming stationary; on a narrow ledge, the leap check in the
-/// post-tick when free.
+/// platform, its pokes and the springboard launch, or becoming stationary
+/// (see [`human::platform_step`]); on a narrow ledge, the leap check in
+/// the post-tick when free.
 fn human_pre_tick(w: &mut World, id: ObjectId) {
     let now = w.now_ms;
     let Some((may_lift, guard, contact, sight)) =
@@ -1325,11 +1326,7 @@ fn human_pre_tick(w: &mut World, id: ObjectId) {
             d.out_of_range = false;
         }
     }
-    let o = obj(w, id);
-    if o.flags & flags::ON_ELEVATOR != 0 && o.object_below.is_some() {
-        if let Some(d) = data_mut(w, id) {
-            d.stationary = true;
-        }
+    if human::platform_step(w, id) {
         return;
     }
     let free = data(w, id).is_some_and(|d| !d.stationary && !d.busy);
