@@ -61,6 +61,8 @@ pub mod decor;
 pub mod effect;
 pub mod enemy;
 pub mod floor_spike;
+pub mod goo_vent;
+pub mod ground_blower;
 pub mod jump_switch;
 pub mod keg;
 pub mod path_elevator;
@@ -143,10 +145,20 @@ pub enum GameLogic {
     JumpSwitch,
     /// Breakable statues that release a fan of treasure.
     Statue,
+    /// Goo vents that erupt in a harmful splash.
+    GooVent,
+    /// Steam vents in the floor that throw Claw straight up.
+    GroundBlower,
+    /// Wolvington, the boss of the sixth level.
+    Wolvington,
+    /// Wolvington's magic shot.
+    WolvingtonShot,
+    /// The light a magic shot of Wolvington's carries.
+    WolvingtonLight,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 30] = [
+pub const ALL: [GameLogic; 35] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -177,6 +189,11 @@ pub const ALL: [GameLogic; 30] = [
     GameLogic::BreakPlank,
     GameLogic::JumpSwitch,
     GameLogic::Statue,
+    GameLogic::GooVent,
+    GameLogic::GroundBlower,
+    GameLogic::Wolvington,
+    GameLogic::WolvingtonShot,
+    GameLogic::WolvingtonLight,
 ];
 
 /// A logic's own data, by family.
@@ -239,6 +256,16 @@ pub enum ObjectData {
     JumpSwitch(jump_switch::JumpSwitchData),
     /// A statue.
     Statue(statue::StatueData),
+    /// A goo vent.
+    GooVent(goo_vent::GooVentData),
+    /// A ground blower.
+    GroundBlower(ground_blower::GroundBlowerData),
+    /// Wolvington.
+    Wolvington(enemy::wolvington::WolvingtonData),
+    /// A magic shot of Wolvington's.
+    WolvingtonShot(enemy::wolvington::shot::ShotData),
+    /// The light of a magic shot of Wolvington's.
+    WolvingtonLight(enemy::wolvington::light::LightData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -275,6 +302,11 @@ macro_rules! dispatch {
             GameLogic::BreakPlank => break_plank::$f($($arg),*),
             GameLogic::JumpSwitch => jump_switch::$f($($arg),*),
             GameLogic::Statue => statue::$f($($arg),*),
+            GameLogic::GooVent => goo_vent::$f($($arg),*),
+            GameLogic::GroundBlower => ground_blower::$f($($arg),*),
+            GameLogic::Wolvington => enemy::wolvington::$f($($arg),*),
+            GameLogic::WolvingtonShot => enemy::wolvington::shot::$f($($arg),*),
+            GameLogic::WolvingtonLight => enemy::wolvington::light::$f($($arg),*),
         }
     };
 }
@@ -313,6 +345,11 @@ macro_rules! constant {
             GameLogic::BreakPlank => break_plank::$c,
             GameLogic::JumpSwitch => jump_switch::$c,
             GameLogic::Statue => statue::$c,
+            GameLogic::GooVent => goo_vent::$c,
+            GameLogic::GroundBlower => ground_blower::$c,
+            GameLogic::Wolvington => enemy::wolvington::$c,
+            GameLogic::WolvingtonShot => enemy::wolvington::shot::$c,
+            GameLogic::WolvingtonLight => enemy::wolvington::light::$c,
         }
     };
 }
@@ -353,6 +390,11 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::BreakPlank => break_plank::BUILT,
         GameLogic::JumpSwitch => jump_switch::BUILT,
         GameLogic::Statue => statue::BUILT,
+        GameLogic::GooVent => goo_vent::BUILT,
+        GameLogic::GroundBlower => ground_blower::BUILT,
+        GameLogic::Wolvington => enemy::wolvington::BUILT,
+        GameLogic::WolvingtonShot => enemy::wolvington::shot::BUILT,
+        GameLogic::WolvingtonLight => enemy::wolvington::light::BUILT,
         _ => true,
     }
 }
@@ -427,8 +469,9 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 }
 
 /// `carrier` lifted `id`. Kegs, crates and the human enemies Claw can
-/// carry (officers, soldiers, cutthroats, robber thieves, Katherine and
-/// the town guards, see [`enemy::lift`]) react; other families ignore it.
+/// carry (officers, soldiers, cutthroats, robber thieves, Katherine, the
+/// town guards and Wolvington, see [`enemy::lift`]) react; other families
+/// ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
@@ -440,7 +483,8 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
             | GameLogic::RobberThief
             | GameLogic::Katherine
             | GameLogic::TownGuard1
-            | GameLogic::TownGuard2,
+            | GameLogic::TownGuard2
+            | GameLogic::Wolvington,
         ) => enemy::lift::lifted(w, id, carrier),
         _ => {}
     }
@@ -458,7 +502,8 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
             | GameLogic::RobberThief
             | GameLogic::Katherine
             | GameLogic::TownGuard1
-            | GameLogic::TownGuard2,
+            | GameLogic::TownGuard2
+            | GameLogic::Wolvington,
         ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
@@ -477,6 +522,7 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
                 | GameLogic::Katherine
                 | GameLogic::TownGuard1
                 | GameLogic::TownGuard2
+                | GameLogic::Wolvington
         )
     ) {
         enemy::lift::wind_up(w, id);
@@ -495,7 +541,8 @@ pub fn dropped(w: &mut World, id: ObjectId) {
             | GameLogic::RobberThief
             | GameLogic::Katherine
             | GameLogic::TownGuard1
-            | GameLogic::TownGuard2,
+            | GameLogic::TownGuard2
+            | GameLogic::Wolvington,
         ) => enemy::lift::dropped(w, id),
         _ => {}
     }

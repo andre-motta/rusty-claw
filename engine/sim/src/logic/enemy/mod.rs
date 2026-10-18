@@ -2,8 +2,8 @@
 //! and Raux ([`raux`]), on shared enemy behaviour and the shared human
 //! states ([`human`]), with the cutthroat ([`cutthroat`]) and the robber
 //! thief ([`robberthief`]), and the seagull ([`seagull`]), the first
-//! flyer. Katherine ([`katherine`]) and the town guards ([`townguard`])
-//! are declared but not built yet.
+//! flyer. Katherine ([`katherine`]), the town guards ([`townguard`]) and
+//! Wolvington ([`wolvington`]) are declared but not built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -68,6 +68,7 @@ pub mod seagull;
 pub mod soldier;
 pub mod states;
 pub mod townguard;
+pub mod wolvington;
 
 pub use states::{enter_hit, enter_pause, enter_strike, go_home, human_home_tick, start_pacing};
 
@@ -180,8 +181,9 @@ pub mod field {
 /// 2120-2139 the fourth level's (Katherine's somersault, see
 /// [`katherine::STATE_BLOCK`]) and 2140-2159 the fifth level's (the town
 /// guards' second idle and parry and the seagull's climb back and flinch,
-/// see [`townguard::STATE_BLOCK`]); later families take blocks of 20 from
-/// 2160.
+/// see [`townguard::STATE_BLOCK`]) and 2160-2179 the sixth level's
+/// (Wolvington's five attacks, see [`wolvington::STATE_BLOCK`]); later
+/// families take blocks of 20 from 2180.
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -266,11 +268,22 @@ pub enum EnemyState {
     Withdraw = 2142,
     /// Flinching from a hit, then back to what it was doing (the seagull).
     GenericHit = 2143,
+    /// Choosing the next shot of a magic volley, or ending it
+    /// (Wolvington).
+    MagicVolley = 2160,
+    /// Casting one magic shot, high or low (Wolvington).
+    MagicShot = 2161,
+    /// The standing uppercut (Wolvington).
+    Uppercut = 2162,
+    /// The low sword thrust at a crouching Claw (Wolvington).
+    SwordThrust = 2163,
+    /// Sprinting at Claw into an uppercut (Wolvington).
+    Sprint = 2164,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 39] = [
+    pub const ALL: [EnemyState; 44] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -310,6 +323,11 @@ impl EnemyState {
         EnemyState::Block,
         EnemyState::Withdraw,
         EnemyState::GenericHit,
+        EnemyState::MagicVolley,
+        EnemyState::MagicShot,
+        EnemyState::Uppercut,
+        EnemyState::SwordThrust,
+        EnemyState::Sprint,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -363,6 +381,11 @@ impl EnemyState {
             EnemyState::Block => "Block",
             EnemyState::Withdraw => "Withdraw",
             EnemyState::GenericHit => "GenericHit",
+            EnemyState::MagicVolley => "MagicVolley",
+            EnemyState::MagicShot => "MagicShot",
+            EnemyState::Uppercut => "Uppercut",
+            EnemyState::SwordThrust => "SwordThrust",
+            EnemyState::Sprint => "Sprint",
         }
     }
 }
@@ -774,6 +797,7 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::TownGuard1 => Some(&townguard::guard1::CLASS),
         GameLogic::TownGuard2 => Some(&townguard::guard2::CLASS),
         GameLogic::Seagull => Some(&seagull::CLASS),
+        GameLogic::Wolvington => Some(&wolvington::CLASS),
         _ => None,
     }
 }
@@ -807,7 +831,7 @@ pub(crate) fn obj_mut<'a>(w: &'a mut World, id: ObjectId) -> &'a mut Object {
 impl ObjectData {
     /// The enemy data this holds: plain enemy data, or the enemy data
     /// inside a family's own data (the punk rat's, Raux's, the thieves',
-    /// Katherine's, the town guards' and the seagull's).
+    /// Katherine's, the town guards', the seagull's and Wolvington's).
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -818,6 +842,7 @@ impl ObjectData {
             ObjectData::Katherine(d) => Some(&d.enemy),
             ObjectData::TownGuard(d) => Some(&d.enemy),
             ObjectData::Seagull(d) => Some(&d.enemy),
+            ObjectData::Wolvington(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -833,6 +858,7 @@ impl ObjectData {
             ObjectData::Katherine(d) => Some(&mut d.enemy),
             ObjectData::TownGuard(d) => Some(&mut d.enemy),
             ObjectData::Seagull(d) => Some(&mut d.enemy),
+            ObjectData::Wolvington(d) => Some(&mut d.enemy),
             _ => None,
         }
     }

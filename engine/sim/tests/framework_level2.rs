@@ -120,7 +120,7 @@ fn declared_families_stay_inert_placeholders_until_built() {
 }
 
 /// Every enemy state with its fixed number and name.
-const STATES: [(EnemyState, i32, &str); 39] = [
+const STATES: [(EnemyState, i32, &str); 44] = [
     (EnemyState::Idle, 2000, "Idle"),
     (EnemyState::Home, 2001, "Home"),
     (EnemyState::Strike, 2002, "Strike"),
@@ -160,6 +160,11 @@ const STATES: [(EnemyState, i32, &str); 39] = [
     (EnemyState::Block, 2141, "Block"),
     (EnemyState::Withdraw, 2142, "Withdraw"),
     (EnemyState::GenericHit, 2143, "GenericHit"),
+    (EnemyState::MagicVolley, 2160, "MagicVolley"),
+    (EnemyState::MagicShot, 2161, "MagicShot"),
+    (EnemyState::Uppercut, 2162, "Uppercut"),
+    (EnemyState::SwordThrust, 2163, "SwordThrust"),
+    (EnemyState::Sprint, 2164, "Sprint"),
 ];
 
 #[test]
@@ -173,8 +178,8 @@ fn every_state_number_is_pinned_and_gaps_are_no_state() {
     }
     // The blocks: bosses 2022-2029, human states 2030-2049, the punk rat
     // 2050-2059, cannons 2060-2069, Raux 2070-2089, the fourth level
-    // 2120-2139, the fifth level 2140-2159.
-    let blocks: [(i32, i32); 8] = [
+    // 2120-2139, the fifth level 2140-2159, the sixth level 2160-2179.
+    let blocks: [(i32, i32); 9] = [
         (2000, 2021),
         (2022, 2029),
         (2030, 2049),
@@ -183,6 +188,7 @@ fn every_state_number_is_pinned_and_gaps_are_no_state() {
         (2070, 2089),
         (2120, 2139),
         (2140, 2159),
+        (2160, 2179),
     ];
     for (_, id, name) in STATES {
         assert!(
