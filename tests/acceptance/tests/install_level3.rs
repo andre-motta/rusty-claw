@@ -7,11 +7,6 @@
 //! there, so a jump from the air takes him on top of the pillar, which no
 //! jump from the floor reaches. Nothing from an install is stored in the
 //! repository.
-//!
-//! The route was found before the game learned the third level's rules
-//! (Claw's shots waiting a call among them) and no longer reaches the
-//! pillar the same way; the check is skipped until the route is searched
-//! again (S2-P5b).
 
 use claw_acceptance::install;
 use claw_assets::{Install, LevelData, LevelSource};
@@ -29,18 +24,9 @@ const FLOOR_JUMP_PEAK: i32 = 6700;
 /// Health a dynamite blast takes.
 const BLAST: i32 = 15;
 
-/// The route waits to be searched again under the third level's rules.
-const AWAITS_SEARCH_IN_S2_P5B: bool = true;
-
 #[test]
 fn install_level3_dynamite_boost_clears_the_pillar() {
     let Some(root) = install() else { return };
-    if AWAITS_SEARCH_IN_S2_P5B {
-        println!(
-            "level3-boost.csv: skipped, expected to fail until it is searched again under the third level's rules (S2-P5b)"
-        );
-        return;
-    }
     let store = Install::open(&root).unwrap().store().unwrap();
     let data = LevelData::build(&store, LevelSource::Retail(3)).unwrap();
     let level = SimLevel::from_level(&data, &store).unwrap();
