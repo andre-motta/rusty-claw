@@ -213,5 +213,25 @@ the bear sailors and the bear hug, and the crabs, their nests and their bombs.
 10. Crabs, snipping: stand next to a crab: it crouches, then charges or snips; a snip costs 5 health. Hitting a crab while it is out of its shell (charging, snipping or throwing) kills it at once.
 11. Crabs, knocking shells: swing at a crab that is hiding or crouched: it slides about 37 px away per standing swing, with one small boink, and does not die; only the magic claw kills a crab fully withdrawn into its shell.
 12. Crab bombs: a dark bomber crab lobs a bomb at Claw at most every 4 s; it bounces and explodes 1 s after the throw, or at once if it touches him (5 health). The blast also kills crabs caught out of their shells, the thrower included.
-||||||| b750384
-<!-- Wolvington's room: his play-test lines go here. -->
+
+## Milestone 3, LEVEL8
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the eighth level with `make run-game ARGS="--install PATH --level 8"`,
+or play on from the seventh level. This section covers the level's
+pirates and Gabriel's room at the end: Gabriel on his deck, his bombs, the
+pirates he calls in, his cannon with its lever and the button on the mast.
+
+<!-- The eighth level's pirates: their play-test line goes here. -->
+
+1. Gabriel, the introduction: walk through the door and stand still: the camera pans up to Gabriel on his raised deck, his line, Claw's line, the name banner, then the fight, about 13.7 s after you arrive. He never comes down to fight you.
+2. Gabriel, the bombs: from his idle pose (about 2.4 or 2.6 s) he sometimes says a line, waits half a second and lobs three bombs to his left on three of four lanes, the nearest lane landing near his ship and the farthest at the dock's west end; each bomb explodes when it comes down to the dock (5 health in the air and in the blast), and a bomb that hits you in the air explodes there.
+3. Gabriel, the pirates: sometimes he calls a red-tail pirate: it appears on his deck behind him, runs left along the deck, leaps down onto the dock and fights you there; with two of his pirates alive he only waits another idle pose. When Gabriel is beaten, his pirates fall at once.
+4. Gabriel, the cannon: sometimes he faces right and pulls his lever: the lever flips and the cannon under the bow fires a ball along the dock (10 health). Climb the three pegs at the dock's west end and strike the red-and-green button on the mast with the sword: it stays lit, the cannon turns its barrel up, and his next lever pull fires straight up through the deck into him; then the cannon turns back down and the button blinks again.
+5. Gabriel, hits: sword, pistol, magic and blasts only make him shrug and say a line, and cost him nothing; a cannonball from below costs him 20 of his 100 on the health bar, and he answers with his bombs.
+6. Gabriel, the fifth cannonball: he falls to his knees, turns about, leaps off the deck onto the dock, collapses, and the gem rises out of him while Claw stands frozen; once the gem settles above the dock Claw can move, and a jump collects it and ends the level. His empty health bar stays on screen.
+7. Gabriel, the intro skip: jump with Right on the first tick in the room. There is no introduction and no health bar, Claw lands on the dock, and Gabriel stays asleep in his idle pose for as long as you leave him: no bombs, no pirates, no cannon. The button can still be struck, and the cannon then waits with its barrel up.
+8. Gabriel, what wakes him after a skip: a blow makes him shrug and go idle, and while the blows keep coming he only shrugs, never attacks; walking back into the box by the door plays the whole introduction and then the normal fight; losing a life puts Claw back at the level's start and Gabriel goes idle and attacks alone in the empty room.
+9. Gabriel, the lift-and-drown kill (with Catnip): with Catnip, the skip jump lands Claw on the deck beside him (his touch costs 10). Lift him (he keeps his idle picture while carried) and throw him onto the dock (4 off his health); for 1.5 s after he lands he cannot be lifted, then lift him again on the dock and hold the throw key for a full throw west: he flies into the water, is gone, and the gem rises from the water to above the dock.
+10. Gabriel, after a throw he survives: on the dock he gets up, pauses a few times, and then stays in his strike pose for good: he never bombs, calls a pirate or pulls the lever again, and his strike hurts you only if you stand right on him.
+11. Gabriel, the cannon after a lost life: strike the button, then lose a life before he fires: after the respawn the cannon shows its barrel down and the button blinks, but every later lever pull still fires straight up into him, and the cannon never turns down again.
