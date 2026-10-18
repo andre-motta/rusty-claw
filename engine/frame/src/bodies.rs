@@ -185,19 +185,21 @@ impl FallingBodies {
     /// time is up, and adds the sprites of the others to the snapshot.
     ///
     /// Call it once for every tick, in order. A snapshot that does not
-    /// follow the last one (a restart or another level), a camera jump or a
-    /// death of Claw's drops every copy first; a presentation no wider than
-    /// the logic view keeps none.
+    /// follow the last one (a restart or another level), a camera jump or
+    /// the end of the game drops every copy first (a respawn clears them
+    /// through [`FallingBodies::clear`]; Claw's death alone does not, so a
+    /// body falling while he dies finishes its fall); a presentation no
+    /// wider than the logic view keeps none.
     pub fn absorb(&mut self, view: &ViewConfig, snapshot: &mut SimSnapshot) {
         let follows = self
             .last_tick
             .is_none_or(|t| snapshot.tick == t.wrapping_add(1));
         self.last_tick = Some(snapshot.tick);
-        let died = snapshot
+        let game_over = snapshot
             .events
             .iter()
-            .any(|e| matches!(e, GameEvent::ClawDied { .. } | GameEvent::GameOver));
-        if !follows || snapshot.camera_teleported || died {
+            .any(|e| matches!(e, GameEvent::GameOver));
+        if !follows || snapshot.camera_teleported || game_over {
             self.copies.clear();
         }
         let (pw, ph) = view.presentation_size();
@@ -377,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn a_jump_a_death_or_a_restart_drops_every_copy() {
+    fn a_jump_the_game_over_or_a_restart_drops_every_copy() {
         let view = wide();
         let start = |bodies: &mut FallingBodies| {
             bodies.clear();
@@ -396,6 +398,12 @@ mod tests {
         start(&mut bodies);
         let mut s = snap(2, Vec::new());
         s.events.push(GameEvent::ClawDied { lives_left: 2 });
+        bodies.absorb(&view, &mut s);
+        assert_eq!(bodies.len(), 1, "Claw's death alone keeps the fall");
+
+        start(&mut bodies);
+        let mut s = snap(2, Vec::new());
+        s.events.push(GameEvent::GameOver);
         bodies.absorb(&view, &mut s);
         assert!(bodies.is_empty());
 
