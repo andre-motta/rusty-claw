@@ -15,6 +15,11 @@
 //!
 //! A warp's set-up takes no game time ([`Camera::settle`]): the camera
 //! only jumps to Claw when he is out of its reach, and moves no further.
+//!
+//! The step towards the target and the shake's countdown count the call's
+//! frame time ([`Camera::tick_for`]): one tick in play, 0 in the two update
+//! passes of a respawn, where the camera neither moves towards its target
+//! nor shakes.
 
 use crate::physics::ptype;
 use crate::player::state as claw_state;
@@ -80,8 +85,10 @@ impl Default for Camera {
     }
 }
 
-fn approach(cur: i32, target: i32, speed: u32) -> i32 {
-    let step = (u64::from(TICK_MS) * u64::from(speed) / 1000).min(i32::MAX as u64) as i32;
+/// `cur` moved towards `target` by `speed` px/s over `dt_ms`, in whole
+/// pixels, never past it.
+fn approach(cur: i32, target: i32, speed: u32, dt_ms: u32) -> i32 {
+    let step = (u64::from(dt_ms) * u64::from(speed) / 1000).min(i32::MAX as u64) as i32;
     if cur < target {
         cur.saturating_add(step).min(target)
     } else {
@@ -95,19 +102,19 @@ impl Camera {
         self.shake_until_ms = self.shake_until_ms.max(now_ms + ms);
     }
 
-    fn follow(&mut self, claw: &Followed, point: Option<(i32, i32)>, t: &CameraTuning) {
+    fn follow(&mut self, claw: &Followed, point: Option<(i32, i32)>, t: &CameraTuning, dt: u32) {
         self.state = state::FOLLOW;
         if claw.state == claw_state::DEATH_FALL {
             return;
         }
         if claw.state == claw_state::CROUCH && claw.look_down_time == 0 {
             self.state = state::LOOK_DOWN;
-            self.look(claw, t.look_offset, t);
+            self.look(claw, t.look_offset, t, dt);
             return;
         }
         if claw.state == claw_state::LOOK_UP && claw.look_down_time == 0 {
             self.state = state::LOOK_UP;
-            self.look(claw, -t.look_offset, t);
+            self.look(claw, -t.look_offset, t, dt);
             return;
         }
         self.target = point.unwrap_or((claw.x, claw.y));
@@ -128,16 +135,16 @@ impl Camera {
             _ => t.follow_speed,
         };
         self.current = (
-            approach(self.current.0, self.target.0, speed),
-            approach(self.current.1, self.target.1, speed),
+            approach(self.current.0, self.target.0, speed, dt),
+            approach(self.current.1, self.target.1, speed, dt),
         );
     }
 
-    fn look(&mut self, claw: &Followed, offset: i32, t: &CameraTuning) {
+    fn look(&mut self, claw: &Followed, offset: i32, t: &CameraTuning, dt: u32) {
         self.target = (claw.x, claw.y + offset);
         self.current = (
-            approach(self.current.0, self.target.0, t.look_speed),
-            approach(self.current.1, self.target.1, t.look_speed),
+            approach(self.current.0, self.target.0, t.look_speed, dt),
+            approach(self.current.1, self.target.1, t.look_speed, dt),
         );
     }
 
@@ -166,8 +173,8 @@ impl Camera {
         }
     }
 
-    /// One logic call. `claw` is None while there is no player; `point` is
-    /// the scripted camera point, if any.
+    /// One logic call of one tick. `claw` is None while there is no
+    /// player; `point` is the scripted camera point, if any.
     pub fn tick(
         &mut self,
         claw: Option<&Followed>,
@@ -175,6 +182,20 @@ impl Camera {
         t: &CameraTuning,
         rng: &mut Rng,
         now_ms: u64,
+    ) {
+        self.tick_for(claw, point, t, rng, now_ms, TICK_MS);
+    }
+
+    /// One logic call with a frame time of `dt` ms (see [`Camera::tick`]):
+    /// the step towards the target and the shake's countdown count it.
+    pub fn tick_for(
+        &mut self,
+        claw: Option<&Followed>,
+        point: Option<(i32, i32)>,
+        t: &CameraTuning,
+        rng: &mut Rng,
+        now_ms: u64,
+        dt: u32,
     ) {
         self.teleported = false;
         let Some(claw) = claw else {
@@ -191,35 +212,35 @@ impl Camera {
             self.state = state::POINT;
         }
         match self.state {
-            state::FOLLOW => self.follow(claw, point, t),
+            state::FOLLOW => self.follow(claw, point, t, dt),
             state::LOOK_DOWN => {
                 if claw.state == claw_state::CROUCH && claw.look_down_time == 0 {
-                    self.look(claw, t.look_offset, t);
+                    self.look(claw, t.look_offset, t, dt);
                 } else {
-                    self.follow(claw, point, t);
+                    self.follow(claw, point, t, dt);
                 }
             }
             state::LOOK_UP => {
                 if claw.state == claw_state::LOOK_UP && claw.look_down_time == 0 {
-                    self.look(claw, -t.look_offset, t);
+                    self.look(claw, -t.look_offset, t, dt);
                 } else {
-                    self.follow(claw, point, t);
+                    self.follow(claw, point, t, dt);
                 }
             }
             state::POINT => match point {
                 Some(p) => {
                     self.target = p;
                     self.current = (
-                        approach(self.current.0, p.0, t.point_speed),
-                        approach(self.current.1, p.1, t.point_speed),
+                        approach(self.current.0, p.0, t.point_speed, dt),
+                        approach(self.current.1, p.1, t.point_speed, dt),
                     );
                 }
-                None => self.follow(claw, point, t),
+                None => self.follow(claw, point, t, dt),
             },
             _ => {}
         }
         if self.shake_until_ms > now_ms {
-            if TICK_MS > self.shake_countdown {
+            if dt > self.shake_countdown {
                 self.shake_countdown = rng.below(t.shake_countdown_range.max(1));
                 let half = (t.shake_jolt_range / 2) as i32;
                 let jx = rng.below(t.shake_jolt_range.max(1)) as i32 - half;
@@ -227,7 +248,7 @@ impl Camera {
                 self.current.0 += jx;
                 self.current.1 += jy;
             } else {
-                self.shake_countdown -= TICK_MS;
+                self.shake_countdown -= dt;
             }
         }
     }

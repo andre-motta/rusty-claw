@@ -1927,11 +1927,11 @@ fn a_kill_by_claw_draws_his_line_a_quarter_of_the_time() {
         sim.with_world(|w| w.objects.get_mut(id).unwrap().health = 1);
         let before = sim.rng().state();
         hit(&mut sim, id, blow, true, false);
-        // The burst's place and size, then the death roll.
+        // The burst's place, then the death roll: with Claw sent away the
+        // officer is off screen, so it gets no burst and no size draw.
         let mut m = Rng::new(before);
         m.below(9);
         m.below(9);
-        m.below(3);
         let roll = m.below(100);
         if roll < 25 {
             m.below(10);
@@ -1945,6 +1945,42 @@ fn a_kill_by_claw_draws_his_line_a_quarter_of_the_time() {
         lines > 5 && sounds > lines,
         "{lines} lines, {sounds} sounds"
     );
+}
+
+/// The hit bursts in the level.
+fn bursts(sim: &Sim) -> Vec<&Object> {
+    sim.objects()
+        .all()
+        .filter(|(_, o)| &*o.logic == "HitBurst")
+        .map(|(_, o)| o)
+        .collect()
+}
+
+#[test]
+fn an_enemy_owns_its_hit_burst_and_gets_none_off_screen() {
+    // On screen: the burst's place and its size.
+    let mut sim = sim_with(arena(vec![record("Officer", 1080, 900)]), 5);
+    sim.step(TickInput::default());
+    let id = first(&sim, GameLogic::Officer);
+    let blow = attacker(&mut sim, types::PLAYER, 1, 0);
+    let before = sim.rng().state();
+    hit(&mut sim, id, blow, true, false);
+    assert_eq!(bursts(&sim).len(), 1, "a burst on screen");
+    let drawn_on_screen = draws_between(before, sim.rng().state());
+    assert!(drawn_on_screen >= 3, "place and size: {drawn_on_screen}");
+    // Off screen: the same hit makes the place's two draws and no burst.
+    let mut sim = sim_with(arena(vec![record("Officer", 3000, 900)]), 5);
+    send_claw_away(&mut sim);
+    let id = first(&sim, GameLogic::Officer);
+    let view = sim.view().rect;
+    let o = obj(&sim, id);
+    assert!(!view.contains(o.x, o.y), "the officer is off screen");
+    let blow = attacker(&mut sim, types::PLAYER, 1, 0);
+    let before = sim.rng().state();
+    hit(&mut sim, id, blow, true, false);
+    assert!(bursts(&sim).is_empty(), "no burst off screen");
+    let drawn_off_screen = draws_between(before, sim.rng().state());
+    assert_eq!(drawn_off_screen + 1, drawn_on_screen, "no size draw");
 }
 
 #[test]

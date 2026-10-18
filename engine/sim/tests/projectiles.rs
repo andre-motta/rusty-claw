@@ -842,6 +842,11 @@ fn glitter_trails_its_target_until_removed() {
             effect::spawn_glitter(w, id)
         })
         .unwrap();
+    // Its first call only sets it up: no sparkle and no draw.
+    let rng = sim.rng().state();
+    step(&mut sim);
+    assert_eq!(count_logic(&sim, "GlitterBaby"), 0, "set up only");
+    assert_eq!(sim.rng().state(), rng, "no draw");
     let mut seen = std::collections::BTreeSet::new();
     for _ in 0..10 {
         let before = count_logic(&sim, "GlitterBaby");
