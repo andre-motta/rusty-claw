@@ -33,7 +33,6 @@ use super::World;
 use crate::anim::{Animation, FRAME_COUNTS_CALLS};
 use crate::level::SimLevel;
 use crate::object::{Object, ObjectId, flags};
-use crate::tuning::TICK_MS;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &[
@@ -228,8 +227,9 @@ impl SpriteAnim {
     }
 }
 
-/// Advances the [`SpriteAnim`] of `id` (held in `anim`) by one tick and
-/// plays the sounds of the element it applies.
+/// Advances the [`SpriteAnim`] of `id` (held in `anim`) by the call's
+/// frame time ([`World::dt_ms`]) and plays the sounds of the element it
+/// applies.
 pub(crate) fn advance_sprite(
     w: &mut World,
     id: ObjectId,
@@ -237,7 +237,7 @@ pub(crate) fn advance_sprite(
     frames: (i32, i32),
 ) -> Option<usize> {
     let o = w.objects.get_mut(id)?;
-    let applied = anim.advance(TICK_MS, o, frames)?;
+    let applied = anim.advance(w.dt_ms, o, frames)?;
     if let Some(a) = anim.animation()
         && a.sounds_of(applied).iter().any(Option::is_some)
     {
