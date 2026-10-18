@@ -594,7 +594,9 @@ impl Sim {
     ///
     /// Inferred for the resume and the respawn: only the level start's
     /// long wait is seen in a run of the original, the others follow from
-    /// the same reset running there.
+    /// the same reset running there. A level started from a save point
+    /// keeps the stand's idle delay for now, since its placement stands
+    /// Claw again after [`Sim::new`]; no compared run starts from a save.
     pub fn restart_idle_wait(&mut self) {
         self.claw.afk_time = player::IDLE_WAIT_AFTER_CLOCK_RESET_MS;
     }

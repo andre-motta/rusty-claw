@@ -1262,8 +1262,10 @@ pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human
 /// woke it by its placement point and go back to sleep at the end of the
 /// tick.
 ///
-/// The limits up and down are the record's, which every class sees at
-/// this step even when it sets its own afterwards. Provisional: no
+/// `bounds` must be the record's range at this step (every class passes
+/// its record bounds today, before deriving any of its own). The limits
+/// up and down are the record's, which every class sees at this step even
+/// when it sets its own afterwards. Provisional: no
 /// enemy met on a compared route is placed outside a range up and down.
 pub fn clamp_on_construction(o: &mut Object, bounds: (i32, i32), bounds_y: (i32, i32)) {
     clamp_into_bounds(o, bounds);

@@ -257,8 +257,8 @@ pub fn home_y(w: &World, id: ObjectId) -> i32 {
 /// 8500 when placed at 0; then it patrols. Draws nothing.
 pub fn construct(w: &mut World, id: ObjectId) {
     // The construction step every enemy shares moves a bird placed beside
-    // its range onto the nearer limit; its patrol height stays where it
-    // was placed.
+    // its range onto the nearer limit, and up or down onto its record's
+    // limits (provisional); its patrol height stays the placement height.
     super::clamp_on_record_range(w, id);
     let fields = EnemyFields {
         bounds: record_bounds(w, id),
