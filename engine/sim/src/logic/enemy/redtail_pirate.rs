@@ -115,11 +115,12 @@
 //! defeated, and a pirate's death lowers his count of live pirates. The
 //! hooks for these ([`take_gabriel_mode`], [`gabriel_mode_step`],
 //! [`enter_gabriel_attack`], [`gabriel_pirate_died`]) sit where the
-//! pirate's rules call them and do nothing until Gabriel's fight is built
-//! with him ([`super::gabriel::BUILT`]); without Gabriel built they are
-//! never reached anyway. His bombs' blasts hurt the pirates he calls in
-//! through the pirate's own hit rule (see the rules below): the roll is
-//! drawn, a blast is never parried, and the pirate flinches.
+//! pirate's rules call them and run Gabriel's rules for his pirates
+//! ([`super::gabriel::pirates`]); he keeps the count of his live pirates
+//! himself. Without Gabriel they are never reached. His bombs' blasts
+//! hurt the pirates he calls in through the pirate's own hit rule (see
+//! the rules below): the roll is drawn, a blast is never parried, and the
+//! pirate flinches.
 //!
 //! # Defaults taken
 //!
@@ -486,30 +487,33 @@ pub fn in_gabriel_fight(w: &World) -> bool {
 }
 
 /// A pirate built while Gabriel fights takes the boss fight's mode: the
-/// range boxes [`GABRIEL_RANGES`], always awake. Not built yet: nothing.
+/// range boxes [`GABRIEL_RANGES`], always awake (see
+/// [`super::gabriel::pirates`]).
 pub fn take_gabriel_mode(w: &mut World, id: ObjectId) {
-    let _ = (w, id);
+    super::gabriel::pirates::take_mode(w, id);
 }
 
 /// The boss fight's step at the start of each call, before the shared
 /// steps: with Gabriel defeated the pirate dies at once (true: the call
-/// ends there); while it runs Gabriel's attack or its leap the shared
-/// steps are skipped. Not built yet: nothing, and false.
+/// ends there); while it runs Gabriel's attack or its leap the call is
+/// only that state's step and the movement step (true; see
+/// [`super::gabriel::pirates`]).
 pub fn gabriel_mode_step(w: &mut World, id: ObjectId) -> bool {
-    let _ = (w, id);
-    false
+    super::gabriel::pirates::mode_step(w, id)
 }
 
 /// Gabriel sends a pirate he called in on his attack
 /// ([`EnemyState::GabrielAttack`]): it runs left along his deck at
 /// [`GABRIEL_ATTACK_SPEED`], then leaps down at Claw aiming
-/// [`GABRIEL_LEAP_RISE`] px above the dock. Not built yet: nothing.
+/// [`GABRIEL_LEAP_RISE`] px above the dock (see
+/// [`super::gabriel::pirates`]).
 pub fn enter_gabriel_attack(w: &mut World, id: ObjectId) {
-    let _ = (w, id);
+    super::gabriel::pirates::enter_attack(w, id);
 }
 
 /// A pirate died while Gabriel fights: his count of live pirates falls by
-/// one. Not built yet: nothing.
+/// one. Gabriel keeps that count himself, from the pirates he called in
+/// (see [`super::gabriel::pirates`]): nothing here.
 pub fn gabriel_pirate_died(w: &mut World, id: ObjectId) {
     let _ = (w, id);
 }

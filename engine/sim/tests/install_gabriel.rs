@@ -39,9 +39,8 @@
 //! states and health within two ticks at c60.
 //!
 //! The pirates Gabriel calls in run his attack through the pirate's own
-//! boss-fight hooks; in a build where those hooks do nothing yet, a route
-//! is compared up to the tick his first pirate appears, and the test says
-//! so.
+//! boss-fight hooks; a pirate of his that appears without being sent on
+//! his attack fails the test.
 //!
 //! Divergences that are known, with their causes, are listed in [`KNOWN`];
 //! any other fails the test. Needs `CLAW_INSTALL`, and `CLAW_REFERENCE`
@@ -805,7 +804,7 @@ struct Played {
     rows: Vec<TraceRow>,
     him: Vec<Option<Him>>,
     /// The tick his first pirate appeared without being sent on his
-    /// attack: the pirate's boss-fight hooks do nothing in this build.
+    /// attack, if one did (the pirate's boss-fight hooks failed).
     hooks_idle_from: Option<usize>,
 }
 
@@ -1337,17 +1336,12 @@ fn install_level8_boss_room_against_the_reference_traces() {
             } else {
                 Tolerances::feel()
             };
-            let until = played
-                .hooks_idle_from
-                .map_or(usize::MAX, |t| t)
-                .min(played.rows.len());
-            if let Some(t) = played.hooks_idle_from {
-                println!(
-                    "level8/{} {clock}: the pirate's boss-fight hooks do nothing in this build; \
-                     compared up to tick {t}, when his first pirate appears",
-                    r.store
-                );
-            }
+            assert_eq!(
+                played.hooks_idle_from, None,
+                "level8/{} {clock}: a pirate of his was not sent on his attack",
+                r.store
+            );
+            let until = played.rows.len();
             let reference_part: Vec<TraceRow> = reference.iter().take(until).cloned().collect();
             let cmp = trace::compare(&played.rows[..until], &reference_part, &tol);
             println!("== level8/{} {clock}", r.store);
@@ -1477,10 +1471,7 @@ fn install_level8_the_introduction_and_his_first_attacks() {
     // runs left and leaps down onto the dock at x 42899.
     let made = pirate_track.first().copied().expect("a pirate");
     assert_eq!(made, (906, 43373, 5038));
-    if !hooks_live {
-        println!("the pirate's boss-fight hooks do nothing in this build: its run is not checked");
-        return;
-    }
+    assert!(hooks_live, "his pirate is sent on his attack");
     let landed = pirate_track
         .iter()
         .find(|&&(_, _, y)| y == 5211)
@@ -1690,12 +1681,13 @@ fn install_level8_five_cannon_hits_and_his_death_acts() {
     });
     println!("his states: {states:?}");
     println!("his health: {healths:?}");
-    if hooks_live == Some(false) {
-        // The pirates he calls in draw from the stream: without their
-        // boss-fight hooks his attacks come at other times.
-        println!("the pirate's boss-fight hooks do nothing in this build: not checked");
-        return;
-    }
+    // The pirates he calls in draw from the stream: without their
+    // boss-fight hooks his attacks would come at other times.
+    assert_ne!(
+        hooks_live,
+        Some(false),
+        "his pirates are sent on his attack"
+    );
     // The cannon's upward ball strikes him on 1651 and, his fifth, starts
     // his death acts 19 ticks later; they last 224, 32, 122 and 293
     // ticks, the second landing him on the dock.
