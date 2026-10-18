@@ -5,8 +5,10 @@
 //! their 7th tick, Home on the 18th or 14th), the hop back from any attack
 //! of Claw's in front of it (on the attack's first tick, a chance of 90,
 //! 60, 30, then 0, back to 90 once Claw is out of range), its flinch and
-//! death on the second blow, the parry it makes only on the eighth and
-//! thirteenth levels, its lifted lines and its taunt after a throw.
+//! death on the second blow, the parry and the shot block it makes only on
+//! the eighth and thirteenth levels (on the eighth a roll below 25 of
+//! 0..101), the blasts it never parries, its lifted lines and its taunt
+//! after a throw.
 
 mod common;
 
@@ -21,8 +23,10 @@ use claw_sim::logic::enemy::redtail_pirate::{
 };
 use claw_sim::logic::enemy::{self, EnemyState, field};
 use claw_sim::logic::{self, ObjectData};
-use claw_sim::object::{LogicKind, Object, ObjectId, Rect, special};
+use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags, special, types};
 use claw_sim::physics::ptype;
+use claw_sim::player::attack::kind as attack_kind;
+use claw_sim::rng::Rng;
 use claw_sim::{GameLogic, Sim, SimConfig, SimLevel};
 use common::*;
 
@@ -93,6 +97,11 @@ fn pirate_anims() -> Vec<Arc<Animation>> {
         anim(
             redtail_pirate::BLOCK_ANIM,
             &[(700, 70, 0), (701, 90, 0)],
+            true,
+        ),
+        anim(
+            redtail_pirate::QUICK_BLOCK_ANIM,
+            &[(710, 30, 0), (711, 30, 0)],
             true,
         ),
     ]
@@ -524,12 +533,11 @@ fn on_the_seventh_level_every_blow_lands_and_the_second_kills() {
 
 #[test]
 fn on_the_eighth_level_it_parries_some_sword_blows() {
-    // Only once the eighth level's rules are built; until then it takes
-    // every blow, as on the seventh.
     let mut parried = 0;
     for seed in 1..20 {
         let (mut sim, id) = with_claw(8, seed, -40);
         for k in 0..600 {
+            let health = sim.objects().get(id).map(|o| o.health);
             sim.step(if k % 25 == 0 {
                 press(ATTACK)
             } else {
@@ -539,17 +547,179 @@ fn on_the_eighth_level_it_parries_some_sword_blows() {
                 break;
             }
             if state_of(&sim, id) == Some(EnemyState::BlockHigh) {
+                // A parry costs it nothing.
+                assert_eq!(Some(obj(&sim, id).health), health, "seed {seed}");
                 parried += 1;
                 break;
             }
         }
     }
-    if redtail_pirate::LEVEL8_BUILT {
-        assert!(parried > 0, "a pirate of the eighth level parries");
-    } else {
-        assert_eq!(parried, 0, "the eighth level's parry is not built yet");
-    }
+    assert!(parried > 0, "a pirate of the eighth level parries");
     assert_eq!(redtail_pirate::block_chances(7), None);
+}
+
+/// A random stream whose next draw of 0..`n` is `want`.
+fn stream_drawing(n: u32, want: u32) -> Rng {
+    (1..100_000)
+        .map(Rng::new)
+        .find(|r| r.clone().below(n) == want)
+        .expect("a seed")
+}
+
+/// An attacker of type `kind` doing `damage`, at the pirate.
+fn attacker(sim: &mut Sim, kind: u32, damage: i32) -> ObjectId {
+    sim.with_world(|w| {
+        let mut o = logic::new_object("TestBlow", AT, 900, 0);
+        o.kind = LogicKind::Inert;
+        o.type_flags = kind;
+        o.damage = damage;
+        o.flags |= flags::NO_COLLIDE;
+        w.spawn(o)
+    })
+}
+
+/// Hits the pirate with `attacker` as a new attack of Claw's, the parry
+/// roll being `roll`; returns the stream as it was before the hit.
+fn hit_with_roll(sim: &mut Sim, id: ObjectId, attacker: ObjectId, roll: u32) -> Rng {
+    let rng = stream_drawing(101, roll);
+    sim.with_world(|w| {
+        // A sword blow does 5.
+        if let Some(c) = w.claw_id.and_then(|c| w.objects.get_mut(c)) {
+            c.damage = 5;
+        }
+        w.claw.attack.kind = attack_kind::SWIPE;
+        w.claw.attack.serial = w.claw.attack.serial.wrapping_add(1);
+        *w.rng = rng.clone();
+        redtail_pirate::on_hit(w, id, attacker);
+    });
+    rng
+}
+
+#[test]
+fn on_the_eighth_level_a_roll_below_25_parries_a_sword_blow() {
+    // A roll of 24: the high guard, its parry sound, no harm, and the
+    // attack is not counted as taken. Only the roll and the sound's pick
+    // are drawn.
+    let (mut sim, id) = with_claw(8, 3, 400);
+    let claw = sim.with_world(|w| w.claw_id.expect("Claw"));
+    let before = hit_with_roll(&mut sim, id, claw, 24);
+    let mut expect = before.clone();
+    expect.below(101);
+    expect.below(2);
+    assert_eq!(sim.with_world(|w| w.rng.clone()), expect);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::BlockHigh));
+    assert_eq!(obj(&sim, id).health, 10);
+    let serial = sim.with_world(|w| w.claw.attack.serial);
+    assert_ne!(pdata(&sim, id).enemy.serial_seen, Some(serial));
+    // The guard holds for 10 ticks, then it is Home again.
+    let seen = states(&mut sim, id, 12, TickInput::default());
+    let guard = seen
+        .iter()
+        .take_while(|s| **s == Some(EnemyState::BlockHigh))
+        .count();
+    assert_eq!(guard + 1, 10, "the tick of the parry and 9 more");
+    assert_eq!(obj(&sim, id).health, 10);
+    // A roll of 25: the blow lands (5 of its 10) and it flinches.
+    let (mut sim, id) = with_claw(8, 3, 400);
+    let claw = sim.with_world(|w| w.claw_id.expect("Claw"));
+    hit_with_roll(&mut sim, id, claw, 25);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::HitLow));
+    assert_eq!(obj(&sim, id).health, 5);
+    let serial = sim.with_world(|w| w.claw.attack.serial);
+    assert_eq!(pdata(&sim, id).enemy.serial_seen, Some(serial));
+}
+
+#[test]
+fn on_the_seventh_level_the_same_roll_does_not_parry() {
+    let (mut sim, id) = with_claw(7, 3, 400);
+    let claw = sim.with_world(|w| w.claw_id.expect("Claw"));
+    hit_with_roll(&mut sim, id, claw, 0);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::HitLow));
+    assert_eq!(obj(&sim, id).health, 5);
+}
+
+#[test]
+fn a_blast_is_never_parried() {
+    // Gabriel's bomb blast on a pirate he called in drew a roll of 7 and
+    // the pirate flinched: blasts (the level's own shots) go through the
+    // hit rule on the eighth level whatever the roll.
+    for roll in [0, 7, 24] {
+        let (mut sim, id) = with_claw(8, 3, 400);
+        let blast = attacker(&mut sim, types::LEVEL_SHOT, 5);
+        let before = hit_with_roll(&mut sim, id, blast, roll);
+        assert_eq!(state_of(&sim, id), Some(EnemyState::HitLow), "{roll}");
+        assert_eq!(obj(&sim, id).health, 5, "{roll}");
+        // The roll and the hit line first, as for any hit.
+        let mut expect = before.clone();
+        expect.below(101);
+        expect.below(101);
+        assert_ne!(
+            sim.with_world(|w| w.rng.clone()),
+            expect,
+            "the hit rule draws on"
+        );
+        assert!(
+            obj(&sim, blast).flags & flags::DESTROY == 0,
+            "the blast stays"
+        );
+    }
+}
+
+#[test]
+fn a_blast_reaches_a_pirate_through_the_collision_pass() {
+    // A bomb's blast (the level's own shot, 100 px wide) over the pirate
+    // hurts it, once; the bomb in flight (an enemy's shot) does not.
+    let (mut sim, id) = with_claw(8, 3, 400);
+    let y = obj(&sim, id).y;
+    let bomb = sim.with_world(|w| {
+        let mut o = logic::new_object("TestBomb", AT + 20, y, 0);
+        o.kind = LogicKind::Inert;
+        o.type_flags = types::ENEMY_SHOT;
+        o.attack_rect = Rect::new(-50, -50, 50, 50);
+        o.damage = 5;
+        w.spawn(o)
+    });
+    sim.step(TickInput::default());
+    assert_eq!(obj(&sim, id).health, 10, "a bomb in flight passes through");
+    sim.with_world(|w| {
+        if let Some(o) = w.objects.get_mut(bomb) {
+            o.type_flags = types::LEVEL_SHOT;
+        }
+    });
+    let mut seen = Vec::new();
+    for _ in 0..16 {
+        sim.step(TickInput::default());
+        seen.push((state_of(&sim, id), obj(&sim, id).health));
+    }
+    assert_eq!(seen[0], (Some(EnemyState::HitLow), 5));
+    assert!(seen.iter().all(|&(_, h)| h == 5), "one hit: {seen:?}");
+}
+
+#[test]
+fn on_the_eighth_level_a_low_roll_blocks_a_pistol_shot() {
+    // The shot is destroyed and the pirate takes the quick guard, safe
+    // while it lasts.
+    let (mut sim, id) = with_claw(8, 3, 400);
+    let shot = attacker(&mut sim, types::PISTOL_SHOT, 8);
+    let before = hit_with_roll(&mut sim, id, shot, 24);
+    let mut expect = before.clone();
+    expect.below(101);
+    expect.below(2);
+    assert_eq!(sim.with_world(|w| w.rng.clone()), expect);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Block));
+    assert_eq!(
+        obj(&sim, id).anim.key(),
+        Some(redtail_pirate::QUICK_BLOCK_ANIM)
+    );
+    assert!(obj(&sim, id).flags & flags::SAFE != 0);
+    assert!(obj(&sim, shot).flags & flags::DESTROY != 0);
+    assert_eq!(obj(&sim, id).health, 10);
+    // At 25 it is hit.
+    let (mut sim, id) = with_claw(8, 3, 400);
+    let shot = attacker(&mut sim, types::PISTOL_SHOT, 8);
+    hit_with_roll(&mut sim, id, shot, 25);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::HitLow));
+    assert_eq!(obj(&sim, id).health, 2);
 }
 
 #[test]

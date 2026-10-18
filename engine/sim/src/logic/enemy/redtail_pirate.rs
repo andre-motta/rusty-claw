@@ -21,8 +21,12 @@
 //! - on the seventh level it never parries: every hit goes through, and a
 //!   low hit makes it flinch for 19 ticks. On the eighth and thirteenth
 //!   levels it parries some of Claw's sword blows and blocks some of his
-//!   shots ([`block_chances`]; the eighth level's only once
-//!   [`LEVEL8_BUILT`] is set).
+//!   shots ([`block_chances`]): on the eighth a quarter of each, a blow
+//!   parried when the roll of 0..101 its hit draws first is below 25 (24
+//!   parries, 25 goes through); a parry holds its guard for 10 ticks and
+//!   costs it nothing. Blasts are never parried: a bomb's or a keg's
+//!   blast hurts it on every level, the pirates Gabriel calls in among
+//!   them.
 //!
 //! It has [`HEALTH`] health (two sword blows or two pistol shots), its
 //! strikes and its touch cost Claw [`DAMAGE`], it can be lifted and
@@ -61,10 +65,19 @@
 //!   next tick.
 //! - Strike: a quarter of the time one of its four strike lines, then the
 //!   shared strike.
-//! - Hits: every new attack of Claw that reaches it draws twice (the
-//!   parry roll of the eighth and thirteenth levels, and a hit line that
-//!   no level ships), then the shared human hit rule: a low flinch of 19
-//!   ticks with only the first hit sound, a high one after an uppercut.
+//! - Hits: every new attack of Claw that reaches it (and every blast or
+//!   thrown object while Claw's last attack is not the one it took last)
+//!   draws the parry roll first, which only the eighth and thirteenth
+//!   levels use: there a sword blow of Claw's himself with the roll below
+//!   the parry chance is parried (it faces Claw, one of its two parry
+//!   sounds, the high guard), and a pistol shot or a stick of dynamite
+//!   with the roll below the block chance is destroyed and blocked (it
+//!   faces Claw, the quick guard, safe while it lasts, one of the two
+//!   sounds); a parried or blocked hit does no harm and does not count as
+//!   taken, so the same attack may be rolled for again. Any other hit
+//!   draws a hit line that no level ships, then goes through the shared
+//!   human hit rule: a low flinch of 19 ticks with only the first hit
+//!   sound, a high one after an uppercut.
 //! - Lifted: always one of its five lifted lines.
 //!
 //! # State numbers
@@ -87,7 +100,8 @@
 //!   taunt's one of 0..2; one of 0..121; mode 3: the strike's or stepping
 //!   in's; mode 4: one of 0..100, then backing off's or the strike's;
 //! - the strike: one of 0..101, then one of 0..4 below 25;
-//! - hit by a new attack of Claw: one of 0..101 twice, then the shared
+//! - hit by a new attack of Claw: one of 0..101; parried or blocked, one
+//!   of 0..2 for the sound; otherwise one of 0..101 again, then the shared
 //!   human hit rule's;
 //! - lifted: one of 0..5, then the shared lift's one of 0..100.
 //!
@@ -101,18 +115,22 @@
 //! defeated, and a pirate's death lowers his count of live pirates. The
 //! hooks for these ([`take_gabriel_mode`], [`gabriel_mode_step`],
 //! [`enter_gabriel_attack`], [`gabriel_pirate_died`]) sit where the
-//! pirate's rules call them and do nothing yet ([`LEVEL8_BUILT`] is
-//! false); without Gabriel built they are never reached anyway.
+//! pirate's rules call them and do nothing until Gabriel's fight is built
+//! with him ([`super::gabriel::BUILT`]); without Gabriel built they are
+//! never reached anyway. His bombs' blasts hurt the pirates he calls in
+//! through the pirate's own hit rule (see the rules below): the roll is
+//! drawn, a blast is never parried, and the pirate flinches.
 //!
 //! # Defaults taken
 //!
 //! - The eighth and thirteenth levels' differences (the parry of Claw's
 //!   sword and the block of his shots, [`block_chances`], and the boss
-//!   fight's mode) are kept where the code branches on the level number,
-//!   and are confirmed with those levels; the seventh level runs none of
-//!   them. The eighth level's parry and block wait for [`LEVEL8_BUILT`],
-//!   and the pistol block keeps the rule above, which no reference run has
-//!   shown yet.
+//!   fight's mode) are kept where the code branches on the level number;
+//!   the seventh level runs none of them. The eighth level's parry is
+//!   confirmed against that level's runs; its block of shots keeps the
+//!   rule above, which no run has shown yet (no shot of those runs reached
+//!   a pirate), and so do the thirteenth level's chances until that level
+//!   is built.
 //! - The "on screen" test of its alert under a widened view follows the
 //!   rule the soldier's sight test uses.
 //!
@@ -253,10 +271,10 @@ pub const FAR_STRIKE_BELOW: i32 = 60;
 /// strike (always, since the draw is at most 120).
 pub const MOVE_AHEAD_BAND: i32 = 30;
 
-/// Whether the eighth level's rules run yet: the parry and the shot block
-/// there ([`blocks_on`]) and the boss fight's mode (see the module
-/// documentation).
-pub const LEVEL8_BUILT: bool = false;
+/// Whether the eighth level's rules run: the parry and the shot block
+/// there ([`blocks_on`]). The boss fight's mode comes with Gabriel (see
+/// the module documentation).
+pub const LEVEL8_BUILT: bool = true;
 
 /// The first two range boxes (half width, half height) of a pirate in the
 /// boss fight's mode; the other three are [`RANGES`]'.
@@ -765,22 +783,24 @@ fn fast_advance_tick(w: &mut World, id: ObjectId) {
 // Hits
 
 /// `attacker` hit `id`: the same attack of Claw that hit last does
-/// nothing; any other draws the parry roll and the hit-line roll, may be
-/// parried or blocked on the eighth and thirteenth levels, and otherwise
-/// goes through the shared human hit rule. Draws: one of 0..101 twice,
-/// then the parry's or the hit rule's.
+/// nothing; any other draws the parry roll, may be parried or blocked on
+/// the eighth and thirteenth levels, and otherwise draws the hit-line roll
+/// and goes through the shared human hit rule (blasts and thrown objects
+/// among them: they are never parried). Draws: one of 0..101; then the
+/// parry's or the block's one of 0..2, or one of 0..101 and the hit
+/// rule's.
 pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
     let serial = w.claw.attack.serial;
     if data(w, id).is_none_or(|d| d.serial_seen == Some(serial)) {
         return;
     }
     let roll = rand(w, 101);
-    let _hit_line = rand(w, 101);
     if let Some((parry, shot_block)) = blocks_on(w.level_number())
         && blocked(w, id, attacker, roll, parry, shot_block)
     {
         return;
     }
+    let _hit_line = rand(w, 101);
     super::on_hit(w, id, attacker);
 }
 
@@ -852,10 +872,14 @@ mod tests {
     }
 
     #[test]
-    fn the_eighth_levels_rules_wait_until_built() {
+    fn the_eighth_levels_parry_and_block_run() {
+        const { assert!(LEVEL8_BUILT) };
         assert_eq!(blocks_on(7), None);
         assert_eq!(blocks_on(13), Some((50, 75)));
-        assert_eq!(blocks_on(8), LEVEL8_BUILT.then_some((25, 25)));
+        assert_eq!(blocks_on(8), Some((25, 25)));
+        for level in [1, 6, 9, 14] {
+            assert_eq!(blocks_on(level), None, "{level}");
+        }
         // Gabriel's pirates run at twice their running speed.
         assert_eq!(GABRIEL_ATTACK_SPEED, 480);
         assert!(GABRIEL_RANGES.iter().all(|r| r.0 > RANGES[0].0));
