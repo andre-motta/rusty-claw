@@ -896,3 +896,61 @@ known.rng = 13104
 reference = "level4/spring-rustle"
 clock = "c18"
 tolerance = "exact"
+
+# The bot's route of the fourth level (original speeds), one 18 ms step per
+# frame. Both games win the level, Katherine's fight included, and are
+# equal on every compared row, the random stream included.
+[[compare]]
+reference = "level4/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The fourth level of a game that started with the third level's route
+# (`level3-original.csv`), entered through the end-of-level screen with the
+# progress the third level carries: equal on every row.
+[[compare]]
+reference = "level4/pair-original"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's route of the fourth level (default tuning) at 60 frames per
+# second. It leaves the feel tolerance in the first jump at 1400 ms (the
+# default tuning's jump, as on the first three levels), then the runs go
+# different ways.
+[[compare]]
+reference = "level4/bot"
+clock = "c60"
+tolerance = "feel"
+known.y = 1400
+known.cam_y = 1400
+known.x = 2300
+known.cam_x = 2300
+known.state_id = 2334
+known.physics_type = 2334
+known.score = 3450
+known.events = 14436
+known.health = 14517
+known.pistol = 45450
+known.dynamite = 86434
+known.lives = 152634
+known.boss_fight = 175750
+
+# The fourth level's jump-in route (default tuning, 60 frames per second):
+# the bot's route with the jump into Katherine's room that skips her
+# introduction; the same feel divergences from the first jump on.
+[[compare]]
+reference = "level4/introskip"
+clock = "c60"
+tolerance = "feel"
+known.y = 1400
+known.cam_y = 1400
+known.x = 2300
+known.cam_x = 2300
+known.state_id = 2334
+known.physics_type = 2334
+known.score = 3450
+known.events = 14436
+known.health = 14517
+known.pistol = 45450
+known.dynamite = 86434
+known.lives = 152634
