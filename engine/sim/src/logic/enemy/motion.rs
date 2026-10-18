@@ -340,8 +340,11 @@ fn depth_sort(w: &mut World, id: ObjectId, d: &EnemyData) {
     }
 }
 
-/// True when the enemy stands on a narrow ledge: there is floor under its
-/// feet at its x, and the floor ends within 49 px on both sides.
+/// True when the enemy stands on a narrow ledge: its own column is ledge,
+/// and the ledge ends within 49 px on both sides. A column is ledge when
+/// the row under the feet is floor (solid, ground or climb) and the pixel
+/// one row up is clear, so a wall rising beside the enemy ends its ledge
+/// even where the floor under the wall goes on.
 pub fn on_narrow_ledge(w: &World, id: ObjectId) -> bool {
     let o = obj(w, id);
     if !o.move_rect.is_set() {
@@ -349,11 +352,18 @@ pub fn on_narrow_ledge(w: &World, id: ObjectId) -> bool {
     }
     let map = &w.level.map;
     let y = o.y + o.move_rect.bottom + 1;
-    if !is_floor(map.attr(o.x, y)) {
+    let ledge = |x: i32| ledge_column(map.attr(x, y), map.attr(x, y - 1));
+    if !ledge(o.x) {
         return false;
     }
-    let ends = |dir: i32| (1..=NARROW_REACH).any(|k| !is_floor(map.attr(o.x + dir * k, y)));
+    let ends = |dir: i32| (1..=NARROW_REACH).any(|k| !ledge(o.x + dir * k));
     ends(-1) && ends(1)
+}
+
+/// A column the narrow-ledge test walks on: floor under the feet
+/// (`under`) with clear air one pixel above it (`above`).
+fn ledge_column(under: u8, above: u8) -> bool {
+    is_floor(under) && above == CLEAR
 }
 
 #[cfg(test)]
@@ -395,6 +405,17 @@ mod tests {
         // The next tick covers one tick again, and a gap all of it.
         assert_eq!(step_seconds(&mut d, 1036), tick);
         assert_eq!(step_seconds(&mut d, 1136), 100.0 * 0.001);
+    }
+
+    #[test]
+    fn a_ledge_column_is_floor_with_clear_air_above() {
+        for floor in [SOLID, GROUND, CLIMB] {
+            assert!(ledge_column(floor, CLEAR));
+            // A wall over the floor ends the ledge.
+            assert!(!ledge_column(floor, SOLID));
+            assert!(!ledge_column(floor, GROUND));
+        }
+        assert!(!ledge_column(CLEAR, CLEAR));
     }
 
     #[test]

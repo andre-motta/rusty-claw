@@ -6,7 +6,7 @@
 # the gem. Every stretch uses --seed level and --fragile-cost 100.
 # The fourth level of the third level's game (level3-original.level4.csv)
 # runs the same stretches with --carry naming its start lines, the third
-# stretch with --fragile-cost 0 (it starts with 40 health).
+# stretch with --fragile-cost 0 (it starts with 25 health).
 #
 # 1. Along the bottom past the first ferns and over the elevators above the
 #    goo, to the tall fern by the wall: no waypoints, goal 5160,4779.

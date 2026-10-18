@@ -728,12 +728,15 @@ fn install_level6_town_guards_follow_the_sixth_levels_rules() {
 
     // Built, every guard has 10 health and the 90 hop chance; the guards
     // whose record sets its first user value stand still, and the first
-    // guards wearing the second's picture take their own.
+    // guards wearing the second's picture take their own. One other first
+    // guard stands still too: a wall rising beside him ends his narrow
+    // ledge, and with Claw far away his leap check puts him for good.
     let mut sim = awake(level);
     idle(&mut sim, 3);
     let mut built = [0, 0];
     let mut stationary = [0, 0];
-    for (_, o) in sim.objects().all() {
+    let mut put_in_play = Vec::new();
+    for (id, o) in sim.objects().all() {
         if !matches!(
             o.kind,
             LogicKind::Game(GameLogic::TownGuard1 | GameLogic::TownGuard2)
@@ -749,13 +752,20 @@ fn install_level6_town_guards_follow_the_sixth_levels_rules() {
         assert_eq!(d.jump_back_chance, 90);
         assert_eq!(o.image_set, d.guard().image_set);
         let record = o.record.as_ref().expect("placed");
-        assert_eq!(d.enemy.stationary, record[field::USER_0] > 0);
-        if d.enemy.stationary {
+        if record[field::USER_0] > 0 {
+            assert!(d.enemy.stationary);
             stationary[i] += 1;
+        } else if d.enemy.stationary {
+            put_in_play.push((id, i, (record[5], record[6])));
         }
     }
     assert_eq!(built, [56, 45]);
     assert_eq!(stationary, [7, 5]);
+    let [(guard, 0, (1045, 7313))] = put_in_play[..] else {
+        panic!("guards put in play: {put_in_play:?}")
+    };
+    let mut ledge = Sim::clone(&sim);
+    assert!(ledge.with_world(|w| enemy::motion::on_narrow_ledge(w, guard)));
 }
 
 #[test]

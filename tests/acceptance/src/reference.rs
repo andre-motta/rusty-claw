@@ -516,8 +516,9 @@ pub fn start_game(
 /// trace covers `until_ms`. A command directive takes effect before its
 /// tick; a pause or a menu holds play and changes nothing in the game,
 /// except that the time of a help screen reaches the dynamite fuse at the
-/// boundary after it (unless the fuse clock is frozen). Every row's source
-/// is `script`, the rows past the route's end included.
+/// boundary after it (unless the fuse clock is frozen) and that Claw's
+/// idle wait restarts as play resumes ([`Sim::restart_idle_wait`]). Every
+/// row's source is `script`, the rows past the route's end included.
 pub fn replay_from(
     sim: Sim,
     script: &InputScript,
@@ -546,7 +547,13 @@ fn replay_ticks(mut sim: Sim, script: &InputScript, ticks: usize) -> Vec<TraceRo
                     screen: MenuScreen::Help,
                     wall_ms,
                     ..
-                } => sim.pass_menu_time(*wall_ms),
+                } => {
+                    sim.pass_menu_time(*wall_ms);
+                    sim.restart_idle_wait();
+                }
+                DirectiveKind::Pause { .. } | DirectiveKind::Menu { .. } => {
+                    sim.restart_idle_wait();
+                }
                 _ => {}
             }
         }
@@ -999,6 +1006,52 @@ pub fn summary_line(store: &Store, result: &ClockResult) -> String {
 mod tests {
     use super::*;
     use claw_sim::trace::ColumnSummary;
+
+    /// A flat level with Claw's standing and idle animations and his idle
+    /// lines: standing still, his idle line draws from the random stream.
+    fn idle_level() -> claw_sim::SimLevel {
+        use claw_sim::anim::Animation;
+        use claw_sim::player::attack;
+        let mut rows = vec![".".repeat(60); 15];
+        rows.push("#".repeat(60));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let map = claw_sim::TileMap::from_ascii(64, &rows);
+        let mut level = claw_sim::SimLevel::synthetic(map, (1000, 600));
+        let stand = Animation::looping("CLAW_STAND", &[(1, 200)]);
+        let mut idle = Animation::once("CLAW_IDLE", &[(1, 500), (2, 10), (3, 500)]);
+        idle.frames[1].event = attack::STAND_FRAME_EVENT;
+        for a in [stand, idle] {
+            level
+                .animations
+                .insert(a.key.clone(), std::sync::Arc::new(a));
+        }
+        for key in attack::IDLE_LINES {
+            level.sounds.insert(key.to_string(), Some(1000));
+        }
+        level
+    }
+
+    #[test]
+    fn a_pause_restarts_claws_idle_wait_with_either_driver() {
+        // Standing still from the start, Claw's idle line is drawn about
+        // 20.5 s in; the pause before tick 200 starts his 20 s wait again,
+        // so with either driver the draw comes after tick 1300.
+        let mut text = String::from("# level 1\ntick,held_mask,pressed_mask\n");
+        for t in 0..1400 {
+            text.push_str(&format!("{t},0x0,0x0\n"));
+        }
+        text.push_str("@200 pause 500\n");
+        let script = InputScript::parse(&text).unwrap();
+        let first_draw = |driver| {
+            let sim = Sim::new(idle_level(), SimConfig::default());
+            let start = sim.rng_state();
+            let rows = replay_from(sim, &script, &text, 0, driver).unwrap();
+            rows.iter().position(|r| r.rng != Some(start))
+        };
+        let ticks = first_draw(Driver::Ticks);
+        assert!(ticks.is_some_and(|t| t > 1300), "{ticks:?}");
+        assert_eq!(first_draw(Driver::Session { hz: 60.0 }), ticks);
+    }
 
     #[test]
     fn a_route_played_with_an_aid_is_never_compared() {

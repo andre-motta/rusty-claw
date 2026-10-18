@@ -27,7 +27,7 @@ use claw_sim::anim::Animation;
 use claw_sim::input::MenuScreen;
 use claw_sim::logic::projectile::{self, ProjectileSpec};
 use claw_sim::object::types;
-use claw_sim::player::state;
+use claw_sim::player::{IDLE_WAIT_AFTER_CLOCK_RESET_MS, state};
 use claw_sim::trace::TraceRow;
 use claw_sim::tuning::FuseClock;
 use claw_sim::{Directive, DirectiveKind, InputScript, Sim, SimConfig, SimLevel, TileMap};
@@ -356,6 +356,45 @@ fn each_resume_runs_exactly_one_tick_whatever_the_pause_lasted() {
         g.go_on(Buttons::NONE);
         assert_eq!(g.s.ticks(), t + 2);
     }
+}
+
+#[test]
+fn a_resume_restarts_claws_long_idle_wait_live_and_replayed() {
+    let mut g = Game::new(sim_with(FuseClock::Original), PauseInput::Original);
+    g.ticks(100);
+    assert!(g.s.sim().claw().afk_time < IDLE_WAIT_AFTER_CLOCK_RESET_MS - 18);
+    g.stop(Span::Pause);
+    g.wait(300);
+    g.go_on(Buttons::NONE);
+    assert_eq!(
+        g.s.sim().claw().afk_time,
+        IDLE_WAIT_AFTER_CLOCK_RESET_MS - 18,
+        "the resume tick counts down from 20 s"
+    );
+    g.ticks(10);
+    let live = g.s.sim().claw().afk_time;
+    let script = g.script();
+    let play = |viewer_pause: bool| {
+        let mut s = Session::new(sim_with(FuseClock::Original)).with_replay(script.clone());
+        let mut p = Pauses::default();
+        while s.replaying() {
+            if viewer_pause && s.ticks() == 105 && !s.is_paused() {
+                // A viewer pauses the replay and goes on: nothing changes.
+                p.user = true;
+                p.apply(Some(&mut s), None, Duration::ZERO);
+                s.open_span(Span::Pause);
+                p.user = false;
+                p.apply(Some(&mut s), None, Duration::ZERO);
+                s.close_span();
+            }
+            s.frame(Duration::from_millis(18));
+        }
+        s.sim().claw().afk_time
+    };
+    // Replayed, the recorded pause's end restarts the wait at the same
+    // boundary; a viewer's own pause while watching changes nothing.
+    assert_eq!(play(false), live);
+    assert_eq!(play(true), live);
 }
 
 #[test]
