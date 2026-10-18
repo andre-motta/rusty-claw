@@ -13,9 +13,16 @@
 //! puff aimed up is 6 ticks shorter). It never moves, nothing can hit it
 //! and it draws no random number.
 //!
-//! Not built yet ([`BUILT`] is false): dart traps stay inert placeholders
-//! (drawn, no collision, reported as not implemented), and the calls below
-//! do nothing.
+//! | State | Per call |
+//! | --- | --- |
+//! | Idle | nothing (no picture) |
+//! | Firing | entered by the trigger, which shuts the trap off from Claw and starts the puff without advancing it; advance the puff; on its first call with event 1 (no retail puff has one) or on the call that ends it, shoot the arrow once; when it ends, show no picture again and go to Wait with the wait timer started |
+//! | Wait | when the trap is open to Claw, mark the next trigger as a fresh one; when the wait has run out, open it to Claw again |
+//!
+//! With T the tick Claw's box first meets the rectangle, the puff shows
+//! its pictures from T + 1, its sound plays on T + 19 and the arrow leaves
+//! on T + 31 from the trap; the next trigger can come on T + 31 +
+//! ceil(wait / 18), so a trap fires every 87 ticks with a 1000 ms wait.
 //!
 //! # State numbers
 //!
@@ -31,26 +38,35 @@
 //!   fourteenth level's launchers (its user value 1 naming the picture set
 //!   `LEVEL_PROJECTILES_<n>`) are built with the trap, though no ninth
 //!   level record uses them; the levels that do confirm them.
+//! - Asleep in the side areas of a wide display, a trap never woken is not
+//!   drawn, as it waits ([`first_look`]).
 //!
 //! Its data ([`DartTrapData`]) is its own.
 
-use super::World;
-use crate::level::SimLevel;
+use super::enemy::{self, Timer};
+use super::projectile::{self, ProjectileSpec};
+use super::{ObjectData, World};
+use crate::level::{SimLevel, runtime_image_set};
 use crate::logic::Look;
-use crate::object::{Object, ObjectId, Rect};
+use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags, types};
+use crate::tuning::TICK_MS;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["TProjectile"];
 
 /// Image sets this family may switch an object to: the arrows.
-pub const IMAGE_SETS: &[&str] = &[arrow::IMAGE_SET];
+pub const IMAGE_SETS: &[&str] = &[
+    arrow::IMAGE_SET,
+    arrow::ANIMATED_SETS[0],
+    arrow::ANIMATED_SETS[1],
+];
 
 /// Prefixes of the animations this family may play: the puffs, which the
 /// records name too.
-pub const ANIM_PREFIXES: &[&str] = &["LEVEL_SHOOTERS_PUFFDART"];
+pub const ANIM_PREFIXES: &[&str] = &["LEVEL_SHOOTERS_PUFFDART", arrow::ANIMATED_ANIM];
 
 /// Whether this family runs its logics yet (see [`super::built`]).
-pub const BUILT: bool = false;
+pub const BUILT: bool = true;
 
 /// The puff's sound (a frame sound of the puff).
 pub const SOUND: &str = "LEVEL_BLOWDART";
@@ -66,6 +82,17 @@ pub const DEFAULT_DIRECTION: i32 = 4;
 pub const WAIT_FIELD: usize = 60;
 /// Record field holding the direction.
 pub const DIRECTION_FIELD: usize = 63;
+/// Record field holding the first-shot delay, ms.
+pub const SMARTS_FIELD: usize = 17;
+/// Record field holding the arrow's picture.
+pub const USER0_FIELD: usize = 43;
+/// Record field naming the animated shot's picture set (0 for an arrow).
+pub const USER1_FIELD: usize = 44;
+/// Record fields holding the trigger rectangle (left, top, right,
+/// bottom).
+pub const BOUNDS_FIELDS: [usize; 4] = [51, 52, 53, 54];
+/// The damage of every trap, whatever its record says.
+pub const DAMAGE: i32 = arrow::DAMAGE;
 /// Ticks of the puff aimed left, right or down at the 18 ms step: the
 /// arrow leaves on the last (measured).
 pub const PUFF_TICKS: u32 = 31;
@@ -105,6 +132,11 @@ pub mod arrow {
     pub const LOGIC: &str = "Bullet";
     /// Its pictures.
     pub const IMAGE_SET: &str = "LEVEL_PROJECTILES";
+    /// The picture sets of the animated shots, named by the record's user
+    /// value 1 (1 or 2).
+    pub const ANIMATED_SETS: [&str; 2] = ["LEVEL_PROJECTILES_1", "LEVEL_PROJECTILES_2"];
+    /// The animation of the animated shots.
+    pub const ANIMATED_ANIM: &str = "GAME_CYCLE100";
     /// Damage to Claw, whatever the record says.
     pub const DAMAGE: i32 = 5;
 
@@ -139,18 +171,271 @@ pub mod arrow {
 pub struct DartTrapData {
     /// The trigger rectangle, relative to the trap, once set up.
     pub trigger: Option<Rect>,
+    /// The animation the record names: the puff.
+    pub puff: Option<String>,
+    /// The next trigger is a fresh one: it waits the record's first-shot
+    /// delay.
+    pub fresh: bool,
+    /// The current puff has shot its arrow.
+    pub fired: bool,
+    /// The wait after a shot.
+    pub wait: Timer,
+    /// Arrows shot so far.
+    pub shots: u32,
+    /// The last arrow shot.
+    pub last_arrow: Option<ObjectId>,
+}
+
+fn data_mut<'a>(w: &'a mut World, id: ObjectId) -> Option<&'a mut DartTrapData> {
+    match &mut w.objects.get_mut(id)?.data {
+        ObjectData::DartTrap(d) => Some(d),
+        _ => None,
+    }
+}
+
+/// The data of dart trap `id`, if it is one.
+pub fn data<'a>(w: &'a World, id: ObjectId) -> Option<&'a DartTrapData> {
+    match &w.objects.get(id)?.data {
+        ObjectData::DartTrap(d) => Some(d),
+        _ => None,
+    }
+}
+
+/// A record field of `o`, 0 without a record.
+fn field(o: &Object, i: usize) -> i32 {
+    o.record.as_deref().map_or(0, |r| r[i])
+}
+
+/// The animation trap `o` was placed with (the puff), when the level has
+/// it; otherwise the one named as its picture set.
+fn placed_puff(level: &SimLevel, o: &Object) -> Option<String> {
+    let (x, y, _) = o.editor;
+    level
+        .objects
+        .iter()
+        .find(|s| {
+            s.record[0] == o.id && s.record[5] == x && s.record[6] == y && *s.logic == *o.logic
+        })
+        .map(|s| s.anim.clone())
+        .filter(|a| level.animations.contains_key(a))
+        .or_else(|| {
+            level
+                .animations
+                .contains_key(&o.image_set)
+                .then(|| o.image_set.clone())
+        })
+}
+
+/// The set-up of trap `o` on its first call (see the module
+/// documentation): a safe, generic object attacking Claw, with its
+/// defaults, its trigger rectangle and no picture; it waits Idle.
+fn set_up(level: &SimLevel, o: &mut Object) {
+    if o.z == 0 {
+        o.z = DEFAULT_Z;
+        o.flags |= flags::RESORT;
+    }
+    o.flags |= flags::SAFE;
+    o.type_flags = 1;
+    o.attack_type_flags = types::PLAYER;
+    o.attack_handler = true;
+    if o.speed_x == 0 {
+        o.speed_x = DEFAULT_SPEED;
+    }
+    if o.speed_y == 0 {
+        o.speed_y = DEFAULT_SPEED;
+    }
+    o.damage = DAMAGE;
+    let [l, t, r, b] = BOUNDS_FIELDS.map(|i| field(o, i));
+    let trigger = Rect::new(l - o.x, t - o.y, r - o.x, b - o.y);
+    o.attack_rect = trigger;
+    o.frame = 0;
+    o.state = state::IDLE;
+    o.data = ObjectData::DartTrap(DartTrapData {
+        trigger: Some(trigger),
+        puff: placed_puff(level, o),
+        fresh: true,
+        ..DartTrapData::default()
+    });
+}
+
+/// The wait after a shot of trap `o`, ms.
+pub fn wait_ms(o: &Object) -> u32 {
+    match field(o, WAIT_FIELD) {
+        0 => DEFAULT_WAIT_MS,
+        w => w as u32,
+    }
+}
+
+/// The direction of trap `o`'s arrows.
+pub fn direction(o: &Object) -> i32 {
+    match field(o, DIRECTION_FIELD) {
+        0 => DEFAULT_DIRECTION,
+        d => d,
+    }
 }
 
 /// How a dart trap whose first call has not run yet looks once it has
-/// (see [`super::first_look`]): `None`, as it looks now.
+/// (see [`super::first_look`]): not drawn. `None` once it has run.
 pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
-    let _ = (level, o);
-    None
+    let _ = level;
+    (o.state == engine_state::INIT).then(Vec::new)
 }
 
 /// One logic call.
 pub fn tick(w: &mut World, id: ObjectId) {
-    let _ = (w, id);
+    let Some(s) = w.objects.get(id).map(|o| o.state) else {
+        return;
+    };
+    match s {
+        state::SET_UP => {
+            let level = w.level;
+            if let Some(o) = w.objects.get_mut(id) {
+                set_up(level, o);
+            }
+        }
+        state::FIRING => firing_tick(w, id),
+        state::WAIT => wait_tick(w, id),
+        _ => {}
+    }
+}
+
+/// Firing: the puff plays; the arrow leaves on an event call or on the
+/// call that ends the puff; then the trap shows nothing and waits.
+fn firing_tick(w: &mut World, id: ObjectId) {
+    let event = w.advance_anim(id);
+    let fired = data(w, id).is_some_and(|d| d.fired);
+    if event == 1 && !fired {
+        shoot(w, id);
+    }
+    if w.objects.get(id).is_none_or(|o| o.anim.is_done()) {
+        if data(w, id).is_some_and(|d| !d.fired) {
+            shoot(w, id);
+        }
+        let now = w.now_ms;
+        let Some(o) = w.objects.get_mut(id) else {
+            return;
+        };
+        o.frame = 0;
+        o.state = state::WAIT;
+        let wait = wait_ms(o);
+        if let Some(d) = data_mut(w, id) {
+            d.wait = Timer::new(now, u64::from(wait));
+        }
+    }
+}
+
+/// Wait: a trap open to Claw takes its next trigger as a fresh one; the
+/// end of the wait opens it to Claw again.
+fn wait_tick(w: &mut World, id: ObjectId) {
+    let now = w.now_ms;
+    let Some(open) = w.objects.get(id).map(|o| o.flags & flags::NO_COLLIDE == 0) else {
+        return;
+    };
+    let Some(d) = data_mut(w, id) else {
+        return;
+    };
+    if open {
+        d.fresh = true;
+    }
+    if d.wait.done(now)
+        && let Some(o) = w.objects.get_mut(id)
+    {
+        o.flags &= !flags::NO_COLLIDE;
+    }
+}
+
+/// Shoots the trap's arrow from its own position (see [`arrow`]).
+fn shoot(w: &mut World, id: ObjectId) {
+    let Some((x, y, z, speeds, dir, user0, user1)) = w.objects.get(id).map(|o| {
+        (
+            o.x,
+            o.y,
+            o.z,
+            (o.speed_x, o.speed_y),
+            direction(o),
+            field(o, USER0_FIELD),
+            field(o, USER1_FIELD),
+        )
+    }) else {
+        return;
+    };
+    if let Some(d) = data_mut(w, id) {
+        d.fired = true;
+    }
+    let (vx, vy) = arrow::velocity(dir, speeds).unwrap_or((0, 0));
+    let shot = projectile::spawn(
+        w,
+        ProjectileSpec {
+            logic: arrow::LOGIC,
+            x,
+            y,
+            z: z - 1,
+            vx,
+            vy,
+            damage: DAMAGE,
+            type_flags: types::ENEMY_SHOT,
+            hit_type_flags: 0,
+            special_flags: 0,
+            image_set: "",
+            owner: Some(id),
+            fuse_ms: None,
+            power: 0,
+        },
+    );
+    if let Some(a) = shot {
+        dress_arrow(w, a, user0, user1);
+        start_shot_clock(w, a);
+    }
+    if let Some(d) = data_mut(w, id) {
+        d.shots += 1;
+        d.last_arrow = shot;
+    }
+}
+
+/// Starts the flight clock of the shot `id` made in this tick by a trap
+/// or a skull cannon, which run the new shot's logic once as they make it:
+/// its clock reads the game time at the end of this tick, so its first
+/// motion step, in the next tick, covers the difference of two such
+/// readings (like every later one) rather than exactly one tick, and now
+/// and then moves it a pixel less (see
+/// [`crate::logic::projectile::ProjectileData::clock_s`]).
+pub fn start_shot_clock(w: &mut World, id: ObjectId) {
+    let now = (w.now_ms + u64::from(TICK_MS)) as f64 * 0.001;
+    if let Some(ObjectData::Projectile(d)) = w.objects.get_mut(id).map(|o| &mut o.data) {
+        d.clock_s = Some(now);
+    }
+}
+
+/// Gives a just shot arrow its own picture: frame `user0` of the arrows,
+/// or for `user1` 1 or 2 the animated shot of that set, never mirrored,
+/// its boxes those of the picture it shows.
+fn dress_arrow(w: &mut World, a: ObjectId, user0: i32, user1: i32) {
+    let (set, frame) = match user1 {
+        0 => (arrow::IMAGE_SET, user0),
+        1 | 2 => {
+            let set = arrow::ANIMATED_SETS[(user1 - 1) as usize];
+            (set, w.image_frames(set).map_or(1, |f| f.0))
+        }
+        _ => return,
+    };
+    let b = w
+        .frame_box(set, frame)
+        .or_else(|| (user1 == 0).then(|| arrow::frame_box(frame)).flatten());
+    let Some(o) = w.objects.get_mut(a) else {
+        return;
+    };
+    o.image_set = runtime_image_set(set);
+    o.frame = frame;
+    o.draw_flags &= !draw_flags::MIRROR;
+    if let Some(b) = b {
+        o.move_rect = b;
+        o.attack_rect = b;
+    }
+    if user1 != 0 {
+        enemy::set_anim(w, a, arrow::ANIMATED_ANIM);
+    } else if let Some(o) = w.objects.get_mut(a) {
+        o.anim = Default::default();
+    }
 }
 
 /// `attacker` hit `id`. Nothing hits a trap.
@@ -158,9 +443,39 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
     let _ = (w, id, attacker);
 }
 
-/// `id` attacked `victim`: Claw stepped into the trigger rectangle.
+/// `id` attacked `victim`: Claw stepped into the trigger rectangle. The
+/// trap shuts itself off from Claw and starts its puff, not advanced; a
+/// fresh trigger first waits the record's first-shot delay.
 pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
-    let _ = (w, id, victim);
+    if w.claw_id != Some(victim) {
+        return;
+    }
+    let Some((puff, fresh)) = data(w, id).map(|d| (d.puff.clone(), d.fresh)) else {
+        return;
+    };
+    let Some(o) = w.objects.get_mut(id) else {
+        return;
+    };
+    o.flags |= flags::NO_COLLIDE;
+    o.state = state::FIRING;
+    if fresh {
+        let smarts = field(o, SMARTS_FIELD);
+        if smarts > 0 {
+            o.time_delay = smarts as u32;
+        }
+    }
+    if let Some(d) = data_mut(w, id) {
+        d.fresh = false;
+        d.fired = false;
+    }
+    match puff {
+        Some(key) => enemy::set_anim(w, id, &key),
+        None => {
+            if let Some(o) = w.objects.get_mut(id) {
+                o.anim = Default::default();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
