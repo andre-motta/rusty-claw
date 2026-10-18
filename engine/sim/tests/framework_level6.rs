@@ -509,12 +509,11 @@ fn install_level6_boss_stage_binds_around_wolvington() {
     assert_eq!(boss[18], 200);
     assert_ne!(boss[18], wolvington::HEALTH);
 
-    // Claw put down where the door drops him starts the introduction; with
-    // Wolvington not built there is no current boss and no health bar, and
-    // his line takes no time: the fight comes on 551 ticks after the
-    // introduction's first tick, where his line's 2592 ms (144 ticks
-    // instead of the one call it takes without him) make the 694 of the
-    // original game.
+    // Claw put down where the door drops him starts the introduction. While
+    // it runs Wolvington is the current boss and his health bar is full; the
+    // fight comes on 694 ticks after the introduction's first tick, as in the
+    // original game (551 plus his line's 2592 ms, 144 ticks, less the one
+    // call the line takes without him).
     let mut sim = Sim::new(level, SimConfig::default());
     sim.step(TickInput::default());
     let d = sim.diagnostics();
@@ -526,11 +525,12 @@ fn install_level6_boss_stage_binds_around_wolvington() {
     let mut on = None;
     for t in 1..=900 {
         sim.step(TickInput::default());
-        assert_eq!(sim.boss().current(), None, "no boss is built");
-        assert_eq!(sim.hud().boss_meter, None);
         match sim.boss().fight() {
             fight::STAGING => {
                 staging.get_or_insert(t);
+                assert!(sim.boss().current().is_some(), "he is the boss");
+                let meter = sim.hud().boss_meter.map(|m| (m.value, m.max));
+                assert_eq!(meter, Some((100, wolvington::METER_MAX)));
             }
             fight::ON => {
                 on = Some(t);
@@ -541,8 +541,7 @@ fn install_level6_boss_stage_binds_around_wolvington() {
     }
     println!("LEVEL6 introduction: staging from tick {staging:?}, fight on at {on:?}");
     let (staging, on) = (staging.expect("the introduction starts"), on.expect("on"));
-    assert_eq!(on - staging, 551, "the introduction's length without him");
-    assert_eq!(on - staging + 144 - 1, 694);
+    assert_eq!(on - staging, 551 + 144 - 1, "the introduction's length");
 }
 
 #[test]

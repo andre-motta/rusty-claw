@@ -24,6 +24,13 @@
 //!   they fly left). Like the ball they hurt Claw and are gone, break the
 //!   crates they pass and fly on, and touch neither powder kegs nor
 //!   enemies; nothing can hit them.
+//! - Wolvington's magic shot ([`crate::logic::enemy::wolvington::shot`])
+//!   is a straight enemy shot of the same kind: 300 px/s, no gravity, 5
+//!   damage whatever the difficulty, its boxes from its first frame
+//!   (turned to face left when it flies left). It sheds two sparkles a
+//!   tick and carries a light of its own
+//!   ([`crate::logic::enemy::wolvington::light`]), both as the magic claw
+//!   does, and goes with its light.
 //! - Every projectile moves on its own clock: each motion step covers the
 //!   game time since its previous step, taken from the step's end in
 //!   seconds and kept as a running sum of double-precision differences,
@@ -68,6 +75,7 @@ use super::World;
 use crate::anim::AnimPlayer;
 use crate::container::Container;
 use crate::level::runtime_image_set;
+use crate::logic::enemy::wolvington;
 use crate::logic::{ObjectData, effect, new_object, placeholder};
 use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags, special, types};
 use crate::physics::{opt, ptype, res};
@@ -170,6 +178,9 @@ pub enum Class {
     RatBomb,
     /// A cannon's ball.
     CannonBall,
+    /// Wolvington's magic shot (see
+    /// [`crate::logic::enemy::wolvington::shot`]).
+    WolvingtonBullet,
 }
 
 impl Class {
@@ -185,6 +196,7 @@ impl Class {
             "Dynamite" => Class::Dynamite,
             "RatBomb" => Class::RatBomb,
             "CannonBall" => Class::CannonBall,
+            "WolvingtonBullet" => Class::WolvingtonBullet,
             _ => return None,
         })
     }
@@ -201,6 +213,7 @@ impl Class {
             Class::Dynamite => "GAME_DYNAMITELIT",
             Class::RatBomb => "LEVEL_RATBOMB",
             Class::CannonBall => "LEVEL_CANNONBALL",
+            Class::WolvingtonBullet => wolvington::shot::IMAGE_SET,
         }
     }
 
@@ -214,6 +227,7 @@ impl Class {
             Class::IceBullet => Some("GAME_ICESWORD"),
             Class::Dynamite => Some("GAME_DYNAMITELIT"),
             Class::CannonBall => Some("LEVEL_CANNONBALL_FALL"),
+            Class::WolvingtonBullet => Some(wolvington::shot::ANIM),
             _ => None,
         }
     }
@@ -232,6 +246,7 @@ impl Class {
             Class::Dynamite => Rect::new(-13, -14, 14, 9),
             Class::RatBomb => Rect::new(-17, 33, 6, 54),
             Class::CannonBall => Rect::new(-9, -10, 22, 9),
+            Class::WolvingtonBullet => wolvington::shot::FRAME_BOX,
         }
     }
 
@@ -241,6 +256,12 @@ impl Class {
             self,
             Class::MagicBullet | Class::FireBullet | Class::LightningBullet | Class::IceBullet
         )
+    }
+
+    /// Sheds sparkles and carries a light as it flies: the magic claw, the
+    /// sword shots and Wolvington's magic shot.
+    pub fn glows(self) -> bool {
+        self.is_magic() || self == Class::WolvingtonBullet
     }
 
     /// Flies straight and is removed at the first wall.
@@ -547,6 +568,18 @@ pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
                 o.z = BURIED_Z;
             }
         }
+        Class::WolvingtonBullet => {
+            // An enemy shot dealing 5 whatever the difficulty, nothing
+            // hits it, and one flying left turns its picture and boxes.
+            o.type_flags = types::ENEMY_SHOT;
+            o.hit_type_flags = 0;
+            o.damage = wolvington::shot::DAMAGE;
+            o.flags |= flags::NOTIFY_DESTROY;
+            if spec.vx < 0 {
+                o.draw_flags |= draw_flags::MIRROR;
+                o.mirror_rects();
+            }
+        }
         Class::CannonBall => {
             o.type_flags = types::ENEMY_SHOT;
             o.hit_type_flags = CANNON_BALL_HIT_BY;
@@ -609,6 +642,15 @@ pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
             }
         }
     }
+    if class == Class::WolvingtonBullet {
+        let light = wolvington::light::spawn(w, id, (x, y, z - 1), spec.vx < 0);
+        if let Some(o) = w.objects.get_mut(id)
+            && let ObjectData::Projectile(d) = &mut o.data
+        {
+            d.flare = Some(light);
+            d.sparkles = wolvington::shot::SPARKLES;
+        }
+    }
     if class.is_magic() {
         let flare = effect::spawn_flare(w, id, x, y, z - 1);
         if let Some(o) = w.objects.get_mut(id)
@@ -657,10 +699,10 @@ fn shot_tick(w: &mut World, id: ObjectId, mut d: ProjectileData, class: Class) {
         // the end of the pass, before it can hit anything.
         w.destroy(id);
     }
-    if class.is_magic() {
+    if class.glows() {
         shed_sparkles(w, id, &d);
         if let Some(f) = d.flare {
-            let lead = if class == Class::MagicBullet {
+            let lead = if matches!(class, Class::MagicBullet | Class::WolvingtonBullet) {
                 0
             } else if d.motion.vx < 0.0 {
                 -SWORD_FLARE_LEAD

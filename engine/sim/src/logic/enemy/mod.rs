@@ -593,6 +593,9 @@ pub struct EnemyFields {
     pub dropped_timer: Timer,
     /// What the shared human states keep (see [`human`]).
     pub human: human::HumanData,
+    /// What Wolvington keeps beyond the shared data (see
+    /// [`wolvington::Fields`]).
+    pub wolvington: wolvington::Fields,
 }
 
 impl Default for EnemyFields {
@@ -651,6 +654,7 @@ impl Default for EnemyFields {
             bounces: 0,
             dropped_timer: Timer::default(),
             human: human::HumanData::default(),
+            wolvington: wolvington::Fields::default(),
         }
     }
 }
