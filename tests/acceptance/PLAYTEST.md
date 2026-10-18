@@ -42,7 +42,7 @@ on says nothing about how hard the level is.
 31. Start the busiest fight you can (several enemies, shots and explosions at once): no sound you would miss stops early (past 64 sounds at once, the oldest short one is cut to make room).
 32. Watch a rat walk into a wall: it stays against the wall for good, its walk playing on the spot, until it throws a bomb at Claw, as in the original.
 33. Open Options in the in-game menu and in the main menu, then Display in each: GAMEPLAY and VIDEO are large, centred entries on rows of their own between AUDIO (or the last display entry) and BACK, the coins flank them when highlighted, and the Gameplay and Video pages they open show their rows in large text too.
-34. On level 2, knock an officer or a soldier into a goo pool: it is gone at once, as on spikes (line 4 of the LEVEL2 section). Not checked before the fourth level: springboards (Claw's jump height, and enemies on them do not launch); not checked yet: loot carried through a warp, and enemies on moving elevators (they stay put).
+34. On level 2, knock an officer or a soldier into a goo pool: it is gone at once, as on spikes (line 4 of the LEVEL2 section). Springboards are checked on the fourth level (its early section below); not checked yet: loot carried through a warp, and enemies on moving elevators (they stay put).
 
 ## Milestone 3, slice 0 (LEVEL1)
 
@@ -129,3 +129,19 @@ hazards, Claw's rope swing and the two thieves.
 7. Thieves: while Claw is level with a cutthroat on screen with nothing between them, it stands still and throws a knife about every 2 s, slashes with its sword when Claw comes close, and never walks up to him; a robber thief shoots arrows the same way. Each shouts once when it first sees Claw.
 8. A knife or an arrow that reaches Claw costs 10 health and is gone; one that reaches a wall stops there.
 9. Knock a thief out and lift it with Z: Claw carries it and throws it as he does an officer, and a thrown thief hurts the enemies it lands on. A beaten thief drops the loot it carries and stops attacking once it starts to fall.
+
+## Milestone 3, LEVEL4 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the fourth level with `make run-game ARGS="--install PATH --level 4"`,
+or play on from the third level. This section covers the springy ferns,
+the stepping stones over the goo, and the level's floor spikes and goo;
+Katherine's room comes later.
+
+1. Ferns, standing: land on a fern and stand still: about a third of a second later it bends with its spring sound and throws Claw straight up, far higher than his own jump, to the same height on every throw (the first fern, just right of the start, throws him back onto itself again and again). Some ferns throw lower or higher than others, as in the original.
+2. Ferns, walking off: land on a fern and walk off its edge at once: Claw drops off without being thrown, and the fern still bends on its own.
+3. Ferns, keys: hold Jump while landing on a fern and through the throw, or walk back and forth on it: the throw comes at the same moment and to the same height as when standing still; a jump of your own before the throw is an ordinary jump.
+4. Ferns, sound: every few seconds the ferns rustle, several at once where they stand close together (at the level start, four rustle together), as in the original.
+5. Stepping stones, the clock rows: each stone sinks into the goo and rises again on its own beat, a row sinking as a wave; a stone stops holding Claw the moment it starts to sink, and holds him again once it is halfway back up. Arrive late and Claw drops through into the goo and dies. The stones make no sound.
+6. Stepping stones, the ones that wait: a stone that waits for Claw sinks a moment after he lands on it (jump on at once to keep going), stays under for about a second and comes back up, ready again.
+7. Floor spikes: each spike rises and sinks on its beat, as on the third level, and hurts only while up; goo pools kill Claw and swallow enemies dropped in, drawn in front of whatever sinks.
