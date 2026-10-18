@@ -6,7 +6,7 @@
 //!          [--tuning default|original] [--nodes N] [--budget-min M]
 //!          [--seed S|level] [--hints FILE] [--from-route FILE --from-tick T]
 //!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--threads N]
-//!          [--cache-games N] [--no-shadows] [--margin-samples N]
+//!          [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot]
 //!          [--intro any|play|skip] [--carry FILE] [--quiet]
 //! ```
 //!
@@ -28,6 +28,10 @@
 //! again, so a route's first press comes after its first tick.
 //! `--hints` names a file of `x,y` waypoints, one per line, written from
 //! the level's geometry; the file's name is recorded in the header.
+//! With `--hints-on-foot` a waypoint counts as reached only with Claw on
+//! his feet, on a ladder or on a rope near it (within twice the usual
+//! distance), so the next stretch of the search never starts in the
+//! middle of a jump.
 //! `--from-route` starts from the game after the first T ticks of another
 //! route, which lead the new one. When the prefix changed its held mask
 //! less than two ticks before T, the new part first keeps that mask for
@@ -84,7 +88,7 @@ use claw_sim::{Carry, InputScript, ScriptHeader, Sim, SimLevel, StartState};
 const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S|level] [--hints FILE] \
 [--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
-[--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] \
+[--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot] \
 [--intro any|play|skip] [--carry FILE] [--quiet]";
 
 /// The random state a route starts from.
@@ -120,6 +124,7 @@ struct Args {
     threads: usize,
     cache_games: usize,
     shadows: bool,
+    hints_on_foot: bool,
     margin_samples: usize,
     intro: Intro,
     carry: Option<PathBuf>,
@@ -145,6 +150,7 @@ impl Default for Args {
             threads: 1,
             cache_games: SearchConfig::default().cached_sims,
             shadows: true,
+            hints_on_foot: false,
             margin_samples: 40,
             intro: Intro::Any,
             carry: None,
@@ -165,6 +171,10 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         }
         if flag == "--no-shadows" {
             a.shadows = false;
+            continue;
+        }
+        if flag == "--hints-on-foot" {
+            a.hints_on_foot = true;
             continue;
         }
         let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -423,6 +433,7 @@ fn run(a: Args) -> Result<bool, String> {
         fragile_cost: a.fragile_cost,
         cached_sims: a.cache_games,
         shadows: a.shadows,
+        hint_on_foot: a.hints_on_foot,
         intro: a.intro,
         wall_limit: a.budget_min.map(|m| Duration::from_secs_f64(m * 60.0)),
         log_every: if a.quiet { 0 } else { 500 },
@@ -545,6 +556,8 @@ mod tests {
         assert_eq!(a.land_gap, Some(3));
         assert_eq!(args("--cache-games 1536").map(|a| a.cache_games), Ok(1536));
         assert!(!args("--no-shadows").unwrap().shadows);
+        assert!(args("--hints-on-foot").unwrap().hints_on_foot);
+        assert!(!a.hints_on_foot);
         assert!(a.shadows);
         assert_eq!(a.fragile_cost, DEFAULT_FRAGILE_COST);
         assert_eq!(args("--fragile-cost 0").map(|a| a.fragile_cost), Ok(0));

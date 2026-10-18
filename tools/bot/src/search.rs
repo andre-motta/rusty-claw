@@ -101,6 +101,12 @@ pub struct SearchConfig {
     pub hints: Vec<(i32, i32)>,
     /// Distance at which a hint counts as reached, px.
     pub hint_radius: i32,
+    /// A hint counts as reached only with Claw on his feet, on a ladder
+    /// or on a rope, within twice [`hint_radius`](Self::hint_radius) of it
+    /// (a point in the air above a floor counts from the floor), never in
+    /// the middle of a jump or a fall: the next segment then starts from
+    /// where he can stay.
+    pub hint_on_foot: bool,
     /// Threads that play the children of a node (1 plays them in turn).
     /// The result does not depend on it.
     pub threads: usize,
@@ -191,6 +197,7 @@ impl Default for SearchConfig {
             seed: 1,
             hints: Vec::new(),
             hint_radius: 48,
+            hint_on_foot: false,
             threads: 1,
             cached_sims: 512,
             wall_limit: None,
@@ -933,6 +940,7 @@ impl Search<'_> {
             tick: node.ticks,
             timing: node.timing,
             land_gap: self.cfg.land_gap,
+            hint_on_foot: self.cfg.hint_on_foot,
             check_fragile: self.cfg.fragile_cost > 0,
             intro: if self.boss.is_some() {
                 self.cfg.intro
@@ -1068,6 +1076,7 @@ struct From {
     tick: u64,
     timing: Timing,
     land_gap: u64,
+    hint_on_foot: bool,
     check_fragile: bool,
     intro: Intro,
 }
@@ -1077,6 +1086,14 @@ struct From {
 /// with a gap of 0.
 fn within(a: Option<u64>, b: u64, gap: u64) -> bool {
     gap > 0 && a.is_some_and(|a| a.abs_diff(b) <= gap)
+}
+
+/// True when Claw is on his feet, on a ladder or on a rope.
+fn on_foot(sim: &Sim) -> bool {
+    matches!(
+        actions::phase(sim),
+        actions::Phase::Ground | actions::Phase::Climb | actions::Phase::Swing
+    )
 }
 
 /// Plays `action` on a copy of the games of `parent`, which start as
@@ -1133,7 +1150,11 @@ fn play(
             done |= near(&sim, x, y, radius);
         }
         if let Some((x, y, r)) = hint {
-            reached |= near(&sim, x, y, r);
+            reached |= if from.hint_on_foot {
+                near(&sim, x, y, 2 * r) && on_foot(&sim)
+            } else {
+                near(&sim, x, y, r)
+            };
         }
         if died || dying(&sim) || sim.stats().lives < lives {
             outcome = Outcome::Dead;
