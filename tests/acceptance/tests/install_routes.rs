@@ -72,12 +72,13 @@ const MAX_STEP_PX: i32 = 48;
 /// The state of the shared random stream at time zero in the reference
 /// runs of each level: the level-load state advanced by the draws of the
 /// level's set-up (six on the first level, four on the second, eight on
-/// the third, four on the fourth).
-const LEVEL_SEEDS: [(u32, u32); 4] = [
+/// the third, four on the fourth, six on the fifth).
+const LEVEL_SEEDS: [(u32, u32); 5] = [
     (1, 4_105_512_405),
     (2, 1_617_999_171),
     (3, 714_107_639),
     (4, 1_617_999_171),
+    (5, 4_105_512_405),
 ];
 
 /// The route header keys.
