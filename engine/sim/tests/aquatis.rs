@@ -1,9 +1,10 @@
 //! Aquatis and his helpers on a synthetic floor with the twelfth level's
 //! animation timings: how he is built (the current boss, hanging where he
 //! is placed, his box, liftable, waiting for the fight), his body that
-//! hurts while he waits, the fight flag's reset and his wait for every
-//! helper's reset bit, the idle poses (only the first leads to a punch)
-//! and the punch boxes, cowering through a quake, a stalactite's hit,
+//! hurts while he waits, a tentacle that sees him current and sways, the
+//! fight flag's reset and his wait for every helper's reset bit, the idle
+//! poses (only the first leads to a punch) and the punch boxes, cowering
+//! through a quake, a stalactite's hit,
 //! the reel and the frenzy of alternating punches, the fifth stalactite,
 //! his death and the gem, Claw's blows that only make him flinch (three
 //! in a row and he cowers), the stalactites lost while he flinches,
@@ -26,7 +27,7 @@ use claw_sim::anim::Animation;
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::enemy::aquatis::{self, crack, dynamite, stalactite as stal};
 use claw_sim::logic::enemy::motion::{DEPTH_BEHIND, STEP_LIMIT};
-use claw_sim::logic::enemy::{EnemyState, Timer};
+use claw_sim::logic::enemy::{EnemyState, Timer, tentacle};
 use claw_sim::logic::world_boss::fight;
 use claw_sim::logic::{ObjectData, new_object, pickup, stalactite as cave};
 use claw_sim::object::{LogicKind, Object, ObjectId, flags, special, types};
@@ -294,6 +295,37 @@ fn he_is_built_hanging_as_the_current_boss_waiting_for_the_fight() {
     // Claw's feet (959) are below his (956): drawn behind Claw.
     assert_eq!(o.z, 10 + DEPTH_BEHIND);
     assert_eq!(st(&sim), Some(EnemyState::Startup));
+}
+
+#[test]
+fn built_he_is_current_so_a_tentacle_sways_while_he_waits() {
+    // A tentacle far left of Claw: he stands right of it, out of its
+    // attacks.
+    let mut level = arena(vec![ObjectSpec::at(tentacle::NAMES[0], 1000, 900, 0)]);
+    let sway = Animation::looping(
+        tentacle::IDLE_ANIM,
+        &[(150, 150), (151, 150), (152, 150), (153, 150)],
+    );
+    level.animations.insert(sway.key.clone(), Arc::new(sway));
+    let (w, h) = (level.map.width() as u32, level.map.height() as u32);
+    let mut sim = Sim::new(
+        level,
+        SimConfig {
+            seed: 7,
+            activation: ActivationConfig::widened((2 * w, 2 * h)),
+            ..SimConfig::default()
+        },
+    );
+    sim.teleport_player(FAR.0, FAR.1);
+    sim.step(TickInput::default());
+    let t = find(&sim, tentacle::NAMES[0])[0];
+    let mut frames = vec![obj(&sim, t).frame];
+    for _ in 0..60 {
+        sim.step(TickInput::default());
+        frames.push(obj(&sim, t).frame);
+    }
+    assert_eq!(st(&sim), Some(EnemyState::Startup));
+    assert!(frames.windows(2).any(|f| f[0] != f[1]), "{frames:?}");
 }
 
 #[test]
