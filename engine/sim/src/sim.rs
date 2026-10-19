@@ -579,7 +579,26 @@ impl Sim {
         sim.set_up_pass();
         sim.set_up_rng = sim.rng.state();
         sim.rng = Rng::new(sim.cfg.seed);
+        // The level's clock starts: Claw's first idle wait is the long one.
+        sim.restart_idle_wait();
         sim
+    }
+
+    /// What the game's clock reset does to Claw: his idle wait starts again
+    /// at [`player::IDLE_WAIT_AFTER_CLOCK_RESET_MS`], so standing still
+    /// from here his idle animation starts after 20 s, not the tuning's
+    /// idle delay. The clock is reset when the level starts (in
+    /// [`Sim::new`]) and after a respawn's passes (done here), and when
+    /// play resumes after a pause or a menu screen: a presentation or a
+    /// replay that holds play for one calls this before the next tick.
+    ///
+    /// Inferred for the resume and the respawn: only the level start's
+    /// long wait is seen in a run of the original, the others follow from
+    /// the same reset running there. A level started from a save point
+    /// keeps the stand's idle delay for now, since its placement stands
+    /// Claw again after [`Sim::new`]; no compared run starts from a save.
+    pub fn restart_idle_wait(&mut self) {
+        self.claw.afk_time = player::IDLE_WAIT_AFTER_CLOCK_RESET_MS;
     }
 
     fn load_record(&mut self, spec: &ObjectSpec, plane: PlaneGeometry) {
@@ -893,6 +912,8 @@ impl Sim {
         self.frame_ms = TICK_MS;
         self.held_clock_ms = None;
         self.respawned = true;
+        // The clock is reset once the passes are over.
+        self.restart_idle_wait();
     }
 
     /// The warp Claw touched in the last tick, between that tick and the

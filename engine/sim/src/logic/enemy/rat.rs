@@ -19,8 +19,8 @@
 use super::states::{move_left, move_right, walk_left_tick, walk_right_tick};
 use super::{
     Body, Class, ClassAnims, ClassSounds, DeathKind, EnemyFields, EnemyState, Handler, Shot, Timer,
-    UNBOUNDED, accept_hit, attacker, build, claw_invisible, data, data_mut, die, face_claw, field,
-    limit, obj, obj_mut, play, rand, record, record_bounds, sees_claw, set_anim, set_state,
+    accept_hit, attacker, build, claw_invisible, data, data_mut, die, face_claw, field, obj,
+    obj_mut, play, rand, record, record_bounds, record_bounds_y, sees_claw, set_anim, set_state,
 };
 use crate::logic::World;
 use crate::logic::projectile::{self, ProjectileSpec};
@@ -174,10 +174,7 @@ fn handler(s: EnemyState) -> Option<Handler> {
 pub fn construct(w: &mut World, id: ObjectId) {
     let fields = EnemyFields {
         bounds: record_bounds(w, id),
-        bounds_y: (
-            limit(record(w, id, field::Y_MIN), UNBOUNDED.0),
-            limit(record(w, id, field::Y_MAX), UNBOUNDED.1),
-        ),
+        bounds_y: record_bounds_y(w, id),
         stationary: record(w, id, field::USER_0) > 0,
         ledge_guard: true,
         z_sort: true,

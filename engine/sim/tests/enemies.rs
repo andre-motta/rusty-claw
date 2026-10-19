@@ -695,6 +695,58 @@ fn a_walker_starting_outside_its_limits_is_put_on_the_nearest() {
     assert_eq!(obj(&sim, id).x, 2700);
 }
 
+#[test]
+fn a_rat_placed_beside_its_range_is_built_on_its_limit_standing_on_the_floor() {
+    let rat_at = |x: i32| {
+        let sim = sim_with(arena(vec![bounded("Rat", x, 900, 2700, 2900)]), 2);
+        let o = obj(&sim, first(&sim, GameLogic::Rat));
+        (o.x, o.y, o.physics_type)
+    };
+    let on_limit = rat_at(2700);
+    assert_eq!(on_limit.0, 2700);
+    // Placed 200 px left of its range, or 300 px right of it: built on the
+    // nearer limit, on the floor as if it had been placed there.
+    assert_eq!(rat_at(2500), on_limit);
+    assert_eq!(rat_at(3200), (2900, on_limit.1, on_limit.2));
+}
+
+#[test]
+fn the_construction_step_clamps_across_and_up_and_down_when_set() {
+    let mut o = Object::new(0, 2500, 900, 0, Arc::from("Rat"), LogicKind::Inert);
+    enemy::clamp_on_construction(&mut o, (2700, 2900), (1000, 1100));
+    assert_eq!((o.x, o.y), (2700, 1000));
+    o.x = 3000;
+    o.y = 1200;
+    enemy::clamp_on_construction(&mut o, (2700, 2900), (1000, 1100));
+    assert_eq!((o.x, o.y), (2900, 1100));
+    // Without limits nothing moves.
+    o.x = 5;
+    o.y = 7;
+    enemy::clamp_on_construction(&mut o, enemy::UNBOUNDED, enemy::UNBOUNDED);
+    assert_eq!((o.x, o.y), (5, 7));
+}
+
+#[test]
+fn an_enemy_woken_by_its_placement_and_built_far_from_it_sleeps_again() {
+    // Claw starts at x 1000: the rat placed 700 px right of him is inside
+    // the enemies' 800 px half width of the activation window and wakes
+    // while the level loads; its range starts 1600 px right of him, so it
+    // is built outside the window and sleeps at the end of the first tick.
+    // A rat placed in its range at the same point stays awake.
+    let far = arena(vec![bounded("Rat", 1700, 900, 2600, 2700)]);
+    let near = arena(vec![bounded("Rat", 1700, 900, 1600, 1800)]);
+    let mut asleep = Vec::new();
+    for level in [far, near] {
+        let mut sim = Sim::new(level, SimConfig::default());
+        let id = first(&sim, GameLogic::Rat);
+        assert!(obj(&sim, id).is_listed(), "woken while the level loads");
+        sim.step(TickInput::default());
+        asleep.push((obj(&sim, id).x, !obj(&sim, id).is_listed()));
+    }
+    assert_eq!(asleep[0], (2600, true));
+    assert!(!asleep[1].1, "awake in its range");
+}
+
 // ----------------------------------------------------------------------
 // The soldier
 
@@ -1281,6 +1333,52 @@ fn on_a_narrow_ledge_an_enemy_leaps_at_claw_nearby_and_stays_put_otherwise() {
     let mut ledge = Sim::clone(&sim);
     let on = ledge.with_world(|w| motion::on_narrow_ledge(w, id));
     assert!(on);
+}
+
+/// A platform of columns 20 to 30 (its top row the feet rest on is 831),
+/// with clear air left of it, and optionally a wall of column 21 rising
+/// from it, and an Officer placed at x 1312 with Claw far away.
+fn ledge_beside(wall: bool) -> Sim {
+    let mut rows = vec![".".repeat(200); 15];
+    rows[13].replace_range(20..31, &"#".repeat(11));
+    if wall {
+        rows[12].replace_range(21..22, "#");
+        rows[11].replace_range(21..22, "#");
+    }
+    rows.push("#".repeat(200));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let spot = record("Officer", 20 * 64 + 32, 13 * 64 - 52);
+    sim_with(level(&rows, (3000, 600), vec![spot]), 1)
+}
+
+#[test]
+fn a_wall_rising_from_a_wide_floor_ends_a_narrow_ledge() {
+    // The floor ends 33 px to the left; on the right a wall rises 32 px
+    // away from a floor that goes on for 600 px. The wall ends the ledge,
+    // so with Claw far away the Officer stays put.
+    let mut sim = ledge_beside(true);
+    idle(&mut sim, 400);
+    let id = first(&sim, GameLogic::Officer);
+    assert_eq!(feet_of(obj(&sim, id)), 831, "on the platform");
+    assert!(data(&sim, id).stationary);
+    assert_eq!(obj(&sim, id).x, 20 * 64 + 32);
+    let mut ledge = Sim::clone(&sim);
+    assert!(ledge.with_world(|w| motion::on_narrow_ledge(w, id)));
+}
+
+#[test]
+fn a_clear_floor_run_beside_an_enemy_is_not_a_narrow_ledge() {
+    // The same platform without the wall: the floor goes on to the right,
+    // so the ledge is not narrow and the Officer is free to pace.
+    let mut sim = ledge_beside(false);
+    let id = first(&sim, GameLogic::Officer);
+    let mut ledge = Sim::clone(&sim);
+    idle(&mut ledge, 1);
+    assert_eq!(feet_of(obj(&ledge, id)), 831, "on the platform");
+    assert_eq!(obj(&ledge, id).x, 20 * 64 + 32);
+    assert!(!ledge.with_world(|w| motion::on_narrow_ledge(w, id)));
+    idle(&mut sim, 400);
+    assert!(!data(&sim, id).stationary);
 }
 
 // ----------------------------------------------------------------------

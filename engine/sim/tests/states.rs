@@ -3,12 +3,19 @@
 
 mod common;
 
+use std::sync::Arc;
+
+use claw_sim::anim::Animation;
+use claw_sim::claw_frame::{AudioCue, SoundChannel};
+use claw_sim::logic::sound;
 use claw_sim::object::Rect;
 use claw_sim::physics::ptype;
-use claw_sim::player::{RowKind, hug, row_of, state};
+use claw_sim::player::{
+    IDLE_WAIT_AFTER_CLOCK_RESET_MS, RowKind, TEETER_VOICE, attack, hug, row_of, state,
+};
 use claw_sim::tiles::TileMap;
 use claw_sim::tuning::Behaviour;
-use claw_sim::{Sim, SimConfig, SimLevel, TickInput, Tuning};
+use claw_sim::{Carry, Sim, SimConfig, SimLevel, StartState, TickInput, Tuning};
 use common::*;
 
 #[test]
@@ -108,6 +115,170 @@ fn standing_over_a_ledge_teeters() {
     assert_eq!(sim.player().unwrap().state, state::ON_EDGE);
     sim.step(press(LEFT));
     assert_eq!(sim.player().unwrap().state, state::MOVE_LEFT);
+}
+
+/// The voice lines started in the last tick.
+fn voice(sim: &Sim) -> Vec<String> {
+    sim.last_audio()
+        .iter()
+        .filter_map(|c| match c {
+            AudioCue::Play(s) if s.channel == SoundChannel::Voice => Some(s.key.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_teeter_line_is_said_through_claws_dialog_helper() {
+    let mut level = ledge_level();
+    level.sounds.insert(TEETER_VOICE.to_string(), Some(1000));
+    let mut cfg = SimConfig::default();
+    cfg.tuning.player.teeter_voice_percent = 100;
+    let mut sim = pressing_sim(level, cfg);
+    sim.step(TickInput::default());
+    let helper = |sim: &Sim| {
+        sim.objects()
+            .all()
+            .find(|(_, o)| &*o.logic == sound::CLAW_DIALOG_LOGIC)
+            .map(|(_, o)| (o.z, o.is_listed()))
+    };
+    assert_eq!(helper(&sim), None);
+    let y = sim.player().unwrap().y;
+    sim.teleport_player(650, y);
+    sim.step(TickInput::default());
+    assert_eq!(sim.player().unwrap().state, state::ON_EDGE);
+    assert_eq!(voice(&sim), [TEETER_VOICE]);
+    assert!(
+        sim.with_world(|w| sound::claw_is_speaking(w)),
+        "one of his lines"
+    );
+    // His helper follows him at his depth + 1, in the object list, and
+    // stays there after the line.
+    idle(&mut sim, 80);
+    assert!(
+        !sim.with_world(|w| sound::claw_is_speaking(w)),
+        "the line is over"
+    );
+    let z = sim.player().unwrap().z;
+    assert_eq!(helper(&sim), Some((z + 1, true)));
+}
+
+#[test]
+fn a_teeter_line_is_refused_while_another_of_his_lines_runs() {
+    let mut level = ledge_level();
+    level.sounds.insert(TEETER_VOICE.to_string(), Some(1000));
+    level.sounds.insert("CLAW_LINE".to_string(), Some(5000));
+    let mut cfg = SimConfig::default();
+    cfg.tuning.player.teeter_voice_percent = 100;
+    let mut sim = pressing_sim(level, cfg);
+    sim.step(TickInput::default());
+    assert!(sim.with_world(|w| sound::claw_say(w, "CLAW_LINE", false)));
+    sim.step(TickInput::default());
+    assert_eq!(voice(&sim), ["CLAW_LINE"]);
+    let (y, rng) = (sim.player().unwrap().y, sim.rng_state());
+    sim.teleport_player(650, y);
+    sim.step(TickInput::default());
+    assert_eq!(sim.player().unwrap().state, state::ON_EDGE);
+    assert!(voice(&sim).is_empty(), "refused");
+    assert_ne!(sim.rng_state(), rng, "the chance is still drawn");
+}
+
+/// A flat level with Claw's standing and idle animations: the idle
+/// animation's second picture (10 ms) carries the idle line's event.
+fn idle_level() -> SimLevel {
+    let mut level = flat_level();
+    let stand = Animation::looping("CLAW_STAND", &[(1, 200)]);
+    let mut idle = Animation::once("CLAW_IDLE", &[(1, 500), (2, 10), (3, 500)]);
+    idle.frames[1].event = attack::STAND_FRAME_EVENT;
+    for a in [stand, idle] {
+        level.animations.insert(a.key.clone(), Arc::new(a));
+    }
+    for key in attack::IDLE_LINES {
+        level.sounds.insert(key.to_string(), Some(1000));
+    }
+    level
+}
+
+fn idling(sim: &Sim) -> bool {
+    sim.player().unwrap().anim.key() == Some("CLAW_IDLE")
+}
+
+#[test]
+fn standing_still_from_the_level_start_claw_idles_after_20_s() {
+    let mut sim = pressing_sim(idle_level(), SimConfig::default());
+    assert_eq!(sim.claw().afk_time, IDLE_WAIT_AFTER_CLOCK_RESET_MS);
+    sim.step(TickInput::default());
+    assert_eq!(sim.claw().afk_time, 20_000 - 18);
+    // 20000 ms run out in the 1112th tick (20016 ms).
+    let first = (1..2000)
+        .find(|_| {
+            sim.step(TickInput::default());
+            idling(&sim)
+        })
+        .expect("the idle animation");
+    assert_eq!(first, 1111);
+}
+
+#[test]
+fn the_idle_animation_says_one_of_the_idle_lines() {
+    let mut sim = pressing_sim(idle_level(), SimConfig::default());
+    let mut said = Vec::new();
+    for tick in 0..1300 {
+        let mut pick = sim.rng().clone();
+        sim.step(TickInput::default());
+        let lines: Vec<String> = voice(&sim)
+            .into_iter()
+            .filter(|k| attack::IDLE_LINES.contains(&k.as_str()))
+            .collect();
+        if !lines.is_empty() {
+            // One draw of 0..12 picks the line.
+            let line = attack::IDLE_LINES[pick.below(12) as usize];
+            assert_eq!(lines, [line]);
+            assert_eq!(sim.rng_state(), pick.state(), "one draw in tick {tick}");
+            said.push(tick);
+        }
+    }
+    assert_eq!(said.len(), 1, "{said:?}");
+    // Once the idle animation is over (about 60 ticks after it started in
+    // tick 1111), the wait is the stand's own 15 s.
+    assert!(!idling(&sim));
+    let left = sim.claw().afk_time;
+    assert!((15_000 - 18 * 200..15_000).contains(&left), "{left}");
+}
+
+#[test]
+fn a_respawn_restarts_the_long_idle_wait() {
+    let start = StartState {
+        carry: Some(Carry {
+            lives: 3,
+            ..Carry::default()
+        }),
+        save: None,
+    };
+    let mut sim = Sim::with_start(idle_level(), SimConfig::default(), start);
+    sim.latch_keys();
+    sim.unlatch_keys();
+    idle(&mut sim, 30);
+    sim.end_life();
+    let mut ticks = 0;
+    while !sim.respawn_pending() {
+        sim.step(TickInput::default());
+        ticks += 1;
+        assert!(ticks < 2000, "no respawn");
+    }
+    assert!(sim.respawn_now());
+    assert_eq!(sim.claw().afk_time, IDLE_WAIT_AFTER_CLOCK_RESET_MS);
+    sim.step(TickInput::default());
+    assert_eq!(sim.claw().afk_time, 20_000 - 18);
+}
+
+#[test]
+fn restarting_the_idle_wait_sets_it_to_20_s() {
+    let mut sim = pressing_sim(idle_level(), SimConfig::default());
+    idle(&mut sim, 100);
+    assert_eq!(sim.claw().afk_time, 20_000 - 100 * 18);
+    sim.restart_idle_wait();
+    assert_eq!(sim.claw().afk_time, IDLE_WAIT_AFTER_CLOCK_RESET_MS);
 }
 
 #[test]

@@ -57,13 +57,15 @@
 //! [`Session::directives`] lists every directive given or played so far;
 //! the recorder writes them into the recording. A pause or menu changes
 //! nothing in the game itself: play stops and goes on where it stopped,
-//! with the input the ticks after it were recorded with. There are two
+//! with the input the ticks after it were recorded with. There are three
 //! exceptions, live and replayed alike: with the fuse clock at its original
 //! default ([`claw_sim::tuning::FuseClock`]) the time the help screen was up
 //! reaches the dynamite fuse at the boundary after it
-//! ([`Sim::pass_menu_time`]), and with the original rule for keys (see
+//! ([`Sim::pass_menu_time`]), with the original rule for keys (see
 //! below) the keys down when a screen closes count as already pressed
-//! ([`Sim::latch_keys`]).
+//! ([`Sim::latch_keys`]), and as play resumes the game's clock is reset, so
+//! Claw's idle wait starts again at its long first value
+//! ([`Sim::restart_idle_wait`]).
 //!
 //! # Going on after a pause or a screen
 //!
@@ -836,6 +838,8 @@ impl Session {
                 if let Some(ms) = self.hold_menu_ms.take() {
                     self.sim.pass_menu_time(ms);
                 }
+                // Play resumes: the game's clock is reset.
+                self.sim.restart_idle_wait();
                 if std::mem::take(&mut self.hold_screen) && self.pause_input == PauseInput::Original
                 {
                     self.sim.latch_keys();
@@ -1108,6 +1112,13 @@ impl Session {
         };
         if let Span::Menu(MenuScreen::Help) = span.span {
             self.sim.pass_menu_time(span.wall_ms());
+        }
+        // Play resumes after a pause or a screen: the game's clock is reset.
+        // A replay being watched plays its own pauses and menus (where the
+        // reset comes as each one's hold ends), so pausing it changes
+        // nothing in the game.
+        if !self.replaying() {
+            self.sim.restart_idle_wait();
         }
         if self.pause_input == PauseInput::Original {
             let held = self.down;

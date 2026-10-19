@@ -300,11 +300,6 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// tolerance, per store and clock; a column not listed must stay within
 /// it, and one listed must not leave it earlier. What they come from:
 ///
-/// - c18, hook-engage, 18000 ms (rng): Claw has stood still for 17 s and
-///   his idle animation reaches the picture on which he says one of his
-///   idle lines, which draws from the random stream. The idle line is not
-///   built (his idle animation plays, silent). The pirate stabs on in both
-///   games.
 /// - c18, hook-pistol (4392 ms) and hook-pistol-hold (2052 ms), pistol:
 ///   Claw's second shot leaves a row early. Pressed again while his first
 ///   shot's pose still holds, it rewinds the shot's animation, and the
@@ -340,7 +335,6 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   pistol routes Claw's second shot leaves a row early as at the 18 ms
 ///   step.
 const KNOWN: &[Known] = &[
-    ("hook-engage", "c18", &[("rng", 18000)]),
     (
         "hook-pistol",
         "c18",
