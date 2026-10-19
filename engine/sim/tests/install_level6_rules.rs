@@ -4,7 +4,8 @@
 //! each of these rules first shows on those routes, the game does what
 //! the original did there. The routes are the sixth level's
 //! original-speeds route and its intro-skip route, kept here as they were
-//! run up to Claw's arrival in Wolvington's room.
+//! run up to Claw's arrival in Wolvington's room, and the sixth level of
+//! the game that starts on the fifth, kept as it was run up to tick 6656.
 //!
 //! 1. A warp door runs every awake object once more with no game time
 //!    before the first tick at the target, with the frame pulse of the
@@ -17,13 +18,27 @@
 //!    the door is touched in tick 13315, not a pulse tick, so the warp
 //!    draws nothing; tick 13316 is a pulse tick and, the guards asleep,
 //!    only Wolvington (serial 183) makes his roll there.
+//! 2. An enemy's movement clock starts when it is built, so its first
+//!    move after the sleep that follows its building covers all the time
+//!    since. On the game's sixth level the rat of serial 45, placed at
+//!    (15682, 5020), is woken at its placement point and built in tick
+//!    6064, Home on the floor at y 5008, outside its activation window, so
+//!    it sleeps at the end of that tick. The window reaches it again in
+//!    tick 6070: Home turns it left at 60 px/s and its first move covers
+//!    the 0.108 s since tick 6064, to x 15675 (exactly 15675.52), and one
+//!    tick a step after that. The rat later throws a bomb from that
+//!    position, which breaks the crate of serial 1214 in tick 6655: the
+//!    crate's break sound draws in that tick.
 //!
 //! The random stream equals the original's after every tick checked here.
 
 use claw_assets::{Install, LevelData, LevelSource};
+use claw_sim::logic::crates;
+use claw_sim::logic::enemy::{self, EnemyState};
 use claw_sim::object::Object;
+use claw_sim::player::progress::parse_start_lines;
 use claw_sim::player::state;
-use claw_sim::{InputScript, Sim, SimConfig, SimLevel, Tuning};
+use claw_sim::{InputScript, Sim, SimConfig, SimLevel, StartState, Tuning};
 
 /// The random state the reference runs of the sixth level start from.
 const LEVEL6_RNG_AT_T0: u32 = 2_731_780_393;
@@ -258,6 +273,81 @@ const INTRO_SKIP_ROUTE: &str = "
     2000000:2 2000001:14 2000000:2 0:6 2000000:6 8000000:6 1000001:2 1000000:8 2000001:3
 ";
 
+/// The sixth level of the game that starts on the fifth, its first 6657
+/// ticks.
+const PAIR_ROUTE: &str = "
+    0:2 2000000:96 8000000:6 8000002:2 8000000:6 2000000:36 2000001:5 2000000:14 0:6 2000001:2
+    2000000:8 2:2 0:6 1000000:6 2000000:6 0:6 2000001:2 2000000:8 2:2 0:12 2000000:6 2000001:5
+    2000000:2 0:6 2:2 0:6 2000000:108 1000000:6 2:2 0:6 2000000:18 1000001:5 1000000:8 0:12
+    1000001:2 1000000:50 2000000:6 2:2 0:6 2000000:6 0:12 2000000:18 2000001:9 2000000:8 2:2 0:6
+    2000000:6 1:9 0:2 2:2 0:6 2000000:12 2000001:14 2000000:26 0:18 2000001:14 2000000:26
+    2000001:14 2000000:26 2000001:14 2000000:26 2000001:14 2000000:26 0:18 2000000:6 2000001:14
+    2000000:26 2000001:14 2000000:26 2000001:9 2000000:2 2:2 0:6 2000000:6 1000000:6 2:2 0:6
+    1000000:36 1000001:14 1000000:26 1000001:14 1000000:20 0:6 1:14 0:2 1000000:6 4000000:6
+    2000001:14 2000000:2 1000000:6 5000000:6 2000001:14 2000000:2 1000000:6 5000000:6 2000001:14
+    2000000:2 1000000:6 5000000:6 2000001:14 2000000:2 1000000:6 5000000:6 2000001:14 2000000:2
+    1000000:6 5000000:6 2000001:14 2000000:20 2000001:14 2000000:128 2000001:5 2000000:2 2:2 0:6
+    2000000:6 8000000:6 2000001:2 2000000:2 2:2 0:6 2000000:42 2:2 0:12 2000000:12 8000000:6
+    1000001:2 1000000:2 8000000:6 2000001:14 2000000:2 0:6 2000000:12 2:2 0:6 2000000:6 2000001:14
+    2000000:8 2:2 0:6 1000000:6 0:6 2000000:66 0:6 1000000:6 6000000:6 2000001:14 2000000:20 1:14
+    0:2 2000000:6 0:6 2:2 0:6 2000001:14 2000000:20 0:6 2:2 0:6 2000001:14 2000000:14 0:6
+    2000001:14 2000000:14 6000000:6 2000001:14 2000000:2 1000000:6 5000000:6 2000001:14 2000000:2
+    1000000:6 5000000:6 2000001:14 2000000:2 1000000:6 5000000:6 2000001:14 2000000:2 1000000:6
+    5000000:6 2000001:5 2000000:2 5000000:6 2000001:14 2000000:20 8000000:6 1000001:2 1000000:2
+    2000001:14 2000000:26 2000001:14 2000000:26 2000001:14 2000000:26 2000001:14 2000000:20
+    2000001:14 2000000:32 2000001:14 2000000:20 0:6 1:14 0:2 2000000:24 2000001:14 2000000:26
+    2000001:14 2000000:20 2000001:14 2000000:8 0:6 2000000:6 1:14 0:2 2000000:24 2000001:9
+    2000000:62 0:6 2000001:14 2000000:26 2000001:5 2000000:2 0:6 2:2 0:6 2000001:14 2000000:26
+    8000000:6 2000001:2 2000000:2 2000001:9 2000000:32 2000001:5 2000000:14 0:6 2000001:14
+    2000000:50 0:6 2000001:9 2000000:14 0:12 2000001:14 2000000:38 2000001:5 2000000:44 2000001:5
+    2000000:2 2:2 0:6 1000000:6 2000000:12 2:2 0:6 2000000:42 2000001:2 2000000:2 2:2 0:6 2000000:6
+    0:6 2:2 0:6 2000000:78 0:24 2000001:14 2000000:8 6000000:6 2000001:14 2000000:2 0:6 1000000:6
+    2000000:48 2000001:5 2000000:2 2:2 0:12 2000000:6 0:6 2:2 0:6 2000000:18 8000000:6 2000001:14
+    2000000:44 8000000:6 8000002:2 8000000:6 2000000:18 2000001:2 2000000:2 2:2 0:6 2000000:6 0:6
+    8000002:2 8000000:6 2000001:14 2000000:98 1000000:6 2:2 0:6 1000000:6 0:12 1000000:12
+    1000001:14 1000000:8 0:18 1000000:72 2:2 0:6 2000000:6 0:12 2:2 0:30 2:2 0:18 8000000:12
+    8000002:2 8000000:6 0:6 8000000:6 1:14 0:2 2000000:6 8000000:6 1:14 0:2 8000002:2 8000000:6
+    8000002:2 8000000:6 0:6 8000000:12 8000002:2 8000000:6 2000000:6 0:6 8000002:2 8000000:6 1:14
+    0:2 8000002:2 8000000:18 8000002:2 8000000:6 0:6 8000000:6 2000001:5 2000000:2 2:2 0:18
+    2000001:14 2000000:20 6000000:6 2000001:14 2000000:2 1000000:12 5000000:6 2000001:14 2000000:2
+    1000000:6 5000000:6 2000001:14 2000000:2 1000000:6 5000000:6 2000001:14 2000000:2 1000000:6
+    5000000:6 2000001:14 2000000:26 2000001:14 2000000:8 2:2 0:6 2000001:14 2000000:2 2:2 0:6
+    2000000:6 0:12 2000001:14 2000000:26 2000001:14 2000000:26 2000001:14 2000000:26 2000001:14
+    2000000:14 1000000:6 0:6 1:14 0:2 2000000:24 2000001:14 2000000:14 0:6 2000000:6 1:14 0:2
+    2000000:24 2000001:14 2000000:14 0:6 2000000:6 1:14 0:2 2000000:24 2000001:14 2000000:8 0:12
+    2000000:6 1:14 0:2 2000000:24 2000001:14 2000000:26 2000001:14 2000000:20 0:6 1:5 0:2 1000000:6
+    2:2 0:6 2:2 0:6 2000000:42 2000001:9 2000000:38 2000001:2 2000000:2 2:2 0:6 2000000:6 0:6 2:2
+    0:18 2000000:12 2000001:5 2000000:2 0:6 2:2 0:6 2000000:6 2000001:9 2000000:20 0:6 2:2 0:6
+    2000000:6 0:6 1:2 0:2 2:2 0:6 2000000:30 8000000:6 2000001:2 2000000:2 8000000:6 8000002:2
+    8000000:6 2000000:24 2:2 0:6 2000000:6 0:6 8000002:2 8000000:6 2000001:2 2000000:2 0:6
+    2000000:90 2000001:2 2000000:2 2:2 0:6 2000000:6 0:6 2:2 0:6 2000000:18 0:6 1:2 0:2 2:2 0:6
+    2000000:6 0:6 8000002:2 8000000:6 2000001:14 2000000:38 2000001:5 2000000:2 2:2 0:6 1000000:6
+    2000000:12 2000001:5 2000000:2 0:6 2:2 0:6 2000000:18 2000001:5 2000000:2 2:2 0:6 2000000:18
+    0:6 2:2 0:6 2000000:24 2000001:5 2000000:2 2:2 0:12 2000000:6 2000001:2 2000000:2 2:2 0:6
+    2000000:6 0:6 2000001:2 2000000:20 2:2 0:6 2000000:18 1000000:6 2:2 0:6 8000002:2 8000000:6
+    8000002:2 8000000:6 2000000:6 2000001:5 2000000:20 2000001:9 2000000:8 2:2 0:6 2000000:36
+    8000000:6 2000001:14 2000000:14 2:2 0:6 2000000:18 0:6 2000000:6 1000001:2 1000000:2 2000000:6
+    0:12 1:5 0:8 2:2 0:6 2000001:14 2000000:20 2:2 0:18 2000001:14 2000000:8 1000000:18 0:99
+    2000001:5 2000000:20 2000001:14 2000000:8 1000000:18 0:66 2000001:5 2000000:32 2000001:2
+    2000000:20 2000001:5 2000000:14 0:6 2000001:9 2000000:8 2:2 0:6 2000000:6 0:6 2:2 0:6
+    2000000:12 2000001:14 2000000:26 2000001:14 2000000:2 4000000:6 2000001:14 2000000:2 1000000:12
+    4000000:6 2000001:14 2000000:2 1000000:12 6000000:6 2000001:14 2000000:2 1000000:6 5000000:6
+    2000001:14 2000000:2 1000000:6 5000000:6 2000001:14 2000000:20 2000001:14 2000000:20 1:14 0:2
+    2000000:12 0:2
+";
+
+/// The progress that game carries into the sixth level.
+const PAIR_START: &str = "
+    # start_score = 346600
+    # start_health = 55
+    # start_lives = 7
+    # start_pistol = 0
+    # start_magic = 10
+    # start_dynamite = 2
+    # start_weapon = dynamite
+    # start_treasure_game = 176, 25, 21, 16, 30, 6, 5, 0, 0
+";
+
 /// The original's random state after these ticks of the first route.
 const BOT_RNG: [(usize, u32); 5] = [
     (13246, 219_789_343),
@@ -275,6 +365,19 @@ const INTRO_SKIP_RNG: [(usize, u32); 5] = [
     (13317, 9_732_774),
     (13318, 9_732_774),
 ];
+
+/// The original's random state after these ticks of the game's sixth
+/// level.
+const PAIR_RNG: [(usize, u32); 3] = [
+    (6654, 400_962_125),
+    (6655, 1_958_181_852),
+    (6656, 429_910_691),
+];
+
+/// The rat built at the edge of its window on the game's sixth level.
+const EDGE_RAT: u32 = 45;
+/// The crate its bomb breaks.
+const BOMBED_CRATE: u32 = 1214;
 
 /// The three town guards by the boss room's door: their serial numbers.
 const DOOR_GUARDS: [u32; 3] = [135, 113, 134];
@@ -408,4 +511,71 @@ fn install_level6_after_a_door_the_guards_by_it_make_no_pulse_roll() {
         checked += 1;
     }
     assert_eq!(checked, 2);
+}
+
+/// An enemy's exact x: its pixel plus the fraction its last step carried,
+/// unless something else has moved it since.
+fn exact_x(o: &Object) -> f64 {
+    let d = enemy::data_of(o).expect("enemy data");
+    if d.moved_to == Some((o.x, o.y)) {
+        f64::from(o.x) + d.carry.0
+    } else {
+        f64::from(o.x)
+    }
+}
+
+#[test]
+fn install_level6_a_rats_first_move_after_its_building_sleep_covers_the_time_since() {
+    let Some(level) = level6() else { return };
+    let script = route(PAIR_ROUTE, 6657);
+    let carry = parse_start_lines(PAIR_START).expect("start lines");
+    let mut sim = Sim::with_start(level, config(), StartState { carry, save: None });
+    let mut checked = 0;
+    for (tick, t) in script.ticks.iter().enumerate() {
+        sim.step(*t);
+        check_rng(&sim, &PAIR_RNG, tick);
+        if !(6063..=6072).contains(&tick) && !(6654..=6656).contains(&tick) {
+            continue;
+        }
+        let rat = by_serial(&sim, EDGE_RAT).expect("the rat");
+        let state = EnemyState::from_id(rat.state);
+        let d = enemy::data_of(rat);
+        match tick {
+            6063 => assert!(d.is_none(), "not built yet"),
+            6064 => {
+                let d = d.expect("built");
+                assert_eq!(state, Some(EnemyState::Home));
+                assert_eq!((rat.x, rat.y), (15682, 5008), "on its floor");
+                assert!(!awake(&sim, EDGE_RAT), "outside its window");
+                assert_eq!(d.last_move_ms, Some(6064 * 18), "its clock starts");
+            }
+            6065..=6069 => {
+                assert!(!awake(&sim, EDGE_RAT), "asleep");
+                assert_eq!((rat.x, rat.y), (15682, 5008));
+            }
+            6070 => {
+                assert!(awake(&sim, EDGE_RAT), "woken");
+                assert_eq!(state, Some(EnemyState::MoveLeft));
+                assert_eq!(rat.x, 15675, "six ticks of walking, not one");
+                assert!((exact_x(rat) - 15_675.52).abs() < 1e-6, "{}", exact_x(rat));
+            }
+            6071 => {
+                assert_eq!(rat.x, 15674);
+                assert!((exact_x(rat) - 15_674.44).abs() < 1e-6, "{}", exact_x(rat));
+            }
+            6072 => assert!((exact_x(rat) - 15_673.36).abs() < 1e-6, "{}", exact_x(rat)),
+            6654 | 6655 => {
+                let c = by_serial(&sim, BOMBED_CRATE).expect("the crate");
+                let want = if tick == 6654 {
+                    crates::state::IDLE
+                } else {
+                    crates::state::BREAKING
+                };
+                assert_eq!(c.state, want, "the crate after tick {tick}");
+            }
+            _ => continue,
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 12);
 }

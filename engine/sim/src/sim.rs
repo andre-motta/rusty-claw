@@ -212,6 +212,8 @@ struct Runner<'a> {
     /// settle after a warp.
     move_ms: u32,
     pulse: bool,
+    /// The calls are the first calls of a set-up pass ([`World::set_up`]).
+    set_up: bool,
     player: Option<ObjectId>,
     /// The ambient manager, recorded when [`Runner::list_spawned`] lists it.
     ambient: &'a mut Option<ObjectId>,
@@ -250,6 +252,7 @@ impl Runner<'_> {
             view,
             out: &mut *self.out,
             aids: self.cfg.aids,
+            set_up: self.set_up,
         }
     }
 
@@ -702,6 +705,7 @@ impl Sim {
                 dt_ms: self.frame_ms,
                 move_ms: TICK_MS,
                 pulse: self.pulse_left == 0,
+                set_up: false,
                 player: self.player,
                 ambient: &mut self.ambient,
             },
@@ -1073,6 +1077,7 @@ impl Sim {
         let mut destroy = Vec::new();
         let mut resort = Vec::new();
         let (mut runner, objects, _) = self.parts();
+        runner.set_up = set_up;
         let mut cur = objects.head();
         while let Some(id) = cur {
             cur = objects.next_of(id);

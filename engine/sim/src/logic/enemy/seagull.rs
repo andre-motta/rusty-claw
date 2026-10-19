@@ -303,6 +303,7 @@ pub fn construct(w: &mut World, id: ObjectId) {
     o.data = ObjectData::Seagull(SeagullData {
         enemy: EnemyFields { vy, ..fields }.into(),
     });
+    super::start_move_clock(w, id);
     go_idle(w, id);
 }
 

@@ -33,12 +33,13 @@
 //!   bounces: the speed becomes -0.5 times the speed, and it moves in the
 //!   same call.
 //! - The move is `(v + a dt / 2) dt` with gravity 2000 px/s² and `dt` the
-//!   time the enemies' step covers (two game clock readings apart); the
-//!   speed then grows by `a dt`. A move that would pass the floor puts it
-//!   exactly on the floor, with the speed `sqrt(v^2 + 2 a (floor - y))`
-//!   (the sign of `v`), `y` where the move would have put it: falling at
-//!   500 px/s, 2.152 px past the floor, it lands at 491.3166 px/s. So the
-//!   bounce comes on the call after the landing.
+//!   time the enemies' step covers (two game clock readings apart, the
+//!   first from the time the crate was built); the speed then grows by
+//!   `a dt`. A move that would pass the floor puts it exactly on the
+//!   floor, with the speed `sqrt(v^2 + 2 a (floor - y))` (the sign of
+//!   `v`), `y` where the move would have put it: falling at 500 px/s,
+//!   2.152 px past the floor, it lands at 491.3166 px/s. So the bounce
+//!   comes on the call after the landing.
 //! - It never falls faster than 500 px/s.
 //!
 //! Statues ([`super::statue`]) are single crates with a different drop
@@ -151,8 +152,8 @@ pub struct CrateData {
     pub vy: f64,
     /// In a stack: its exact height below its pixel.
     pub rest: f64,
-    /// In a stack: game time of its last movement step, ms (`None` before
-    /// the first).
+    /// In a stack: game time of its last movement step, ms, from the time
+    /// it was built (`None` before then).
     pub last_move_ms: Option<u64>,
 }
 
@@ -411,6 +412,7 @@ fn build_stack(w: &mut World, id: ObjectId) {
     let (x, y, z, frame) = (o.x, o.y, o.z, o.frame);
     let (sx, sy) = (o.speed_x, o.speed_y);
     let contents = stack_contents(o.record.as_deref().map_or(&[][..], |r| &r[..]));
+    let built_at = enemy::built_at_ms(w);
     let mut ids = Vec::with_capacity(contents.len());
     for (i, &content) in contents.iter().enumerate() {
         let i = i as i32;
@@ -434,6 +436,8 @@ fn build_stack(w: &mut World, id: ObjectId) {
             index: i,
             floor: f64::from(y - STACK_STEP * i),
             base: y,
+            // Its movement clock starts when it is built, as an enemy's.
+            last_move_ms: built_at,
             ..CrateData::default()
         });
         ids.push(w.spawn(c));
@@ -459,6 +463,7 @@ fn stacked_tick(w: &mut World, id: ObjectId) {
         // with their per-tick roll.
         enemy::pulse_roll(w);
     }
+    let built_at = enemy::built_at_ms(w);
     let o = w.objects.get_mut(id).expect("caller checked");
     match o.state {
         state::INIT => {
@@ -475,6 +480,7 @@ fn stacked_tick(w: &mut World, id: ObjectId) {
             d.content = content;
             d.floor = f64::from(y);
             d.base = y;
+            d.last_move_ms = built_at;
             o.state = state::STACKED;
         }
         state::STACKED => fall(w, id),
