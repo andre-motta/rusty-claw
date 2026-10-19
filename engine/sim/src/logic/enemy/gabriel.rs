@@ -464,6 +464,7 @@ pub static CLASS: Class = Class {
     go_idle,
     carry: Some(CARRY),
     pick_lift_voice: super::nothing,
+    lift_roll: true,
     anims: ClassAnims::NONE,
     sounds: ClassSounds::NONE,
 };

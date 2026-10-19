@@ -126,6 +126,7 @@ pub static CLASS: Class = Class {
     go_idle,
     carry: None,
     pick_lift_voice: super::nothing,
+    lift_roll: true,
     anims: ClassAnims {
         advance: "",
         fast_advance: "",

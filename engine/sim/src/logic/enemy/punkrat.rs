@@ -130,6 +130,7 @@ pub static CLASS: Class = Class {
     go_idle: super::nothing,
     carry: None,
     pick_lift_voice: super::nothing,
+    lift_roll: true,
     anims: ClassAnims {
         walk: WALK_ANIM,
         ..ClassAnims::NONE

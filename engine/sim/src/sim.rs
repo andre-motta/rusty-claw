@@ -133,6 +133,9 @@ pub struct Sim {
     camera: Camera,
     camera_point: (i32, i32),
     camera_override: Option<(i32, i32)>,
+    /// Where the level's load left Claw: the first tick's enter pass wakes
+    /// the objects around it (see [`Sim::enter_centres`]).
+    load_point: (i32, i32),
     rng: Rng,
     sound_rng: Rng,
     tick: u64,
@@ -523,6 +526,7 @@ impl Sim {
             camera: Camera::default(),
             camera_point: level.start,
             camera_override: None,
+            load_point: level.start,
             tick: 0,
             input: TickInput::default(),
             latched: Buttons(u32::MAX),
@@ -578,6 +582,9 @@ impl Sim {
         // in list order, so their set-up draws come before time zero and
         // their first update in the first tick.
         sim.set_up_pass();
+        if let Some(c) = sim.player.and_then(|id| sim.objects.get(id)) {
+            sim.load_point = (c.x, c.y);
+        }
         sim.set_up_rng = sim.rng.state();
         sim.rng = Rng::new(sim.cfg.seed);
         // The level's clock starts: Claw's first idle wait is the long one.
@@ -683,6 +690,20 @@ impl Sim {
         Centres::new(&self.cfg.activation, self.level.plane(), self.camera_point)
     }
 
+    /// The centres of a tick's enter pass. The level's load wakes the
+    /// objects around its start point; by the level's first tick the view
+    /// already stands on Claw where the load dropped him, so that tick's
+    /// enter pass wakes the objects around that point: below a start point
+    /// above the floor, a few more than the load did. From then on (the
+    /// camera's first call) the camera's own point counts.
+    fn enter_centres(&self) -> Centres {
+        if self.camera.state == crate::camera::state::INIT {
+            Centres::new(&self.cfg.activation, self.level.plane(), self.load_point)
+        } else {
+            self.centres()
+        }
+    }
+
     fn parts(&mut self) -> (Runner<'_>, &mut Container, &mut Activation) {
         let now_ms = self.held_clock_ms.unwrap_or(self.tick * u64::from(TICK_MS));
         (
@@ -767,8 +788,12 @@ impl Sim {
             let dirs = self.claw_input.held.0 & (Buttons::LEFT.0 | Buttons::RIGHT.0);
             self.claw_input.pressed = Buttons(self.claw_input.pressed.0 | dirs);
         }
-        // A scream's lockout takes the keys from Claw while it runs.
-        scream::lock_input(&mut self.out.scream_lock_ms, TICK_MS, &mut self.claw_input);
+        // A scream's lockout takes the keys from Claw while it runs, and a
+        // locked tick empties the latch: keys held when it runs out count
+        // as pressed then.
+        if scream::lock_input(&mut self.out.scream_lock_ms, TICK_MS, &mut self.claw_input) {
+            self.latched = Buttons::NONE;
+        }
         self.pulse_left = match self.pulse_left {
             0 => PULSE_MS,
             left if left <= TICK_MS => 0,
@@ -780,7 +805,7 @@ impl Sim {
         if std::mem::take(&mut self.end_life) {
             self.apply_end_life();
         }
-        let c = self.centres();
+        let c = self.enter_centres();
         self.activation.enter(&mut self.objects, c);
         self.update_pass();
         self.collision_pass();
