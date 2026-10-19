@@ -277,3 +277,35 @@ fn claw_standing_on_an_opening_slab_is_carried_with_it() {
     let after = sim.player().expect("Claw").x;
     assert_eq!(after - before, 5 * 9, "carried at 5 px a tick");
 }
+
+/// Claw standing still on the closed bridge at `x` when the slabs open:
+/// how far across he is carried in the first ten ticks of the opening.
+fn carried_from(x: i32) -> i32 {
+    let mut sim = room(true);
+    idle(&mut sim, 40);
+    sim.with_world(|w| w.marrow_link_mut().expect("link").open_request = false);
+    idle(&mut sim, 40);
+    let top = SLAB_Y + platform::surface(10, SurfaceKind::BigElevator).top;
+    sim.teleport_player(x, top - 70);
+    idle(&mut sim, 30);
+    let before = sim.player().expect("Claw").x;
+    assert_eq!(before, x, "he stands where he was put");
+    sim.with_world(|w| w.marrow_link_mut().expect("link").open_request = true);
+    idle(&mut sim, 10);
+    sim.player().expect("Claw").x - before
+}
+
+/// The rule behind the bridge trick: a standing Claw whose box reaches the
+/// right slab rides the right slab, even with his x on the left half of
+/// the room's centre seam or exactly on it; only one standing wholly on
+/// the left slab rides the left one. So Claw standing on Marrow's half
+/// (x 40808 or more) never rides the left slab: the trick needs him in the
+/// air at that moment, landing on the left slab after it starts to move.
+#[test]
+fn a_standing_claw_whose_box_reaches_the_right_slab_rides_it() {
+    for x in [40808, 40812] {
+        assert_eq!(carried_from(x), 5 * 9, "at {x}: carried right");
+    }
+    assert_eq!(marrow::ROOM_CENTRE_X, 40808);
+    assert_eq!(carried_from(40804), -5 * 9, "at 40804: carried left");
+}

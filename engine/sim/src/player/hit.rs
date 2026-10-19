@@ -52,7 +52,7 @@ use claw_frame::{AudioCue, GameEvent, SoundChannel};
 
 use super::death::{self, DeathCause, powerup};
 use super::{Ctx, special, state};
-use crate::logic::{self, effect, pickup, projectile};
+use crate::logic::{effect, pickup, projectile};
 use crate::object::{Object, ObjectId, Rect, flags, special as sflags, types};
 use crate::physics::ptype;
 
@@ -334,7 +334,7 @@ pub fn take_damage_from(c: &mut Ctx, damage: i32, attacker: Option<ObjectId>) {
         return;
     }
     if let Some(lifted) = c.p.special.lifted.take() {
-        c.with_world(|w| logic::dropped(w, lifted));
+        c.with_world(|w| special::tell_dropped(w, lifted));
     }
     super::attack::cancel(c);
     let a = attacker.and_then(|id| c.objects.get(id));

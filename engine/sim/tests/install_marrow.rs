@@ -18,6 +18,14 @@
 //!   carry); or the same and then a step down onto the right slab, which
 //!   the carry opens under him; or one pistol shot at the parrot's first
 //!   swoop;
+//! - the bridge trick: the normal fight to five hits on Marrow (and, at
+//!   the original's speeds, a sixth blow he blocks), then Left and a jump
+//!   off his ledge as he whistles, so that Claw is in the air on Marrow's
+//!   half when the parrot starts to carry him (to the left ledge) and lands
+//!   on the left slab as it opens; a second jump off the slab onto the left
+//!   ledge, the fight there (crouched stabs at the original's speeds,
+//!   standing swings at the default ones) while the parrot never perches
+//!   again, and the jump into the gem;
 //! - the skip: Right and Jump on Claw's first row in the room (he lands on
 //!   the left ledge outside the stager's box), one row late (the
 //!   introduction runs), then a walk back into the stager's box;
@@ -301,12 +309,31 @@ fn route(store: &str) -> Route {
             r.checkpoint = Some(DIAGNOSTIC_CHECKPOINT);
             r
         }
+        "boss-bridge-trick-c18" => fight_start("c18", 4400)
+            .taps(ATTACK, 1725, 1858, 12)
+            .hold(LEFT, 1870, 1960)
+            .hold(JUMP, 1870, 1890)
+            .hold(JUMP, 1918, 1938)
+            .hold(RIGHT, 1965, 1967)
+            .hold(DOWN, 1970, 4060)
+            .taps(ATTACK, 1975, 4055, 12)
+            .hold(RIGHT, 4195, 4255)
+            .hold(JUMP, 4210, 4235),
+        "boss-bridge-trick" => fight_start("c60", 3600)
+            .taps(ATTACK, 1749, 1930, 12)
+            .hold(LEFT, 1960, 2043)
+            .hold(JUMP, 1960, 1980)
+            .hold(JUMP, 2008, 2028)
+            .hold(RIGHT, 2048, 2050)
+            .taps(ATTACK, 2058, 3285, 12)
+            .hold(RIGHT, 3310, 3370)
+            .hold(JUMP, 3330, 3355),
         other => panic!("no route {other}"),
     }
 }
 
 /// The stores and the clocks they were run at.
-const STORES: [(&str, &[&str]); 15] = [
+const STORES: [(&str, &[&str]); 17] = [
     ("boss-intro-normal", &["c18", "c60"]),
     ("boss-normal-fight-c18", &["c18"]),
     ("boss-normal-fight", &["c60"]),
@@ -322,6 +349,8 @@ const STORES: [(&str, &[&str]); 15] = [
     ("boss-skip-cross-kill", &["c60"]),
     ("boss-skip-cross-pause-c18", &["c18"]),
     ("boss-skip-death-fight-c18", &["c18"]),
+    ("boss-bridge-trick-c18", &["c18"]),
+    ("boss-bridge-trick", &["c60"]),
 ];
 
 // ----------------------------------------------------------------------
@@ -340,6 +369,16 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   original, which counts each step's game time in seconds as a sum of
 ///   double-precision differences, and on it in this build, which counts
 ///   whole 18 ms steps: the bird is drawn one pixel higher there.
+/// - c18, the bridge trick, Marrow's hops (40698 ms): standing, Marrow's
+///   exact height creeps a part of a pixel below his whole pixel and back
+///   ([`marrow::MarrowData::stand_fraction`]); after the parrot drops him
+///   on the left ledge the original's creep runs on a phase this build
+///   does not follow yet, so some of his dodge hops there start a part of
+///   a pixel higher and are drawn one pixel higher through their arc
+///   (every state and his position across the same).
+/// - c18, the bridge trick, the parrot's late swoop (66258 ms): the same
+///   rounding of the step time as the ride's climb above, on one row
+///   of a swoop's set-up across.
 /// - c18, the diagnostic run, from the life ended at row 300 (5436 ms):
 ///   the original's frame pulse countdown stands still in the tick the
 ///   in-game menu takes (the menu takes the frame), so every pulse draw
@@ -354,9 +393,16 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   parrot's swoops then reach Claw at other times. The crossing's blast
 ///   hits Claw 35 px lower than at 60 frames per second: his jump out of it
 ///   meets the right ledge's wall and he falls onto the spikes, so that
-///   route does not reach Marrow at this clock.
+///   route does not reach Marrow at this clock. The bridge trick at this
+///   clock plays the normal fight's divergences: Claw dies in the swoops
+///   before the bridge closes, so the trick is not played.
 const KNOWN: &[Known] = &[
     ("boss-normal-ride-c18", "c18", &[("parrot_y", 38268)]),
+    (
+        "boss-bridge-trick-c18",
+        "c18",
+        &[("marrow_y", 40698), ("parrot_x", 66258)],
+    ),
     (
         "boss-skip-death-fight-c18",
         "c18",
@@ -387,6 +433,23 @@ const KNOWN: &[Known] = &[
     ),
     (
         "boss-normal-fight",
+        "c60",
+        &[
+            ("events", 467),
+            ("cam_x", 833),
+            ("boss_fight", 13683),
+            ("state_id", 13700),
+            ("health", 27317),
+            ("x", 27367),
+            ("physics_type", 29117),
+            ("y", 29200),
+            ("cam_y", 29200),
+            ("boss_health", 32217),
+            ("lives", 32600),
+        ],
+    ),
+    (
+        "boss-bridge-trick",
         "c60",
         &[
             ("events", 467),
@@ -1031,10 +1094,11 @@ fn install_marrow_routes_follow_the_reference_traces() {
                     None => println!("the reference runs are not there: the room is not compared"),
                 }
             }
-            // The crossing at the original's speeds reaches the level's
-            // end, as in the original (at 60 frames per second, see
-            // `KNOWN`).
-            if clock == "c18" && store.starts_with("boss-skip-cross") && !played.completed {
+            // The crossing and the bridge trick at the original's speeds
+            // reach the level's end, as in the original (at 60 frames per
+            // second, see `KNOWN`).
+            let ends = store.starts_with("boss-skip-cross") || store == "boss-bridge-trick-c18";
+            if clock == "c18" && ends && !played.completed {
                 failures.push(format!("{store} {clock}: the level does not end"));
             }
             failures.extend(new_divergences(store, clock, &played, &reference, room));
@@ -1477,4 +1541,67 @@ fn install_marrow_after_a_death_the_skipped_fight_blocks_whistles_and_drops_back
         rows.iter().any(|l| st(l) == Some(EnemyState::Dead)),
         "he dies"
     );
+}
+
+#[test]
+fn install_marrow_the_bridge_trick_strands_him_on_claws_ledge() {
+    let Some(level) = level10() else { return };
+    let rows = watch(&level, "boss-bridge-trick-c18", 4244);
+    // Five hits and a blocked sixth blow; Claw jumps off Marrow's ledge
+    // as he whistles, so Marrow runs at him through the whistle and the
+    // parrot takes hold of him late: the carry starts on 1908 with Claw in
+    // the air on Marrow's half, and goes to the left ledge.
+    let wait = first(&rows, 0, |l| st(l) == Some(EnemyState::WaitForParrot));
+    assert_eq!(wait, 1875);
+    let call = first(&rows, wait, |l| l.link.is_some_and(|k| k.parrot_call));
+    assert!(rows[call].marrow.expect("Marrow").x < rows[wait].marrow.expect("Marrow").x);
+    let carry = first(&rows, call, |l| {
+        parrot_st(l) == Some(EnemyState::CarryMarrow)
+    });
+    assert_eq!(carry, 1908);
+    let (cx, cy, cs) = rows[carry].claw;
+    assert!(cx >= marrow::ROOM_CENTRE_X, "on Marrow's half: {cx}");
+    assert_ne!(cs, claw_sim::player::state::STAND, "in the air at {cy}");
+    // He lands on the left slab, which carries him left, and jumps onto
+    // the left ledge before it is under the rock.
+    let landed = first(&rows, carry, |l| l.claw.1 == 7312);
+    assert!(landed < 1918, "{landed}");
+    assert!(rows[landed + 3].claw.0 < rows[landed].claw.0);
+    assert!(rows[1960].claw.0 < 40626 && rows[1960].claw.1 == 7245);
+    // The drop beside him: (40615, 7253) on 2022, the phase health 75.
+    let drop = first(&rows, carry, |l| st(l) == Some(EnemyState::Home));
+    assert_eq!(drop, 2022);
+    assert_eq!(rows[drop].marrow.map(|m| (m.x, m.y)), Some((40615, 7253)));
+    assert_eq!(rows[drop].link.map(|k| k.phase_health), Some(75));
+    // From then on the slabs stay open and the parrot never perches; his
+    // whistles go unanswered and each ends in the 278-tick timeout with
+    // the phase health his health.
+    let open = Some(marrow_floor::state::IDLE);
+    for l in &rows[1945..] {
+        if l.link.is_none() {
+            break;
+        }
+        assert_eq!(
+            l.slabs.map(|s| s.map(|s| (s.x, s.state))),
+            [Some((40534, open)), Some((41071, open))]
+        );
+        assert!(!matches!(
+            parrot_st(l),
+            Some(EnemyState::Idle | EnemyState::FlyToIdle | EnemyState::FlyToMarrow)
+        ));
+    }
+    let waits = starts(&rows, drop, |l| st(l) == Some(EnemyState::WaitForParrot));
+    assert_eq!(waits, [2569, 3289]);
+    for (&w, health) in waits.iter().zip([49, 23]) {
+        let end = first(&rows, w, |l| !l.marrow_safe);
+        assert_eq!(end - w, 278);
+        assert_eq!(rows[end].link.map(|k| k.phase_health), Some(health));
+    }
+    // He dies on the left ledge on 4045; Claw jumps into the gem.
+    assert_eq!(
+        first(&rows, drop, |l| st(l) == Some(EnemyState::Dead)),
+        4045
+    );
+    assert!(rows[4045].marrow.expect("Marrow").x < 40626);
+    assert!(rows.last().expect("rows").ended, "the level ends");
 }

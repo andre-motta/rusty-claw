@@ -31,7 +31,9 @@ help:
 	@echo "                               list, or comes earlier than listed; STRICT=1 fails on any"
 	@echo "                               divergence and on a game trace shorter than the reference;"
 	@echo "                               a store's meta.toml teleport = \"X,Y\" is the start point;"
-	@echo "                               tolerances in tests/acceptance/tolerances/)"
+	@echo "                               tolerances in tests/acceptance/tolerances/; the tenth level's"
+	@echo "                               boss stores replay through claw-replay from the store's time"
+	@echo "                               zero, exact at c18 and feel at c60, failing on any divergence)"
 	@echo "make run-viewer ARGS=...       run the level viewer"
 	@echo "make run-game ARGS=...         run the game"
 	@echo "make bench ARGS=...            run the game with --bench SECONDS in ARGS, or along a route"
@@ -69,14 +71,45 @@ test-install:
 # does not list for that route and clock (or that comes earlier than
 # listed), and with STRICT=1 on any divergence and on a game trace that ends
 # before the reference trace; see tests/acceptance/tests/install_reference.rs.
+#
+# The tenth level's boss stores (REF=level10/boss-...) were run with Claw
+# placed at the store's start point on the level's first tick and left there
+# until the route's time zero (t0_ms), with the random state there
+# (rng_at_t0). They replay through claw-replay, which starts a store's
+# segment that way (see tools/replay), once per reference trace of each
+# clock (or only CLOCK): c18 with the original tuning at the exact
+# tolerance, c60 with the default tuning at the feel tolerance. Any
+# divergence fails, as with STRICT=1; the trace comparisons in
+# engine/sim/tests/install_marrow.rs list the known ones.
+COMPARE_FROM_T0 := level10/boss-%
 compare:
 	@if [ -z "$(CLAW_INSTALL)" ]; then echo "CLAW_INSTALL is not set; point it at your own install" >&2; exit 2; fi
 	@if [ -z "$(CLAW_REFERENCE)" ]; then echo "CLAW_REFERENCE is not set; point it at the reference store" >&2; exit 2; fi
 	@if [ -z "$(REF)" ]; then echo "REF is not set, for example REF=level1/opening" >&2; exit 2; fi
 	@case "$(CLOCK)" in ""|c18|c60) ;; *) echo "CLOCK is c18 or c60" >&2; exit 2;; esac
 	@case "$(STRICT)" in ""|0|1) ;; *) echo "STRICT is 0 or 1" >&2; exit 2;; esac
+ifneq ($(filter $(COMPARE_FROM_T0),$(REF)),)
+	@dir="$(CLAW_REFERENCE)/$(REF)"; \
+	if [ ! -f "$$dir/meta.toml" ] || [ ! -f "$$dir/route.csv" ]; then echo "$$dir lacks its meta.toml or route.csv" >&2; exit 2; fi; \
+	$(CARGO) build --release --locked -q -p claw-replay || exit 2; \
+	n=0; status=0; \
+	for t in "$$dir"/trace-*-r*.csv; do \
+		[ -f "$$t" ] || continue; \
+		clock=$$(basename "$$t" | sed 's/^trace-\([^-]*\)-.*/\1/'); \
+		if [ -n "$(CLOCK)" ] && [ "$$clock" != "$(CLOCK)" ]; then continue; fi; \
+		case "$$clock" in c18) tuning=original; tol=exact;; c60) tuning=default; tol=feel;; *) continue;; esac; \
+		echo "== $(REF) $$clock: $$t (tuning $$tuning, tolerance $$tol)"; \
+		$(CARGO) run --release --locked -q -p claw-replay -- --install "$(CLAW_INSTALL)" \
+			--script "$$dir/route.csv" --tuning $$tuning --compare "$$t" --tolerance $$tol; \
+		rc=$$?; if [ $$rc -gt $$status ]; then status=$$rc; fi; \
+		n=$$((n + 1)); \
+	done; \
+	if [ $$n -eq 0 ]; then echo "$$dir holds no reference trace$(if $(CLOCK), for $(CLOCK))" >&2; exit 2; fi; \
+	exit $$status
+else
 	CLAW_INSTALL="$(CLAW_INSTALL)" CLAW_REFERENCE="$(CLAW_REFERENCE)" CLAW_COMPARE_REF="$(REF)" CLAW_COMPARE_CLOCK="$(CLOCK)" CLAW_COMPARE_STRICT="$(STRICT)" \
 		$(CARGO) test --release --locked -p claw-acceptance --test install_reference -- --exact make_compare --nocapture
+endif
 
 run-viewer:
 	$(CARGO) run --release --locked -p claw-viewer -- $(ARGS)

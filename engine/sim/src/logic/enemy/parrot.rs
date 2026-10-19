@@ -136,7 +136,7 @@ pub const HITS_HOME: i32 = 3;
 pub const CARRY_X: (i32, i32) = (41063, 40553);
 /// How far above Marrow it takes hold of him, px.
 pub const GRAB_ABOVE: i32 = 97;
-/// How far above Marrow's height it carries him to, px.
+/// How far above Marrow's exact height it carries him to, px.
 pub const CARRY_ABOVE: i32 = 110;
 /// The gravity of its flight to the perch, px/s^2.
 pub const HOME_GRAVITY: f64 = 1000.0;
@@ -773,10 +773,12 @@ pub fn fly_to_marrow_tick(w: &mut World, id: ObjectId) {
 }
 
 /// Carries Marrow to the ledge away from Claw (the right one when Claw is
-/// left of the room's centre), 110 px above his height, on the slowest arc
-/// under a gravity of 200 px/s^2; his limit on that side is lifted, the
-/// slabs are asked to open and he says his line. Without Marrow it flies
-/// on.
+/// left of the room's centre; Claw's x on this first step of the carry
+/// decides it, once), 110 px above his exact height (the part of a pixel
+/// he stands below his whole pixel counts: a Marrow who crept 0.972 px
+/// down is aimed 0.972 px lower), on the slowest arc under a gravity of
+/// 200 px/s^2; his limit on that side is lifted, the slabs are asked to
+/// open and he says his line. Without Marrow it flies on.
 pub fn enter_carry(w: &mut World, id: ObjectId) {
     let Some(m) = marrow_of(w) else {
         start_flying(w, id);
@@ -793,14 +795,14 @@ pub fn enter_carry(w: &mut World, id: ObjectId) {
             d.bounds.0 = super::UNBOUNDED.0;
         }
     }
-    let ty = obj(w, m).y - CARRY_ABOVE;
+    let ty = at(w, m).1 - f64::from(CARRY_ABOVE);
     face_x(w, id, tx);
     set_gravity(w, id, CARRY_GRAVITY);
     let (x, y) = at(w, id);
-    let v = leap(f64::from(tx) - x, f64::from(ty) - y, CARRY_GRAVITY);
+    let v = leap(f64::from(tx) - x, ty - y, CARRY_GRAVITY);
     set_velocity(w, id, v);
     if let Some(p) = parrot_mut(w, id) {
-        p.target = (tx, ty);
+        p.target = (tx, ty.trunc() as i32);
     }
     if let Some(l) = w.marrow_link_mut() {
         l.open_request = true;

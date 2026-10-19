@@ -61,7 +61,7 @@ use claw_frame::{
 };
 
 use super::{Ctx, fallback_tick, progress, state, transition};
-use crate::logic::{self, effect};
+use crate::logic::effect;
 use crate::object::{ObjectId, flags, types};
 use crate::physics::ptype;
 use crate::tuning::TICK_MS;
@@ -192,7 +192,7 @@ pub fn end_life(c: &mut Ctx) -> bool {
 /// What every death shares: input, carried object and attack let go.
 fn let_go(c: &mut Ctx) {
     if let Some(lifted) = c.p.special.lifted.take() {
-        c.with_world(|w| logic::dropped(w, lifted));
+        c.with_world(|w| super::special::tell_dropped(w, lifted));
     }
     super::attack::cancel(c);
     c.o.special_flags &= !(claw_flags::LIVES_COUNTED | claw_flags::RESPAWNING);
