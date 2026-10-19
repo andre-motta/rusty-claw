@@ -1565,6 +1565,13 @@ impl Sim {
         self.claw.checkpoint = point;
     }
 
+    /// Sets Claw's health (tools and tests: a route's set-up at its time
+    /// zero, see [`crate::input::script_health`]); a respawn refills it as
+    /// any respawn does.
+    pub fn set_health(&mut self, health: i32) {
+        self.claw.stats.health = health;
+    }
+
     /// Puts Claw back at the checkpoint (or the spawn point) at once, as
     /// the death and restart paths do.
     pub fn respawn(&mut self) {
