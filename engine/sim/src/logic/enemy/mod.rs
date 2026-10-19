@@ -10,7 +10,7 @@
 //! Marrow ([`marrow`]) with his parrot ([`parrot`]), the eleventh
 //! level's Mercat ([`mercat`]), Siren ([`siren`]) and Fish ([`fish`]),
 //! and the twelfth level's Aquatis ([`aquatis`]) with his helpers and the
-//! tentacles ([`tentacle`]), declared but not built yet.
+//! tentacles ([`tentacle`]).
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from

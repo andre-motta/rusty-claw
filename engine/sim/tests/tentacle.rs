@@ -9,7 +9,7 @@
 //! tenth call with a press, the squeeze that kills, a second tentacle
 //! grabbing a held Claw and a third one's strike ending both holds, the
 //! thrashing of Aquatis's frenzy (its delay, the swipes facing each way in
-//! turn, the box that reaches everything right of it on its row, nothing
+//! turn, the box facing right that reaches nobody on its row, nothing
 //! hurts it, a reset facing right that leaves it no box), the attack choice that replaces a frenzy started in the same
 //! call, death by any hit, the hidden splash, regrowth after 20 s or at
 //! once in a frenzy and never after Aquatis's death, the reset Aquatis
@@ -70,8 +70,9 @@ fn anims() -> Vec<Arc<Animation>> {
 /// its right.
 const AT: (i32, i32) = (3000, 900);
 const GAP: i32 = 100;
-/// Where Aquatis's object is placed.
-const AQUATIS: (i32, i32) = (3600, 900);
+/// Where Aquatis's object is placed: far enough right that his body
+/// never touches Claw where the tests put him.
+const AQUATIS: (i32, i32) = (4000, 900);
 
 /// The flat floor (feet rest on 959) as the twelfth level, with `n`
 /// tentacles from `AT` and Aquatis's object; every object awake.
@@ -91,7 +92,8 @@ fn arena(n: usize) -> SimLevel {
 }
 
 /// The arena with `n` tentacles and Claw put `dx` px from the first
-/// tentacle on the first tick; Aquatis current and alive when `current`.
+/// tentacle on the first tick; Aquatis current and alive when `current`,
+/// otherwise the link names no Aquatis.
 fn arena_sim(n: usize, dx: i32, current: bool) -> (Sim, Vec<ObjectId>) {
     let level = arena(n);
     let (w, h) = (level.map.width() as u32, level.map.height() as u32);
@@ -112,14 +114,12 @@ fn arena_sim(n: usize, dx: i32, current: bool) -> (Sim, Vec<ObjectId>) {
         .map(|(id, o)| (id, o.x))
         .collect();
     ids.sort_by_key(|&(_, x)| x);
-    if current {
-        let boss = aquatis_object(&sim);
-        sim.with_world(|w| {
-            let link = w.aquatis_link_mut();
-            link.aquatis = Some(boss);
-            link.alive = true;
-        });
-    }
+    let boss = current.then(|| aquatis_object(&sim));
+    sim.with_world(|w| {
+        let link = w.aquatis_link_mut();
+        link.aquatis = boss;
+        link.alive = current;
+    });
     (sim, ids.into_iter().map(|(id, _)| id).collect())
 }
 
@@ -490,9 +490,9 @@ fn in_aquatis_frenzy_it_thrashes_both_ways_and_nothing_hurts_it() {
         .collect();
     assert!(turns.len() >= 4, "{turns:?}");
     assert!(turns.windows(2).all(|t| t[1] - t[0] == 20), "{turns:?}");
-    // Claw, 600 px right of it on its row, is hurt by the right half.
-    let k = hurt_at.expect("hurt from 600 px away");
-    assert!(facing[k]);
+    // Claw, 600 px right of it on its row, is never hurt: facing right,
+    // its box away from the strike's picture reaches nobody.
+    assert_eq!(hurt_at, None);
     // The frenzy over, it goes idle with no attack box.
     sim.with_world(|w| w.aquatis_link_mut().frenzy = false);
     let mut k = 0;
