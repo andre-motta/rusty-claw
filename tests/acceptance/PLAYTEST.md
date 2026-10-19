@@ -392,8 +392,8 @@ Start the thirteenth level with `make run-game ARGS="--install PATH --level 13"`
 or play on from the twelfth level. This section covers what the level
 reuses (the red-tail pirates and bear sailors, the dart traps, the ropes,
 ferns, pegs and stepping stones), its Chameleons, its water rocks and the
-two dynamite throws of the speedrun. RedTail's fight comes with its own
-lines below.
+two dynamite throws of the speedrun, and the boss fight with RedTail, his
+stakes and his wind.
 
 To try a spot with the tools, `make replay ARGS="--install PATH --level 13
 --start X,Y --script ROUTE.csv"` puts Claw at (X, Y) first (the game starts
@@ -411,6 +411,13 @@ the level at its start).
 10. The waterfalls: the falling sheets of water and their current move steadily; nothing in them hurts or carries Claw.
 11. The toggle pegs in the boss room slide out and in every 1.5 s, in step with each other.
 
-<!-- RedTail's lines (the introduction and the intro skip, his flare gun,
-slide and kick, the wind that pushes Claw toward the stakes, his leap away
-on every third blow, his death and the gem) follow here with his fight. -->
+12. RedTail, the introduction: walk right into the warp near the level's end (left of x 33002): Claw arrives on the sand next to the stakes at the left wall and freezes; the camera pans to RedTail on the log ledge, his line, back to Claw, Claw's line, then the name banner drops with a thud and slides off; about 11 s after arriving the fight is on, with his health bar. Half a second later he makes his first move (usually a jump down to the sand and his flare gun).
+13. The intro skip: jump at the very first moment on the sand: no freeze, no banner, no health bar; RedTail keeps his idle pose on the ledge at full health and never attacks, jumps or raises the wind for as long as nothing touches him, even with Claw standing right beside him on the ledge; touching him still costs 10. Jumping a moment later is too late: the introduction runs. Walking back onto the warp's spot on the sand later runs the introduction then.
+14. His flare gun: on Claw's level he aims and fires a glowing flare that flies straight ahead at about 500 px a second; it costs 15 and bursts where it hits Claw; one that misses is gone at the wall.
+15. His slide and kick: on the sand he runs at Claw and slides along the ground into him (10; the slide ends once he is past Claw, or at the wall); close by he kicks instead (10). Touching his body costs 10.
+16. His knives: when Claw stands on the other level he throws three knives in a fan up or down at him, straight through the ledge (5 each).
+17. The wind: from the ledge, at a Claw on the sand, he raises his arm and a whistling wind blows across the beach for 5 s, grass, leaves and sand flying left: a standing Claw drifts left into the stakes at about 280 px a second, a Claw walking right still loses ground slowly, a jump is carried left; a falling or reeling Claw is not pushed. Held against the stakes Claw loses 20 each time his protection after a hit ends (about every 0.85 s).
+18. His jumps: he leaps down to the sand or up onto the ledge to reach Claw's level, and does nothing else in the air.
+19. Every third blow he leaps away: each sword blow costs him 5 and makes him flinch, but the third blow that finds him free costs nothing and he leaps to the other level (after an intro skip already the second). Pistol shots and magic he blocks; a blast next to him makes him hop back.
+20. His death: twenty sword blows kill him (on the ledge he first jumps down to the sand); he falls, says his last line, and about 2.4 s after he fell the gem rises out of him and flies to a point above the ledge, with Claw frozen where he is (in mid air, if he was jumping) until it arrives; taking it ends the level.
+21. Losing a life during the fight: RedTail is back on the ledge at full health, the wind stops, and the fight goes on.
