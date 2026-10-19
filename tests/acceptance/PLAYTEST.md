@@ -312,8 +312,7 @@ and `make replay ARGS="--install PATH --level 10 --start 32340,7740
 Failures only, as above: note the line, what happened instead, and where.
 Start the eleventh level with `make run-game ARGS="--install PATH --level 11"`,
 or play on from the tenth level. This section covers what the level
-reuses, its lasers, Mercat and the Fish; the Siren is not built yet and
-stands still where the level places her, harmless and untouchable.
+reuses, its lasers, Mercat, the Fish and the Siren.
 
 To try the end of the level with the tools, `--start 3424,1467` puts
 Claw on the ledge under the start room, left of its pillar (`make replay
@@ -329,12 +328,15 @@ takes it; the game starts the level at its start).
 7. The way to the map piece: the ladder at x 3100 leads up to the left part of that ledge; walk right to below the pocket (x 3424) and jump: Claw takes the map piece and the level ends.
 
 8. Mercat's bolts: whenever a Mercat can see Claw on his floor, he waits one to two seconds, raises his trident and throws a bolt of lightning straight at Claw at waist height with a crackle, at any distance he can see him from, without walking at him. The bolt costs 20 and bursts into a short explosion where it hits; a jump clears it, a crouch does not. A wall stops it without a burst, and Claw's respawn clears every bolt in flight.
-9. Fighting a Mercat close in: swinging at him from in front within about 150 px makes him hop about 96 px back, silently, almost always the first time and less often after each hop (never after the third); a crouching sword stab is always parried with a clang and does nothing; standing stabs, punches and kicks land (two kill him), and about one pistol shot in four is parried. When he cannot see Claw (a wall between them, or Claw invisible), he walks or runs at him instead and, within about 150 px, stabs (10, reaching about 110 px).
+9. Fighting a Mercat close in: swinging at him from in front within about 150 px makes him hop about 96 px back, calling out one of his hop lines, almost always the first time and less often after each hop (never after the third); a crouching sword stab is always parried with a clang and does nothing; standing stabs, punches and kicks land (two kill him), and about one pistol shot in four is parried. When he cannot see Claw (a wall between them, or Claw invisible), he walks or runs at him instead and, within about 150 px, stabs (10, reaching about 110 px).
 10. Standing right in front of a Mercat (about 60 px) facing him: his bolt bursts on Claw at once and its explosion kills the Mercat himself; Claw loses only the bolt's 20. A Mercat that threw instead of stabbing at a close Claw stops hopping back from swings.
 11. The Fish's leap: standing in a wading pool above a fish's swimming line, a fish swimming towards Claw leaps out with a splash, bites at the top of an arc about 150 px high and 250 px long, and drops back in with a splash on the far side.
 12. The Fish's dash: with Claw level with a fish's line, it dashes along the pool floor to where he stood and swims on. Every touch of a fish costs 10, whatever it is doing; any single hit (sword, punch, pistol, magic, an explosion) kills it.
 13. Pit walls: from the bank right of the pool at x 13854 to 14498, a fish leaping at Claw bounces off the pit's wall and falls back into its pool; none lands on the bank.
 
-<!-- The Siren, her scream and the two-second lockout of Claw's controls: their lines go here. -->
+14. The Siren: come within about 500 px of a Siren on her floor (and within about 40 px up or down) and she faces you and sings (farther than about 200 px she sometimes walks at you instead), through walls too: a call, and four rings of sound a third of a second apart that drift towards you slowly and fade after about 300 px. She sings again about 5 s after her last call (never sooner than 4 s). Touching her costs 10; two sword hits kill her, and she can be picked up and thrown.
+15. Her scream: a ring that reaches Claw, standing or crouching, costs no health (only his hit sound) and freezes his controls for about two seconds, each ring starting the two seconds again: a walk stops, a crouch stands up, a jump on its way up loses the rest of its height, and he shows a dazed pose. He can still be hurt and killed while frozen.
+16. Keys held through the freeze act the moment it ends: holding Jump jumps at once, holding Right walks on at once, holding Down crouches again.
+17. The pause key, the help screen (F1) and the in-game menu still open while Claw is frozen, and the freeze waits while they are up; losing a life while frozen does not end it: it runs on after the respawn.
 
 <!-- Standing up inside the floor at a pool's left wall after a crouched hit, and falling through it: its lines go here. -->

@@ -166,8 +166,10 @@ const KNOWN: &[Known] = &[
 /// Which families a route meets besides the objects it is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Neighbours {
-    /// The Siren pacing beside the laser.
-    Siren,
+    /// The Siren pacing beside the laser and the Mercat below her floor,
+    /// both awake in the laser routes, each with an enemy's roll on every
+    /// third tick.
+    SirenAndMercat,
     /// The Mercat by the start room's opening and the fish of the first
     /// pool, or the Mercat and the fish within reach of the plank.
     MercatAndFish,
@@ -177,7 +179,7 @@ impl Neighbours {
     /// True while one of them is not built.
     fn unbuilt(self) -> bool {
         match self {
-            Neighbours::Siren => !siren::BUILT,
+            Neighbours::SirenAndMercat => !(siren::BUILT && mercat::BUILT),
             Neighbours::MercatAndFish => !(mercat::BUILT && fish::BUILT),
         }
     }
@@ -191,8 +193,14 @@ impl Neighbours {
 /// by the opening throws a bolt that reaches Claw at 4248 ms in the
 /// original's run.
 const UNBUILT: &[(Neighbours, Known)] = &[
-    (Neighbours::Siren, ("laser-cycle", "c18", &[("rng", 36)])),
-    (Neighbours::Siren, ("laser-stand", "c18", &[("rng", 36)])),
+    (
+        Neighbours::SirenAndMercat,
+        ("laser-cycle", "c18", &[("rng", 36)]),
+    ),
+    (
+        Neighbours::SirenAndMercat,
+        ("laser-stand", "c18", &[("rng", 36)]),
+    ),
     (
         Neighbours::MercatAndFish,
         ("plank-walk", "c18", &[("rng", 36)]),
