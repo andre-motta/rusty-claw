@@ -958,9 +958,6 @@ fn trace_firsts(cmp: &Comparison) -> BTreeMap<String, u64> {
 ///   button's foot): the original shows no hit burst for an enemy it did
 ///   not draw and makes no draw for its size; this build still shows it.
 ///   The rule comes with the third level's route work, merged later.
-/// - The full throw into the water: at one tick of his flight his exact
-///   height lands on the whole pixel 5262 in this build's arithmetic, a
-///   hair below it in the original's (5261); the next tick agrees again.
 /// - The cannon death (the diagnostic run): the gem rising out of him
 ///   moves in the tick it is made in this build (it is listed after
 ///   Claw), where the original's first call only leads the camera; the
@@ -1211,8 +1208,6 @@ const KNOWN: &[Known] = &[
             ("held", 16500),
         ],
     ),
-    // The full throw's whole pixel.
-    ("boss-lift-drown-c18", "c18", &[("his_y", 10260)]),
     // Claw with Catnip in the room a tick early: the introduction runs.
     (
         "boss-lift-throw",

@@ -418,8 +418,10 @@ fn level_at(level: &SimLevel, at: (i32, i32)) -> SimLevel {
 /// route's start are built on the first tick, as any enemy that wakes up.
 /// The game is started at the route's start ([`level_at`]), which sets
 /// all of them up with the level: the ones outside the level start's
-/// window are built again on the first tick, and the others are told
-/// that Claw was out of range.
+/// window are built again on the first tick from where they were placed
+/// (a built enemy's exact height starts at its placement point, above the
+/// floor it is dropped onto), and the others are told that Claw was out
+/// of range.
 fn as_after_a_teleport(sim: &mut Sim, level_start: (i32, i32)) {
     let cfg = sim.activation().config().clone();
     let c = Centres::new(&cfg, sim.level().plane(), level_start);
@@ -451,6 +453,7 @@ fn as_after_a_teleport(sim: &mut Sim, level_start: (i32, i32)) {
             } else if let Some(o) = w.objects.get_mut(id) {
                 o.state = engine_state::INIT;
                 o.data = ObjectData::None;
+                (o.x, o.y) = (o.editor.0, o.editor.1);
             }
         }
     });
@@ -574,13 +577,13 @@ fn trace_firsts(cmp: &Comparison) -> BTreeMap<String, u64> {
 ///   [`play`]), and the random stream's own column is only reported: the
 ///   seagulls of the guards' rooms are not built in this build, so the
 ///   original draws more on the frame pulse ticks.
-/// - c18, the original keeps a fraction of a pixel in the height of a
-///   standing enemy that the game does not: a guard killed while
-///   standing flies off 1 px higher on its first step (`tg2-swing`,
-///   2934 ms), and the switch guard by the level's start, set up with the
-///   level, carries 0.648 px from the level's load, so its arc from the
-///   switch is a pixel off from 3150 ms, it lands a tick sooner and
-///   reaches Claw a tick sooner (`js-2402`, Claw from 5688 ms).
+/// - c18, a standing enemy keeps a fraction of a pixel in its height: a
+///   guard killed while standing flies off from it as in the original
+///   (`tg2-swing`). The switch guard by the level's start, set up with the
+///   level, carries 0.648 px from the level's load in the original, a
+///   fraction the game's does not carry yet, so its arc from the switch
+///   is a pixel off from 3150 ms, it lands a tick sooner and reaches Claw
+///   a tick sooner (`js-2402`, Claw from 5688 ms).
 /// - c60 (the default tuning played tick by tick): the game's 18 ms ticks
 ///   against the original's frames of 16 and 17 ms put the guards' idle
 ///   routines, strikes and hops a few frames apart, so the first strike
@@ -593,7 +596,6 @@ fn trace_firsts(cmp: &Comparison) -> BTreeMap<String, u64> {
 type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 
 const KNOWN: &[Known] = &[
-    ("tg2-swing", "c18", &[("guard_y", 2934)]),
     (
         "js-2402",
         "c18",

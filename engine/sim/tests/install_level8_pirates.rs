@@ -91,32 +91,25 @@ type Known = (&'static str, &'static [(&'static str, u64)]);
 
 /// The first reference time (ms) at which each column already leaves its
 /// tolerance, per clock; a column not listed must stay within it, and one
-/// listed must not leave it earlier. What they come from:
+/// listed must not leave it earlier. At c18 the killed pirate's body
+/// flies off on the original's arc row for row: a standing enemy carries
+/// its exact height, a part of a pixel below its whole pixel, into the
+/// flight. What the entries come from:
 ///
-/// - c18, 2016 ms (pirate_y): the killed pirate's body flies off on the
-///   same arc, but on 6 of its rows the original's comes out 1 px lower
-///   (its first row of flight rises 12 px, the replay's 13, and the two
-///   are level again on the next row): the shared flight of a killed
-///   enemy starts from the pirate's whole-pixel height, the original's
-///   from a part of a pixel below it. The body touches nothing on its
-///   way.
 /// - c60 (the default tuning played tick by tick): the original at 60
 ///   frames per second advances the pirate's strikes once a frame, so the
 ///   second strike after time zero reaches Claw on its frame 17 (300 ms)
 ///   and knocks him back, which the replay's strike, live on another
 ///   tick, does not; Claw's position and health follow from there.
-const KNOWN: &[Known] = &[
-    ("c18", &[("pirate_y", 2016)]),
-    (
-        "c60",
-        &[
-            ("state_id", 300),
-            ("health", 300),
-            ("x", 350),
-            ("cam_x", 350),
-        ],
-    ),
-];
+const KNOWN: &[Known] = &[(
+    "c60",
+    &[
+        ("state_id", 300),
+        ("health", 300),
+        ("x", 350),
+        ("cam_x", 350),
+    ],
+)];
 
 /// The numbers the reference runs give the pirate's states, where they
 /// differ from the states' own numbers.
