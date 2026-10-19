@@ -7,9 +7,10 @@
 //! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
 //! ([`crab`]), Gabriel with his bomb ([`gabriel`]), the hook-handed
 //! pirate ([`hook_pirate`]), PegLeg with his bullet ([`pegleg`]),
-//! Marrow ([`marrow`]) with his parrot ([`parrot`]), and the eleventh
+//! Marrow ([`marrow`]) with his parrot ([`parrot`]), the eleventh
 //! level's Mercat ([`mercat`]), Siren ([`siren`]) and Fish ([`fish`]),
-//! declared but not built yet.
+//! and the twelfth level's Aquatis ([`aquatis`]) with his helpers and the
+//! tentacles ([`tentacle`]), declared but not built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -59,6 +60,7 @@ use crate::physics::ptype;
 use crate::tiles::SOLID;
 use crate::tuning::TICK_MS;
 
+pub mod aquatis;
 pub mod bear_sailor;
 pub mod crab;
 pub mod cutthroat;
@@ -84,6 +86,7 @@ pub mod seagull;
 pub mod siren;
 pub mod soldier;
 pub mod states;
+pub mod tentacle;
 pub mod townguard;
 pub mod wolvington;
 
@@ -210,7 +213,10 @@ pub mod field {
 /// (Marrow's whistle and the parrot's flights, see
 /// [`marrow::STATE_BLOCK`]) and 2260-2279 the eleventh level's (the
 /// Fish's swim, leap and flop and the Siren's song from 2270, see
-/// [`mercat::STATE_BLOCK`]); later families take blocks of 20 from 2280.
+/// [`mercat::STATE_BLOCK`]) and 2280-2299 the twelfth level's (Aquatis's
+/// punches, frenzy, stalactite hit and fright from 2280, the tentacles'
+/// grab, squeeze and regrowth from 2290, see [`aquatis::STATE_BLOCK`]);
+/// later families take blocks of 20 from 2300.
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -381,11 +387,28 @@ pub enum EnemyState {
     OutOfWater = 2272,
     /// Singing, a scream every few ticks (the Siren).
     Singing = 2273,
+    /// A punch high over the water (Aquatis).
+    HighPunch = 2280,
+    /// A punch low along the water (Aquatis).
+    LowPunch = 2281,
+    /// Thrashing in a frenzy after a stalactite's hit (Aquatis and the
+    /// tentacles).
+    SuperFrenzy = 2282,
+    /// Reeling from a stalactite that fell on him (Aquatis).
+    StalactiteHit = 2283,
+    /// Cowering, during an earthquake or after three flinches (Aquatis).
+    Scared = 2284,
+    /// Taking hold of Claw (a tentacle).
+    StartGrab = 2290,
+    /// Squeezing the held Claw (a tentacle).
+    Squeeze = 2291,
+    /// Growing back out of the water (a tentacle).
+    Respawn = 2292,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 80] = [
+    pub const ALL: [EnemyState; 88] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -466,6 +489,14 @@ impl EnemyState {
         EnemyState::JumpStrike,
         EnemyState::OutOfWater,
         EnemyState::Singing,
+        EnemyState::HighPunch,
+        EnemyState::LowPunch,
+        EnemyState::SuperFrenzy,
+        EnemyState::StalactiteHit,
+        EnemyState::Scared,
+        EnemyState::StartGrab,
+        EnemyState::Squeeze,
+        EnemyState::Respawn,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -560,6 +591,14 @@ impl EnemyState {
             EnemyState::JumpStrike => "JumpStrike",
             EnemyState::OutOfWater => "OutOfWater",
             EnemyState::Singing => "Singing",
+            EnemyState::HighPunch => "HighPunch",
+            EnemyState::LowPunch => "LowPunch",
+            EnemyState::SuperFrenzy => "SuperFrenzy",
+            EnemyState::StalactiteHit => "StalactiteHit",
+            EnemyState::Scared => "Scared",
+            EnemyState::StartGrab => "StartGrab",
+            EnemyState::Squeeze => "Squeeze",
+            EnemyState::Respawn => "Respawn",
         }
     }
 }
@@ -991,6 +1030,8 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::Mercat => Some(&mercat::CLASS),
         GameLogic::Siren => Some(&siren::CLASS),
         GameLogic::Fish => Some(&fish::CLASS),
+        GameLogic::Aquatis => Some(&aquatis::CLASS),
+        GameLogic::Tentacle => Some(&tentacle::CLASS),
         _ => None,
     }
 }
@@ -1026,8 +1067,8 @@ impl ObjectData {
     /// inside a family's own data (the punk rat's, Raux's, the thieves',
     /// Katherine's, the town guards', the seagull's, Wolvington's, the
     /// red-tail pirates', the bear sailors', the crabs', Gabriel's, the
-    /// hook-handed pirates', PegLegs', Marrow's and his parrot's, and the
-    /// Mercats', Sirens' and Fish's).
+    /// hook-handed pirates', PegLegs', Marrow's and his parrot's, the
+    /// Mercats', Sirens' and Fish's, and Aquatis's and the tentacles').
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -1050,6 +1091,8 @@ impl ObjectData {
             ObjectData::Mercat(d) => Some(&d.enemy),
             ObjectData::Siren(d) => Some(&d.enemy),
             ObjectData::Fish(d) => Some(&d.enemy),
+            ObjectData::Aquatis(d) => Some(&d.enemy),
+            ObjectData::Tentacle(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -1077,6 +1120,8 @@ impl ObjectData {
             ObjectData::Mercat(d) => Some(&mut d.enemy),
             ObjectData::Siren(d) => Some(&mut d.enemy),
             ObjectData::Fish(d) => Some(&mut d.enemy),
+            ObjectData::Aquatis(d) => Some(&mut d.enemy),
+            ObjectData::Tentacle(d) => Some(&mut d.enemy),
             _ => None,
         }
     }

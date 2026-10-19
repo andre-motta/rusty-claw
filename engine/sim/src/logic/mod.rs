@@ -78,10 +78,12 @@ pub mod platform;
 pub mod projectile;
 pub mod rope;
 pub mod saw_blade;
+pub mod shake;
 pub mod skull_cannon;
 pub mod sound;
 pub mod sound_object;
 pub mod springboard;
+pub mod stalactite;
 pub mod statue;
 pub mod stepping_stone;
 pub mod world;
@@ -216,10 +218,25 @@ pub enum GameLogic {
     TridentBullet,
     /// The Siren's scream.
     SirenBullet,
+    /// Aquatis, the boss of the twelfth level.
+    Aquatis,
+    /// The crack in the wall behind Aquatis that a blast sets off.
+    AquatisCrack,
+    /// The hidden helper that puts a stick of dynamite back in Aquatis's
+    /// room.
+    AquatisDynamite,
+    /// The five stalactites over Aquatis that fall on him one by one.
+    AquatisStalactite,
+    /// Aquatis's tentacles, which strike at Claw and grab him.
+    Tentacle,
+    /// The falling stalactites of the twelfth level's caves.
+    Stalactite,
+    /// The invisible earthquake triggers of the twelfth level.
+    Shake,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 60] = [
+pub const ALL: [GameLogic; 67] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -280,6 +297,13 @@ pub const ALL: [GameLogic; 60] = [
     GameLogic::Laser,
     GameLogic::TridentBullet,
     GameLogic::SirenBullet,
+    GameLogic::Aquatis,
+    GameLogic::AquatisCrack,
+    GameLogic::AquatisDynamite,
+    GameLogic::AquatisStalactite,
+    GameLogic::Tentacle,
+    GameLogic::Stalactite,
+    GameLogic::Shake,
 ];
 
 /// A logic's own data, by family.
@@ -398,6 +422,20 @@ pub enum ObjectData {
     Fish(enemy::fish::FishData),
     /// A laser.
     Laser(laser::LaserData),
+    /// Aquatis.
+    Aquatis(enemy::aquatis::AquatisData),
+    /// The crack behind Aquatis.
+    AquatisCrack(enemy::aquatis::crack::CrackData),
+    /// The dynamite helper of Aquatis's room.
+    AquatisDynamite(enemy::aquatis::dynamite::DynamiteData),
+    /// One of the five stalactites over Aquatis.
+    AquatisStalactite(enemy::aquatis::stalactite::StalactiteData),
+    /// A tentacle.
+    Tentacle(enemy::tentacle::TentacleData),
+    /// A falling stalactite of the caves.
+    Stalactite(stalactite::StalactiteData),
+    /// An earthquake trigger.
+    Shake(shake::ShakeData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -464,6 +502,13 @@ macro_rules! dispatch {
             GameLogic::Laser => laser::$f($($arg),*),
             GameLogic::TridentBullet => projectile::trident::$f($($arg),*),
             GameLogic::SirenBullet => projectile::scream::$f($($arg),*),
+            GameLogic::Aquatis => enemy::aquatis::$f($($arg),*),
+            GameLogic::AquatisCrack => enemy::aquatis::crack::$f($($arg),*),
+            GameLogic::AquatisDynamite => enemy::aquatis::dynamite::$f($($arg),*),
+            GameLogic::AquatisStalactite => enemy::aquatis::stalactite::$f($($arg),*),
+            GameLogic::Tentacle => enemy::tentacle::$f($($arg),*),
+            GameLogic::Stalactite => stalactite::$f($($arg),*),
+            GameLogic::Shake => shake::$f($($arg),*),
         }
     };
 }
@@ -532,6 +577,13 @@ macro_rules! constant {
             GameLogic::Laser => laser::$c,
             GameLogic::TridentBullet => projectile::trident::$c,
             GameLogic::SirenBullet => projectile::scream::$c,
+            GameLogic::Aquatis => enemy::aquatis::$c,
+            GameLogic::AquatisCrack => enemy::aquatis::crack::$c,
+            GameLogic::AquatisDynamite => enemy::aquatis::dynamite::$c,
+            GameLogic::AquatisStalactite => enemy::aquatis::stalactite::$c,
+            GameLogic::Tentacle => enemy::tentacle::$c,
+            GameLogic::Stalactite => stalactite::$c,
+            GameLogic::Shake => shake::$c,
         }
     };
 }
@@ -602,6 +654,13 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::Laser => laser::BUILT,
         GameLogic::TridentBullet => projectile::trident::BUILT,
         GameLogic::SirenBullet => projectile::scream::BUILT,
+        GameLogic::Aquatis => enemy::aquatis::BUILT,
+        GameLogic::AquatisCrack => enemy::aquatis::crack::BUILT,
+        GameLogic::AquatisDynamite => enemy::aquatis::dynamite::BUILT,
+        GameLogic::AquatisStalactite => enemy::aquatis::stalactite::BUILT,
+        GameLogic::Tentacle => enemy::tentacle::BUILT,
+        GameLogic::Stalactite => stalactite::BUILT,
+        GameLogic::Shake => shake::BUILT,
         _ => true,
     }
 }
@@ -680,9 +739,8 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 /// `carrier` lifted `id`. Kegs, crates and the human enemies Claw can
 /// carry (officers, soldiers, cutthroats, robber thieves, Katherine, the
 /// town guards, Wolvington, the red-tail pirates, the bear sailors,
-/// Gabriel, the hook-handed pirates, PegLegs, the Mercats and the Sirens,
-/// see [`enemy::lift`])
-/// react; other families ignore it.
+/// Gabriel, the hook-handed pirates, PegLegs, the Mercats, the Sirens and
+/// Aquatis, see [`enemy::lift`]) react; other families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
@@ -702,7 +760,8 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
             | GameLogic::HookPirate
             | GameLogic::PegLeg
             | GameLogic::Mercat
-            | GameLogic::Siren,
+            | GameLogic::Siren
+            | GameLogic::Aquatis,
         ) => enemy::lift::lifted(w, id, carrier),
         _ => {}
     }
@@ -728,7 +787,8 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
             | GameLogic::HookPirate
             | GameLogic::PegLeg
             | GameLogic::Mercat
-            | GameLogic::Siren,
+            | GameLogic::Siren
+            | GameLogic::Aquatis,
         ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
@@ -755,6 +815,7 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
                 | GameLogic::PegLeg
                 | GameLogic::Mercat
                 | GameLogic::Siren
+                | GameLogic::Aquatis
         )
     ) {
         enemy::lift::wind_up(w, id);
@@ -781,7 +842,8 @@ pub fn dropped(w: &mut World, id: ObjectId) {
             | GameLogic::HookPirate
             | GameLogic::PegLeg
             | GameLogic::Mercat
-            | GameLogic::Siren,
+            | GameLogic::Siren
+            | GameLogic::Aquatis,
         ) => enemy::lift::dropped(w, id),
         _ => {}
     }

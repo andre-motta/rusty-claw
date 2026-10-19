@@ -343,3 +343,34 @@ takes it; the game starts the level at its start).
 17. The pause key, the help screen (F1) and the in-game menu still open while Claw is frozen, and the freeze waits while they are up; losing a life while frozen does not end it: it runs on after the respawn.
 
 18. The floor clip at the first fish pool (x 4067 to 4450): walk left to the pool's left wall, crouch there and stay down while the fish knock Claw back and forth. A touch from his right slides him, still crouched, under the ledge left of the wall; when the hit ends he stands up inside the floor and falls straight through it to the hall below the pool, landing near x 4000. A stick of dynamite blowing up between Claw and the wall pushes him away from it instead, and there is no fall.
+
+## Milestone 3, LEVEL12 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the twelfth level with `make run-game ARGS="--install PATH --level 12"`,
+or play on from the eleventh level. This section covers what the level
+reuses (the Mercats, Sirens and Fish of the eleventh level, the pegs, the
+rocks and the floor spikes), its stalactites and its earthquakes; Aquatis,
+his crack, his stalactites and his tentacles are not built yet and stand
+still where the level places them, harmless and untouchable.
+
+To try the water's edge with the tools, `--start 3110,3567` puts Claw on
+the ledge at the water's edge, right of the first stalactites (`make
+replay ARGS="--install PATH --level 12 --start 3110,3567 --script
+ROUTE.csv"` takes it; the game starts the level at its start).
+
+1. Stalactites: walk under a hanging stalactite (walk left along the ledge at the water's edge, x 3110, to about x 3070): a moment later it snaps loose with a crack, falls (about 200 px in under half a second), lands with a crash, crumbles in about a third of a second and is gone. The two beside it fall with it. Standing under one as it lands costs 5 and a flinch; walking or jumping into a hanging one costs 5 too, and it stays where it hangs.
+2. Fallen stalactites stay gone until Claw loses a life; then every one hangs again where it was.
+3. A pistol shot fired at a hanging stalactite flies through it and on; nothing Claw has can break or bring one down.
+4. Earthquakes: dropping down the first shaft (from its lip at x 2925) Claw passes an invisible earthquake trigger: the ground rumbles (one of five rumbles, sometimes none) and the screen shakes for 5 s. The trigger does nothing more for 7 s; a Claw still in its area then gets the rumble and the shake again. Pausing during a shake does not shorten it.
+5. Tall shafts: falling down the tall shaft at x 25540, the earthquake at its foot starts only when Claw is near the bottom, not as he enters the shaft at the top; its hanging stalactites hit him on the way down (5 each, a flinch each).
+6. The water: falling into the deep water (left of the ledge at the water's edge, x 2600 to 2880, and all along the level's bottom) kills Claw at once, with the splash sound, as his feet reach the surface.
+7. The ledge's end: standing at the very end of the ledge at the water's edge (x 2884), Claw teeters, and the dynamite key does nothing there; a step back from the edge, it throws as usual.
+8. The Mercat over the first shaft: as Claw drops into the shaft from its lip, the Mercat on the far lip throws a bolt that hits him on the way down (20 and a flinch), as on the eleventh level.
+9. The toggle peg beside Aquatis's rock (x 37781) stays out for good: it is solid to stand on at any time.
+
+<!-- The tentacles: their strike, their grab and squeeze, the mashing that frees Claw and their frenzy: their lines go here. -->
+
+<!-- Aquatis and his helpers: the introduction and its skip, the crack and the earthquake, the stalactites that fall on him, his frenzy, his death and the gem, the lift and the help screen that ends the level: their lines go here. -->
+
+<!-- The passage under the water: the drop past the water's left end onto the floor beneath it, and the run to the boss room: its lines go here. -->
