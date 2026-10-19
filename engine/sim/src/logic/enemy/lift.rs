@@ -402,8 +402,8 @@ fn recover(w: &mut World, id: ObjectId) {
 /// The movement box saved at the lift, keeping the feet where they are.
 /// The move to the new height keeps the fraction of a pixel the enemy
 /// carries across (it walks on from there), and drops the one up and
-/// down.
-fn restore_move_rect(w: &mut World, id: ObjectId) {
+/// down. The crab's landing after a throw puts its box back the same way.
+pub(super) fn restore_move_rect(w: &mut World, id: ObjectId) {
     let Some(saved) = data(w, id).map(|d| d.saved_move_rect) else {
         return;
     };

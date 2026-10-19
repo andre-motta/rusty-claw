@@ -90,8 +90,15 @@
 //!   it flies into; other crabs let it pass), with no time limit. On
 //!   landing ([`thrown_tick`]) it stops, takes its own movement box back
 //!   with its feet where they are, is an enemy again and regroups: no
-//!   bounce, no rest and no damage.
+//!   bounce, no rest and no damage. It is free at once (it crouches on
+//!   its next tick) and may leave the active area again, as in the
+//!   original.
 //! - Dropped: as a guard is, then it regroups.
+//!
+//! A dead crab is never liftable: a crab killed in its shell (by the
+//! magic claw, or on a death tile while knocked aside) loses the flag at
+//! once, and [`lifted`] refuses a dead crab, so a body can never be
+//! thrown and get up again.
 //!
 //! # State numbers
 //!
@@ -129,6 +136,7 @@
 //!   position (the game sets none for the crab), so a thrown crab lands
 //!   when its position reaches the floor and its feet are put back there.
 //! - A nest crab falls onto platforms as the other enemies do.
+//! - A dead crab cannot be lifted (see [Lifting](#lifting)).
 //!
 //! Its data ([`HermitCrabData`]) holds the shared enemy data, which the
 //! shared enemy behaviour reaches through [`super::data`] and
@@ -411,6 +419,11 @@ fn handler(s: EnemyState) -> Option<Handler> {
 /// move them).
 pub fn tick(w: &mut World, id: ObjectId) {
     human::run(w, id, &CLASS);
+    // Dead by its own step (a death tile) while it could be lifted: no
+    // longer.
+    if data(w, id).is_some_and(|d| d.dead) {
+        obj_mut(w, id).special_flags &= !special::LIFTABLE;
+    }
 }
 
 /// `id` attacked `victim`: a crab leaves its touches to Claw's own rule.
@@ -878,14 +891,14 @@ pub fn is_crab(w: &World, id: ObjectId) -> bool {
 /// [`lift::lifted`]), but with no line and no draw. It is busy, cannot be
 /// hit, stays active everywhere, loses its patrol limits, takes the
 /// carried movement box of [`CARRY`] and no longer moves by itself. A
-/// crab being removed is not taken, nor a dead one that is no longer an
-/// enemy. Draws nothing.
+/// crab being removed is not taken, nor a dead one (a dead crab is never
+/// liftable, see [`on_hit`]), so a body cannot be thrown and get up
+/// again. Draws nothing.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     let Some(dead) = data(w, id).map(|d| d.dead) else {
         return;
     };
-    let o = obj(w, id);
-    if o.flags & flags::DESTROY != 0 || (dead && o.type_flags != types::ENEMY) {
+    if dead || obj(w, id).flags & flags::DESTROY != 0 {
         return;
     }
     let z = w.objects.get(carrier).map(|c| c.z.saturating_add(1));
@@ -961,37 +974,11 @@ pub fn thrown_tick(w: &mut World, id: ObjectId) {
     obj_mut(w, id).flags &= !flags::ALWAYS_ACTIVE;
     set_anim_now(w, id, FALL_ANIM);
     set_vx(w, id, 0.0);
-    restore_move_rect(w, id);
+    lift::restore_move_rect(w, id);
     let o = obj_mut(w, id);
     o.type_flags = types::ENEMY;
     o.flags &= !flags::SAFE;
     go_home(w, id);
-}
-
-/// The movement box saved at the lift, keeping the feet where they are;
-/// the move to the new height drops the fraction of a pixel carried up
-/// and down, as a guard's does.
-fn restore_move_rect(w: &mut World, id: ObjectId) {
-    let Some(saved) = data(w, id).map(|d| d.saved_move_rect) else {
-        return;
-    };
-    if !saved.is_set() {
-        return;
-    }
-    let o = obj_mut(w, id);
-    let before = (o.x, o.y);
-    let r = facing_rect(o, saved);
-    if o.move_rect.is_set() {
-        o.y += o.move_rect.bottom - r.bottom;
-    }
-    o.move_rect = r;
-    let after = (o.x, o.y);
-    if let Some(d) = data_mut(w, id)
-        && d.moved_to == Some(before)
-    {
-        d.moved_to = Some(after);
-        d.carry.1 = 0.0;
-    }
 }
 
 // ----------------------------------------------------------------------
@@ -1030,6 +1017,9 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
         enter_nudge(w, id, ax >= x);
     } else {
         die(w, id, DeathKind::Hit, Some(attacker));
+        // A crab killed in its shell (by the magic claw) is liftable no
+        // longer.
+        obj_mut(w, id).special_flags &= !special::LIFTABLE;
         let item = record(w, id, crate::logic::enemy::field::POWERUP);
         if item > 0 {
             let (x, y) = {
@@ -1065,7 +1055,10 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
 /// more, the last crab a drawn -200 to 200 px/s. With three crabs that
 /// is -75, -25 and the drawn one. A crab is built at once where the nest
 /// is (on the floor below it) and starts falling; its first tick comes
-/// in the next update pass.
+/// in the next update pass. Its flight starts from [`DROP_START`] px
+/// above the nest, where its drop to the floor began, so on its first
+/// tick it shows that much higher, and it lands later than a fall from
+/// the floor would.
 ///
 /// A record whose second user value is set throws its loot instead of
 /// crabs; loot (the record's powerup and its two user boxes) goes to the
@@ -1135,6 +1128,10 @@ pub mod nest {
     /// Record field of the second user value: set, the nest throws loot
     /// instead of crabs.
     pub const USER_1: usize = 44;
+    /// How far above the nest a hatched crab's flight starts, px: its
+    /// building drops it from there onto the floor, but it flies on from
+    /// where the drop began.
+    pub const DROP_START: i32 = 32;
 
     /// The nest's states, in its object's state.
     pub mod state {
@@ -1313,10 +1310,18 @@ pub mod nest {
                 } else {
                     f
                 };
+                let at = w.objects.get(crab).map(|o| (o.x, o.y));
                 if let Some(e) = crate::logic::enemy::data_mut(w, crab) {
                     e.vx = f64::from(vx);
                     e.vy = f64::from(vy);
                     e.ay = super::NEST_GRAVITY;
+                    // Its building puts it on the floor, but its flight
+                    // starts from where that drop began, 32 px above the
+                    // nest.
+                    if let Some(at) = at {
+                        e.carry = (0.0, f64::from(y - DROP_START - at.1));
+                        e.moved_to = Some(at);
+                    }
                 }
                 super::enter_tumble(w, crab);
                 super::set_bomber(w, crab, bomber);
