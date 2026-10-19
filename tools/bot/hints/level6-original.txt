@@ -31,6 +31,11 @@
 # 7. Down into the sewer, across the two ropes, along its floor and up the
 #    ladder to the checkpoint: no waypoints, goal 16418,4765. The fifth
 #    level's game: 14599,5685, 15266,5630, 15899,5670 and 16031,5454.
+#    The fifth level's game was searched again from this stretch's tick
+#    6655 on (--from-tick 6655, no waypoints) once an enemy's movement
+#    clock started when it is built, which moves a rat on this stretch;
+#    its ticks before 6655 play the same, and every later stretch of that
+#    game was searched again after it.
 # 8. Up on the low blower to the ladder above it, over the goo to the
 #    checkpoint: no waypoints, goal 17854,3995.
 # 9. Down the long shaft to the second super checkpoint: no waypoints,
@@ -54,13 +59,13 @@
 #         627-685 0x0 nothing
 #         686-699 0x2000001 right and jump
 #         700-729 0x2000000 right
-#        level5-original.level6.csv: route ticks 7996 to 8549
-#           0-402 0x0 nothing
-#         403-416 0x2000001 right and jump
-#         417-437 0x2000000 right
-#         438-507 0x0 nothing
-#         508-521 0x2000001 right and jump
-#         522-553 0x2000000 right
+#        level5-original.level6.csv: route ticks 8008 to 8581
+#           0-392 0x0 nothing
+#         393-406 0x2000001 right and jump
+#         407-427 0x2000000 right
+#         428-527 0x0 nothing
+#         528-541 0x2000001 right and jump
+#         542-573 0x2000000 right
 #     c. From the block over the blocks beyond and up the shaft: goal
 #        22323,4958.
 21317,5906
@@ -82,10 +87,11 @@
 #        waypoints), with --intro play, or
 #        --intro skip for the jump-in route. The touching tick and the
 #        fragile cost: level6-original.csv 13248 and 400,
-#        level6-introskip.csv 13316 and 100, level5-original.level6.csv
-#        12914 and 400 (of the two costs tried, the one whose route kept
-#        more health, or won more often with a change of the held buttons
-#        a tick early or late).
+#        level6-introskip.csv 13316 and 100 (of the two costs tried, the
+#        one whose route kept more health, or won more often with a
+#        change of the held buttons a tick early or late). The fifth
+#        level's game, searched again from stretch 7 on, runs this stretch
+#        in one part, with --intro play and the fragile cost 100.
 31534,5458
 30500,5079
 30432,4400
