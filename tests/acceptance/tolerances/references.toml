@@ -935,8 +935,7 @@ known.events = 14436
 known.health = 14517
 known.pistol = 45450
 known.dynamite = 86434
-known.lives = 152634
-known.boss_fight = 175750
+known.lives = 106100
 
 # The fourth level's jump-in route (default tuning, 60 frames per second):
 # the bot's route with the jump into Katherine's room that skips her
@@ -956,4 +955,39 @@ known.events = 14436
 known.health = 14517
 known.pistol = 45450
 known.dynamite = 86434
-known.lives = 152634
+known.lives = 106100
+
+# The bot's route of the fifth level (original speeds), one 18 ms step per
+# frame. Both games win the level and are equal on every compared row, the
+# random stream included.
+[[compare]]
+reference = "level5/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The fifth level of a game that started with the fourth level's route
+# (`level4-original.csv`), entered through the end-of-level screen with the
+# progress the fourth level carries: equal on every row.
+[[compare]]
+reference = "level5/pair-original"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's route of the fifth level (default tuning) at 60 frames per
+# second. It leaves the feel tolerance in a jump at 5500 ms (the default
+# tuning's jump, as on the first four levels), then the runs go different
+# ways.
+[[compare]]
+reference = "level5/bot"
+clock = "c60"
+tolerance = "feel"
+known.y = 5500
+known.cam_y = 5500
+known.score = 9350
+known.state_id = 16117
+known.health = 16117
+known.x = 16184
+known.physics_type = 16184
+known.cam_x = 16184
+known.events = 25560
+known.magic = 82217

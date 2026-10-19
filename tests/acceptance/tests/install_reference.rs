@@ -57,27 +57,6 @@ fn known_line(entry: &Entry) -> String {
     )
 }
 
-/// The c60 references of the two fourth-level default-tuning routes hold
-/// the original's runs of the routes found before the fifth level's two
-/// latest rules (a stacked crate falls by the enemies' movement step; any
-/// stop ends a move back). Those routes were searched again under the
-/// rules, and the committed routes are not the ones these stores hold, so
-/// the comparisons are skipped until the original's runs of the new routes
-/// replace the stores.
-const AWAITS_ORIGINAL_RUN: [&str; 2] = ["level4/bot", "level4/introskip"];
-
-/// True (with a note) when `reference` waits for the original's run of its
-/// new route.
-fn awaits_original_run(reference: &str) -> bool {
-    let waits = AWAITS_ORIGINAL_RUN.contains(&reference);
-    if waits {
-        println!(
-            "{reference}: skipped, its route was searched again under the fifth level's latest rules and waits for the original's run of the new route"
-        );
-    }
-    waits
-}
-
 #[test]
 fn references_hold_their_known_divergences() {
     let Some(install) = install() else { return };
@@ -86,9 +65,6 @@ fn references_hold_their_known_divergences() {
     let mut levels = Levels::new();
     let mut failures = Vec::new();
     for entry in &entries {
-        if awaits_original_run(&entry.reference) {
-            continue;
-        }
         let store = Store::open(&root, &entry.reference).unwrap_or_else(|e| panic!("{e}"));
         let run = store
             .run(entry.clock)
