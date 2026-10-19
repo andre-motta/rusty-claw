@@ -2234,3 +2234,47 @@ fn enemy_lines_share_one_speaking_slot() {
         assert!(p[1] - p[0] >= gap, "{said:?}");
     }
 }
+
+#[test]
+fn going_home_stops_an_enemy_across_and_keeps_its_speed_up_or_down() {
+    let mut sim = sim_with(arena(vec![record("Officer", 1300, 900)]), 5);
+    sim.step(TickInput::default());
+    let id = first(&sim, GameLogic::Officer);
+    sim.with_world(|w| {
+        let d = enemy::data_mut(w, id).unwrap();
+        d.vx = 60.0;
+        d.vy = 251.71;
+        enemy::go_home(w, id);
+    });
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Home));
+    let d = data(&sim, id);
+    assert_eq!((d.vx, d.vy), (0.0, 251.71), "it falls on at its speed");
+}
+
+#[test]
+fn claw_is_on_an_enemys_right_when_his_pixel_is_at_or_past_its_exact_x() {
+    let mut sim = sim_with(arena(vec![record("Officer", 1300, 900)]), 5);
+    sim.step(TickInput::default());
+    let id = first(&sim, GameLogic::Officer);
+    let claw_x = sim.player().expect("Claw").x;
+    let side = |sim: &mut Sim, x: i32, carry: f64| {
+        sim.with_world(|w| {
+            let o = w.objects.get_mut(id).unwrap();
+            o.x = x;
+            let y = o.y;
+            let d = enemy::data_mut(w, id).unwrap();
+            d.carry.0 = carry;
+            d.moved_to = Some((x, y));
+        });
+        sim.step(TickInput::default());
+        assert_eq!(sim.player().unwrap().x, claw_x, "Claw stands still");
+        data(sim, id).claw_right
+    };
+    // On the same pixel, Claw is on the enemy's right only when the
+    // enemy's exact x is not past his pixel: at 0.6 px past it he is on
+    // its left.
+    assert!(side(&mut sim, claw_x, 0.0));
+    assert!(!side(&mut sim, claw_x, 0.6));
+    assert!(side(&mut sim, claw_x - 1, 0.6));
+    assert!(!side(&mut sim, claw_x + 1, -0.4));
+}

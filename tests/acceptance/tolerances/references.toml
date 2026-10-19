@@ -70,8 +70,16 @@
 # (30) the ledge guard looks at the side an enemy's exact position moved
 # to and puts it back where it was before the step, both coordinates (a
 # thrown enemy caught by a step's corner lands where it was); and (31) a
-# thrown enemy's bounce keeps the fractions of its exact position. The
-# comparison itself takes a
+# thrown enemy's bounce keeps the fractions of its exact position. Five
+# more came from the fifth level's runs: (32) a standing enemy's exact
+# height still moves under gravity and goes back onto its floor pixel
+# with the upward speed that move implies, and a built enemy's exact
+# height stays at its placement point; (33) going Home stops an enemy
+# across only; (34) going off screen cancels the 500 ms out-of-range wait;
+# (35) an enemy's movement step covers the difference of two game clock
+# readings in double-precision seconds, the clock one tick ahead; and (36)
+# Claw is on an enemy's right when his pixel is at or past its exact x.
+# The comparison itself takes a
 # reference step of no game time (the original's step of a save, `dt_ms`
 # 0) as the instant at its time, so the save's checkpoint is found in
 # both traces. The rule numbers below refer to this list.
@@ -90,8 +98,9 @@
 # `level1/bot-original-v2`, `level1/bot-original-v3` and
 # `level1/bot-original-v4`) are equal to the original in every column of
 # every compared row, random stream and events included. The other two
-# (`level1/bot-original-delay1` and `level1/bot-original-seg3410`) keep
-# the steps listed in their entries.
+# (`level1/bot-original-delay1` and `level1/bot-original-seg3410`) kept
+# the steps listed in their entries; `level1/bot-original-delay1` is equal
+# too since the enemies' step time follows the game clock.
 #
 # The entries after them hold the first level's routes found with rules
 # 18 to 20 (`-v5`, equal to the original on every row at `c18`), the first
@@ -205,21 +214,15 @@ tolerance = "exact"
 # original. The random stream used to differ from 47070 ms, where Claw
 # has stood since his respawn (47052 ms before rule 6 lost its time cap,
 # 25812 ms before rules 16 and 17); with the third level's latest rules
-# (the respawn's passes and an enemy's sight among them) it is equal
-# until 99738 ms (not traced yet), and Claw's movement until 107514 ms.
-# The score, the lives and the events now stay equal to the end.
+# (the respawn's passes and an enemy's sight among them) it was equal
+# until 99738 ms, and Claw's movement until 107514 ms. Since an enemy's
+# movement step takes its time from the game clock in double-precision
+# seconds (the difference of two readings, not 18 ms times 0.001), it is
+# equal on every row, random stream included.
 [[compare]]
 reference = "level1/bot-original-delay1"
 clock = "c18"
 tolerance = "exact"
-known.rng = 99738
-known.state_id = 107514
-known.physics_type = 107514
-known.x = 107532
-known.cam_x = 107532
-known.y = 107532
-known.cam_y = 107532
-known.health = 107514
 
 # The bot's route (default tuning) with one empty row first, at 60 frames
 # per second. At 550 ms the jump key is pressed on the frame Claw lands in

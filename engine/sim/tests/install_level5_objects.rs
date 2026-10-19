@@ -159,10 +159,11 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   collects them on other ticks (score). Drawn from the original's
 ///   stream, the fan and the break sound take the original's values in
 ///   the original's order (eight speeds, then the sound).
-/// - c18, the town guards again: Claw falls past (plank-edge-18832) or
-///   lands beside (plank-walk) a town guard on a lower row, or walks into
-///   one (plank-reset, after the restore), whose touch or strike costs him
-///   10 health in the original; here the guards stand still.
+/// - c18, the town guards again: Claw falls past (plank-edge-18832) a
+///   town guard on a lower row, or walks into one (plank-reset, after the
+///   restore), whose touch or strike costs him 10 health in the original;
+///   here the guards stand still. On plank-walk Claw lands beside one and
+///   follows the original to the end, the random stream included.
 /// - c18, plank-edge-18809, 918 ms: Claw stands balancing on the edge of
 ///   the second piece's cell when it goes; in the original he stands for a
 ///   tick before he falls, here he falls at once (his own states, not the
@@ -208,17 +209,6 @@ const KNOWN: &[Known] = &[
             ("physics_type", 2232),
             ("x", 3078),
             ("cam_x", 3078),
-        ],
-    ),
-    (
-        "plank-walk",
-        "c18",
-        &[
-            ("rng", 36),
-            ("state_id", 5472),
-            ("health", 5472),
-            ("x", 5490),
-            ("cam_x", 5490),
         ],
     ),
     (

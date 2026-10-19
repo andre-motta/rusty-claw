@@ -138,12 +138,12 @@ fn toward_claw(w: &World, id: ObjectId, speed: f64) -> f64 {
 // ----------------------------------------------------------------------
 // Home
 
-/// Goes Home (human enemies): stops and decides again in Home's handler.
-/// It leaves the busy flag as it is.
+/// Goes Home (human enemies): stops across and decides again in Home's
+/// handler. Its speed up or down is kept, so one that goes Home in mid-air
+/// falls on at its speed. It leaves the busy flag as it is.
 pub fn go_home(w: &mut World, id: ObjectId) {
     if let Some(d) = data_mut(w, id) {
         d.vx = 0.0;
-        d.vy = 0.0;
     }
     set_state(w, id, EnemyState::Home);
 }

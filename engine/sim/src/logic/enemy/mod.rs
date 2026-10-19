@@ -591,7 +591,8 @@ pub struct EnemyFields {
     /// Busy: striking, flinching, jumping, carried or dead; nothing is
     /// scheduled for it in the post-tick.
     pub busy: bool,
-    /// Claw is to the right (at or past the enemy's x).
+    /// Claw is to the right: his whole pixel at or past the enemy's exact
+    /// x (Claw at 16222 is left of an enemy at 16222.6).
     pub claw_right: bool,
     /// Range mode, 0 to 6 (see [`range_mode`]).
     pub mode: u8,
@@ -1224,7 +1225,10 @@ pub struct Body {
 /// removed far outside the level and (for human enemies) is told before it
 /// is removed. Every enemy placed outside its patrol limits is first moved
 /// onto the nearer limit (see [`clamp_on_construction`]); then it is
-/// dropped to the floor below it.
+/// dropped to the floor below it. Its exact height stays at the (clamped)
+/// point it was placed at: its first movement step starts from there, so
+/// an enemy placed 27 px above its floor starts standing with an upward
+/// speed of about 327 px/s (see [`motion`]).
 pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human: bool) {
     let bounds = fields.bounds;
     let bounds_y = record_bounds_y(w, id);
@@ -1249,7 +1253,16 @@ pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human
     o.damage = scaled(body.damage, DAMAGE_FACTOR);
     o.data = ObjectData::Enemy(fields.into());
     clamp_on_construction(o, bounds, bounds_y);
+    let placed_y = o.y;
     drop_to_floor(w, id);
+    let (x, y) = {
+        let o = obj(w, id);
+        (o.x, o.y)
+    };
+    if let Some(d) = data_mut(w, id) {
+        d.carry.1 = f64::from(placed_y - y);
+        d.moved_to = Some((x, y));
+    }
 }
 
 /// The construction step every enemy shares (rats, crabs, seagulls and
@@ -1488,6 +1501,7 @@ pub fn pre_tick(w: &mut World, id: ObjectId, class: &Class) {
         let o = obj(w, id);
         (o.x, o.y)
     };
+    let exact = exact_x(w, id);
     let claw = w.claw_object().map(|c| (c.x, c.y));
     let invisible = claw_invisible(w);
     let screen = on_screen(w, id);
@@ -1495,7 +1509,7 @@ pub fn pre_tick(w: &mut World, id: ObjectId, class: &Class) {
     let Some(d) = data_mut(w, id) else { return };
     d.roll = roll;
     if let Some((cx, cy)) = claw {
-        d.claw_right = cx >= ex;
+        d.claw_right = f64::from(cx) >= exact;
         if !invisible {
             d.mode = range_mode(d, (ex, ey), (cx, cy), screen, now);
         }
@@ -1566,7 +1580,9 @@ pub const MIRRORED: u32 = 0x2;
 /// innermost) down to 0 (the outermost), tested from the innermost out;
 /// otherwise 6 while the enemy is off screen, and 5 once Claw has been
 /// outside every box for [`OUT_OF_RANGE_MS`] with the enemy on screen
-/// (until then the mode keeps its value).
+/// (until then the mode keeps its value). Going off screen cancels that
+/// wait as a box hit does, so an enemy that comes back on screen with Claw
+/// out of range stays in mode 6 for the first 500 ms.
 ///
 /// Box `i` is centred on the enemy with the half sizes in
 /// [`EnemyFields::ranges`], cut across to the patrol limits widened by box
@@ -1592,6 +1608,7 @@ pub fn range_mode(
         }
     }
     if !screen {
+        d.miss_since = None;
         return 6;
     }
     let since = *d.miss_since.get_or_insert(now);
@@ -1944,6 +1961,27 @@ mod tests {
         assert_eq!(range_mode(&mut d, (100, 100), (200, 100), false, 0), 6);
         assert_eq!(range_mode(&mut d, (100, 100), (0, 60), false, 0), 4);
         assert_eq!(range_mode(&mut d, (100, 100), (0, 140), false, 0), 6);
+    }
+
+    #[test]
+    fn going_off_screen_cancels_the_out_of_range_wait() {
+        let mut d = officer_ranges();
+        d.mode = 4;
+        assert_eq!(range_mode(&mut d, (100, 100), (300, 100), true, 1000), 4);
+        assert_eq!(d.miss_since, Some(1000));
+        // Off screen: mode 6, and the wait is cancelled.
+        d.mode = range_mode(&mut d, (100, 100), (300, 100), false, 2000);
+        assert_eq!(d.mode, 6);
+        assert_eq!(d.miss_since, None);
+        // Back on screen long after the first miss, the wait starts again
+        // and the mode stays 6 for 500 ms (a town guard back on screen at
+        // 172962 ms is still in mode 6 when it reaches its limit two ticks
+        // later).
+        assert_eq!(range_mode(&mut d, (100, 100), (300, 100), true, 172_962), 6);
+        assert_eq!(d.miss_since, Some(172_962));
+        assert_eq!(range_mode(&mut d, (100, 100), (300, 100), true, 172_998), 6);
+        assert_eq!(range_mode(&mut d, (100, 100), (300, 100), true, 173_461), 6);
+        assert_eq!(range_mode(&mut d, (100, 100), (300, 100), true, 173_462), 5);
     }
 
     #[test]

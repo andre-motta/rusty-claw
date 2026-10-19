@@ -714,11 +714,9 @@ fn compare_crabs(
 ///
 /// - c18, the rooms of the patrol 10629..10806 (`crab-fight`,
 ///   `crab-swing`, `crab-nudge`): Claw, the crabs and the random stream
-///   follow the original step for step, except that a crab killed while
-///   standing flies off 1 px lower on some steps: the original keeps a
-///   fraction of a pixel in the height of a standing enemy that this game
-///   does not (`crab-swing` from 954 ms, `crab-nudge` from 1224 ms and
-///   4194 ms).
+///   follow the original step for step, a crab killed while standing
+///   included (it flies off from the fraction of a pixel a standing enemy
+///   keeps in its height).
 /// - c18, `crab-clamp`: this game's leave pass runs after the update pass
 ///   of the same tick, so the crab moved onto its limit by its own first
 ///   call is asleep at the end of that step (504 ms), where the original
@@ -743,53 +741,51 @@ const KNOWN: &[Known] = &[
         "nest-hatch",
         "c18",
         &[
-            ("rng", 18),
+            ("rng", 1350),
             ("crab0_y", 648),
             ("crab1_y", 648),
-            ("crab2_x", 648),
+            ("crab2_x", 1494),
             ("crab2_y", 648),
-            ("crab2_state", 1296),
-            ("crab0_x", 1440),
-            ("crab0_state", 1458),
-            ("crab1_state", 1368),
-            ("crab1_x", 1350),
+            ("crab2_state", 1512),
+            ("crab0_x", 1620),
+            ("crab0_state", 1638),
+            ("crab1_state", 1476),
+            ("crab1_x", 1476),
             ("crab0_listed", 3006),
             ("crab1_listed", 3006),
-            ("state_id", 1044),
-            ("health", 1044),
-            ("x", 1062),
+            ("state_id", 1350),
+            ("health", 1350),
+            ("x", 1368),
         ],
     ),
     (
         "nest-hatch",
         "c60",
         &[
-            ("state_id", 950),
-            ("health", 950),
-            ("x", 983),
-            ("cam_x", 983),
+            ("state_id", 1250),
+            ("health", 1250),
+            ("x", 1300),
+            ("cam_x", 1300),
         ],
     ),
     (
         "nest-duck",
         "c18",
         &[
-            ("rng", 18),
+            ("rng", 846),
             ("crab0_y", 648),
             ("crab1_y", 648),
-            ("crab2_x", 648),
+            ("crab2_x", 1494),
             ("crab2_y", 648),
-            ("crab2_state", 1296),
-            ("crab0_x", 1440),
-            ("crab0_state", 1458),
-            ("crab1_state", 1368),
-            ("crab1_x", 1350),
-            ("crab2_listed", 2700),
-            ("crab0_listed", 2862),
-            ("crab1_listed", 2862),
-            ("state_id", 810),
-            ("health", 810),
-            ("x", 828),
+            ("crab2_state", 1512),
+            ("crab0_x", 1620),
+            ("crab0_state", 1638),
+            ("crab1_state", 1476),
+            ("crab1_x", 1476),
+            ("crab0_listed", 2952),
+            ("state_id", 846),
+            ("health", 846),
+            ("x", 864),
         ],
     ),
     (
@@ -817,8 +813,6 @@ const KNOWN: &[Known] = &[
             ("cam_y", 14767),
         ],
     ),
-    ("crab-swing", "c18", &[("crab1_y", 954)]),
-    ("crab-nudge", "c18", &[("crab0_y", 1224), ("crab1_y", 4194)]),
     ("crab-clamp", "c18", &[("rng", 18), ("crab0_listed", 504)]),
 ];
 

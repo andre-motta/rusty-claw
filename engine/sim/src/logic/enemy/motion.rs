@@ -11,15 +11,22 @@
 //! 3. Each axis moves by `(v + a dt / 2) dt`, at most 24 px; the speed
 //!    then grows by `a dt` (after a capped step, it is what the energy of
 //!    the capped move gives). Across there is no acceleration; up and down
-//!    there is gravity, except for a standing enemy, which does not move
-//!    up or down and has no vertical speed. `dt` is the 18 ms tick, except
-//!    on the first step after a gap (an enemy woken after sleeping outside
-//!    its activation window): that step covers the whole time since the
-//!    last step, so a woken walker first makes up the way it did not walk
-//!    while asleep, up to the 24 px step limit (a rat asleep for 3.7 s
-//!    moves 24 px, then stops on its patrol limit). A step with no game
-//!    time since the last one, as in a respawn's update passes, covers
-//!    none and moves nothing.
+//!    there is gravity. A standing enemy (not riding a platform) moves its
+//!    exact height too, but the tiles keep it on its floor pixel; after
+//!    the collision its exact height goes back onto that pixel once it has
+//!    left it, with the upward speed that move back implies, so it carries
+//!    an upward speed settling towards 36 px/s and starts a fall off a
+//!    ledge with it. `dt` is the time on the game clock since the last
+//!    step, the difference of two readings in double-precision seconds,
+//!    each the clock (one tick ahead of the tick's start) times 0.001: an
+//!    18 ms tick is 0.018000000000000682 s at 135.36 s. The first step
+//!    covers one tick. After a gap (an enemy woken after sleeping outside
+//!    its activation window) the step covers the whole time since the last
+//!    one, so a woken walker first makes up the way it did not walk while
+//!    asleep, up to the 24 px step limit (a rat asleep for 3.7 s moves
+//!    24 px, then stops on its patrol limit). A step with no game time
+//!    since the last one, as in a respawn's update passes, covers none and
+//!    moves nothing.
 //! 4. The new position is clamped to the patrol limits: a walker that
 //!    would cross a limit stops exactly on it.
 //! 5. The object moves there through the tiles and platforms. When the
@@ -44,7 +51,8 @@
 //!    step, after the tiles had their say: a thrown enemy whose move into
 //!    a step's side is stopped while it lands on the step's corner moved
 //!    back by the fraction it carried, so it looks at its back edge, finds
-//!    no floor there and lands where it was, in the air.
+//!    no floor there and lands where it was, in the air. A standing enemy
+//!    put back also has its exact height put back on its pixel.
 //! 7. With the depth sort, it is drawn in front of Claw when his feet are
 //!    at or above its own, behind him otherwise.
 
@@ -110,25 +118,31 @@ pub fn integrate(w: &mut World, id: ObjectId) {
     }
 }
 
-/// The time the step at `now` covers, s: one tick, or after a gap (the
-/// enemy slept, so no step ran for more than a tick) the whole time since
-/// the last step, which only the [`STEP_LIMIT`] of the move bounds. A step
-/// with no game time since the last one covers none: a second step in the
-/// same moment, as in the update passes of a respawn, where the clock
-/// stands still, moves nothing. The first step covers one tick. Records
-/// `now` as the time of the last step.
+/// The time the step at `now` covers, s: the game clock's reading now
+/// less its reading at the last step (see [`clock_seconds`]), one tick or,
+/// after a gap (the enemy slept, so no step ran for more than a tick), the
+/// whole time since the last step, which only the [`STEP_LIMIT`] of the
+/// move bounds. A step with no game time since the last one covers none:
+/// a second step in the same moment, as in the update passes of a
+/// respawn, where the clock stands still, moves nothing. The first step
+/// covers one tick. Records `now` as the time of the last step.
 fn step_seconds(d: &mut EnemyData, now: u64) -> f64 {
     let last = d.last_move_ms.replace(now);
     let since = last.map_or(0, |t| now.saturating_sub(t));
-    if last.is_some() && since == 0 {
-        return 0.0;
+    match last {
+        Some(_) if since == 0 => 0.0,
+        Some(last) => clock_seconds(now) - clock_seconds(last),
+        None => f64::from(TICK_MS) * 0.001,
     }
-    let ms = if since > u64::from(TICK_MS) {
-        since
-    } else {
-        u64::from(TICK_MS)
-    };
-    ms as f64 * 0.001
+}
+
+/// The game clock at the step that runs at `now` (the tick's start, ms),
+/// in seconds: the clock is one tick ahead then, and each reading is
+/// rounded to a double on its own, so the time between two steps is the
+/// difference of two rounded readings (0.018000000000000682 s at 135.36 s,
+/// not 0.018).
+fn clock_seconds(now: u64) -> f64 {
+    (now + u64::from(TICK_MS)) as f64 * 0.001
 }
 
 fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
@@ -162,6 +176,18 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
         d.bounds,
     );
     let tx = px.trunc() as i32;
+    // A standing enemy's exact height still moves under gravity; the
+    // tiles keep it on its floor, and after the collision the exact height
+    // goes back there (see `settle_standing`). Not while it rides a
+    // platform, which carries it by whole pixels.
+    let riding = ride != (0, 0) || obj(w, id).flags & flags::ON_ELEVATOR != 0;
+    let stand_y = (standing && !riding).then(|| {
+        let ay = d.ay;
+        clamp_to(
+            f64::from(y0) + d.carry.1 + axis_step_for(&mut d.vy, ay, dt),
+            d.bounds_y,
+        )
+    });
     let (py, ty) = if standing {
         d.vy = 0.0;
         let y = y0 + ride.1;
@@ -195,6 +221,9 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     } else {
         0.0
     };
+    if let Some(moved) = stand_y {
+        settle_standing(d, y, moved);
+    }
     if now == ptype::DIRECT {
         d.moved_to = Some((x, y));
         if d.z_sort {
@@ -259,6 +288,27 @@ fn collide(w: &mut World, id: ObjectId, tx: i32, ty: i32) -> u32 {
     }
 }
 
+/// After the step of a standing enemy whose exact height moved to `moved`
+/// while the tiles kept it on the floor at `y`: when `moved` no longer
+/// truncates to `y`, the exact height goes back onto `y` and the vertical
+/// speed is the one that move back implies, `-sqrt(2 a (y - moved))` (0
+/// when that is not a move up, and without gravity); otherwise `moved`
+/// stays as the carried fraction and the speed stays 0. So a standing
+/// enemy under 2000 px/s² carries an upward speed that settles towards
+/// 36 px/s and starts a fall off a ledge with it.
+fn settle_standing(d: &mut EnemyData, y: i32, moved: f64) {
+    if moved.trunc() as i32 == y {
+        d.carry.1 = moved - f64::from(y);
+        return;
+    }
+    d.carry.1 = 0.0;
+    d.vy = if d.ay == 0.0 {
+        0.0
+    } else {
+        -(2.0 * d.ay * (f64::from(y) - moved)).max(0.0).sqrt()
+    };
+}
+
 /// Where an enemy was before its step: its position, its exact position,
 /// its speed up or down, and whether it started the step standing.
 #[derive(Debug, Clone, Copy)]
@@ -310,6 +360,7 @@ fn ledge_guard(w: &mut World, id: ObjectId, d: &mut EnemyData, before: Before, m
     o.x = before.x;
     d.carry.0 = 0.0;
     if before.standing {
+        d.carry.1 = 0.0;
         return;
     }
     let y = o.y;
@@ -368,6 +419,7 @@ fn ledge_column(under: u8, above: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::EnemyFields;
     use super::*;
 
     #[test]
@@ -394,17 +446,82 @@ mod tests {
     #[test]
     fn a_step_covers_the_game_time_since_the_last_one() {
         let mut d = EnemyData::default();
-        let tick = 18.0 * 0.001;
+        let reading = |ms: u64| (ms + 18) as f64 * 0.001;
         // The first step covers one tick.
-        assert_eq!(step_seconds(&mut d, 1000), tick);
-        assert_eq!(step_seconds(&mut d, 1018), tick);
+        assert_eq!(step_seconds(&mut d, 1000), 18.0 * 0.001);
+        assert_eq!(step_seconds(&mut d, 1018), reading(1018) - reading(1000));
         // A second step in the same moment (a respawn's update passes,
         // with the clock standing still) covers none.
         assert_eq!(step_seconds(&mut d, 1018), 0.0);
         assert_eq!(step_seconds(&mut d, 1018), 0.0);
         // The next tick covers one tick again, and a gap all of it.
-        assert_eq!(step_seconds(&mut d, 1036), tick);
-        assert_eq!(step_seconds(&mut d, 1136), 100.0 * 0.001);
+        assert_eq!(step_seconds(&mut d, 1036), reading(1036) - reading(1018));
+        assert_eq!(step_seconds(&mut d, 1136), reading(1136) - reading(1036));
+    }
+
+    #[test]
+    fn the_step_time_is_the_difference_of_two_clock_readings() {
+        // The tick that starts at 135342 ms runs with the clock at 135.36 s
+        // and the last step's reading 135.342 s: the step covers
+        // 0.018000000000000682 s, not 18 ms times 0.001.
+        let mut d = EnemyData::from(EnemyFields {
+            last_move_ms: Some(135_324),
+            ..EnemyFields::default()
+        });
+        assert_eq!(clock_seconds(135_342), 135.36);
+        let dt = step_seconds(&mut d, 135_342);
+        assert_eq!(dt, 0.018_000_000_000_000_682);
+        assert_ne!(dt, 18.0 * 0.001);
+        // So a walker covers slightly more or less than 18 ms worth per
+        // tick, by the rounding of the two readings.
+        let mut d = EnemyData::default();
+        step_seconds(&mut d, 18 * 3538);
+        let walked: f64 = (3539..=3594u64)
+            .map(|k| 120.0 * step_seconds(&mut d, 18 * k))
+            .sum();
+        assert_ne!(walked, 56.0 * 120.0 * (18.0 * 0.001));
+    }
+
+    #[test]
+    fn a_standing_enemy_is_put_back_on_its_floor_with_an_upward_speed() {
+        let mut d = EnemyData::from(EnemyFields {
+            ay: 2000.0,
+            ..EnemyFields::default()
+        });
+        // Built 27 px above its floor at 5416: the first tick moves the
+        // exact height 0.324 px down, to 5389.324, and it goes back on the
+        // floor at 326.66 px/s up.
+        let mut v = 0.0;
+        let moved = 5389.0 + axis_step_for(&mut v, 2000.0, 0.018);
+        settle_standing(&mut d, 5416, moved);
+        assert_eq!(d.carry.1, 0.0);
+        assert!((d.vy + (4000.0f64 * 26.676).sqrt()).abs() < 1e-9);
+        // Standing on, the speed settles towards 36 px/s up.
+        for _ in 0..2000 {
+            let mut v = d.vy;
+            let moved = 5416.0 + d.carry.1 + axis_step_for(&mut v, 2000.0, 0.018);
+            d.vy = 0.0;
+            settle_standing(&mut d, 5416, moved);
+        }
+        assert!(d.vy < -36.0 && d.vy > -36.5, "{}", d.vy);
+        // A move down within the pixel stays as the carried fraction, with
+        // no speed; one that leaves it downward is put back with none.
+        let mut d = EnemyData::from(EnemyFields {
+            ay: 2000.0,
+            ..EnemyFields::default()
+        });
+        settle_standing(&mut d, 5416, 5416.324);
+        assert!((d.carry.1 - 0.324).abs() < 1e-9);
+        assert_eq!(d.vy, 0.0);
+        settle_standing(&mut d, 5416, 5417.2);
+        assert_eq!((d.carry.1, d.vy), (0.0, 0.0));
+        // Without gravity there is no speed to give back.
+        let mut d = EnemyData::from(EnemyFields {
+            ay: 0.0,
+            ..EnemyFields::default()
+        });
+        settle_standing(&mut d, 100, 99.5);
+        assert_eq!((d.carry.1, d.vy), (0.0, 0.0));
     }
 
     #[test]
