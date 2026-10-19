@@ -154,11 +154,12 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// - c18, 36 ms (rng): the town guards are not built yet. In the original
 ///   those awake around Claw each make the enemies' per-tick roll on every
 ///   frame pulse tick, so the random stream runs ahead of the game's from
-///   the first pulse tick. The planks never read it; a statue's fan does
-///   (each goodie's upward speed), so its goodies fly other arcs and Claw
-///   collects them on other ticks (score). Drawn from the original's
-///   stream, the fan and the break sound take the original's values in
-///   the original's order (eight speeds, then the sound).
+///   the first pulse tick. The planks never read it. The statues' routes
+///   follow the original on every column at c18: the objects awake where
+///   Claw was put down from run once more in the warp and go to sleep
+///   before his first tick there, so the statue's fan and its break sound
+///   draw the original's values in the original's order (eight speeds,
+///   then the sound).
 /// - c18, the town guards again: Claw falls past (plank-edge-18832) a
 ///   town guard on a lower row, or walks into one (plank-reset, after the
 ///   restore), whose touch or strike costs him 10 health in the original;
@@ -253,9 +254,7 @@ const KNOWN: &[Known] = &[
             ("cam_y", 12168),
         ],
     ),
-    ("statue-front", "c18", &[("rng", 36), ("score", 1620)]),
     ("statue-front", "c60", &[("score", 1633)]),
-    ("statue-behind", "c18", &[("rng", 36), ("score", 1458)]),
     ("statue-behind", "c60", &[("score", 1433)]),
 ];
 

@@ -172,11 +172,12 @@ pub struct Sim {
     /// the next tick.
     respawned: bool,
     /// The frame time the logic calls run with, ms: one tick, or 0 in the
-    /// respawn's two update passes (see [`Sim::respawn_between_ticks`]).
+    /// respawn's two update passes (see [`Sim::respawn_between_ticks`])
+    /// and in the warp's (see [`Sim::settle_after_warp`]).
     frame_ms: u32,
     /// The game time the logic calls see while the clock stands still
-    /// (the respawn's update passes), ms; `None` the rest of the time,
-    /// when it is the start of the current tick.
+    /// (the respawn's and the warp's update passes), ms; `None` the rest
+    /// of the time, when it is the start of the current tick.
     held_clock_ms: Option<u64>,
     /// The level was won in an earlier tick: play has stopped (see
     /// [`Sim::level_ended`]).
@@ -200,9 +201,9 @@ struct Runner<'a> {
     input: TickInput,
     tick: u64,
     now_ms: u64,
-    /// The frame time of the call, ms: one tick; 0 in the respawn's
-    /// update passes and in Claw's call in the settle after a warp. Claw's
-    /// timers and movement, the level logics' animations
+    /// The frame time of the call, ms: one tick; 0 in the respawn's and
+    /// the warp's update passes and in Claw's call in the settle after a
+    /// warp. Claw's timers and movement, the level logics' animations
     /// ([`World::dt_ms`]), the camera and the objects' time delays count
     /// it.
     dt_ms: u32,
@@ -918,18 +919,17 @@ impl Sim {
 
     /// The warp Claw touched in the last tick, between that tick and the
     /// next, taking no game time: Claw is put at the target and the
-    /// camera's scripted point is dropped; the camera jumps to him when he
-    /// is out of its reach ([`Camera::settle`]), the objects around his new
-    /// place wake, and those that never ran run their first logic call in
-    /// list order, as the level's objects do while it loads (a trigger or
-    /// boss waiting there is so ready for Claw's first tick at the
-    /// target); then Claw's logic runs once more with no game time, with
-    /// the keys of the last tick held and nothing pressed. Nothing moves in
-    /// that call, but Claw's state follows where he now is: falling onto a
+    /// camera's scripted point is dropped; then the warp's set-up runs
+    /// ([`Sim::settle_after_warp`]): every other object still awake around
+    /// the warp runs once more with no game time, the camera jumps to
+    /// Claw, the objects by the warp go to sleep and those around his new
+    /// place wake, and those that never ran make their first logic call;
+    /// then Claw's logic runs once more with no game time, with the keys
+    /// of the last tick held and nothing pressed. Nothing moves in that
+    /// call, but Claw's state follows where he now is: falling onto a
     /// floor he lands, so a fall into the warp walks on in the first tick
     /// at the target when a direction is held, while a walk into it stays
-    /// a walk. The objects' own calls in that pass change nothing with no
-    /// game time, so only Claw's runs.
+    /// a walk.
     fn warp_between_ticks(&mut self, (x, y): (i32, i32)) {
         let Some(id) = self.player else { return };
         if let Some(o) = self.objects.get_mut(id) {
@@ -949,7 +949,26 @@ impl Sim {
 
     /// The warp's set-up after it moved Claw (see
     /// [`Sim::warp_between_ticks`]).
+    ///
+    /// First an update pass runs over every object in the live list but
+    /// Claw, with a frame time of 0 and the game clock and frame pulse of
+    /// the tick that touched the warp, as in the respawn's passes: no game
+    /// time passes in it, but the objects still awake around the warp
+    /// make their logic calls once more. When that tick was a pulse
+    /// tick, the enemies there make their per-pulse roll a second time.
+    /// Claw does not run in it, so he does not move.
+    ///
+    /// Then the camera jumps to Claw when he is out of its reach
+    /// ([`Camera::settle`]), and the activation's leave and enter run
+    /// around his new place: the objects by the warp go to sleep before
+    /// the first tick at the target, and those around him wake. Last, the
+    /// objects that never ran make their first logic call in list order,
+    /// as the level's objects do while it loads (a trigger or boss waiting
+    /// there is so ready for Claw's first tick at the target).
     fn settle_after_warp(&mut self) {
+        self.frame_ms = 0;
+        self.held_clock_ms = Some(self.tick.saturating_sub(1) * u64::from(TICK_MS));
+        self.pass(false, self.player);
         let followed = self
             .player
             .and_then(|p| self.objects.get(p))
@@ -967,6 +986,12 @@ impl Sim {
         );
         self.camera_point = self.camera.current;
         let c = self.centres();
+        {
+            let (mut runner, objects, activation) = self.parts();
+            activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
+        }
+        self.frame_ms = TICK_MS;
+        self.held_clock_ms = None;
         self.activation.enter(&mut self.objects, c);
         self.set_up_pass();
     }
@@ -995,14 +1020,14 @@ impl Sim {
     }
 
     fn update_pass(&mut self) {
-        self.pass(false);
+        self.pass(false, None);
     }
 
     /// The level load's set-up: the first logic call of every level object
     /// in the live list that has not had one, in list order, before time
     /// zero.
     fn set_up_pass(&mut self) {
-        self.pass(true);
+        self.pass(true, None);
     }
 
     /// The ambient sound manager's update, once per tick after the rest of
@@ -1042,14 +1067,18 @@ impl Sim {
     /// The walk keeps the next object before it runs one, and an object
     /// made by a logic joins the list at once (by depth): it runs in the
     /// same walk when it lands after the kept next object, and from the
-    /// next tick when it lands before it.
-    fn pass(&mut self, set_up: bool) {
+    /// next tick when it lands before it. The object `skip`, when given,
+    /// is passed over.
+    fn pass(&mut self, set_up: bool, skip: Option<ObjectId>) {
         let mut destroy = Vec::new();
         let mut resort = Vec::new();
         let (mut runner, objects, _) = self.parts();
         let mut cur = objects.head();
         while let Some(id) = cur {
             cur = objects.next_of(id);
+            if Some(id) == skip {
+                continue;
+            }
             let run = {
                 let Some(o) = objects.get_mut(id) else {
                     continue;
