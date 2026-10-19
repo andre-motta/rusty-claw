@@ -17,7 +17,9 @@
 //! open cells follow what Claw can do, generously:
 //!
 //! - down: always (falling), except through a one-way floor (a ground
-//!   tile, which Claw stands on and cannot drop through);
+//!   tile, which Claw stands on and cannot drop through) that is not a
+//!   breaking plank's (a plank gives way under him a moment after he
+//!   steps on it, so he stands on it and then falls through);
 //! - up: only within a jump's reach above support in the same column, or
 //!   on a ladder, or within a jump's reach and Claw's height below one
 //!   (he catches a ladder with his body, so a jump from the floor reaches
@@ -36,7 +38,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use claw_sim::SimLevel;
-use claw_sim::logic::{path_elevator, platform, rope, springboard, stepping_stone};
+use claw_sim::logic::{break_plank, path_elevator, platform, rope, springboard, stepping_stone};
 use claw_sim::player::swing;
 use claw_sim::tiles::{CLIMB, DEATH, GROUND, SOLID};
 
@@ -204,6 +206,7 @@ impl Grid {
         grid.mark_ropes(level, &mut support);
         grid.mark_stepping_stones(level, &mut support);
         grid.mark_springboards(level, &mut support, reach);
+        grid.mark_planks(level);
         grid.to_ladder = vec![u16::MAX; n];
         for c in 0..cols {
             let mut above = u16::MAX;
@@ -391,6 +394,38 @@ impl Grid {
             }
         }
         self.thrown = thrown;
+    }
+
+    /// Lets Claw fall through the floor of every breaking plank: the cells
+    /// of each piece's floor tile stay support but are no longer a one-way
+    /// floor, since the piece gives way under him.
+    fn mark_planks(&mut self, level: &SimLevel) {
+        let Some(planks) = break_plank::level_table(level.number) else {
+            return;
+        };
+        let (tw, th) = (level.map.tile_w().max(1), level.map.tile_h().max(1));
+        for spec in &level.objects {
+            if spec.logic != break_plank::SPAWNER {
+                continue;
+            }
+            let r = &spec.record;
+            for i in 0..r[break_plank::WIDTH_FIELD].max(1) {
+                let (col, row) =
+                    break_plank::floor_cell(planks, r[5] + i * planks.spacing, r[6], th);
+                let (left, top) = (col * tw, row * th);
+                let mut yy = top;
+                while yy < top + th {
+                    let mut xx = left;
+                    while xx < left + tw {
+                        if let Some(c) = self.cell_index(xx, yy) {
+                            self.floor[c] = false;
+                        }
+                        xx += CELL;
+                    }
+                    yy += CELL;
+                }
+            }
+        }
     }
 
     /// Marks the open cells of a box as support.
@@ -698,6 +733,45 @@ mod tests {
         assert!(!g.is_open(3 * 64 + 10, 2 * 64 + 10));
         let f = g.field_to(600, 120, 20);
         assert_ne!(f.at(60, 120), UNREACHABLE);
+    }
+
+    #[test]
+    fn claw_falls_through_a_breaking_plank_row_but_not_a_one_way_floor() {
+        // 64 px tiles on the fifth level: a floor at the bottom, and a
+        // ground row across the whole level in row 4; with no plank row
+        // there it is a one-way floor, and with a row of planks along it
+        // the way down from above it is straight through.
+        let rows = [
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "==========",
+            "..........",
+            "..........",
+            "##########",
+        ];
+        let field = |objects: Vec<ObjectSpec>| {
+            let mut l = level(&rows);
+            l.number = 5;
+            l.objects = objects;
+            Grid::build(&l, Reach::default())
+                .field_to(320, 6 * 64 + 32, 20)
+                .at(320, 4 * 64 - 8)
+        };
+        assert_eq!(field(Vec::new()), UNREACHABLE);
+        // Ten pieces 64 px apart from x 0, their floor cells in row 4
+        // (60 px above the pieces' y).
+        let mut row = ObjectSpec::at(break_plank::SPAWNER, 0, 4 * 64 + 60, 0);
+        row.record[break_plank::WIDTH_FIELD] = 10;
+        let through = field(vec![row.clone()]);
+        assert_ne!(through, UNREACHABLE);
+        assert!(through <= 4 * 64, "straight down: {through}");
+        // A row of three pieces at the left lets him through only there.
+        row.record[break_plank::WIDTH_FIELD] = 3;
+        let around = field(vec![row]);
+        assert!(around > through, "{around} {through}");
+        assert_ne!(around, UNREACHABLE);
     }
 
     /// 16 px tiles: a floor at the bottom (feet in row 28) and a high

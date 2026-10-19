@@ -87,6 +87,29 @@ pub enum Goal {
         /// Distance that counts as there, px.
         radius: i32,
     },
+    /// Claw comes within `radius` px of (`x`, `y`) on his feet, on a
+    /// ladder or on a rope, never in the middle of a jump or a fall: a
+    /// stretch of a route that ends there leaves him where he can stay.
+    Stand {
+        /// Target x.
+        x: i32,
+        /// Target y.
+        y: i32,
+        /// Distance that counts as there, px.
+        radius: i32,
+    },
+}
+
+impl Goal {
+    /// True when `sim` meets this goal by Claw's place alone (the level
+    /// complete goal is met by its event).
+    pub fn met_at(&self, sim: &Sim) -> bool {
+        match *self {
+            Goal::LevelComplete => false,
+            Goal::Reach { x, y, radius } => near(sim, x, y, radius),
+            Goal::Stand { x, y, radius } => near(sim, x, y, radius) && on_foot(sim),
+        }
+    }
 }
 
 /// Search settings.
@@ -435,7 +458,9 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
             }
             (None, None) => return Err(fail("the level has no end object to head for".into())),
         },
-        Goal::Reach { x, y, radius } => grid.field_to(x, y + feet, radius.max(8)),
+        Goal::Reach { x, y, radius } | Goal::Stand { x, y, radius } => {
+            grid.field_to(x, y + feet, radius.max(8))
+        }
     };
     targets.push(Target {
         field,
@@ -1105,7 +1130,7 @@ fn within(a: Option<u64>, b: u64, gap: u64) -> bool {
 }
 
 /// True when Claw is on his feet, on a ladder or on a rope.
-fn on_foot(sim: &Sim) -> bool {
+pub fn on_foot(sim: &Sim) -> bool {
     matches!(
         actions::phase(sim),
         actions::Phase::Ground | actions::Phase::Climb | actions::Phase::Swing
@@ -1162,9 +1187,7 @@ fn play(
                 _ => {}
             }
         }
-        if let Goal::Reach { x, y, radius } = *goal {
-            done |= near(&sim, x, y, radius);
-        }
+        done |= goal.met_at(&sim);
         if let Some((x, y, r)) = hint {
             reached |= if from.hint_on_foot {
                 near(&sim, x, y, 2 * r) && on_foot(&sim)
@@ -1305,7 +1328,8 @@ fn played_on(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> Option<Si
 /// The coarse state of a game the search treats as one: Claw's position to
 /// 8 px, his state, facing, running and attacking, his health to 10
 /// points, and the platforms (position to 16 px and state) and enemies
-/// (alive or not) within about a screen of him. Springboards and stepping
+/// (alive or not) within about a screen of him, and whether each piece of
+/// a breaking plank row near him is whole, waiting or crumbling. Springboards and stepping
 /// stones count with where they are in their cycles (state and frame, and
 /// a stone that keeps to the clock its time in its cycle to a tenth of a
 /// second), so a wait on a springboard for its throw, or beside a stone
@@ -1373,6 +1397,14 @@ pub fn state_key(sim: &Sim) -> u64 {
                 i64::from(o.frame),
                 into,
             ]);
+        } else if let ObjectData::BreakPlank(d) = &o.data
+            && d.pieces.is_empty()
+        {
+            // A piece of a breaking plank row: whole, waiting to give way,
+            // or crumbling and gone decides whether Claw can stand there,
+            // so Claw back where he stood with the row broken behind him
+            // is another state.
+            k.add(&[9, i64::from(id), i64::from(o.state)]);
         } else if o.type_flags & platform::PLATFORM != 0 {
             k.add(&[
                 1,
