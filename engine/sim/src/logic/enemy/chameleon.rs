@@ -53,7 +53,9 @@
 //! - The tongue: the shared strike with its strike picture's event (the
 //!   fourth call) and the tongue sound; its tongue box is live on that
 //!   call only; it goes Home on the sixteenth.
-//! - Hits: the shared human hit rule, which kills it in the same hit.
+//! - Hits: the shared human hit rule, which kills it in the same hit; a
+//!   jump switch launches it as it launches the guards, from its exact
+//!   position ([`jump_switch::launch`]).
 //! - The fourteenth level only: while not fading or dead, a close frontal
 //!   attack of Claw's (range modes 3 and 4, Claw attacking and facing it)
 //!   tries to phase 3 times in 100 ([`FRONTAL_PHASE_CHANCE`]).
@@ -121,7 +123,7 @@ use super::{
     Handler, Timer, build, data, data_mut, exact_x, face_claw, human_fields, obj_mut, play, rand,
     set_anim, set_state,
 };
-use crate::logic::{ObjectData, World};
+use crate::logic::{ObjectData, World, jump_switch};
 use crate::object::{Object, ObjectId, Rect, draw_flags, flags};
 
 /// Logic names this family runs.
@@ -388,8 +390,18 @@ pub fn tick(w: &mut World, id: ObjectId) {
     human::tick(w, id);
 }
 
-/// `attacker` hit `id`: the shared human hit rule.
+/// `attacker` hit `id`: the shared human hit rule, except that a jump
+/// switch (the fourteenth level's switch room) passes the shared hit gate
+/// and launches the lizard from its exact position as it launches the
+/// guards ([`jump_switch::launch`]).
 pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
+    let kind = w.objects.get(attacker).map_or(0, |a| a.type_flags);
+    if kind == super::attacker::SPRING {
+        if super::accept_hit(w, id) {
+            jump_switch::launch(w, id, attacker);
+        }
+        return;
+    }
     super::on_hit(w, id, attacker);
 }
 

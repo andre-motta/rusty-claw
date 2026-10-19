@@ -67,6 +67,13 @@
 //! A script's `# checkpoint X,Y` comment line stands in for the flag when
 //! it is not given. The run is still plain play and can be compared.
 //!
+//! A script's `# health N` comment line gives Claw health N at the
+//! script's time zero (after `--start` has settled him, as the reference
+//! store's runs of such a route set it): a diagnostic set-up too, for a
+//! stretch that starts from a health plain play does not bring there; the
+//! run can still be compared with those runs. A respawn refills it as any
+//! respawn does.
+//!
 //! A script's `# boss_health N` comment line is a set-up for measuring a
 //! stretch of a boss fight: the level's boss is given health N on the
 //! first arena step, after the first tick that has him as the current
@@ -103,7 +110,9 @@ use std::process::ExitCode;
 
 use claw_assets::{Install, LevelData, LevelSource, Source};
 use claw_sim::claw_frame::{AspectPolicy, GameEvent, ViewConfig};
-use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
+use claw_sim::input::{
+    DirectiveKind, ScriptCommand, ScriptTuning, script_checkpoint, script_health,
+};
 use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
@@ -120,10 +129,6 @@ const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FIL
 
 /// The key of the mid-air hit jump fix in a script's comment line.
 const BEHAVIOUR_KEY: &str = "mid_air_hit_fix";
-
-/// The key of the respawn point set at time zero in a script's comment
-/// line.
-const CHECKPOINT_KEY: &str = "checkpoint";
 
 /// Rows of each trace shown before a divergence.
 const CONTEXT_ROWS: usize = 5;
@@ -350,29 +355,6 @@ fn parse_point(v: &str) -> Option<(i32, i32)> {
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
-/// The respawn point a script's `# checkpoint X,Y` comment line sets at
-/// time zero (the last such line counts); `None` without one. An `=`
-/// between the key and the point is accepted.
-fn script_checkpoint(text: &str) -> Result<Option<(i32, i32)>, String> {
-    for l in text.lines().rev() {
-        let Some(rest) = l.trim().strip_prefix('#') else {
-            continue;
-        };
-        let rest = rest.trim();
-        let Some(v) = rest.strip_prefix(CHECKPOINT_KEY) else {
-            continue;
-        };
-        if !v.starts_with([' ', '=', '\t']) {
-            continue;
-        }
-        let v = v.trim().trim_start_matches('=').trim();
-        return parse_point(v)
-            .map(Some)
-            .ok_or_else(|| format!("bad checkpoint line {l:?}, expected # checkpoint X,Y"));
-    }
-    Ok(None)
-}
-
 fn parse_on_off(v: &str) -> Option<bool> {
     match v.trim().to_ascii_lowercase().as_str() {
         "on" | "true" | "yes" | "1" => Some(true),
@@ -448,6 +430,8 @@ fn run(args: Args) -> Result<Outcome, String> {
         Some(p) => Some(p),
         None => script_checkpoint(&text).map_err(|e| format!("{}: {e}", script_path.display()))?,
     };
+    let start_health =
+        script_health(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
     let fix = args
         .mid_air_hit_fix
         .or(script_behaviour(&text))
@@ -547,6 +531,10 @@ fn run(args: Args) -> Result<Outcome, String> {
     }
     if let Some(p) = checkpoint {
         sim.set_checkpoint(Some(p));
+    }
+    if let Some(h) = start_health {
+        sim.set_health(h);
+        eprintln!("claw-replay: Claw's health set to {h} at the script's time zero");
     }
     let mut rows = Vec::with_capacity(script.ticks.len());
     let mut completed = false;
@@ -812,6 +800,37 @@ mod tests {
             Some(1500),
             "respawned at the set point"
         );
+    }
+
+    #[test]
+    fn a_health_set_at_time_zero_holds_until_a_respawn_refills_it() {
+        use claw_sim::{SimConfig, TileMap};
+        assert_eq!(
+            script_health("# level 14\n# health 90\ntick,a,b\n0,0,0\n"),
+            Ok(Some(90))
+        );
+        assert_eq!(script_health("# level 14\ntick,a,b\n"), Ok(None));
+        assert!(script_health("# health ninety\n").is_err());
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (300, 880));
+        let mut sim = Sim::new(level, SimConfig::default());
+        sim.step(Default::default());
+        sim.set_health(90);
+        sim.step(Default::default());
+        assert_eq!(sim.claw().stats.health, 90);
+        assert_eq!(sim.hud().health, 90);
+        sim.end_life();
+        let mut refilled = false;
+        for _ in 0..400 {
+            sim.step(Default::default());
+            if sim.claw().stats.health == 100 {
+                refilled = true;
+                break;
+            }
+        }
+        assert!(refilled, "a respawn refills it");
     }
 
     #[test]

@@ -10,9 +10,11 @@
 //! Marrow ([`marrow`]) with his parrot ([`parrot`]), the eleventh
 //! level's Mercat ([`mercat`]), Siren ([`siren`]) and Fish ([`fish`]),
 //! the twelfth level's Aquatis ([`aquatis`]) with his helpers and the
-//! tentacles ([`tentacle`]), and the thirteenth level's Chameleon
-//! ([`chameleon`]), with RedTail ([`redtail`]), his stakes and his wind
-//! declared but not built yet.
+//! tentacles ([`tentacle`]), the thirteenth level's Chameleon
+//! ([`chameleon`]) and RedTail ([`redtail`]) with his stakes and his wind,
+//! and the fourteenth level's tiger guards ([`tiger_guard`]), with Omar
+//! ([`omar`]), his shield and his energy balls declared but not built
+//! yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -78,6 +80,7 @@ pub mod marrow;
 pub mod mercat;
 pub mod motion;
 pub mod officer;
+pub mod omar;
 pub mod parrot;
 pub mod pegleg;
 pub mod punkrat;
@@ -91,6 +94,7 @@ pub mod siren;
 pub mod soldier;
 pub mod states;
 pub mod tentacle;
+pub mod tiger_guard;
 pub mod townguard;
 pub mod wolvington;
 
@@ -222,7 +226,9 @@ pub mod field {
 /// grab, squeeze and regrowth from 2290, see [`aquatis::STATE_BLOCK`])
 /// and 2300-2319 the thirteenth level's (RedTail's attacks and jumps from
 /// 2300, the Chameleon's fade out and back from 2310, see
-/// [`redtail::STATE_BLOCK`]); later families take blocks of 20 from 2320.
+/// [`redtail::STATE_BLOCK`]) and 2320-2339 the fourteenth level's (the
+/// tiger guards' lunge and flips from 2320, Omar's cast, move and wait
+/// from 2330, see [`tiger_guard::STATE_BLOCK`]).
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -428,11 +434,24 @@ pub enum EnemyState {
     PhaseOut = 2310,
     /// Hidden somewhere else, then fading back in (the Chameleon).
     PhaseIn = 2311,
+    /// Crouching, then dashing at where Claw stood, claws out (the tiger
+    /// guards).
+    LungeAttack = 2320,
+    /// Somersaulting towards Claw (the tiger guards).
+    FrontFlip = 2321,
+    /// Somersaulting away from Claw (the tiger guards).
+    BackFlip = 2322,
+    /// Casting an energy ball at Claw (Omar).
+    MagicAttack = 2330,
+    /// Flashing in place before he appears somewhere else (Omar).
+    MoveToPosition = 2331,
+    /// Doing nothing for the rest of the level (Omar, after his death).
+    Wait = 2332,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 97] = [
+    pub const ALL: [EnemyState; 103] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -530,6 +549,12 @@ impl EnemyState {
         EnemyState::JumpDown,
         EnemyState::PhaseOut,
         EnemyState::PhaseIn,
+        EnemyState::LungeAttack,
+        EnemyState::FrontFlip,
+        EnemyState::BackFlip,
+        EnemyState::MagicAttack,
+        EnemyState::MoveToPosition,
+        EnemyState::Wait,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -641,6 +666,12 @@ impl EnemyState {
             EnemyState::JumpDown => "JumpDown",
             EnemyState::PhaseOut => "PhaseOut",
             EnemyState::PhaseIn => "PhaseIn",
+            EnemyState::LungeAttack => "LungeAttack",
+            EnemyState::FrontFlip => "FrontFlip",
+            EnemyState::BackFlip => "BackFlip",
+            EnemyState::MagicAttack => "MagicAttack",
+            EnemyState::MoveToPosition => "MoveToPosition",
+            EnemyState::Wait => "Wait",
         }
     }
 }
@@ -1083,6 +1114,8 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::Tentacle => Some(&tentacle::CLASS),
         GameLogic::Chameleon => Some(&chameleon::CLASS),
         GameLogic::RedTail => Some(&redtail::CLASS),
+        GameLogic::TigerGuard => Some(&tiger_guard::CLASS),
+        GameLogic::Omar => Some(&omar::CLASS),
         _ => None,
     }
 }
@@ -1119,8 +1152,8 @@ impl ObjectData {
     /// Katherine's, the town guards', the seagull's, Wolvington's, the
     /// red-tail pirates', the bear sailors', the crabs', Gabriel's, the
     /// hook-handed pirates', PegLegs', Marrow's and his parrot's, the
-    /// Mercats', Sirens' and Fish's, Aquatis's and the tentacles', and the
-    /// Chameleons' and RedTail's).
+    /// Mercats', Sirens' and Fish's, Aquatis's and the tentacles', the
+    /// Chameleons' and RedTail's, and the tiger guards' and Omar's).
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -1147,6 +1180,8 @@ impl ObjectData {
             ObjectData::Tentacle(d) => Some(&d.enemy),
             ObjectData::Chameleon(d) => Some(&d.enemy),
             ObjectData::RedTail(d) => Some(&d.enemy),
+            ObjectData::TigerGuard(d) => Some(&d.enemy),
+            ObjectData::Omar(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -1178,6 +1213,8 @@ impl ObjectData {
             ObjectData::Tentacle(d) => Some(&mut d.enemy),
             ObjectData::Chameleon(d) => Some(&mut d.enemy),
             ObjectData::RedTail(d) => Some(&mut d.enemy),
+            ObjectData::TigerGuard(d) => Some(&mut d.enemy),
+            ObjectData::Omar(d) => Some(&mut d.enemy),
             _ => None,
         }
     }

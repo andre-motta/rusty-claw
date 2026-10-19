@@ -22,7 +22,8 @@
 //! left to settle before the route's time zero, and the random stream is
 //! set to `rng_at_t0` once he stands. A diagnostic route that moved Claw's
 //! respawn point at its time zero says so in a `# checkpoint X,Y` comment
-//! line ([`script_checkpoint`]); the replay sets the same point there.
+//! line ([`script_checkpoint`]), and one that gave Claw a health there in a
+//! `# health N` line ([`script_health`]); the replay sets the same there.
 //!
 //! [`Store::compare_clock`] replays the route in the game with that clock's
 //! tuning and the random state at time zero (and, for a later level of one
@@ -459,26 +460,10 @@ impl Driver {
 }
 
 /// The respawn point a route's `# checkpoint X,Y` comment line sets at
-/// its time zero (the last such line counts; an `=` after the key is
-/// accepted); `None` without one, an error for a line that names no point.
-pub fn script_checkpoint(text: &str) -> Result<Option<(i32, i32)>, String> {
-    for l in text.lines().rev() {
-        let Some(rest) = l.trim().strip_prefix('#') else {
-            continue;
-        };
-        let Some(v) = rest.trim().strip_prefix("checkpoint") else {
-            continue;
-        };
-        if !v.starts_with([' ', '=', '\t']) {
-            continue;
-        }
-        let v = v.trim().trim_start_matches('=').trim();
-        return parse_point(v)
-            .map(Some)
-            .ok_or_else(|| format!("bad checkpoint line {l:?}, expected # checkpoint X,Y"));
-    }
-    Ok(None)
-}
+/// its time zero, and the health its `# health N` line gives Claw there
+/// (see [`claw_sim::input::script_checkpoint`] and
+/// [`claw_sim::input::script_health`]).
+pub use claw_sim::input::{script_checkpoint, script_health};
 
 /// The game at a route's time zero: the level just loaded with `cfg`
 /// (with the progress `carry` a game brought into it, for a later level of
@@ -699,6 +684,11 @@ impl Store {
             script_checkpoint(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?
         {
             sim.set_checkpoint(Some(p));
+        }
+        if let Some(h) =
+            script_health(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?
+        {
+            sim.set_health(h);
         }
         let rebuild = replay_from(sim, &script, &route_text, until, driver)?;
         let traces = references

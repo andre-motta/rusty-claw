@@ -421,3 +421,40 @@ the level at its start).
 19. Every third blow he leaps away: each sword blow costs him 5 and makes him flinch, but the third blow that finds him free costs nothing and he leaps to the other level (after an intro skip already the second). Pistol shots and magic he blocks; a blast next to him makes him hop back.
 20. His death: twenty sword blows kill him (on the ledge he first jumps down to the sand); he falls, says his last line, and about 2.4 s after he fell the gem rises out of him and flies to a point above the ledge, with Claw frozen where he is (in mid air, if he was jumping) until it arrives; taking it ends the level.
 21. Losing a life during the fight: RedTail is back on the ledge at full health, the wind stops, and the fight goes on.
+
+## Milestone 3, LEVEL14 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the fourteenth level with `make run-game ARGS="--install PATH --level 14"`,
+or play on from the thirteenth level. This section covers what the level
+reuses (the Chameleons, the fire shooters, the jump switches, the ropes,
+pegs, elevators and floor spikes), its tiger guards and its lava: the
+fountains, the dripping mouths and the hands that throw lava balls. Omar's
+fight and the end of the game come with their own lines below.
+
+To try a spot with the tools, `make replay ARGS="--install PATH --level 14
+--start X,Y --script ROUTE.csv"` puts Claw at (X, Y) first (the game starts
+the level at its start).
+
+1. Tiger guards: come within about 500 px of an orange or white tiger on its floor: it runs at Claw, and from a few steps away it strikes: a knife combo of two to four slashes (15 each, with a flinch), a lunge (it crouches still for half a second, then dashes about 100 px toward where Claw stood when it crouched, claws out: 20), or a somersault toward Claw that lands about 100 px nearer and ends in one slash. Stepping back during the crouch avoids the lunge.
+2. Close in, a tiger nearly always somersaults back once (about 100 px) while it rests between strikes, and when Claw attacks it from in front it sometimes hops back out of reach.
+3. The tiger's guard: pistol shots and thrown sticks of dynamite that reach a tiger are gone and it holds its guard for a quarter of a second with a clang, unhurt; a blast next to it, or an object Claw throws at it, only makes it block too. Sword blows, punches and kicks hurt it (three sword blows kill it), and so does magic; but a blow while it lunges, somersaults toward Claw or slashes after that somersault does nothing, and nothing at all touches it during either somersault.
+4. A tiger can be picked up and thrown like the pirates; after landing it growls a taunt and strikes back at once. Killed, it drops its loot (every tiger carries some).
+5. The lava fountains: columns of lava rise from the lava pools, hold at their full height and fall back, again and again, about every 1.6 s; touching a column costs 10. In the lake with eight fountains they rise in a staggered wave.
+6. The lava mouths: stone mouths in the ceilings drip lava without end, a drop swelling under the mouth, then falling to the floor and splashing, about every 1.2 s; the drop costs 10 from when it forms until it splashes.
+7. After losing a life, every fountain and mouth near Claw starts its cycle again after its own delay; while it waits, a fountain caught mid-column keeps that column (and its harm) standing, and a mouth caught mid-drip shows an empty mouth but its drop still hurts where it was.
+8. The lava hands: walking into the area around a hand (the one at x about 20800, right of the fire shooter, for example) makes it rise out of the lava and throw a lava ball at Claw's side, up to three in a row about 1.2 s apart; then it rests (half a second for that hand, up to 2.5 s for others) before Claw in its area sets it off again.
+9. A lava ball flies in an arc trailing sparks and lies where it lands; touching it costs 10 and makes it burst at once; otherwise it bursts a second after the throw, wherever it is, and its small blast hurts Claw (10) and makes a tiger beside it block.
+10. The fire shooters: launchers in the walls shoot animated fireballs (5 and a knockback) while Claw stands in front of them.
+11. The jump-switch room (the warp down at x about 15380 takes Claw there): the tigers and the two Chameleons pace their ledges, and one that paces onto a hidden switch leaps across the room to another ledge.
+12. The lava: falling into the lava anywhere on the level kills Claw (he sinks into it); he starts again at the last checkpoint passed (at the level's start before the first).
+
+<!-- Omar's lines (the warp into his chamber and the fall onto the ladder
+top, the staged introduction with no skip by a jump, the end of a life
+during it, his ring of fire or ice and the opposite sword, the second
+phase in the hall with his energy balls, his death and the gem) follow
+here with his fight. -->
+
+<!-- The end of the game's lines (after the last gem: the black of the
+ending, the map and the tally, the credits on the parchment and the way
+back to the main menu) follow here. -->

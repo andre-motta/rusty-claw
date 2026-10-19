@@ -72,6 +72,7 @@ pub mod ground_blower;
 pub mod jump_switch;
 pub mod keg;
 pub mod laser;
+pub mod lava;
 pub mod marrow_floor;
 pub mod path_elevator;
 pub mod pickup;
@@ -249,10 +250,28 @@ pub enum GameLogic {
     RedTailBullet,
     /// The grass, leaves and sand RedTail's wind blows across the arena.
     WindDebris,
+    /// The tiger guards of the fourteenth level.
+    TigerGuard,
+    /// The lava fountains of the fourteenth level.
+    LavaGeyser,
+    /// The stone mouths that drip lava from the fourteenth level's
+    /// ceilings.
+    LavaMouth,
+    /// The hands that rise out of the fourteenth level's lava and throw
+    /// lava balls.
+    LavaHand,
+    /// A lava hand's lava ball.
+    LavaHandProjectile,
+    /// Omar, the boss of the fourteenth level.
+    Omar,
+    /// The pieces of Omar's ring of fire or ice.
+    OmarShield,
+    /// Omar's energy balls.
+    OmarBullet,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 74] = [
+pub const ALL: [GameLogic; 82] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -327,6 +346,14 @@ pub const ALL: [GameLogic; 74] = [
     GameLogic::RedTailKnife,
     GameLogic::RedTailBullet,
     GameLogic::WindDebris,
+    GameLogic::TigerGuard,
+    GameLogic::LavaGeyser,
+    GameLogic::LavaMouth,
+    GameLogic::LavaHand,
+    GameLogic::LavaHandProjectile,
+    GameLogic::Omar,
+    GameLogic::OmarShield,
+    GameLogic::OmarBullet,
 ];
 
 /// A logic's own data, by family.
@@ -473,6 +500,22 @@ pub enum ObjectData {
     RedTailBullet(boss::flare::FlareData),
     /// A piece of the wind's debris.
     WindDebris(boss::debris::DebrisData),
+    /// A tiger guard.
+    TigerGuard(enemy::tiger_guard::TigerGuardData),
+    /// A lava fountain.
+    LavaGeyser(lava::geyser::GeyserData),
+    /// A lava mouth.
+    LavaMouth(lava::mouth::MouthData),
+    /// A lava hand.
+    LavaHand(lava::hand::HandData),
+    /// A lava hand's lava ball.
+    LavaHandProjectile(lava::ball::BallData),
+    /// Omar.
+    Omar(enemy::omar::OmarData),
+    /// A piece of Omar's ring.
+    OmarShield(enemy::omar::shield::ShieldData),
+    /// One of Omar's energy balls.
+    OmarBullet(enemy::omar::bullet::BulletData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -553,6 +596,14 @@ macro_rules! dispatch {
             GameLogic::RedTailKnife => boss::knife::$f($($arg),*),
             GameLogic::RedTailBullet => boss::flare::$f($($arg),*),
             GameLogic::WindDebris => boss::debris::$f($($arg),*),
+            GameLogic::TigerGuard => enemy::tiger_guard::$f($($arg),*),
+            GameLogic::LavaGeyser => lava::geyser::$f($($arg),*),
+            GameLogic::LavaMouth => lava::mouth::$f($($arg),*),
+            GameLogic::LavaHand => lava::hand::$f($($arg),*),
+            GameLogic::LavaHandProjectile => lava::ball::$f($($arg),*),
+            GameLogic::Omar => enemy::omar::$f($($arg),*),
+            GameLogic::OmarShield => enemy::omar::shield::$f($($arg),*),
+            GameLogic::OmarBullet => enemy::omar::bullet::$f($($arg),*),
         }
     };
 }
@@ -635,6 +686,14 @@ macro_rules! constant {
             GameLogic::RedTailKnife => boss::knife::$c,
             GameLogic::RedTailBullet => boss::flare::$c,
             GameLogic::WindDebris => boss::debris::$c,
+            GameLogic::TigerGuard => enemy::tiger_guard::$c,
+            GameLogic::LavaGeyser => lava::geyser::$c,
+            GameLogic::LavaMouth => lava::mouth::$c,
+            GameLogic::LavaHand => lava::hand::$c,
+            GameLogic::LavaHandProjectile => lava::ball::$c,
+            GameLogic::Omar => enemy::omar::$c,
+            GameLogic::OmarShield => enemy::omar::shield::$c,
+            GameLogic::OmarBullet => enemy::omar::bullet::$c,
         }
     };
 }
@@ -719,6 +778,14 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::RedTailKnife => boss::knife::BUILT,
         GameLogic::RedTailBullet => boss::flare::BUILT,
         GameLogic::WindDebris => boss::debris::BUILT,
+        GameLogic::TigerGuard => enemy::tiger_guard::BUILT,
+        GameLogic::LavaGeyser => lava::geyser::BUILT,
+        GameLogic::LavaMouth => lava::mouth::BUILT,
+        GameLogic::LavaHand => lava::hand::BUILT,
+        GameLogic::LavaHandProjectile => lava::ball::BUILT,
+        GameLogic::Omar => enemy::omar::BUILT,
+        GameLogic::OmarShield => enemy::omar::shield::BUILT,
+        GameLogic::OmarBullet => enemy::omar::bullet::BUILT,
         _ => true,
     }
 }
@@ -797,8 +864,9 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 /// `carrier` lifted `id`. Kegs, crates and the human enemies Claw can
 /// carry (officers, soldiers, cutthroats, robber thieves, Katherine, the
 /// town guards, Wolvington, the red-tail pirates, the bear sailors,
-/// Gabriel, the hook-handed pirates, PegLegs, the Mercats, the Sirens and
-/// Aquatis, see [`enemy::lift`]) react; other families ignore it.
+/// Gabriel, the hook-handed pirates, PegLegs, the Mercats, the Sirens,
+/// Aquatis and the tiger guards, see [`enemy::lift`]) react; other
+/// families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
@@ -818,7 +886,8 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
             | GameLogic::HookPirate
             | GameLogic::PegLeg
             | GameLogic::Mercat
-            | GameLogic::Siren,
+            | GameLogic::Siren
+            | GameLogic::TigerGuard,
         ) => enemy::lift::lifted(w, id, carrier),
         Some(GameLogic::Aquatis) => enemy::aquatis::lifted(w, id, carrier),
         _ => {}
@@ -846,7 +915,8 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
             | GameLogic::PegLeg
             | GameLogic::Mercat
             | GameLogic::Siren
-            | GameLogic::Aquatis,
+            | GameLogic::Aquatis
+            | GameLogic::TigerGuard,
         ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
@@ -874,6 +944,7 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
                 | GameLogic::Mercat
                 | GameLogic::Siren
                 | GameLogic::Aquatis
+                | GameLogic::TigerGuard
         )
     ) {
         enemy::lift::wind_up(w, id);
@@ -901,7 +972,8 @@ pub fn dropped(w: &mut World, id: ObjectId) {
             | GameLogic::PegLeg
             | GameLogic::Mercat
             | GameLogic::Siren
-            | GameLogic::Aquatis,
+            | GameLogic::Aquatis
+            | GameLogic::TigerGuard,
         ) => enemy::lift::dropped(w, id),
         _ => {}
     }
@@ -957,6 +1029,8 @@ impl Look {
 ///   [`skull_cannon::first_look`]).
 /// - The slabs of Marrow's trap floor answer for themselves
 ///   ([`marrow_floor::first_look`]).
+/// - A tiger guard shows its colour (white or orange, by its record) on
+///   the floor below its place ([`enemy::tiger_guard::first_look`]).
 ///
 /// It reads the object and the level only, on copies: nothing in the game
 /// changes, no logic runs and no random number is drawn.
@@ -970,6 +1044,7 @@ pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
         LogicKind::Game(GameLogic::SawBlade) => saw_blade::first_look(level, o),
         LogicKind::Game(GameLogic::SkullCannon) => skull_cannon::first_look(level, o),
         LogicKind::Game(GameLogic::MarrowFloor) => marrow_floor::first_look(level, o),
+        LogicKind::Game(GameLogic::TigerGuard) => enemy::tiger_guard::first_look(level, o),
         _ => None,
     }
 }
