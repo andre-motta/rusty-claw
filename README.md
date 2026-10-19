@@ -96,6 +96,9 @@ of its two save points), options (sound, video, controls) and quit.
 or the gamepad's Start button open the in-game menu: resume, options and
 end the game. Finishing a level shows the treasure tally, then the main
 menu; the next level is then open in the new game and load lists.
+Finishing the fourteenth level shows its map and tally, then the credits
+over the parchment; Escape, Enter, a game key or a click returns to the
+main menu, whose Credits entry shows them again.
 
 The game pauses when its window loses focus.
 
@@ -541,6 +544,12 @@ unless `--uncapped` is given.
   and other objects do not move or act yet.
 - No movies or cut scenes, and no multiplayer (curses only act in
   multiplayer games, so they vanish in single player as in the original).
+  After the last level the ending movie is left out: a short black hold
+  stands in for it before the map screen, and the credits show over the
+  parchment rather than over a moving background.
+- The credits text uses the game's bitmap font, which has capitals, digits
+  and a few signs only: letters show as capitals, and other signs
+  (hyphens, apostrophes, slashes, quotes, colons) show as spaces.
 - A few details still follow a reasonable guess rather than a measurement
   of the original: carrying an object walks at 30 px/s, rats that reach a
   wall turn back at walking speed, enemies treat goo like spikes, and a
@@ -560,7 +569,7 @@ unless `--uncapped` is given.
 | `engine/render` | `claw-render` | palette renderer, screen sprites and transitions |
 | `engine/sim` | `claw-sim` | headless simulation and the level logics |
 | `engine/audio` | `claw-audio` | mixer, output device and music synthesis |
-| `engine/ui` | `claw-ui` | status bar, menus and the title, tally and game-over screens |
+| `engine/ui` | `claw-ui` | status bar, menus and the title, tally, game-over and credits screens |
 | `app/info` | `claw-info` | level summary tool |
 | `app/viewer` | `claw-viewer` | level viewer |
 | `app/game` | `claw-game` | the game (`rusty-claw` binary) |

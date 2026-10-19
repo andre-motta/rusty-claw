@@ -455,6 +455,18 @@ during it, his ring of fire or ice and the opposite sword, the second
 phase in the hall with his energy balls, his death and the gem) follow
 here with his fight. -->
 
-<!-- The end of the game's lines (after the last gem: the black of the
-ending, the map and the tally, the credits on the parchment and the way
-back to the main menu) follow here. -->
+## Milestone 3, the end of the game
+
+Failures only, as above: note the line, what happened instead, and where.
+Win the fourteenth level (Omar's gem), or, until his fight is in, choose
+Credits on the main menu for lines 3 to 6. The original plays its ending
+movie after the gem; this game has no movie player yet, so a short black
+stands in for it (line 1).
+
+1. Taking the last gem: the level ends as other levels do, the screen stays black for about a second (Escape, Space or Enter end it sooner), then the map screen shows the amulet: the last gem plays into its socket, the amulet is made whole with its sound and Claw says his line; the treasure tally follows as after every level.
+2. When the tally is done (or skipped), it fades out, the screen stays black for half a second, and the parchment with the skull and crossed swords unrolls from a narrow strip at the centre to the full screen with its sound.
+3. The credits text rises from the bottom over the parchment, white, in a column from near the left edge, at a slow even pace (25 px a second), and the credits music plays and loops; once the last line has left the top, the text starts again from the bottom.
+4. Escape, Space, Enter, a game key such as attack or jump, a pad button, or a click anywhere but the top-left corner returns to the main menu at once (no unroll) with the menu music; the arrow keys do nothing. Keys pressed while the parchment unrolls do nothing.
+5. A click in the top-left corner (about 100 px square) switches to another tune, shows a line from the developers in white at the centre for 3 s and changes the text's colour every 0.3 s; a second click there, or the tune's end, brings the white text and the credits music back.
+6. From the main menu, Credits rolls the menu up and unrolls the parchment, then the same credits run.
+7. After the credits the main menu offers every level in New Game and Load Game as before; finishing the game saves nothing new.

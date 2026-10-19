@@ -590,3 +590,35 @@ fn gamepads_off_reads_no_pad() {
     assert!(r.notices().is_empty());
     assert!(r.help().contains("Ctrl attacks"));
 }
+
+#[test]
+fn non_direction_presses_are_noted_in_every_context() {
+    let (mut r, pads) = router();
+    pads.push(0, PadEventKind::Connected("pad".into()));
+    poll(&mut r);
+    r.set_context(InputContext::Menu);
+    assert!(!r.take_press());
+    // Directions do not count, nor key releases or keys bound to nothing.
+    r.key(KeyCode::ArrowLeft, true);
+    r.key(KeyCode::ArrowLeft, false);
+    r.key(KeyCode::KeyQ, true);
+    assert!(!r.take_press());
+    // A game key does, once.
+    r.key(KeyCode::ControlLeft, true);
+    assert!(r.take_press());
+    assert!(!r.take_press());
+    r.key(KeyCode::ControlLeft, false);
+    assert!(!r.take_press());
+    // A pad button bound to a game button does; the pad's directions do
+    // not.
+    pads.button(0, PadButton::DPadUp, true);
+    poll(&mut r);
+    assert!(!r.take_press());
+    pads.button(0, PadButton::North, true);
+    poll(&mut r);
+    assert!(r.take_press());
+    // In play as well.
+    r.set_context(InputContext::Play);
+    r.key(KeyCode::KeyZ, true);
+    assert!(r.take_press());
+}

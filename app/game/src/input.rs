@@ -348,6 +348,9 @@ pub struct InputRouter {
     captured: Option<CaptureOutcome>,
     notices: Vec<String>,
     told_no_pad: bool,
+    /// A key or pad button bound to a game button other than the four
+    /// directions went down since the last [`InputRouter::take_press`].
+    pressed: bool,
 }
 
 impl fmt::Debug for InputRouter {
@@ -394,6 +397,22 @@ impl InputRouter {
             captured: None,
             notices: Vec::new(),
             told_no_pad: false,
+            pressed: false,
+        }
+    }
+
+    /// True when a key or pad button bound to a game button other than the
+    /// four directions went down since the last call, in any context (the
+    /// credits leave on such a press); clears it.
+    pub fn take_press(&mut self) -> bool {
+        std::mem::take(&mut self.pressed)
+    }
+
+    fn note_press(&mut self, action: Option<Action>) {
+        if let Some(Action::Button(b)) = action
+            && b.0 & !ALL_DIRECTIONS.0 != 0
+        {
+            self.pressed = true;
         }
     }
 
@@ -638,6 +657,9 @@ impl InputRouter {
                 self.held_keys.push((key, b));
             }
         }
+        if down {
+            self.note_press(self.keymap.action(key));
+        }
         if self.context == InputContext::Menu {
             if let Some(m) = self.menu_key(key) {
                 self.menu_keys.retain(|(k, _)| *k != key);
@@ -783,6 +805,7 @@ impl InputRouter {
             }
             return;
         }
+        self.note_press(self.pad.map.action(button));
         if self.context == InputContext::Menu {
             match button {
                 PadButton::South | PadButton::Start => out.push(Routed::Menu(MenuInput::Confirm)),

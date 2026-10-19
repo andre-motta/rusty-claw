@@ -279,11 +279,21 @@ fn track_selection_and_fallback() {
         Some("CHORD")
     );
     assert_eq!(Track::Level.name(), "LEVEL");
-    // No file is known for the credits yet: the level's music is not
-    // taken for it.
-    for mode in [BankMode::GeneralMidi, BankMode::Original] {
-        assert_eq!(select_file(Track::Credits, mode, &["PLAY", "PLAY0"]), None);
-    }
+    // The credits' own folder holds their track as PLAY (the same rule
+    // as a level's arrangements when both are there).
+    assert_eq!(
+        select_file(Track::Credits, BankMode::GeneralMidi, &["PLAY"]),
+        Some("PLAY")
+    );
+    assert_eq!(
+        select_file(Track::Credits, BankMode::GeneralMidi, &["PLAY", "PLAY0"]),
+        Some("PLAY0")
+    );
+    assert_eq!(
+        select_file(Track::Credits, BankMode::Original, &["PLAY0", "PLAY"]),
+        Some("PLAY")
+    );
+    assert_eq!(Track::Credits.name(), "CREDITS");
 }
 
 #[test]
