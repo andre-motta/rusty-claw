@@ -53,6 +53,7 @@ use crate::level::SimLevel;
 use crate::object::{LogicKind, Object, ObjectId, flags};
 use crate::registry::{REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
 
+pub mod boss;
 pub mod boss_stage;
 pub mod break_plank;
 pub mod cannon;
@@ -233,10 +234,25 @@ pub enum GameLogic {
     Stalactite,
     /// The invisible earthquake triggers of the twelfth level.
     Shake,
+    /// The Chameleon, the lizard that fades out and back in elsewhere on
+    /// its ledge.
+    Chameleon,
+    /// RedTail, the boss of the thirteenth level.
+    RedTail,
+    /// The stakes at the left wall of RedTail's arena.
+    RedTailSpikes,
+    /// The wind RedTail raises across his arena.
+    RedTailWind,
+    /// RedTail's knives.
+    RedTailKnife,
+    /// RedTail's flares.
+    RedTailBullet,
+    /// The grass, leaves and sand RedTail's wind blows across the arena.
+    WindDebris,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 67] = [
+pub const ALL: [GameLogic; 74] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -304,6 +320,13 @@ pub const ALL: [GameLogic; 67] = [
     GameLogic::Tentacle,
     GameLogic::Stalactite,
     GameLogic::Shake,
+    GameLogic::Chameleon,
+    GameLogic::RedTail,
+    GameLogic::RedTailSpikes,
+    GameLogic::RedTailWind,
+    GameLogic::RedTailKnife,
+    GameLogic::RedTailBullet,
+    GameLogic::WindDebris,
 ];
 
 /// A logic's own data, by family.
@@ -436,6 +459,20 @@ pub enum ObjectData {
     Stalactite(stalactite::StalactiteData),
     /// An earthquake trigger.
     Shake(shake::ShakeData),
+    /// A Chameleon.
+    Chameleon(enemy::chameleon::ChameleonData),
+    /// RedTail.
+    RedTail(enemy::redtail::RedTailData),
+    /// The stakes of RedTail's arena.
+    RedTailSpikes(boss::spikes::SpikesData),
+    /// RedTail's wind.
+    RedTailWind(boss::wind::WindData),
+    /// One of RedTail's knives.
+    RedTailKnife(boss::knife::KnifeData),
+    /// One of RedTail's flares.
+    RedTailBullet(boss::flare::FlareData),
+    /// A piece of the wind's debris.
+    WindDebris(boss::debris::DebrisData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -509,6 +546,13 @@ macro_rules! dispatch {
             GameLogic::Tentacle => enemy::tentacle::$f($($arg),*),
             GameLogic::Stalactite => stalactite::$f($($arg),*),
             GameLogic::Shake => shake::$f($($arg),*),
+            GameLogic::Chameleon => enemy::chameleon::$f($($arg),*),
+            GameLogic::RedTail => enemy::redtail::$f($($arg),*),
+            GameLogic::RedTailSpikes => boss::spikes::$f($($arg),*),
+            GameLogic::RedTailWind => boss::wind::$f($($arg),*),
+            GameLogic::RedTailKnife => boss::knife::$f($($arg),*),
+            GameLogic::RedTailBullet => boss::flare::$f($($arg),*),
+            GameLogic::WindDebris => boss::debris::$f($($arg),*),
         }
     };
 }
@@ -584,6 +628,13 @@ macro_rules! constant {
             GameLogic::Tentacle => enemy::tentacle::$c,
             GameLogic::Stalactite => stalactite::$c,
             GameLogic::Shake => shake::$c,
+            GameLogic::Chameleon => enemy::chameleon::$c,
+            GameLogic::RedTail => enemy::redtail::$c,
+            GameLogic::RedTailSpikes => boss::spikes::$c,
+            GameLogic::RedTailWind => boss::wind::$c,
+            GameLogic::RedTailKnife => boss::knife::$c,
+            GameLogic::RedTailBullet => boss::flare::$c,
+            GameLogic::WindDebris => boss::debris::$c,
         }
     };
 }
@@ -661,6 +712,13 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::Tentacle => enemy::tentacle::BUILT,
         GameLogic::Stalactite => stalactite::BUILT,
         GameLogic::Shake => shake::BUILT,
+        GameLogic::Chameleon => enemy::chameleon::BUILT,
+        GameLogic::RedTail => enemy::redtail::BUILT,
+        GameLogic::RedTailSpikes => boss::spikes::BUILT,
+        GameLogic::RedTailWind => boss::wind::BUILT,
+        GameLogic::RedTailKnife => boss::knife::BUILT,
+        GameLogic::RedTailBullet => boss::flare::BUILT,
+        GameLogic::WindDebris => boss::debris::BUILT,
         _ => true,
     }
 }

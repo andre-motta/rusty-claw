@@ -67,6 +67,13 @@
 //! A script's `# checkpoint X,Y` comment line stands in for the flag when
 //! it is not given. The run is still plain play and can be compared.
 //!
+//! A script's `# boss_health N` comment line is a set-up for measuring a
+//! stretch of a boss fight: the level's boss is given health N on the
+//! first arena step, after the first tick that has him as the current
+//! boss (see `claw_sim::SimConfig::boss_health`), as the reference
+//! store's runs of such a route set it. Like `--checkpoint`, it is a
+//! diagnostic set-up; the run can still be compared with those runs.
+//!
 //! `--expect-complete` checks that the level ends (a level-complete event)
 //! within the script.
 //!
@@ -511,6 +518,11 @@ fn run(args: Args) -> Result<Outcome, String> {
     cfg.tuning.behaviour.fix_double_jump = fix;
     cfg.aids = aids;
     cfg.start_powerup = powerup;
+    cfg.boss_health = claw_sim::input::script_boss_health(&text)
+        .map_err(|e| format!("{}: {e}", script_path.display()))?;
+    if let Some(h) = cfg.boss_health {
+        eprintln!("claw-replay: the boss is given health {h} on the first arena step");
+    }
     let carried = carry.as_ref().map(|c| {
         format!(
             ", carried in: score {}, health {}, lives {}",

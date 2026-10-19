@@ -47,6 +47,19 @@
 //!    no floor there and lands where it was, in the air.
 //! 7. With the depth sort, it is drawn in front of Claw when his feet are
 //!    at or above its own, behind him otherwise.
+//!
+//! When the enemy's own logic wrote a new position in the tick
+//! ([`super::EnemyFields::teleport_to`], the Chameleon's phase), the step
+//! starts from that x instead of where the object stands, with nothing
+//! carried: the object moves from where it stands toward it through the
+//! tiles, and that x counts as where it stood before the step, so a wall
+//! that stops the move, or a ledge that sends it back, makes that x its
+//! patrol limit on that side (the ledge also puts it there). Which edge
+//! leads is still decided by where the object stood. The move itself
+//! stops at the plane's edge: a target outside the plane (the Chameleon's
+//! phase sends an unbounded lizard toward x = -2147483647) takes an
+//! object on a floor that runs to the edge of the level there and no
+//! further, instead of on along the edge's floor to the target.
 
 use crate::logic::World;
 use crate::object::{ObjectId, flags};
@@ -152,16 +165,28 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     if d.moved_to != Some((x0, y0)) {
         d.carry = (0.0, 0.0);
     }
+    // A position its own logic wrote: the step starts from it.
+    let jump = d.teleport_to.take();
+    if jump.is_some() {
+        d.carry.0 = 0.0;
+    }
+    let start_x = jump.map_or(f64::from(x0) + d.carry.0, f64::from);
+    let before_x = jump.unwrap_or(x0);
     let dt = step_seconds(d, w.now_ms);
     let standing = entry == ptype::STAND;
     // Where the step starts from, exactly, and the speed up or down then.
     let p0 = (f64::from(x0) + d.carry.0, f64::from(y0) + d.carry.1);
     let v0y = d.vy;
     let px = clamp_to(
-        f64::from(x0) + d.carry.0 + f64::from(ride.0) + axis_step_for(&mut d.vx, 0.0, dt),
+        start_x + f64::from(ride.0) + axis_step_for(&mut d.vx, 0.0, dt),
         d.bounds,
     );
     let tx = px.trunc() as i32;
+    let tx = if jump.is_some() {
+        tx.clamp(0, w.level.map.width().saturating_sub(1))
+    } else {
+        tx
+    };
     let (py, ty) = if standing {
         d.vy = 0.0;
         let y = y0 + ride.1;
@@ -208,10 +233,10 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     if r & res::CEILING != 0 {
         d.vy = -d.vy;
     } else if r & res::WALL != 0 && r & res::RIGHT != 0 {
-        d.bounds.1 = x0;
+        d.bounds.1 = before_x;
         d.vx *= -0.5;
     } else if r & res::WALL != 0 && r & res::LEFT != 0 {
-        d.bounds.0 = x0;
+        d.bounds.0 = before_x;
         d.vx *= -0.5;
     }
     let state = super::EnemyState::from_id(obj(w, id).state);
@@ -220,7 +245,7 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     if now == ptype::STAND && d.ledge_guard && !d.stationary {
         let moved = f64::from(x) + d.carry.0 - p0.0;
         let before = Before {
-            x: x0,
+            x: before_x,
             y: y0,
             p0,
             v0y,

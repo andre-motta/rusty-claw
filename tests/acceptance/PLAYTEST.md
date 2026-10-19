@@ -384,3 +384,33 @@ ROUTE.csv"` takes it; the game starts the level at its start).
 21. Losing a life during the fight: Aquatis is back at full health, every stalactite hangs again, and the fight goes on.
 22. The lift: walk right along the hidden floor past the third tentacle and jump so that Claw meets Aquatis's body at the top of the jump (10 and a flinch, held in mid air); on the step after he stands in mid air, press Lift: Claw picks Aquatis up and drops him at once, and he dies in the water; the gem rises out of him with Claw frozen in mid air. Open the help screen (F1) right then, wait about 8 s and close it: the gem is on Claw and the level ends. Without the help screen the gem flies away and Claw falls into the water.
 23. The passage under the water (the water skip): from the ledge at the water's edge, throw a stick of dynamite a step before the end, jump left off the end and, while the stick falls, open the help screen (F1) for about 3 s: on the return the stick goes off under Claw and its blast hits him in the air (15 and a flinch), holding him in place. Jump on the step after he stands in mid air and he jumps again, on to the left; a second stick thrown in the air and set off the same way (about 4 s of help) hits him again and gives a second jump. Let go of Left over the water's left end (x 2546 to 2559) and he drops straight through the water onto a hidden floor beneath it, unharmed, and walks under the pool all the way to the boss room; let go further right and the water kills him, further left and he falls past the floor's end. A jump from the hidden floor that comes back down into the water kills him.
+
+## Milestone 3, LEVEL13 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the thirteenth level with `make run-game ARGS="--install PATH --level 13"`,
+or play on from the twelfth level. This section covers what the level
+reuses (the red-tail pirates and bear sailors, the dart traps, the ropes,
+ferns, pegs and stepping stones), its Chameleons, its water rocks and the
+two dynamite throws of the speedrun. RedTail's fight comes with its own
+lines below.
+
+To try a spot with the tools, `make replay ARGS="--install PATH --level 13
+--start X,Y --script ROUTE.csv"` puts Claw at (X, Y) first (the game starts
+the level at its start).
+
+1. Chameleons: come within about 500 px of a green lizard on its floor: it runs at Claw, lashes its long tongue from up to about 127 px away (10 and a flinch), or fades out where it stands over about half a second, its picture dissolving into the background.
+2. A faded Chameleon is gone for up to 1.5 s, then fades back in somewhere else on its floor (never right where Claw stands) over about half a second. While it fades out, is gone or fades in, nothing hits it and it hurts nothing; it does not fade again for a second after it is back.
+3. One hit of anything (sword, pistol, magic, a blast, a thrown object) kills a Chameleon at once, and it cannot be picked up.
+4. The lizards near the level's start with no floor limits: the one on the ledge right of the start (x about 1780) is carried off its ledge by a fade and falls to the floor below, where it stays unseen and untouchable; the one on the floor right of it (x about 2430) keeps fading out and back in at the same spot.
+5. Water rocks: step onto the flat stone at the water's surface (from the platform at x 3600, walk right onto the rock at x 3744): about a third of a second later a spout throws Claw straight up, 600 px on this rock (250 to 600 px on the others, by rock), whatever the jump key does; landing on it again throws him again. Stepping off before the spout cancels the throw.
+6. Dynamite from the bear's block: from the step right of the bear sailor on the first ledges (x 4250), facing right, hold Dynamite about 0.6 s and let go: the stick drops onto the floor below and its blast kills the Chameleon and the red-tail pirate waiting there.
+7. Dynamite down the waterfall: from the lip of the waterfall shaft (x 26000), facing right, hold Dynamite about 1.2 s and let go: the stick falls down the shaft and its blast at the foot kills the Chameleon and the red-tail pirate standing there before Claw drops down.
+8. A stick thrown straight into a red-tail pirate on this level is usually blocked and destroyed (he parries sword blows half the time); a blast beside him is never blocked.
+9. The water: falling into the water anywhere on the level kills Claw at once; he starts again at the last checkpoint passed (at the level's start before the first).
+10. The waterfalls: the falling sheets of water and their current move steadily; nothing in them hurts or carries Claw.
+11. The toggle pegs in the boss room slide out and in every 1.5 s, in step with each other.
+
+<!-- RedTail's lines (the introduction and the intro skip, his flare gun,
+slide and kick, the wind that pushes Claw toward the stakes, his leap away
+on every third blow, his death and the gem) follow here with his fight. -->
