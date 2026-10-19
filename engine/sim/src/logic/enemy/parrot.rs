@@ -347,6 +347,9 @@ fn carry_marrow(w: &mut World, m: ObjectId, moved: (f64, f64)) {
 /// box, its hit box, no attack box, depth 8500 when placed at 0, perched
 /// at its record's place with no hits; then it flies. Draws nothing.
 pub fn construct(w: &mut World, id: ObjectId) {
+    // The construction step every enemy shares moves a bird placed beside
+    // its box onto the nearer limits before its perch is read.
+    super::clamp_on_record_range(w, id);
     let (x_min, x_max) = (
         super::record(w, id, super::field::X_MIN),
         super::record(w, id, super::field::X_MAX),
