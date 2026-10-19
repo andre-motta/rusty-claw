@@ -552,3 +552,71 @@ fn the_carried_box_is_a_point_and_the_offsets_are_the_crabs() {
     assert_eq!(crab::CLASS.anims.lifted, crab::LIFT_ANIM);
     assert_eq!(crab::CLASS.anims.lifted2, crab::HIDE_ANIM);
 }
+
+/// A blow of kind `kind` at `at`, touching nothing by itself.
+fn blow(sim: &mut Sim, kind: u32, at: (i32, i32)) -> ObjectId {
+    sim.with_world(|w| {
+        let mut o = logic::new_object("TestBlow", at.0, at.1, 0);
+        o.kind = LogicKind::Inert;
+        o.type_flags = kind;
+        o.flags |= flags::NO_COLLIDE;
+        w.spawn(o)
+    })
+}
+
+#[test]
+fn a_crab_killed_in_its_shell_cannot_be_lifted() {
+    let (mut sim, ids) = game(&[1600]);
+    let id = ids[0];
+    let x = claw(&sim).x + if sim.claw().facing_right { 40 } else { -40 };
+    put(&mut sim, id, x);
+    assert_eq!(state(&sim, id), Some(EnemyState::Hide));
+    assert!(liftable(&sim, id));
+    // The magic claw gets through the withdrawn shell: dead, and liftable
+    // no longer.
+    let magic = blow(&mut sim, enemy::attacker::MAGIC, (x - 30, CRAB_Y));
+    sim.with_world(|w| {
+        w.objects.get_mut(id).unwrap().frame = 801;
+        crab::on_hit(w, id, magic);
+    });
+    assert_eq!(state(&sim, id), Some(EnemyState::Dead));
+    assert!(!liftable(&sim, id));
+    // Claw's lift finds nothing to take.
+    sim.step(press(Buttons::LIFT.0));
+    assert_ne!(claw(&sim).state, state::LIFT);
+    assert_eq!(sim.claw().special.lifted, None);
+    assert_eq!(state(&sim, id), Some(EnemyState::Dead));
+}
+
+#[test]
+fn a_dead_crab_handed_to_the_lift_stays_dead() {
+    let (mut sim, ids) = game(&[1600]);
+    let id = ids[0];
+    let carrier = claw_id(&sim);
+    // Dead by any means while it could still be lifted.
+    sim.with_world(|w| enemy::die(w, id, enemy::DeathKind::Landing, None));
+    assert_eq!(state(&sim, id), Some(EnemyState::Dead));
+    // Its family refuses the lift, so a throw does nothing either.
+    sim.with_world(|w| {
+        crab::lifted(w, id, carrier);
+        crab::thrown(w, id, 200, -600);
+    });
+    assert_eq!(state(&sim, id), Some(EnemyState::Dead));
+    let o = obj(&sim, id);
+    assert_ne!(o.type_flags, types::THROWN);
+    assert_eq!(o.flags & flags::SAFE, 0);
+    // Its own next tick takes the flag away; it never gets up again.
+    sim.step(TickInput::default());
+    assert!(!liftable(&sim, id));
+    for _ in 0..200 {
+        sim.step(TickInput::default());
+        let Some(o) = sim.objects().get(id) else {
+            break;
+        };
+        if !o.is_listed() {
+            break;
+        }
+        assert_eq!(state(&sim, id), Some(EnemyState::Dead));
+        assert!(enemy::data_of(o).is_some_and(|d| d.dead));
+    }
+}
