@@ -38,7 +38,10 @@
 //!    827.04 px/s, not 840). Unless it moves without tile tests: a ceiling
 //!    then turns its vertical speed around, and a wall on either side moves
 //!    that patrol limit to where it stood before the step and turns its
-//!    speed across around at half.
+//!    speed across around at half. The step keeps what the tiles reported
+//!    ([`super::EnemyFields::last_result`]): any stop, a wall, a ceiling or a
+//!    landing, sets the stop bit, and a human enemy's move back or move
+//!    ahead ends on it.
 //! 6. Unless it moves without tile tests: landing on a death tile kills
 //!    it (spikes; goo is not told apart yet), and a standing enemy with the
 //!    ledge guard whose leading edge has no floor under it goes back to
@@ -127,7 +130,16 @@ pub fn integrate(w: &mut World, id: ObjectId) {
 /// respawn, where the clock stands still, moves nothing. The first step
 /// covers one tick. Records `now` as the time of the last step.
 fn step_seconds(d: &mut EnemyData, now: u64) -> f64 {
-    let last = d.last_move_ms.replace(now);
+    step_seconds_since(&mut d.last_move_ms, now)
+}
+
+/// The time the movement step at `now` covers, s, for any mover that keeps
+/// the time of its last step in `last_ms` (an enemy, or a crate of a stack,
+/// which falls by the same clock): the game clock's reading now less its
+/// reading then, none in the same moment, one tick for the first step.
+/// Records `now` in `last_ms`.
+pub fn step_seconds_since(last_ms: &mut Option<u64>, now: u64) -> f64 {
+    let last = last_ms.replace(now);
     let since = last.map_or(0, |t| now.saturating_sub(t));
     match last {
         Some(_) if since == 0 => 0.0,
@@ -208,6 +220,7 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
         }
     }
     let r = collide(w, id, tx, ty);
+    d.last_result = r;
     if standing {
         d.vy = 0.0;
     }

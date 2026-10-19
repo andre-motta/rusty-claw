@@ -436,7 +436,7 @@ fn run(w: &mut World, id: ObjectId) {
 
 /// The post-tick: a block's release before a scheduled call (as
 /// [`human::run`] does), the scheduled call, then the movement step,
-/// noting where it started and whether a wall stopped it, and his
+/// noting where it started and whether the tiles stopped it, and his
 /// standing fraction. A hop back leaves from his exact position.
 fn post_tick(w: &mut World, id: ObjectId) {
     let deferred = data_mut(w, id).and_then(|d| d.deferred.take());
@@ -465,15 +465,13 @@ fn post_tick(w: &mut World, id: ObjectId) {
         let o = obj(w, id);
         (o.x, o.physics_type == ptype::STAND)
     };
-    let vx = data(w, id).map_or(0.0, |d| d.vx);
     if let Some(d) = data_mut(w, id) {
         d.human.pre_move_x = x;
     }
     super::motion::integrate(w, id);
+    human::note_stop(w, id);
     let stands = obj(w, id).physics_type == ptype::STAND;
     if let Some(d) = data_mut(w, id) {
-        // A wall turns the speed across around at half.
-        d.human.tile_hit = vx != 0.0 && d.vx == -0.5 * vx;
         let ay = d.ay;
         let f = &mut d.wolvington;
         if stood && stands {

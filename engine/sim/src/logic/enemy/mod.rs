@@ -648,6 +648,9 @@ pub struct EnemyFields {
     /// Where the last movement step left the object; a move made by
     /// anything else drops the carried fraction.
     pub moved_to: Option<(i32, i32)>,
+    /// The tile result of the last movement step (the bits of
+    /// [`crate::physics::res`]); a step that does not run keeps it.
+    pub last_result: u32,
     /// Game time of the last movement step, ms (see [`motion`]); `None`
     /// before the first.
     pub last_move_ms: Option<u64>,
@@ -735,6 +738,7 @@ impl Default for EnemyFields {
             target_y: 0,
             carry: (0.0, 0.0),
             moved_to: None,
+            last_result: 0,
             last_move_ms: None,
             frozen: false,
             deferred: None,

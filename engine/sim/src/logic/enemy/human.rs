@@ -62,7 +62,7 @@
 use crate::logic::projectile::{self, ProjectileSpec};
 use crate::logic::{World, springboard};
 use crate::object::{ObjectId, Rect, engine_state, flags, types};
-use crate::physics::ptype;
+use crate::physics::{ptype, res};
 use crate::tiles::{CLEAR, CLIMB, GROUND, SOLID};
 
 use super::{
@@ -173,7 +173,8 @@ pub struct HumanData {
     pub target_x: i32,
     /// The x before the last movement step.
     pub pre_move_x: i32,
-    /// The last movement step ran into a wall.
+    /// The last movement step reported a stop: a wall, a ceiling or a
+    /// landing.
     pub tile_hit: bool,
     /// The release a block armed: the state it left (see the module
     /// documentation).
@@ -267,7 +268,7 @@ pub fn run(w: &mut World, id: ObjectId, class: &Class) {
 }
 
 /// The post-tick of [`run`]: the block's release and the scheduled call,
-/// then the movement step, noting where it started and whether a wall
+/// then the movement step, noting where it started and whether the tiles
 /// stopped it.
 fn post_tick(w: &mut World, id: ObjectId, class: &Class) {
     let deferred = data_mut(w, id).and_then(|d| d.deferred.take());
@@ -286,14 +287,18 @@ fn post_tick(w: &mut World, id: ObjectId, class: &Class) {
         None => {}
     }
     let x = obj(w, id).x;
-    let vx = data(w, id).map_or(0.0, |d| d.vx);
     if let Some(d) = data_mut(w, id) {
         d.human.pre_move_x = x;
     }
     motion::integrate(w, id);
+    note_stop(w, id);
+}
+
+/// Notes whether the movement step just made reported a stop
+/// ([`HumanData::tile_hit`]): a wall, a ceiling or a landing.
+pub fn note_stop(w: &mut World, id: ObjectId) {
     if let Some(d) = data_mut(w, id) {
-        // A wall turns the speed across around at half.
-        d.human.tile_hit = vx != 0.0 && d.vx == -0.5 * vx;
+        d.human.tile_hit = d.last_result & res::HIT != 0;
     }
 }
 
@@ -490,12 +495,14 @@ fn start_move(w: &mut World, id: ObjectId, tx: i32, inside: bool, rightward: boo
 }
 
 /// MoveBack and MoveAhead: Home once it has reached or passed its spot,
-/// when the last movement step ran into a wall, or when it did not move.
-/// The spot is reached by the exact position, fraction included: walking
-/// left onto 23694, an enemy at 23694.12 walks one tick more.
+/// when the last movement step reported any stop (a wall, a ceiling or a
+/// landing: a guard that walks back over a small gap in its floor and
+/// lands goes Home on its next call), or when it did not move (its exact
+/// position is still the pixel it started the step from). The spot is
+/// reached by the exact position, fraction included: walking left onto
+/// 23694, an enemy at 23694.12 walks one tick more.
 pub fn move_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
-    let x = obj(w, id).x;
     let exact = super::exact_x(w, id);
     let Some((vx, h)) = data(w, id).map(|d| (d.vx, d.human.clone())) else {
         return;
@@ -506,7 +513,7 @@ pub fn move_tick(w: &mut World, id: ObjectId) {
     } else {
         exact >= target
     };
-    if arrived || h.tile_hit || x == h.pre_move_x {
+    if arrived || h.tile_hit || exact == f64::from(h.pre_move_x) {
         go_home(w, id);
     }
 }
