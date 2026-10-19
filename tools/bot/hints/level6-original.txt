@@ -91,7 +91,14 @@
 #        one whose route kept more health, or won more often with a
 #        change of the held buttons a tick early or late). The fifth
 #        level's game, searched again from stretch 7 on, runs this stretch
-#        in one part, with --intro play and the fragile cost 100.
+#        in one part, with --intro play and the fragile cost 100. It was
+#        searched again from its route tick 11811 on (--from-route with
+#        --from-tick 11811, these waypoints, --intro play, the fragile
+#        cost 100) once an air attack running when a ceiling stops
+#        Claw's rise kept its animation, the fall animation waiting for
+#        the attack's end: a jumping swipe under the sewer's low ceiling
+#        no longer hit the town guard below it. Its ticks before 11811
+#        play the same.
 31534,5458
 30500,5079
 30432,4400
