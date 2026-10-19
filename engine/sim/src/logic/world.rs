@@ -11,7 +11,9 @@ use crate::anim::{Animation, FRAME_SOUND_IN_VIEW, FRAME_SOUND_POSITIONAL};
 use crate::container::Container;
 use crate::level::SimLevel;
 use crate::logic::enemy::aquatis::AquatisLink;
+use crate::logic::enemy::chameleon::PhaseFrame;
 use crate::logic::enemy::marrow::MarrowLink;
+use crate::logic::enemy::redtail::RedTailLink;
 use crate::logic::sound;
 use crate::logic::world_boss::BossState;
 use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags};
@@ -44,7 +46,9 @@ pub struct VoiceRequest {
 /// state too: it lasts the whole level and starts cleared with it. So are
 /// the Marrow link ([`MarrowLink`], see [`World::marrow_link`]), the
 /// scream lockout ([`World::scream_lock_ms`]), the fish's flop toggle
-/// ([`World::fish_flop`]) and the Aquatis link ([`World::aquatis_link`]).
+/// ([`World::fish_flop`]), the Aquatis link ([`World::aquatis_link`]),
+/// the RedTail link ([`World::redtail_link`]) and the Chameleons' shared
+/// phase frame ([`World::chameleon_frame`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Outbox {
     audio: Vec<AudioCue>,
@@ -67,6 +71,12 @@ pub struct Outbox {
     /// What Aquatis's helpers and tentacles share with him (see
     /// [`crate::logic::enemy::aquatis`]).
     pub(crate) aquatis: AquatisLink,
+    /// What RedTail's helpers share with him (see
+    /// [`crate::logic::enemy::redtail`]).
+    pub(crate) redtail: RedTailLink,
+    /// How the Chameleons' shared phase frame is drawn (see
+    /// [`crate::logic::enemy::chameleon`]).
+    pub(crate) chameleon: PhaseFrame,
     falling: Vec<ObjectId>,
     removed_bodies: Vec<RemovedBody>,
 }
@@ -169,6 +179,17 @@ impl Outbox {
     /// The Aquatis link (see [`World::aquatis_link`]).
     pub fn aquatis(&self) -> &AquatisLink {
         &self.aquatis
+    }
+
+    /// The RedTail link (see [`World::redtail_link`]).
+    pub fn redtail(&self) -> &RedTailLink {
+        &self.redtail
+    }
+
+    /// How the Chameleons' shared phase frame is drawn (see
+    /// [`World::chameleon_frame`]).
+    pub fn chameleon_frame(&self) -> PhaseFrame {
+        self.chameleon
     }
 
     /// The scream lockout, ms: 0 while Claw's controls are free (see

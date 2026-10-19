@@ -18,6 +18,36 @@ use crate::tuning::{PlayAids, TICK_MS};
 /// Length of a tick in microseconds.
 pub const TICK_US: u64 = TICK_MS as u64 * 1000;
 
+/// The comment key of a route's boss health set-up (see
+/// [`script_boss_health`]).
+pub const BOSS_HEALTH_KEY: &str = "boss_health";
+
+/// The boss health set-up a script's `# boss_health N` comment line asks
+/// for (the last such line counts; an `=` between the key and the value
+/// is accepted): the health the level's boss is given on the first arena
+/// step ([`crate::SimConfig::boss_health`]). `None` without one. A route
+/// with it measures a stretch of a boss fight; it is not plain play.
+pub fn script_boss_health(text: &str) -> Result<Option<i32>, String> {
+    for l in text.lines().rev() {
+        let Some(rest) = l.trim().strip_prefix('#') else {
+            continue;
+        };
+        let rest = rest.trim();
+        let Some(v) = rest.strip_prefix(BOSS_HEALTH_KEY) else {
+            continue;
+        };
+        if !v.starts_with([' ', '=', '\t']) {
+            continue;
+        }
+        let v = v.trim().trim_start_matches('=').trim();
+        return v
+            .parse()
+            .map(Some)
+            .map_err(|_| format!("bad boss health line {l:?}, expected # boss_health N"));
+    }
+    Ok(None)
+}
+
 /// Collects timestamped button events and hands out tick inputs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InputLatch {
@@ -844,6 +874,27 @@ impl InputScript {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_route_asks_for_a_boss_health_with_its_comment_line() {
+        let route = "# level 13\n# boss_health 5\ntick,held_mask,pressed_mask\n0,0x0,0x0\n";
+        assert_eq!(script_boss_health(route), Ok(Some(5)));
+        assert_eq!(script_boss_health("# boss_health = 40\n"), Ok(Some(40)));
+        // The last line counts; other comments are not the key.
+        assert_eq!(
+            script_boss_health("# boss_health 5\n# boss_health 7\n"),
+            Ok(Some(7))
+        );
+        assert_eq!(script_boss_health("# boss_healthy 5\n# note\n"), Ok(None));
+        assert_eq!(
+            script_boss_health("tick,held_mask,pressed_mask\n"),
+            Ok(None)
+        );
+        assert!(script_boss_health("# boss_health five\n").is_err());
+        // The line is a comment for the script itself.
+        let s = InputScript::parse(route).unwrap();
+        assert_eq!(s.ticks.len(), 1);
+    }
 
     #[test]
     fn parses_comments_hex_and_decimal() {

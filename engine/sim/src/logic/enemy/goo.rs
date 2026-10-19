@@ -36,8 +36,9 @@ pub fn is_goo_level(number: u32) -> bool {
 /// How far above Claw the splash of his own goo death rises, px, on the
 /// levels whose value is known: 50 on the second level, 40 on the
 /// fourth, 10 on the sixth, 60 on the seventh, 0 on the eighth (on
-/// both, the death tiles are water), 50 on the ninth and 50 on the
-/// twelfth (water too). Later levels add theirs with their slices.
+/// both, the death tiles are water), 50 on the ninth, 50 on the twelfth
+/// and 50 on the thirteenth (water on both). Later levels add theirs with
+/// their slices.
 pub fn splash_y(number: u32) -> Option<i32> {
     match number {
         2 => Some(50),
@@ -47,6 +48,7 @@ pub fn splash_y(number: u32) -> Option<i32> {
         8 => Some(0),
         9 => Some(50),
         12 => Some(50),
+        13 => Some(50),
         _ => None,
     }
 }
@@ -131,6 +133,11 @@ mod tests {
         assert!(is_goo_level(9));
         assert_eq!(splash_y(12), Some(50));
         assert!(is_goo_level(12), "the twelfth level's water kills as goo");
+        assert_eq!(splash_y(13), Some(50));
+        assert!(
+            is_goo_level(13),
+            "the thirteenth level's water kills as goo"
+        );
         assert_eq!(splash_y(1), None);
         assert_eq!(splash_y(5), None);
     }

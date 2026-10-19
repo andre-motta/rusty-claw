@@ -9,8 +9,10 @@
 //! pirate ([`hook_pirate`]), PegLeg with his bullet ([`pegleg`]),
 //! Marrow ([`marrow`]) with his parrot ([`parrot`]), the eleventh
 //! level's Mercat ([`mercat`]), Siren ([`siren`]) and Fish ([`fish`]),
-//! and the twelfth level's Aquatis ([`aquatis`]) with his helpers and the
-//! tentacles ([`tentacle`]).
+//! the twelfth level's Aquatis ([`aquatis`]) with his helpers and the
+//! tentacles ([`tentacle`]), and the thirteenth level's Chameleon
+//! ([`chameleon`]), with RedTail ([`redtail`]), his stakes and his wind
+//! declared but not built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -62,6 +64,7 @@ use crate::tuning::TICK_MS;
 
 pub mod aquatis;
 pub mod bear_sailor;
+pub mod chameleon;
 pub mod crab;
 pub mod cutthroat;
 pub mod fish;
@@ -80,6 +83,7 @@ pub mod pegleg;
 pub mod punkrat;
 pub mod rat;
 pub mod raux;
+pub mod redtail;
 pub mod redtail_pirate;
 pub mod robberthief;
 pub mod seagull;
@@ -215,8 +219,10 @@ pub mod field {
 /// Fish's swim, leap and flop and the Siren's song from 2270, see
 /// [`mercat::STATE_BLOCK`]) and 2280-2299 the twelfth level's (Aquatis's
 /// punches, frenzy, stalactite hit and fright from 2280, the tentacles'
-/// grab, squeeze and regrowth from 2290, see [`aquatis::STATE_BLOCK`]);
-/// later families take blocks of 20 from 2300.
+/// grab, squeeze and regrowth from 2290, see [`aquatis::STATE_BLOCK`])
+/// and 2300-2319 the thirteenth level's (RedTail's attacks and jumps from
+/// 2300, the Chameleon's fade out and back from 2310, see
+/// [`redtail::STATE_BLOCK`]); later families take blocks of 20 from 2320.
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -404,11 +410,29 @@ pub enum EnemyState {
     Squeeze = 2291,
     /// Growing back out of the water (a tentacle).
     Respawn = 2292,
+    /// Throwing three knives at Claw on the other level (RedTail).
+    KnifeAttack = 2300,
+    /// Kicking at Claw beside him (RedTail).
+    KickAttack = 2301,
+    /// Sliding along the sand at Claw (RedTail).
+    SlideAttack = 2302,
+    /// Firing the flare gun (RedTail).
+    GunAttack = 2303,
+    /// Raising the wind from the ledge (RedTail).
+    WindAttack = 2304,
+    /// Leaping up from the sand to the ledge (RedTail).
+    JumpUp = 2305,
+    /// Leaping down from the ledge to the sand (RedTail).
+    JumpDown = 2306,
+    /// Fading out where it stands (the Chameleon).
+    PhaseOut = 2310,
+    /// Hidden somewhere else, then fading back in (the Chameleon).
+    PhaseIn = 2311,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 88] = [
+    pub const ALL: [EnemyState; 97] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -497,6 +521,15 @@ impl EnemyState {
         EnemyState::StartGrab,
         EnemyState::Squeeze,
         EnemyState::Respawn,
+        EnemyState::KnifeAttack,
+        EnemyState::KickAttack,
+        EnemyState::SlideAttack,
+        EnemyState::GunAttack,
+        EnemyState::WindAttack,
+        EnemyState::JumpUp,
+        EnemyState::JumpDown,
+        EnemyState::PhaseOut,
+        EnemyState::PhaseIn,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -599,6 +632,15 @@ impl EnemyState {
             EnemyState::StartGrab => "StartGrab",
             EnemyState::Squeeze => "Squeeze",
             EnemyState::Respawn => "Respawn",
+            EnemyState::KnifeAttack => "KnifeAttack",
+            EnemyState::KickAttack => "KickAttack",
+            EnemyState::SlideAttack => "SlideAttack",
+            EnemyState::GunAttack => "GunAttack",
+            EnemyState::WindAttack => "WindAttack",
+            EnemyState::JumpUp => "JumpUp",
+            EnemyState::JumpDown => "JumpDown",
+            EnemyState::PhaseOut => "PhaseOut",
+            EnemyState::PhaseIn => "PhaseIn",
         }
     }
 }
@@ -760,6 +802,12 @@ pub struct EnemyFields {
     pub last_move_ms: Option<u64>,
     /// No movement at all (dead in place, or carried by Claw).
     pub frozen: bool,
+    /// An x the enemy's own logic wrote as its new position in this tick
+    /// (the Chameleon's phase): the next movement step starts from it
+    /// instead of where the object stands, moving the object there through
+    /// the tiles, and a wall or a ledge that stops the move makes it the
+    /// patrol limit on that side (see [`motion`]). `None` otherwise.
+    pub teleport_to: Option<i32>,
     /// Call scheduled for the post-tick.
     pub deferred: Option<Deferred>,
     /// Object holding the level's strike token.
@@ -844,6 +892,7 @@ impl Default for EnemyFields {
             moved_to: None,
             last_move_ms: None,
             frozen: false,
+            teleport_to: None,
             deferred: None,
             token_at: None,
             contact_rect: Rect::UNSET,
@@ -1032,6 +1081,8 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::Fish => Some(&fish::CLASS),
         GameLogic::Aquatis => Some(&aquatis::CLASS),
         GameLogic::Tentacle => Some(&tentacle::CLASS),
+        GameLogic::Chameleon => Some(&chameleon::CLASS),
+        GameLogic::RedTail => Some(&redtail::CLASS),
         _ => None,
     }
 }
@@ -1068,7 +1119,8 @@ impl ObjectData {
     /// Katherine's, the town guards', the seagull's, Wolvington's, the
     /// red-tail pirates', the bear sailors', the crabs', Gabriel's, the
     /// hook-handed pirates', PegLegs', Marrow's and his parrot's, the
-    /// Mercats', Sirens' and Fish's, and Aquatis's and the tentacles').
+    /// Mercats', Sirens' and Fish's, Aquatis's and the tentacles', and the
+    /// Chameleons' and RedTail's).
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -1093,6 +1145,8 @@ impl ObjectData {
             ObjectData::Fish(d) => Some(&d.enemy),
             ObjectData::Aquatis(d) => Some(&d.enemy),
             ObjectData::Tentacle(d) => Some(&d.enemy),
+            ObjectData::Chameleon(d) => Some(&d.enemy),
+            ObjectData::RedTail(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -1122,6 +1176,8 @@ impl ObjectData {
             ObjectData::Fish(d) => Some(&mut d.enemy),
             ObjectData::Aquatis(d) => Some(&mut d.enemy),
             ObjectData::Tentacle(d) => Some(&mut d.enemy),
+            ObjectData::Chameleon(d) => Some(&mut d.enemy),
+            ObjectData::RedTail(d) => Some(&mut d.enemy),
             _ => None,
         }
     }
@@ -1631,7 +1687,8 @@ pub fn pre_tick(w: &mut World, id: ObjectId, class: &Class) {
     };
     let claw = w.claw_object().map(|c| (c.x, c.y));
     let invisible = claw_invisible(w);
-    let screen = on_screen(w, id);
+    // A hidden enemy is not drawn, so it is never on screen.
+    let screen = on_screen(w, id) && obj(w, id).draw_flags & draw_flags::HIDDEN == 0;
     let now = w.now_ms;
     let Some(d) = data_mut(w, id) else { return };
     d.roll = roll;

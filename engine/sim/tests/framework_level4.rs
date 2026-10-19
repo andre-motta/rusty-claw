@@ -30,9 +30,11 @@ use claw_sim::registry::Registry;
 use claw_sim::{Sim, SimConfig, SimLevel, TickInput};
 use common::*;
 
-/// The families declared for the fourth level, with the names they claim.
+/// The families declared for the fourth level, with the names they claim
+/// (the springboards' family also runs the thirteenth level's water
+/// rocks).
 const DECLARED: [(GameLogic, &[&str]); 3] = [
-    (GameLogic::SpringBoard, &["SpringBoard"]),
+    (GameLogic::SpringBoard, &["SpringBoard", "WaterRock"]),
     (
         GameLogic::SteppingStone,
         &[

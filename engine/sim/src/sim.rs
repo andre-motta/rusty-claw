@@ -52,6 +52,13 @@ pub struct SimConfig {
     /// respawn, as a pickup gives it (see [`player::powerup_aid`]). None
     /// by default, and the game then plays exactly as without it.
     pub start_powerup: Option<AidPowerup>,
+    /// A set-up for measuring a boss fight, not play: the health the
+    /// level's boss is given on the first arena step, at the boundary
+    /// after the first tick that has him as the current boss (his health
+    /// on that tick is still his own). A route asks for it with its
+    /// `# boss_health N` line ([`crate::input::script_boss_health`]).
+    /// None by default, and the game then plays exactly as without it.
+    pub boss_health: Option<i32>,
 }
 
 impl Default for SimConfig {
@@ -100,6 +107,7 @@ impl SimConfig {
             fuse_clock: FuseClock::Original,
             aids: PlayAids::NONE,
             start_powerup: None,
+            boss_health: None,
         }
     }
 }
@@ -175,6 +183,8 @@ pub struct Sim {
     /// Claw respawned since the last tick: the death's circles end with
     /// the next tick.
     respawned: bool,
+    /// [`SimConfig::boss_health`] has been given to the boss.
+    boss_health_given: bool,
     /// The frame time the logic calls run with, ms: one tick, or 0 in the
     /// respawn's two update passes (see [`Sim::respawn_between_ticks`]).
     frame_ms: u32,
@@ -544,6 +554,7 @@ impl Sim {
             end_life: false,
             give_powerup: None,
             respawned: false,
+            boss_health_given: false,
             ended: false,
             frame_ms: TICK_MS,
             held_clock_ms: None,
@@ -771,6 +782,7 @@ impl Sim {
         if let Some(target) = self.claw.special.warp_to.take() {
             self.warp_between_ticks(target);
         }
+        self.give_boss_health();
         self.input = input;
         // A latched key stays latched until a tick finds it up.
         self.latched = Buttons(self.latched.0 & input.held.0);
@@ -1204,6 +1216,7 @@ impl Sim {
                     r.draw_mode = self.claw.look.mode;
                     r.draw_color = self.claw.look.color;
                 }
+                logic::enemy::chameleon::apply_phase_look(self.out.chameleon_frame(), o, &mut r);
                 renderables.push(r);
             }
         }
@@ -1321,6 +1334,37 @@ impl Sim {
     /// The Aquatis link (see [`crate::logic::enemy::aquatis::AquatisLink`]).
     pub fn aquatis_link(&self) -> &crate::logic::enemy::aquatis::AquatisLink {
         self.out.aquatis()
+    }
+
+    /// Gives the current boss the health [`SimConfig::boss_health`] asks
+    /// for, once: at the first tick boundary that finds a current boss.
+    fn give_boss_health(&mut self) {
+        let Some(health) = self.cfg.boss_health else {
+            return;
+        };
+        if self.boss_health_given {
+            return;
+        }
+        if let Some(o) = self
+            .out
+            .boss
+            .current
+            .and_then(|id| self.objects.get_mut(id))
+        {
+            o.health = health;
+            self.boss_health_given = true;
+        }
+    }
+
+    /// The RedTail link (see [`crate::logic::enemy::redtail::RedTailLink`]).
+    pub fn redtail_link(&self) -> &crate::logic::enemy::redtail::RedTailLink {
+        self.out.redtail()
+    }
+
+    /// How the Chameleons' shared phase frame is drawn now (see
+    /// [`crate::logic::enemy::chameleon::PhaseFrame`]).
+    pub fn chameleon_frame(&self) -> crate::logic::enemy::chameleon::PhaseFrame {
+        self.out.chameleon_frame()
     }
 
     /// The camera's scripted point, when one is set (by Claw's code, a
@@ -1708,6 +1752,43 @@ mod tests {
         let r = runner.with_claw(objects, id, f).unwrap();
         runner.list_spawned(objects);
         r
+    }
+
+    #[test]
+    fn the_boss_health_set_up_reaches_the_boss_after_his_first_tick() {
+        let mut level = flat();
+        level
+            .objects
+            .push(crate::level::ObjectSpec::at("NoSuchLogic", 1200, 900, 4000));
+        for asked in [None, Some(5)] {
+            let cfg = SimConfig {
+                boss_health: asked,
+                ..SimConfig::default()
+            };
+            let mut sim = Sim::new(level.clone(), cfg);
+            sim.step(TickInput::default());
+            let boss = sim
+                .objects()
+                .all()
+                .find(|(_, o)| &*o.logic == "NoSuchLogic")
+                .map(|(id, _)| id)
+                .unwrap();
+            let own = sim.objects().get(boss).unwrap().health;
+            // No boss yet: nothing is given.
+            sim.step(TickInput::default());
+            assert_eq!(sim.objects().get(boss).unwrap().health, own);
+            // He becomes the current boss in a tick: that tick shows his
+            // own health, the next one the asked health.
+            sim.with_world(|w| w.set_current_boss(Some(boss)));
+            assert_eq!(sim.objects().get(boss).unwrap().health, own);
+            sim.step(TickInput::default());
+            let want = asked.unwrap_or(own);
+            assert_eq!(sim.objects().get(boss).unwrap().health, want);
+            // Once only.
+            sim.with_world(|w| w.objects.get_mut(boss).unwrap().health = 77);
+            sim.step(TickInput::default());
+            assert_eq!(sim.objects().get(boss).unwrap().health, 77);
+        }
     }
 
     #[test]
