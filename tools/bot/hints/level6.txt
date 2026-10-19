@@ -47,4 +47,12 @@
 # 13. Down to the sewer under the boss room's door, along it over the
 #     goo on the elevator, up on the blower at its end, back along the
 #     passage above and up the ladder to the door; the boss and the gem:
-#     no waypoints, no goal.
+#     no waypoints, no goal, in two parts.
+#     a. To the door, through the tick Claw touches it (route tick
+#        11469): no goal.
+#     b. From the door on, Wolvington and the gem: searched again once a
+#        warp door ran every awake object once more before Claw's first
+#        tick in the room, which changes the fight. The route up to the
+#        touching tick is kept as it is, and the search carries on from
+#        the tick after it (--from-route with --from-tick one past the
+#        touching tick), with --intro play and --fragile-cost 100.
