@@ -21,6 +21,9 @@
 //! - Waiting: when RedTail is there with his flag up, the blow starts (in
 //!   the same tick, without a push yet): [`BLOW_MS`] from now, the
 //!   whistle looping.
+//! - The whistle plays at [`WHISTLE_VOLUME`] from the blow's start and
+//!   stops at its end (the game fades it in over a second and out over
+//!   three quarters of one; this build has no fades).
 //! - Blowing, every tick: a piece of debris when [`DEBRIS_MS`] have
 //!   passed since the last one (the first on the blow's first tick after
 //!   its start); the push; then, once the blow's time is over or the flag

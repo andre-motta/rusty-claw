@@ -787,3 +787,63 @@ fn dying_with_claw_dead_he_starts_over_at_claws_respawn() {
     // His fall's flag that he hurts nothing stays.
     assert_ne!(obj(&sim, id).flags & flags::HARMLESS, 0);
 }
+
+#[test]
+fn a_damaging_blow_in_the_death_jump_leaves_him_fighting_until_the_next_one() {
+    let mut sim = arena_sim(with_helpers(), (AT.0 - 60, CLAW_LEDGE_Y), 7);
+    let id = boss(&sim);
+    sim.with_world(|w| {
+        if let Some(o) = w.objects.get_mut(id) {
+            o.health = 5;
+        }
+    });
+    blow(&mut sim, 5);
+    assert_eq!(st(&sim), Some(EnemyState::JumpDown));
+    // After the blow's cooldown, another (not the third counted) blow in
+    // the air: the flinch takes the jump's place and the death waits.
+    step(&mut sim, 17);
+    sim.with_world(|w| {
+        if let Some(ObjectData::RedTail(d)) = w.objects.get_mut(id).map(|o| &mut o.data) {
+            d.hits = 0;
+        }
+    });
+    blow(&mut sim, 5);
+    assert_eq!(st(&sim), Some(EnemyState::HitLow));
+    assert_eq!(rd(&sim).pending, 6, "kept, never made");
+    // Out of the jump he falls through the sand to the fall guard, then
+    // goes Home and fights on with no health.
+    step_until(&mut sim, EnemyState::Home, 60);
+    step(&mut sim, 30);
+    assert_ne!(st(&sim), Some(EnemyState::Dead));
+    assert!(obj(&sim, id).health <= 0);
+    // The next blow that gets through runs his death again.
+    sim.with_world(|w| {
+        if let Some(o) = w.objects.get_mut(id) {
+            o.x = 37850;
+            o.y = SAND_Y;
+            o.physics_type = ptype::STAND;
+        }
+        if let Some(ObjectData::RedTail(d)) = w.objects.get_mut(id).map(|o| &mut o.data) {
+            d.hits = 0;
+        }
+    });
+    step(&mut sim, 1);
+    blow(&mut sim, 5);
+    assert_eq!(st(&sim), Some(EnemyState::Dead));
+}
+
+#[test]
+fn claws_respawn_takes_his_knives_and_flares_away() {
+    let mut sim = arena_sim(with_helpers(), (37200, CLAW_SAND_Y), 7);
+    act(&mut sim, redtail::knives_entry);
+    step(&mut sim, 18);
+    let knives = find(&sim, knife::NAMES[0]);
+    assert_eq!(knives.len(), 3);
+    sim.with_world(|w| w.claw.stats.attempt += 1);
+    step(&mut sim, 1);
+    assert_eq!(st(&sim), Some(EnemyState::Home));
+    step(&mut sim, 1);
+    for k in knives {
+        assert!(sim.objects().get(k).is_none());
+    }
+}

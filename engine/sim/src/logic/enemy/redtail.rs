@@ -110,7 +110,8 @@
 //!   are over, with Claw alive, Claw is held and the gem rises out of him
 //!   ([`World::boss_defeated`]) toward [`GEM_TARGET`] (his record's
 //!   speed fields), and he is defeated. He is never removed.
-//! - Claw's respawn: the reset, in the respawn's own update passes.
+//! - Claw's respawn: the reset, in the respawn's own update passes; his
+//!   knives and flares still flying are gone with it.
 //!
 //! # State numbers
 //!
@@ -629,6 +630,8 @@ pub fn tick(w: &mut World, id: ObjectId) {
             b.attempt = attempt;
         }
         reset(w, id);
+        // Everything thrown or fired goes with the life Claw lost.
+        crate::logic::projectile::purge(w.objects);
     }
     super::pre_tick(w, id, &CLASS);
     pre_tick(w, id);
