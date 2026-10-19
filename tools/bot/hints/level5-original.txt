@@ -71,5 +71,66 @@
 #     peg's right end; after a wait, a step and a short jump to the right
 #     the blast strikes Claw in the air past the peg, and a jump from the
 #     air once struck lands on the block (15 health).
+#     The stretch is written into the route as these held buttons (masks
+#     of the route file), in ticks counted from the stretch's first tick,
+#     each range inclusive: a wait and a walk to the right to stand under
+#     the stack, the four hops, each after the shortest wait that lands it
+#     on its peg, and from the jump to the top peg on the same throw and
+#     boost in both routes. The first wait is the shortest that brings the
+#     pegs round in time for the rest.
+#     level5-original.csv: route ticks 10081 to 10514
+#         0-23  0x0 nothing
+#        24-32  0x2000000 right
+#        33-69  0x0 nothing
+#        70-83  0x1 jump
+#        84-113 0x0 nothing
+#       114-127 0x1 jump
+#       128-157 0x0 nothing
+#       158-171 0x1 jump
+#       172-197 0x0 nothing
+#       198-211 0x1 jump
+#       212-230 0x0 nothing
+#       231-244 0x2000001 right and jump
+#       245-264 0x2000000 right
+#       265-271 0x0 nothing
+#       272-273 0x100 dynamite (selects it)
+#       274-275 0x0 nothing
+#       276-279 0x8000000 down
+#       280-281 0x8000004 down and throw
+#       282-283 0x8000000 down
+#       284-331 0x0 nothing
+#       332-333 0x2000000 right
+#       334-342 0x2000001 right and jump
+#       343-382 0x2000000 right
+#       383-384 0x0 nothing
+#       385-398 0x2000001 right and jump
+#       399-433 0x2000000 right
+#     level4-original.level5.csv: route ticks 10371 to 10847
+#         0-9   0x0 nothing
+#        10-19  0x2000000 right
+#        20-112 0x0 nothing
+#       113-126 0x1 jump
+#       127-156 0x0 nothing
+#       157-170 0x1 jump
+#       171-201 0x0 nothing
+#       202-215 0x1 jump
+#       216-240 0x0 nothing
+#       241-254 0x1 jump
+#       255-273 0x0 nothing
+#       274-287 0x2000001 right and jump
+#       288-307 0x2000000 right
+#       308-314 0x0 nothing
+#       315-316 0x100 dynamite (selects it)
+#       317-318 0x0 nothing
+#       319-322 0x8000000 down
+#       323-324 0x8000004 down and throw
+#       325-326 0x8000000 down
+#       327-374 0x0 nothing
+#       375-376 0x2000000 right
+#       377-385 0x2000001 right and jump
+#       386-425 0x2000000 right
+#       426-427 0x0 nothing
+#       428-441 0x2000001 right and jump
+#       442-476 0x2000000 right
 # 14. Down the shaft through its rows of breaking planks and along the
 #     floor to the gem: no goal.
