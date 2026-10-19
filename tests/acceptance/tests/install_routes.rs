@@ -606,7 +606,10 @@ fn install_routes_play_one_game_through_the_booty_screen() {
     let games = later_levels();
     assert!(!games.is_empty(), "no route of a game's later level");
     for (first, later, n) in games {
-        if awaits_search(&later.file_name().unwrap().to_string_lossy()) {
+        // A game waits too when its first level's route does.
+        if awaits_search(&later.file_name().unwrap().to_string_lossy())
+            || awaits_search(&first.file_name().unwrap().to_string_lossy())
+        {
             continue;
         }
         let read = |p: &Path| {
