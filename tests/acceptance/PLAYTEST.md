@@ -312,8 +312,8 @@ and `make replay ARGS="--install PATH --level 10 --start 32340,7740
 Failures only, as above: note the line, what happened instead, and where.
 Start the eleventh level with `make run-game ARGS="--install PATH --level 11"`,
 or play on from the tenth level. This section covers what the level
-reuses and its lasers; Mercat, the Siren and the Fish are not built yet
-and stand still where the level places them, harmless and untouchable.
+reuses, its lasers, Mercat and the Fish; the Siren is not built yet and
+stands still where the level places her, harmless and untouchable.
 
 To try the end of the level with the tools, `--start 3424,1467` puts
 Claw on the ledge under the start room, left of its pillar (`make replay
@@ -328,7 +328,12 @@ takes it; the game starts the level at its start).
 6. The ledge under the start room: dropping through the opening in the start room's floor, Claw falls past the ledge and cannot reach it, even holding Left; he lands on the ground below.
 7. The way to the map piece: the ladder at x 3100 leads up to the left part of that ledge; walk right to below the pocket (x 3424) and jump: Claw takes the map piece and the level ends.
 
-<!-- Mercat and his trident bolts, and the Fish in the wading pools: their lines go here. -->
+8. Mercat's bolts: whenever a Mercat can see Claw on his floor, he waits one to two seconds, raises his trident and throws a bolt of lightning straight at Claw at waist height with a crackle, at any distance he can see him from, without walking at him. The bolt costs 20 and bursts into a short explosion where it hits; a jump clears it, a crouch does not. A wall stops it without a burst, and Claw's respawn clears every bolt in flight.
+9. Fighting a Mercat close in: swinging at him from in front within about 150 px makes him hop about 96 px back, silently, almost always the first time and less often after each hop (never after the third); a crouching sword stab is always parried with a clang and does nothing; standing stabs, punches and kicks land (two kill him), and about one pistol shot in four is parried. When he cannot see Claw (a wall between them, or Claw invisible), he walks or runs at him instead and, within about 150 px, stabs (10, reaching about 110 px).
+10. Standing right in front of a Mercat (about 60 px) facing him: his bolt bursts on Claw at once and its explosion kills the Mercat himself; Claw loses only the bolt's 20. A Mercat that threw instead of stabbing at a close Claw stops hopping back from swings.
+11. The Fish's leap: standing in a wading pool above a fish's swimming line, a fish swimming towards Claw leaps out with a splash, bites at the top of an arc about 150 px high and 250 px long, and drops back in with a splash on the far side.
+12. The Fish's dash: with Claw level with a fish's line, it dashes along the pool floor to where he stood and swims on. Every touch of a fish costs 10, whatever it is doing; any single hit (sword, punch, pistol, magic, an explosion) kills it.
+13. Pit walls: from the bank right of the pool at x 13854 to 14498, a fish leaping at Claw bounces off the pit's wall and falls back into its pool; none lands on the bank.
 
 <!-- The Siren, her scream and the two-second lockout of Claw's controls: their lines go here. -->
 
