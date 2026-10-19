@@ -141,10 +141,27 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 
 /// The first reference time (ms) at which each column already leaves its
 /// tolerance, per store and clock; a column not listed must stay within
-/// it, and one listed must not leave it earlier. None once every family
-/// the routes meet is built; until then [`UNBUILT`] lists what the
-/// missing ones change.
-const KNOWN: &[Known] = &[];
+/// it, and one listed must not leave it earlier. [`UNBUILT`] lists what
+/// the families not built yet change. What these come from:
+///
+/// - c18, start-drop, belt-left and plank-walk (`rng`): the Mercat by the
+///   start room's opening stands 3 px inside the enemies' window once the
+///   window is placed around Claw on the start room's floor. The original
+///   wakes and builds him in the level's first tick; the replay's first
+///   tick still places the window around the level's start point, 79 px
+///   higher, so he wakes and builds a tick later. His build's draw and his
+///   idle poses' draws (one every second) come a tick later on start-drop
+///   (18 ms), his second pose a tick later on belt-left (198 ms), and on
+///   plank-walk, where Claw comes back to the start after his fall, the
+///   original finds him built already while the replay builds him then,
+///   so a pose's draw comes on another row (6066 ms). Nothing else
+///   changes: his poses touch nothing, and the stream is the original's
+///   again once the late draw is made.
+const KNOWN: &[Known] = &[
+    ("start-drop", "c18", &[("rng", 18)]),
+    ("belt-left", "c18", &[("rng", 198)]),
+    ("plank-walk", "c18", &[("rng", 6066)]),
+];
 
 /// Which families a route meets besides the objects it is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
