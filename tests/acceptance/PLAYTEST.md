@@ -312,7 +312,7 @@ and `make replay ARGS="--install PATH --level 10 --start 32340,7740
 Failures only, as above: note the line, what happened instead, and where.
 Start the eleventh level with `make run-game ARGS="--install PATH --level 11"`,
 or play on from the tenth level. This section covers what the level
-reuses and its lasers; Mercat, the Siren and the Fish are not built yet
+reuses, its lasers and the Siren; Mercat and the Fish are not built yet
 and stand still where the level places them, harmless and untouchable.
 
 To try the end of the level with the tools, `--start 3424,1467` puts
@@ -330,6 +330,9 @@ takes it; the game starts the level at its start).
 
 <!-- Mercat and his trident bolts, and the Fish in the wading pools: their lines go here. -->
 
-<!-- The Siren, her scream and the two-second lockout of Claw's controls: their lines go here. -->
+8. The Siren: come within about 500 px of a Siren on her floor (and within about 40 px up or down) and she faces you and sings, through walls too: a call, and four rings of sound a third of a second apart that drift towards you slowly and fade after about 300 px. She sings again about 4 s after her last call. Touching her costs 10; two sword hits kill her, and she can be picked up and thrown.
+9. Her scream: a ring that reaches Claw, standing or crouching, costs no health (only his hit sound) and freezes his controls for about two seconds, each ring starting the two seconds again: a walk stops, a crouch stands up, a jump on its way up loses the rest of its height, and he shows a dazed pose. He can still be hurt and killed while frozen.
+10. Keys held through the freeze act the moment it ends: holding Jump jumps at once, holding Right walks on at once, holding Down crouches again.
+11. The pause key, the help screen (F1) and the in-game menu still open while Claw is frozen, and the freeze waits while they are up; losing a life while frozen does not end it: it runs on after the respawn.
 
 <!-- Standing up inside the floor at a pool's left wall after a crouched hit, and falling through it: its lines go here. -->

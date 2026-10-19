@@ -767,8 +767,12 @@ impl Sim {
             let dirs = self.claw_input.held.0 & (Buttons::LEFT.0 | Buttons::RIGHT.0);
             self.claw_input.pressed = Buttons(self.claw_input.pressed.0 | dirs);
         }
-        // A scream's lockout takes the keys from Claw while it runs.
-        scream::lock_input(&mut self.out.scream_lock_ms, TICK_MS, &mut self.claw_input);
+        // A scream's lockout takes the keys from Claw while it runs, and a
+        // locked tick empties the latch: keys held when it runs out count
+        // as pressed then.
+        if scream::lock_input(&mut self.out.scream_lock_ms, TICK_MS, &mut self.claw_input) {
+            self.latched = Buttons::NONE;
+        }
         self.pulse_left = match self.pulse_left {
             0 => PULSE_MS,
             left if left <= TICK_MS => 0,
