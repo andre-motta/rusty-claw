@@ -779,12 +779,10 @@ impl Sim {
         if std::mem::take(&mut self.respawned) {
             self.out.set_transition(None);
         }
-        // Before a warp's set-up: a boss it builds keeps his own health
-        // on his first tick.
-        self.give_boss_health();
         if let Some(target) = self.claw.special.warp_to.take() {
             self.warp_between_ticks(target);
         }
+        self.give_boss_health();
         self.input = input;
         // A latched key stays latched until a tick finds it up.
         self.latched = Buttons(self.latched.0 & input.held.0);
