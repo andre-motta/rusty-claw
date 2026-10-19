@@ -20,8 +20,26 @@
 //! the shared random stream on every third tick.
 //!
 //! Each crate of a stack breaks on any accepted hit and releases its one
-//! item with a random hop; the crates above it then fall 40 px under
-//! gravity onto the one below, with one small bounce when they land fast.
+//! item with a random hop; the crates above it then fall 40 px onto the
+//! one below. A crate of a stack falls by the enemies' movement step
+//! ([`enemy::motion`]), on its exact height, kept in doubles: each call
+//! it first looks at its floor, then moves.
+//!
+//! - Its floor is the exact height of the crate below less 40 px (the
+//!   stack's bottom when no crate is left below); each call gives the
+//!   crate above its own exact height less 40 px, before it moves.
+//! - On its floor exactly and falling at 200 px/s or less, it stops there
+//!   (speed 0, no move in this call). On its floor faster than that, it
+//!   bounces: the speed becomes -0.5 times the speed, and it moves in the
+//!   same call.
+//! - The move is `(v + a dt / 2) dt` with gravity 2000 px/s² and `dt` the
+//!   time the enemies' step covers (two game clock readings apart); the
+//!   speed then grows by `a dt`. A move that would pass the floor puts it
+//!   exactly on the floor, with the speed `sqrt(v^2 + 2 a (floor - y))`
+//!   (the sign of `v`), `y` where the move would have put it: falling at
+//!   500 px/s, 2.152 px past the floor, it lands at 491.3166 px/s. So the
+//!   bounce comes on the call after the landing.
+//! - It never falls faster than 500 px/s.
 //!
 //! Statues ([`super::statue`]) are single crates with a different drop
 //! and no removal; they share the hit rule, the break sound and the break
@@ -29,6 +47,7 @@
 
 use claw_frame::SoundChannel;
 
+use super::enemy::motion;
 use super::{Look, ObjectData, World, enemy, new_object, pickup, sound};
 use crate::level::{SimLevel, runtime_image_set};
 use crate::object::{Object, ObjectId, Rect, draw_flags, engine_state, flags, types};
@@ -89,9 +108,11 @@ pub const DROP_RISE: i32 = 24;
 pub const UNBREAKABLE: i32 = 999;
 /// Gravity on falling crates of a stack, px/s/s.
 pub const STACK_GRAVITY: f64 = 2000.0;
-/// A falling crate landing faster than this bounces back at half speed,
-/// px/s.
+/// A crate of a stack on its floor faster than this bounces back at half
+/// speed, px/s.
 pub const STACK_BOUNCE_SPEED: f64 = 200.0;
+/// The fastest a crate of a stack falls, px/s.
+pub const STACK_MAX_FALL: f64 = 500.0;
 
 /// Logic states of a crate.
 pub mod state {
@@ -122,14 +143,17 @@ pub struct CrateData {
     pub above: Option<ObjectId>,
     /// In a stack: position from the bottom when it was built.
     pub index: i32,
-    /// In a stack: the height it rests at.
-    pub floor: i32,
+    /// In a stack: the exact height it rests at.
+    pub floor: f64,
     /// In a stack: the height of the stack's bottom.
     pub base: i32,
     /// In a stack: falling speed, px/s (down is positive).
     pub vy: f64,
-    /// In a stack: sub-pixel fall carried to the next tick.
+    /// In a stack: its exact height below its pixel.
     pub rest: f64,
+    /// In a stack: game time of its last movement step, ms (`None` before
+    /// the first).
+    pub last_move_ms: Option<u64>,
 }
 
 fn data_mut(o: &mut Object) -> &mut CrateData {
@@ -408,7 +432,7 @@ fn build_stack(w: &mut World, id: ObjectId) {
         c.data = ObjectData::Crate(CrateData {
             content,
             index: i,
-            floor: y - STACK_STEP * i,
+            floor: f64::from(y - STACK_STEP * i),
             base: y,
             ..CrateData::default()
         });
@@ -449,7 +473,7 @@ fn stacked_tick(w: &mut World, id: ObjectId) {
             let y = o.y;
             let d = data_mut(o);
             d.content = content;
-            d.floor = y;
+            d.floor = f64::from(y);
             d.base = y;
             o.state = state::STACKED;
         }
@@ -466,47 +490,61 @@ fn stacked_tick(w: &mut World, id: ObjectId) {
 }
 
 /// A crate of a stack settles on the crate below it (or the stack's
-/// bottom), and tells the crate above where to rest.
+/// bottom), and tells the crate above where to rest (see the module
+/// documentation).
 fn fall(w: &mut World, id: ObjectId) {
     let below_alive = |w: &World, b: Option<ObjectId>| {
         b.and_then(|b| w.objects.get(b)).and_then(data_of).is_some()
     };
+    let now = w.now_ms;
     let o = w.objects.get(id).expect("caller checked");
-    let d = data_of(o).cloned().unwrap_or_default();
+    let mut d = data_of(o).cloned().unwrap_or_default();
     let has_below = below_alive(w, d.below);
     let o = w.objects.get_mut(id).expect("checked");
     o.flags |= flags::ALWAYS_ACTIVE;
-    let mut d = d;
     if !has_below {
         d.below = None;
-        d.floor = d.base;
+        d.floor = f64::from(d.base);
     }
-    let dt = f64::from(TICK_MS) / 1000.0;
-    if o.y < d.floor || d.vy != 0.0 {
-        d.vy += STACK_GRAVITY * dt;
-        let fy = d.vy * dt + d.rest;
-        let dy = fy.trunc();
-        d.rest = fy - dy;
-        o.y += dy as i32;
-    }
-    if o.y >= d.floor {
-        o.y = d.floor;
-        d.rest = 0.0;
+    let exact = f64::from(o.y) + d.rest;
+    let mut resting = false;
+    if exact == d.floor {
         if d.vy > STACK_BOUNCE_SPEED {
-            d.vy = -d.vy / 2.0;
+            d.vy *= -0.5;
         } else {
             d.vy = 0.0;
+            resting = true;
             o.flags &= !flags::ALWAYS_ACTIVE;
         }
     }
-    let top = o.y - STACK_STEP;
+    let dt = motion::step_seconds_since(&mut d.last_move_ms, now);
+    if !resting {
+        let (y, vy) = fall_step(exact, d.vy, d.floor, dt);
+        o.y = y.trunc() as i32;
+        d.rest = y - f64::from(o.y);
+        d.vy = vy;
+    }
     let above = d.above;
     *data_mut(o) = d;
     if let Some(a) = above.and_then(|a| w.objects.get_mut(a))
         && matches!(a.data, ObjectData::Crate(_))
     {
-        data_mut(a).floor = top;
+        data_mut(a).floor = exact - f64::from(STACK_STEP);
     }
+}
+
+/// One move of a falling crate of a stack from the exact height `y` at
+/// `v` px/s over `dt` s onto `floor`: the new exact height and speed (see
+/// the module documentation).
+pub fn fall_step(y: f64, v: f64, floor: f64, dt: f64) -> (f64, f64) {
+    let mut after = v;
+    let to = y + motion::axis_step_for(&mut after, STACK_GRAVITY, dt);
+    let (y, v) = if to > floor {
+        (floor, motion::speed_after(v, STACK_GRAVITY, floor - to))
+    } else {
+        (to, after)
+    };
+    (y, v.min(STACK_MAX_FALL))
 }
 
 fn break_stacked(w: &mut World, id: ObjectId, attacker: ObjectId) {

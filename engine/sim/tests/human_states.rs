@@ -17,7 +17,7 @@ use claw_sim::level::ObjectSpec;
 use claw_sim::logic::enemy::human::{self, HumanCall};
 use claw_sim::logic::enemy::{self, Deferred, EnemyState, states};
 use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags, types};
-use claw_sim::physics::ptype;
+use claw_sim::physics::{ptype, res};
 use claw_sim::rng::Rng;
 use claw_sim::tiles::TileMap;
 use claw_sim::{GameLogic, Sim, SimConfig, SimLevel};
@@ -412,6 +412,69 @@ fn moving_ends_at_a_wall() {
         assert!(n < 60, "still walking at {}", obj(&sim, id).x);
     }
     assert!(obj(&sim, id).x > 2943, "stopped by the wall");
+}
+
+#[test]
+fn moving_ends_on_a_landing_too() {
+    // Moving back over a drop: any stop the movement step reports ends
+    // the move, a landing as well as a wall. In the air it walks on; the
+    // step that lands it reports the stop, and its next call goes Home.
+    let (mut sim, id) = raux_on(&flat_rows());
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(id).unwrap();
+        o.y -= 20;
+        o.physics_type = ptype::FALL;
+        let d = enemy::data_mut(w, id).unwrap();
+        d.vx = -150.0;
+        d.vy = 0.0;
+        d.human.target_x = 2000;
+        // As if it had just walked here.
+        d.human.pre_move_x = 3003;
+        enemy::set_state(w, id, EnemyState::MoveBack);
+    });
+    let mut n = 0;
+    while obj(&sim, id).physics_type != ptype::STAND {
+        sim.step(TickInput::default());
+        n += 1;
+        assert!(n < 30, "still in the air");
+        assert_eq!(state_of(&sim, id), Some(EnemyState::MoveBack));
+    }
+    assert!(n > 1, "it fell for a while");
+    let d = data(&sim, id);
+    assert_eq!(
+        d.last_result & (res::HIT | res::FLOOR),
+        res::HIT | res::FLOOR
+    );
+    assert!(d.human.tile_hit, "the landing is a stop");
+    sim.step(TickInput::default());
+    assert_ne!(state_of(&sim, id), Some(EnemyState::MoveBack));
+}
+
+#[test]
+fn moving_goes_on_while_its_exact_position_moves_within_a_pixel() {
+    // Walking left at 10 px/s (0.18 px a tick) from 3000.8: its pixel
+    // stays 3000 for four steps, but its exact position moved, so it has
+    // not stopped; it ends only when it reaches its spot or a stop.
+    let (mut sim, id) = raux_on(&flat_rows());
+    sim.with_world(|w| {
+        let y = w.objects.get(id).unwrap().y;
+        w.objects.get_mut(id).unwrap().x = 3000;
+        let d = enemy::data_mut(w, id).unwrap();
+        d.vx = -10.0;
+        d.carry = (0.8, 0.0);
+        d.moved_to = Some((3000, y));
+        d.human.target_x = 2000;
+        d.human.pre_move_x = 3001;
+        enemy::set_state(w, id, EnemyState::MoveBack);
+    });
+    for _ in 0..4 {
+        sim.step(TickInput::default());
+        assert_eq!(obj(&sim, id).x, 3000);
+        assert_eq!(state_of(&sim, id), Some(EnemyState::MoveBack));
+    }
+    sim.step(TickInput::default());
+    assert_eq!(obj(&sim, id).x, 2999, "past the pixel");
+    assert_eq!(state_of(&sim, id), Some(EnemyState::MoveBack));
 }
 
 #[test]

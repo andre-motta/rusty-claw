@@ -454,7 +454,7 @@ pub fn decides(s: EnemyState) -> bool {
 
 /// The post-tick: a block's release before a scheduled call (as
 /// [`human::run`] does), the scheduled call or the dodge's leap, then the
-/// movement step, noting where it started and whether a wall stopped it.
+/// movement step, noting where it started and whether the tiles stopped it.
 /// With `no_time` (the respawn's update passes, see [`between_ticks`])
 /// there is no movement step.
 fn post_tick(w: &mut World, id: ObjectId, no_time: bool) {
@@ -488,19 +488,15 @@ fn post_tick(w: &mut World, id: ObjectId, no_time: bool) {
         let o = obj(w, id);
         (o.x, o.physics_type == ptype::STAND)
     };
-    let vx = data(w, id).map_or(0.0, |d| d.vx);
     if let Some(d) = data_mut(w, id) {
         d.human.pre_move_x = x;
     }
     motion::integrate(w, id);
+    human::note_stop(w, id);
     let (stands, ay) = (
         obj(w, id).physics_type == ptype::STAND,
         data(w, id).map_or(0.0, |d| d.ay),
     );
-    if let Some(d) = data_mut(w, id) {
-        // A wall turns the speed across around at half.
-        d.human.tile_hit = vx != 0.0 && d.vx == -0.5 * vx;
-    }
     if let Some(k) = own_mut(w, id) {
         if stood && stands {
             k.stand_y = if k.falls {

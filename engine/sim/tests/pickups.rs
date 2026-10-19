@@ -543,6 +543,91 @@ fn breaking_a_stacked_crate_drops_its_item_and_lets_the_ones_above_fall() {
     assert_eq!(obj(&sim, ids[2]).y, 925);
 }
 
+/// A crate of a stack's exact height and falling speed.
+fn crate_fall(o: &Object) -> (f64, f64) {
+    match &o.data {
+        ObjectData::Crate(d) => (f64::from(o.y) + d.rest, d.vy),
+        _ => panic!("not a crate"),
+    }
+}
+
+#[test]
+fn a_falling_crate_moves_as_the_enemies_do_lands_exactly_and_is_capped() {
+    // One tick of the movement step from rest: (0 + 2000 dt / 2) dt.
+    let (y, v) = crates::fall_step(5384.0, 0.0, 5424.0, 0.018);
+    assert!((y - 5384.324).abs() < 1e-9 && (v - 36.0).abs() < 1e-9);
+    // Never faster than 500 px/s: 468 + 36 is held at 500.
+    let (y, v) = crates::fall_step(5438.756, 468.0, 5464.0, 0.018);
+    assert!((y - (5438.756 + 486.0 * 0.018)).abs() < 1e-9);
+    assert_eq!(v, crates::STACK_MAX_FALL);
+    // Passing its floor it lands exactly on it, with the speed the energy
+    // of the move leaves: 500 px/s with 2.152 px past the floor.
+    let (y, v) = crates::fall_step(5456.828, 500.0, 5464.0, 0.018);
+    assert_eq!(y, 5464.0);
+    let past: f64 = 5456.828 + 518.0 * 0.018 - 5464.0;
+    assert!((past - 2.152).abs() < 1e-9);
+    assert!((v - (500.0f64 * 500.0 - 4000.0 * past).sqrt()).abs() < 1e-9);
+    assert!((v - 491.3166).abs() < 1e-4, "{v}");
+    // Rising, gravity takes its speed off as it moves.
+    let (y, v) = crates::fall_step(5464.0, -245.0, 5464.0, 0.018);
+    assert!((y - (5464.0 + (-245.0 + 18.0) * 0.018)).abs() < 1e-9);
+    assert!((v + 209.0).abs() < 1e-9);
+}
+
+#[test]
+fn a_stacked_crate_bounces_on_the_call_after_it_lands_and_then_rests() {
+    // Three crates; the two under the top one break, so it falls 80 px
+    // onto the stack's bottom.
+    let mut sim = Sim::new(
+        level(vec![stack(
+            "BackStackedCrates",
+            1200,
+            0,
+            [33, 2, 41, 0],
+            [0; 4],
+        )]),
+        SimConfig::default(),
+    );
+    step(&mut sim, 2);
+    let ids = stack_crates(&sim);
+    let claw = claw(&mut sim);
+    sim.with_world(|w| w.objects.get_mut(claw).unwrap().hit_type_flags = 0);
+    hit(&mut sim, ids[0], claw);
+    hit(&mut sim, ids[1], claw);
+    let top = ids[2];
+    assert_eq!(crate_fall(obj(&sim, top)), (845.0, 0.0));
+    let mut path = Vec::new();
+    for _ in 0..80 {
+        step(&mut sim, 1);
+        path.push(crate_fall(obj(&sim, top)));
+    }
+    // The first call falls one tick from rest.
+    assert!((path[0].0 - 845.324).abs() < 1e-6, "{:?}", path[0]);
+    // It reaches the 500 px/s cap and goes no faster.
+    assert!(path.iter().all(|&(_, v)| v <= crates::STACK_MAX_FALL));
+    assert!(path.iter().any(|&(_, v)| v == crates::STACK_MAX_FALL));
+    // It lands exactly on the bottom, still falling: the bounce comes on
+    // the next call, at half that speed back up, then one tick of gravity.
+    let land = path.iter().position(|&(y, _)| y == 925.0).unwrap();
+    let v = path[land].1;
+    assert!(v > crates::STACK_BOUNCE_SPEED && v < crates::STACK_MAX_FALL);
+    let (y, up) = path[land + 1];
+    assert!(y < 925.0, "it rises");
+    assert!((up - (-0.5 * v + 2000.0 * 0.018)).abs() < 1e-6, "{up}");
+    // It comes back at about the speed it left with, still above 200 px/s,
+    // so it bounces once more; then it lands slower and rests on the
+    // bottom.
+    let (y, v) = *path.last().unwrap();
+    assert_eq!((y, v), (925.0, 0.0));
+    assert_eq!(obj(&sim, top).y, 925);
+    assert_eq!(obj(&sim, top).flags & flags::ALWAYS_ACTIVE, 0, "at rest");
+    let bounces = path
+        .windows(2)
+        .filter(|p| p[0].1 > 0.0 && p[1].1 < 0.0)
+        .count();
+    assert_eq!(bounces, 2);
+}
+
 #[test]
 fn an_empty_stacked_crate_drops_nothing() {
     let mut sim = Sim::new(
