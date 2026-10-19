@@ -57,19 +57,22 @@ fn known_line(entry: &Entry) -> String {
     )
 }
 
-/// The c60 references of the two fourth-level routes found before the
-/// fifth level's two latest rules (a stacked crate falls by the enemies'
-/// movement step; any stop ends a move back): under those rules the routes
-/// lose a life at 106100 ms, so these comparisons are skipped until the
-/// routes are searched again and run in the original (S4-P5d).
-const SEARCHED_AGAIN_IN_S4_P5D: [&str; 2] = ["level4/bot", "level4/introskip"];
+/// The c60 references of the two fourth-level default-tuning routes hold
+/// the original's runs of the routes found before the fifth level's two
+/// latest rules (a stacked crate falls by the enemies' movement step; any
+/// stop ends a move back). Those routes were searched again under the
+/// rules, and the committed routes are not the ones these stores hold, so
+/// the comparisons are skipped until the original's runs of the new routes
+/// replace the stores.
+const AWAITS_ORIGINAL_RUN: [&str; 2] = ["level4/bot", "level4/introskip"];
 
-/// True (with a note) when `reference` waits to be searched again.
-fn awaits_search(reference: &str) -> bool {
-    let waits = SEARCHED_AGAIN_IN_S4_P5D.contains(&reference);
+/// True (with a note) when `reference` waits for the original's run of its
+/// new route.
+fn awaits_original_run(reference: &str) -> bool {
+    let waits = AWAITS_ORIGINAL_RUN.contains(&reference);
     if waits {
         println!(
-            "{reference}: skipped, expected to fail until its route is searched again under the fifth level's latest rules (S4-P5d)"
+            "{reference}: skipped, its route was searched again under the fifth level's latest rules and waits for the original's run of the new route"
         );
     }
     waits
@@ -83,7 +86,7 @@ fn references_hold_their_known_divergences() {
     let mut levels = Levels::new();
     let mut failures = Vec::new();
     for entry in &entries {
-        if awaits_search(&entry.reference) {
+        if awaits_original_run(&entry.reference) {
             continue;
         }
         let store = Store::open(&root, &entry.reference).unwrap_or_else(|e| panic!("{e}"));
