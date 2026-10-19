@@ -70,6 +70,7 @@ pub mod goo_vent;
 pub mod ground_blower;
 pub mod jump_switch;
 pub mod keg;
+pub mod laser;
 pub mod marrow_floor;
 pub mod path_elevator;
 pub mod pickup;
@@ -203,10 +204,22 @@ pub enum GameLogic {
     Parrot,
     /// The two slabs that bridge the spike pit of Marrow's room.
     MarrowFloor,
+    /// Mercat, the merman who throws trident bolts.
+    Mercat,
+    /// The Siren, whose scream locks Claw's controls.
+    Siren,
+    /// The pond fish that leap at Claw from the wading pools.
+    Fish,
+    /// The electric traps across the eleventh level's corridors.
+    Laser,
+    /// Mercat's trident bolt.
+    TridentBullet,
+    /// The Siren's scream.
+    SirenBullet,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 54] = [
+pub const ALL: [GameLogic; 60] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -261,6 +274,12 @@ pub const ALL: [GameLogic; 54] = [
     GameLogic::Marrow,
     GameLogic::Parrot,
     GameLogic::MarrowFloor,
+    GameLogic::Mercat,
+    GameLogic::Siren,
+    GameLogic::Fish,
+    GameLogic::Laser,
+    GameLogic::TridentBullet,
+    GameLogic::SirenBullet,
 ];
 
 /// A logic's own data, by family.
@@ -371,6 +390,14 @@ pub enum ObjectData {
     Parrot(enemy::parrot::ParrotData),
     /// A slab of Marrow's trap floor.
     MarrowFloor(marrow_floor::FloorData),
+    /// A Mercat.
+    Mercat(enemy::mercat::MercatData),
+    /// A Siren.
+    Siren(enemy::siren::SirenData),
+    /// A fish.
+    Fish(enemy::fish::FishData),
+    /// A laser.
+    Laser(laser::LaserData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -431,6 +458,12 @@ macro_rules! dispatch {
             GameLogic::Marrow => enemy::marrow::$f($($arg),*),
             GameLogic::Parrot => enemy::parrot::$f($($arg),*),
             GameLogic::MarrowFloor => marrow_floor::$f($($arg),*),
+            GameLogic::Mercat => enemy::mercat::$f($($arg),*),
+            GameLogic::Siren => enemy::siren::$f($($arg),*),
+            GameLogic::Fish => enemy::fish::$f($($arg),*),
+            GameLogic::Laser => laser::$f($($arg),*),
+            GameLogic::TridentBullet => projectile::trident::$f($($arg),*),
+            GameLogic::SirenBullet => projectile::scream::$f($($arg),*),
         }
     };
 }
@@ -493,6 +526,12 @@ macro_rules! constant {
             GameLogic::Marrow => enemy::marrow::$c,
             GameLogic::Parrot => enemy::parrot::$c,
             GameLogic::MarrowFloor => marrow_floor::$c,
+            GameLogic::Mercat => enemy::mercat::$c,
+            GameLogic::Siren => enemy::siren::$c,
+            GameLogic::Fish => enemy::fish::$c,
+            GameLogic::Laser => laser::$c,
+            GameLogic::TridentBullet => projectile::trident::$c,
+            GameLogic::SirenBullet => projectile::scream::$c,
         }
     };
 }
@@ -557,6 +596,12 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::Marrow => enemy::marrow::BUILT,
         GameLogic::Parrot => enemy::parrot::BUILT,
         GameLogic::MarrowFloor => marrow_floor::BUILT,
+        GameLogic::Mercat => enemy::mercat::BUILT,
+        GameLogic::Siren => enemy::siren::BUILT,
+        GameLogic::Fish => enemy::fish::BUILT,
+        GameLogic::Laser => laser::BUILT,
+        GameLogic::TridentBullet => projectile::trident::BUILT,
+        GameLogic::SirenBullet => projectile::scream::BUILT,
         _ => true,
     }
 }
@@ -635,7 +680,8 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 /// `carrier` lifted `id`. Kegs, crates and the human enemies Claw can
 /// carry (officers, soldiers, cutthroats, robber thieves, Katherine, the
 /// town guards, Wolvington, the red-tail pirates, the bear sailors,
-/// Gabriel, the hook-handed pirates and PegLegs, see [`enemy::lift`])
+/// Gabriel, the hook-handed pirates, PegLegs, the Mercats and the Sirens,
+/// see [`enemy::lift`])
 /// react; other families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
@@ -654,7 +700,9 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
             | GameLogic::BearSailor
             | GameLogic::Gabriel
             | GameLogic::HookPirate
-            | GameLogic::PegLeg,
+            | GameLogic::PegLeg
+            | GameLogic::Mercat
+            | GameLogic::Siren,
         ) => enemy::lift::lifted(w, id, carrier),
         _ => {}
     }
@@ -678,7 +726,9 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
             | GameLogic::BearSailor
             | GameLogic::Gabriel
             | GameLogic::HookPirate
-            | GameLogic::PegLeg,
+            | GameLogic::PegLeg
+            | GameLogic::Mercat
+            | GameLogic::Siren,
         ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
@@ -703,6 +753,8 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
                 | GameLogic::Gabriel
                 | GameLogic::HookPirate
                 | GameLogic::PegLeg
+                | GameLogic::Mercat
+                | GameLogic::Siren
         )
     ) {
         enemy::lift::wind_up(w, id);
@@ -727,7 +779,9 @@ pub fn dropped(w: &mut World, id: ObjectId) {
             | GameLogic::BearSailor
             | GameLogic::Gabriel
             | GameLogic::HookPirate
-            | GameLogic::PegLeg,
+            | GameLogic::PegLeg
+            | GameLogic::Mercat
+            | GameLogic::Siren,
         ) => enemy::lift::dropped(w, id),
         _ => {}
     }

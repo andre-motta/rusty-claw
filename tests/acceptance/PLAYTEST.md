@@ -306,3 +306,30 @@ and `make replay ARGS="--install PATH --level 10 --start 32340,7740
 17. The dynamite crossing after the skip: throw a stick of dynamite in the air toward the pit, jump off the left ledge's edge into its blast, and press Jump with Right on the tick after the hit's one stand (pausing and stepping helps): Claw jumps out of the blast onto Marrow's ledge. Twenty sword hits of 5 kill the skipped Marrow; between hits he flinches and strikes back, then holds his last pose. Pausing through the crossing changes nothing.
 18. The gem: Marrow's body flies off and the gem rises out of him to a point over the middle of the pit in about 2.7 s while Claw stands frozen; then Claw can move, and a jump from the ledge's edge into the gem ends the level.
 19. A lost life in the room after the skip: Claw comes back with Marrow at full health, the slabs snapped shut and sliding open again. From then on, every 25 damage Marrow blocks every blow and whistles, stays out of reach of every hit for 5 s waiting for a parrot that never comes, then takes blows again.
+
+## Milestone 3, LEVEL11 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the eleventh level with `make run-game ARGS="--install PATH --level 11"`,
+or play on from the tenth level. This section covers what the level
+reuses and its lasers; Mercat, the Siren and the Fish are not built yet
+and stand still where the level places them, harmless and untouchable.
+
+To try the end of the level with the tools, `--start 3424,1467` puts
+Claw on the ledge under the start room, left of its pillar (`make replay
+ARGS="--install PATH --level 11 --start 3424,1467 --script ROUTE.csv"`
+takes it; the game starts the level at its start).
+
+1. Lasers: in the six low corridors the two crystal clusters wait about 1.5 s, then arc lightning for about 1.35 s with crackling zaps, heard even off screen. The beam hurts from the moment the crystals light up until a moment after the arc is gone (1 health, Claw knocked back); standing in it costs 1 and again just under a second later, and that knock carries him out. Neither ducking nor jumping gets under or over a firing laser: cross while it waits. The laser at x 12516 draws over Claw, the others behind him.
+2. Break planks: walking onto a plank row, a piece gives way only when Claw's middle is over it (a 30 px window per piece, nothing in the 34 px between pieces); it shakes, crumbles and drops him about a quarter to three quarters of a second later, and the next piece starts as the previous one crumbles, with the crumbling bridge sound.
+3. Toggle pegs: the wall pegs slide in and out on a steady three-second rhythm in five pictures (about a quarter second each way), solid only while out; a few stay out for good and three keep their own offset.
+4. Water: in the wading pools Claw walks on the pool floor with the water drawn over his legs (he looks waist-deep), with a splashing step sound along the floors and in the puddles; nothing slows him.
+5. Deep pools: falling into a deep pool (the wide one at x 6912 to 8959 below the first checkpoint) kills Claw at once, as spikes do, with the spike death sound.
+6. The ledge under the start room: dropping through the opening in the start room's floor, Claw falls past the ledge and cannot reach it, even holding Left; he lands on the ground below.
+7. The way to the map piece: the ladder at x 3100 leads up to the left part of that ledge; walk right to below the pocket (x 3424) and jump: Claw takes the map piece and the level ends.
+
+<!-- Mercat and his trident bolts, and the Fish in the wading pools: their lines go here. -->
+
+<!-- The Siren, her scream and the two-second lockout of Claw's controls: their lines go here. -->
+
+<!-- Standing up inside the floor at a pool's left wall after a crouched hit, and falling through it: its lines go here. -->

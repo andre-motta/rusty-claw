@@ -40,8 +40,10 @@ pub struct VoiceRequest {
 /// the end of the tick is carried out then, so none outlives its tick.
 ///
 /// The boss fight state ([`BossState`], see [`super::world_boss`]) is a
-/// state too: it lasts the whole level and starts cleared with it. So is
-/// the Marrow link ([`MarrowLink`], see [`World::marrow_link`]).
+/// state too: it lasts the whole level and starts cleared with it. So are
+/// the Marrow link ([`MarrowLink`], see [`World::marrow_link`]), the
+/// scream lockout ([`World::scream_lock_ms`]) and the fish's flop toggle
+/// ([`World::fish_flop`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Outbox {
     audio: Vec<AudioCue>,
@@ -55,6 +57,12 @@ pub struct Outbox {
     tile_edits: Vec<(i32, i32, i32)>,
     pub(crate) boss: BossState,
     pub(crate) marrow: Option<MarrowLink>,
+    /// The scream lockout, ms (see
+    /// [`crate::logic::projectile::scream`]).
+    pub(crate) scream_lock_ms: u32,
+    /// The fish's flop toggle reads 0 (see
+    /// [`crate::logic::enemy::fish`]); it starts at 1.
+    pub(crate) fish_flop_zero: bool,
     falling: Vec<ObjectId>,
     removed_bodies: Vec<RemovedBody>,
 }
@@ -152,6 +160,12 @@ impl Outbox {
     /// [`World::marrow_link`]).
     pub fn marrow(&self) -> Option<&MarrowLink> {
         self.marrow.as_ref()
+    }
+
+    /// The scream lockout, ms: 0 while Claw's controls are free (see
+    /// [`World::scream_lock_ms`]).
+    pub fn scream_lock_ms(&self) -> u32 {
+        self.scream_lock_ms
     }
 
     /// The frame clock was restarted in this tick (a save, see

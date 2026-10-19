@@ -288,6 +288,10 @@ fn enemy_contact(c: &mut Ctx, attacker: ObjectId) {
 }
 
 fn shot(c: &mut Ctx, attacker: ObjectId) {
+    // A scream locks his controls instead (see projectile::scream).
+    if projectile::scream::hit_claw(c, attacker) {
+        return;
+    }
     let Some(a) = c.objects.get(attacker) else {
         return;
     };
