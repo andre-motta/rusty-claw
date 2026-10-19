@@ -76,9 +76,11 @@
 //!   in the strike, each time it ends it starts again facing the other
 //!   way, and once his frenzy is over the attack box is cleared and it
 //!   goes idle. Facing right, a picture other than the strike's leaves
-//!   it the attack box [`FRENZY_RIGHT_BOX`]: one row at its own height
-//!   from its x to the far right of the level. Whatever turns it back
-//!   left (the next swipe, going idle, the reset) leaves it no box.
+//!   it the attack box [`FRENZY_RIGHT_BOX`]: its unset box turned right,
+//!   which counts as set but reaches nothing, so Claw standing right of
+//!   it on its row is hurt only by the strike's own box. Whatever turns
+//!   it back left (the next swipe, going idle, the reset) leaves it no
+//!   box.
 //! - Hits: none while dead, grabbing, squeezing or thrashing; the attack
 //!   of Claw that hit it last hits no more (whatever the attacker is);
 //!   otherwise a hit burst, a pistol shot is used up, and it dies.
@@ -175,14 +177,11 @@ pub const BOX: Rect = Rect::new(5, -99, 68, 110);
 pub const STRIKE_BOX: Rect = Rect::new(-136, -44, 0, 39);
 /// The picture of the strike that carries the strike box.
 pub const STRIKE_FRAME: i32 = 301;
-/// How far right its attack box reaches while it thrashes facing right at
-/// another picture than the strike's, px: anything right of it on its
-/// own row, however far.
-pub const FRENZY_RIGHT_REACH: i32 = 1 << 30;
 /// Its attack box while it thrashes facing right at another picture than
-/// the strike's: one row at its own height, from its x to
-/// [`FRENZY_RIGHT_REACH`] px right of it.
-pub const FRENZY_RIGHT_BOX: Rect = Rect::new(0, 0, FRENZY_RIGHT_REACH, 0);
+/// the strike's: its unset box turned right. It counts as set, but its
+/// right edge lies far left of its left one, so it overlaps nothing and
+/// hurts nobody.
+pub const FRENZY_RIGHT_BOX: Rect = Rect::new(0, 0, i32::MIN, 0);
 /// What may hit it: Claw, his pistol shots, the level's shots and
 /// explosions, and his magic.
 pub const HIT_MASK: u32 = 0x300_0022;
@@ -472,8 +471,7 @@ pub fn go_idle(w: &mut World, id: ObjectId) {
 
 /// Turns it to face right (`right`) or left. Its box facing right on
 /// another picture than the strike's turns into no box at all when it
-/// turns left, whatever turns it: mirrored, that box would reach its
-/// whole row to its left.
+/// turns left, whatever turns it (mirrored, that box is no box anyway).
 fn turn(w: &mut World, id: ObjectId, right: bool) {
     let o = obj_mut(w, id);
     if !right && o.attack_rect == FRENZY_RIGHT_BOX {
@@ -807,10 +805,10 @@ mod tests {
     fn its_boxes_facing_right() {
         assert_eq!(STRIKE_BOX.mirrored(), Rect::new(0, -44, 136, 39));
         assert!(FRENZY_RIGHT_BOX.is_set());
-        // Translated to the far right of a level, the box still points
-        // right.
-        let far = FRENZY_RIGHT_BOX.translate(60_000, 9_000);
-        assert!(far.right > far.left && far.top == far.bottom);
+        // Anywhere in a level, the box reaches nothing on its row.
+        let at = FRENZY_RIGHT_BOX.translate(37_523, 3_612);
+        assert!(at.right < at.left && at.top == at.bottom);
+        assert!(!at.overlaps(&Rect::new(37_658, 3_562, 37_695, 3_659)));
         assert_eq!(REACH, 200);
     }
 }
