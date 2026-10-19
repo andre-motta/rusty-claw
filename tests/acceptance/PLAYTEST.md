@@ -350,9 +350,11 @@ Failures only, as above: note the line, what happened instead, and where.
 Start the twelfth level with `make run-game ARGS="--install PATH --level 12"`,
 or play on from the eleventh level. This section covers what the level
 reuses (the Mercats, Sirens and Fish of the eleventh level, the pegs, the
-rocks and the floor spikes), its stalactites and its earthquakes; Aquatis,
-his crack, his stalactites and his tentacles are not built yet and stand
-still where the level places them, harmless and untouchable.
+rocks and the floor spikes), its stalactites, its earthquakes and the
+tentacles; Aquatis, his crack and his stalactites are not built yet and
+stand still where the level places them, harmless and untouchable. The
+tentacles act only while Aquatis is in his room, so until he is built
+they stand still too.
 
 To try the water's edge with the tools, `--start 3110,3567` puts Claw on
 the ledge at the water's edge, right of the first stalactites (`make
@@ -369,7 +371,11 @@ ROUTE.csv"` takes it; the game starts the level at its start).
 8. The Mercat over the first shaft: as Claw drops into the shaft from its lip, the Mercat on the far lip throws a bolt that hits him on the way down (20 and a flinch), as on the eleventh level.
 9. The toggle peg beside Aquatis's rock (x 37781) stays out for good: it is solid to stand on at any time.
 
-<!-- The tentacles: their strike, their grab and squeeze, the mashing that frees Claw and their frenzy: their lines go here. -->
+10. The tentacles: come within about 200 px left of a tentacle (on the ledge, or in the passage under the water): after a second or so it either whips sideways at Claw with the swipe sound (5, reaching about 136 px to its left at its own height; under the water it misses) or grabs him. Grabbed, Claw freezes where he is; about a third of a second later he is lifted out beside the tentacle (50 px right of it, 70 px up), facing right, crushed in its grip, and squeezed: one health point about every 0.2 s, 14 in all, until it lets go after 3 s and he drops.
+11. Mashing frees Claw: pressing a key on ten ticks while squeezed (any game key) lets him go on the tenth press.
+12. A second tentacle can grab Claw while the first still squeezes him: it lifts him beside itself and both squeeze him; a strike from a third tentacle hits him out of both holds.
+13. Any hit (sword, pistol, magic, a blast) cuts a tentacle down: it sinks into the water with its death sound and grows back after 20 s (at once when Aquatis starts a frenzy). Nothing hurts it while it grabs or squeezes.
+14. Aquatis's frenzy: every tentacle thrashes, swiping left and right in turn, and cannot be hurt; facing right it hurts Claw anywhere to its right on its own row, even at the ledge's far end.
 
 <!-- Aquatis and his helpers: the introduction and its skip, the crack and the earthquake, the stalactites that fall on him, his frenzy, his death and the gem, the lift and the help screen that ends the level: their lines go here. -->
 
