@@ -1232,7 +1232,8 @@ pub struct Body {
 /// dropped to the floor below it. Its exact height stays at the (clamped)
 /// point it was placed at: its first movement step starts from there, so
 /// an enemy placed 27 px above its floor starts standing with an upward
-/// speed of about 327 px/s (see [`motion`]).
+/// speed of about 327 px/s (see [`motion`]). Its movement clock starts
+/// now (see [`start_move_clock`]).
 pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human: bool) {
     let bounds = fields.bounds;
     let bounds_y = record_bounds_y(w, id);
@@ -1266,6 +1267,36 @@ pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human
     if let Some(d) = data_mut(w, id) {
         d.carry.1 = f64::from(placed_y - y);
         d.moved_to = Some((x, y));
+    }
+    start_move_clock(w, id);
+}
+
+/// The time an enemy is built is the time of its last movement step: its
+/// movement clock starts when it is built, not at its first step. So its
+/// first step covers the time since then (see [`motion`]): one tick when
+/// it first moves in the tick after, nothing in the tick it was built in,
+/// and the whole time since when it went back to sleep at the end of that
+/// tick (built at the edge of its activation window, then dropped to a
+/// floor outside it) and wakes some ticks later. An enemy built in a
+/// set-up pass between ticks takes the time of the tick before the next
+/// one, so its first step in that next tick covers one tick (while the
+/// level loads, before time zero, no time is recorded, which covers one
+/// tick too). A class that builds its enemy without [`build`] calls this
+/// once its data is set.
+pub fn start_move_clock(w: &mut World, id: ObjectId) {
+    let at = built_at_ms(w);
+    if let Some(d) = data_mut(w, id) {
+        d.last_move_ms = at;
+    }
+}
+
+/// The game time an object built in this call records as the time of its
+/// last movement step (see [`start_move_clock`]).
+pub fn built_at_ms(w: &World) -> Option<u64> {
+    if w.set_up {
+        w.now_ms.checked_sub(u64::from(TICK_MS))
+    } else {
+        Some(w.now_ms)
     }
 }
 

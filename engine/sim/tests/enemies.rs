@@ -747,6 +747,68 @@ fn an_enemy_woken_by_its_placement_and_built_far_from_it_sleeps_again() {
     assert!(!asleep[1].1, "awake in its range");
 }
 
+#[test]
+fn an_enemys_first_move_after_the_sleep_that_follows_its_building_covers_the_time_since() {
+    // Claw stands at x 1000; the rat placed at 150 is just outside the
+    // left edge of its activation window. The camera is pointed a little
+    // to the left, so the window's edge reaches the rat's placement point
+    // in tick 9: it wakes and is built on the right limit of its range, at
+    // 100, outside the window, so it sleeps again at the end of that tick
+    // before any movement step. The camera keeps moving left and the
+    // window reaches it again in tick 16. Home turns it left at 60 px/s,
+    // and its movement clock started when it was built, so that first
+    // move covers all the time since: 0.126 s, 7.56 px, not one tick's
+    // 1.08 px.
+    let mut sim = Sim::new(
+        arena(vec![bounded("Rat", 150, 900, 20, 100)]),
+        SimConfig::default(),
+    );
+    let id = first(&sim, GameLogic::Rat);
+    sim.set_camera_point(Some((930, 899)));
+    let reading = |ms: u64| (ms + 18) as f64 * 0.001;
+    let mut checked = 0;
+    for tick in 0..18u64 {
+        sim.step(TickInput::default());
+        let o = obj(&sim, id);
+        let d = enemy::data_of(o);
+        match tick {
+            0..9 => assert!(d.is_none(), "asleep at its placement point"),
+            9 => {
+                let d = d.expect("built");
+                assert_eq!(o.x, 100, "on its right limit");
+                assert!(!o.is_listed(), "asleep again");
+                assert_eq!(state_of(&sim, id), Some(EnemyState::Home));
+                assert_eq!(d.last_move_ms, Some(9 * 18), "its clock starts now");
+                sim.set_camera_point(Some((860, 899)));
+                checked += 1;
+            }
+            10..16 => assert!(!o.is_listed(), "still asleep"),
+            16 => {
+                let d = d.expect("enemy data");
+                assert!(o.is_listed(), "woken");
+                assert_eq!(state_of(&sim, id), Some(EnemyState::MoveLeft));
+                assert_eq!(d.vx, -60.0);
+                assert_eq!(d.last_move_ms, Some(16 * 18));
+                let covered = reading(16 * 18) - reading(9 * 18);
+                assert!((covered - 0.126).abs() < 1e-12, "{covered}");
+                let exact = f64::from(o.x) + d.carry.0;
+                assert_eq!(o.x, 92);
+                assert!((exact - (100.0 - 60.0 * covered)).abs() < 1e-9, "{exact}");
+                checked += 1;
+            }
+            17 => {
+                // Then one tick a step again.
+                let d = d.expect("enemy data");
+                let exact = f64::from(o.x) + d.carry.0;
+                assert!((exact - 91.36).abs() < 1e-9, "{exact}");
+                checked += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(checked, 3);
+}
+
 // ----------------------------------------------------------------------
 // The soldier
 

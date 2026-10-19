@@ -19,12 +19,19 @@
 //!    ledge with it. `dt` is the time on the game clock since the last
 //!    step, the difference of two readings in double-precision seconds,
 //!    each the clock (one tick ahead of the tick's start) times 0.001: an
-//!    18 ms tick is 0.018000000000000682 s at 135.36 s. The first step
-//!    covers one tick. After a gap (an enemy woken after sleeping outside
-//!    its activation window) the step covers the whole time since the last
+//!    18 ms tick is 0.018000000000000682 s at 135.36 s. The clock starts
+//!    when the enemy is built ([`super::start_move_clock`]), so its first
+//!    step covers the time since then: one tick when it first moves in the
+//!    tick after. After a gap (an enemy woken after sleeping outside its
+//!    activation window) the step covers the whole time since the last
 //!    one, so a woken walker first makes up the way it did not walk while
 //!    asleep, up to the 24 px step limit (a rat asleep for 3.7 s moves
-//!    24 px, then stops on its patrol limit). A step with no game time
+//!    24 px, then stops on its patrol limit). The sleep may start at the
+//!    end of the tick it was built in: a rat built when its placement
+//!    point reaches the edge of its activation window, then dropped to a
+//!    floor just outside it, sleeps until the window reaches it again, and
+//!    its first step covers all the time since it was built (six ticks,
+//!    0.108 s, so 6.48 px at 60 px/s, not 1.08). A step with no game time
 //!    since the last one, as in a respawn's update passes, covers none and
 //!    moves nothing.
 //! 4. The new position is clamped to the patrol limits: a walker that
@@ -127,8 +134,9 @@ pub fn integrate(w: &mut World, id: ObjectId) {
 /// whole time since the last step, which only the [`STEP_LIMIT`] of the
 /// move bounds. A step with no game time since the last one covers none:
 /// a second step in the same moment, as in the update passes of a
-/// respawn, where the clock stands still, moves nothing. The first step
-/// covers one tick. Records `now` as the time of the last step.
+/// respawn, where the clock stands still, moves nothing. The clock starts
+/// when the enemy is built, so the first step covers the time since then.
+/// Records `now` as the time of the last step.
 fn step_seconds(d: &mut EnemyData, now: u64) -> f64 {
     step_seconds_since(&mut d.last_move_ms, now)
 }
@@ -136,8 +144,9 @@ fn step_seconds(d: &mut EnemyData, now: u64) -> f64 {
 /// The time the movement step at `now` covers, s, for any mover that keeps
 /// the time of its last step in `last_ms` (an enemy, or a crate of a stack,
 /// which falls by the same clock): the game clock's reading now less its
-/// reading then, none in the same moment, one tick for the first step.
-/// Records `now` in `last_ms`.
+/// reading then, none in the same moment. Both start the clock when they
+/// are built; a mover with no time recorded yet covers one tick. Records
+/// `now` in `last_ms`.
 pub fn step_seconds_since(last_ms: &mut Option<u64>, now: u64) -> f64 {
     let last = last_ms.replace(now);
     let since = last.map_or(0, |t| now.saturating_sub(t));
@@ -460,7 +469,8 @@ mod tests {
     fn a_step_covers_the_game_time_since_the_last_one() {
         let mut d = EnemyData::default();
         let reading = |ms: u64| (ms + 18) as f64 * 0.001;
-        // The first step covers one tick.
+        // With no time recorded (built enemies have the time they were
+        // built), the first step covers one tick.
         assert_eq!(step_seconds(&mut d, 1000), 18.0 * 0.001);
         assert_eq!(step_seconds(&mut d, 1018), reading(1018) - reading(1000));
         // A second step in the same moment (a respawn's update passes,

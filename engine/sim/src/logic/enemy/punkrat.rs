@@ -220,6 +220,7 @@ pub fn construct(w: &mut World, id: ObjectId) {
             enemy: fields.into(),
         });
     }
+    super::start_move_clock(w, id);
     move_right(w, id, WALK_SPEED);
     obj_mut(w, id).physics_type = ptype::WALK;
     // The first walk shows the standing animation, advanced once.

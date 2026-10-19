@@ -428,6 +428,7 @@ impl Ctx<'_> {
                 view: self.view,
                 out: &mut *self.out,
                 aids: self.aids,
+                set_up: false,
             };
             f(&mut w)
         };

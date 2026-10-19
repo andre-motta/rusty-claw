@@ -14,8 +14,9 @@
 //!    the point it was placed at while it is dropped onto the floor. The
 //!    town guard placed at 21220,5389 is built in tick 7261 of the first
 //!    route on the floor at 5416 with its exact height still 5389, sleeps
-//!    two ticks, and its first step in tick 7264 puts it back on the floor
-//!    at 326.66 px/s up. Standing on, that speed settles towards 36 px/s:
+//!    two ticks, and its first step in tick 7264, which covers the three
+//!    ticks since it was built, puts it back on the floor at 310.38 px/s
+//!    up. Standing on, that speed settles towards 36 px/s:
 //!    after tick 7518, as it walks off its ledge, it is 36.29 px/s up, so
 //!    its first falling step lifts it to 5415.6708.
 //! 2. Going Home stops an enemy across only: that guard goes Home in mid
@@ -316,11 +317,11 @@ fn install_level5_a_standing_enemy_keeps_its_speed_up_and_going_home_keeps_it() 
             7264 => {
                 assert!(g.is_listed());
                 assert_eq!(exact(g).1, 5416.0, "back on the floor");
-                assert!((vy(g) + 326.655_782).abs() < 1e-6, "{}", vy(g));
+                assert!((vy(g) + 310.380_412).abs() < 1e-6, "{}", vy(g));
             }
             7518 => {
                 assert_eq!(g.y, 5416);
-                assert!((vy(g) + 36.290_185).abs() < 1e-6, "{}", vy(g));
+                assert!((vy(g) + 36.290_128).abs() < 1e-6, "{}", vy(g));
             }
             7519 => {
                 assert_eq!(g.y, 5415, "lifted by its speed up");
@@ -329,7 +330,7 @@ fn install_level5_a_standing_enemy_keeps_its_speed_up_and_going_home_keeps_it() 
             7526 => {
                 assert_eq!((g.x, g.y), (21243, 5431));
                 assert_eq!(enemy::data_of(g).unwrap().vx, 0.0, "stopped across");
-                assert!((vy(g) - 251.709_815).abs() < 1e-6, "falling on: {}", vy(g));
+                assert!((vy(g) - 251.709_872).abs() < 1e-6, "falling on: {}", vy(g));
             }
             7536 => assert_ne!(state(g), Some(EnemyState::Dead)),
             7537 => {

@@ -267,6 +267,10 @@ pub struct World<'a> {
     pub out: &'a mut Outbox,
     /// The play-test aids ([`crate::sim::SimConfig::aids`]).
     pub aids: PlayAids,
+    /// The call is an object's first, made in a set-up pass between ticks
+    /// (while the level loads, or after a warp moved Claw): the game clock
+    /// still reads the tick before the next one.
+    pub set_up: bool,
 }
 
 impl World<'_> {
