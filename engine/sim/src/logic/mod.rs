@@ -760,9 +760,9 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
             | GameLogic::HookPirate
             | GameLogic::PegLeg
             | GameLogic::Mercat
-            | GameLogic::Siren
-            | GameLogic::Aquatis,
+            | GameLogic::Siren,
         ) => enemy::lift::lifted(w, id, carrier),
+        Some(GameLogic::Aquatis) => enemy::aquatis::lifted(w, id, carrier),
         _ => {}
     }
 }
