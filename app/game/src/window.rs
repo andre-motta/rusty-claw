@@ -845,6 +845,7 @@ impl App {
             let mut session = Session::new(sim)
                 .with_pause_input(self.settings.pause_input)
                 .with_death_circles();
+            session.set_smooth_rope(self.settings.smooth_rope);
             self.router
                 .set_keep_held(self.settings.pause_input == PauseInput::Original);
             if let Some(path) = &self.settings.record
@@ -988,6 +989,7 @@ impl App {
         let mut session = Session::new(sim)
             .with_pause_input(self.settings.pause_input)
             .with_death_circles();
+        session.set_smooth_rope(self.settings.smooth_rope);
         self.router
             .set_keep_held(self.settings.pause_input == PauseInput::Original);
         // Every level is recorded, each into its own file.
@@ -1259,6 +1261,12 @@ impl App {
                 }
             }
             VideoSetting::Interpolation => self.interp = s.interpolation,
+            VideoSetting::SmoothRope => {
+                self.settings.smooth_rope = s.smooth_rope;
+                if let Some(l) = &mut self.level {
+                    l.session.set_smooth_rope(s.smooth_rope);
+                }
+            }
             VideoSetting::StatusBar => {
                 if let Some(l) = &mut self.level {
                     l.status.set_centred(centred);

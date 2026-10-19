@@ -1356,6 +1356,7 @@ fn run_planned(
         }
     };
     session.set_presentation(view);
+    session.set_smooth_rope(settings.smooth_rope);
     let mut combat = Combat::default();
     // The preload looks every set up through the drawing path too: only
     // what frames look up from here on counts.

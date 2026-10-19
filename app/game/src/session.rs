@@ -9,7 +9,10 @@
 //! 2. each frame adds its duration to the 18 ms accumulator and runs the
 //!    whole ticks that fit, each one taking the input of its own 18 ms span
 //!    (or the next row of a replayed script);
-//! 3. the frame is drawn between the previous and the current tick.
+//! 3. the frame is drawn between the previous and the current tick (with
+//!    Claw's rope swing smoothed between the rope's frames unless
+//!    [`Session::set_smooth_rope`] turned that off; see
+//!    [`crate::rope_swing`]).
 //!
 //! Because each key event lands in the tick whose span contains it, the
 //! same events give the same ticks at any display rate.
@@ -162,6 +165,7 @@ use claw_sim::{
 
 use crate::input::Recorder;
 use crate::pause::PauseInput;
+use crate::rope_swing::SwingTrack;
 use crate::saves::{CARRY_KEYS, carry_fields, carry_from_fields};
 
 /// What one frame did.
@@ -393,6 +397,10 @@ pub struct Session {
     /// The view the frames are presented in, when the presentation said
     /// (see [`Session::set_presentation`]).
     presentation: Option<ViewConfig>,
+    /// Claw's rope swing over the last ticks, for drawing it smoothly.
+    swing: SwingTrack,
+    /// Draw rope swings smoothly between the rope's frames.
+    smooth_rope: bool,
 }
 
 impl std::fmt::Debug for Session {
@@ -441,6 +449,8 @@ impl Session {
             powerup_cycle,
             bodies: FallingBodies::new(),
             presentation: None,
+            swing: SwingTrack::default(),
+            smooth_rope: true,
         }
     }
 
@@ -452,6 +462,18 @@ impl Session {
     /// only: the ticks are the same with any view.
     pub fn set_presentation(&mut self, view: ViewConfig) {
         self.presentation = Some(view);
+    }
+
+    /// Draws Claw's rope swings smoothly between the rope's frames (on,
+    /// the default) or in the rope's own steps (see [`crate::rope_swing`]).
+    /// Drawing only: the ticks are the same either way.
+    pub fn set_smooth_rope(&mut self, on: bool) {
+        self.smooth_rope = on;
+    }
+
+    /// Whether rope swings are drawn smoothly.
+    pub fn smooth_rope(&self) -> bool {
+        self.smooth_rope
     }
 
     /// Bodies being drawn on as they fall (see [`Session::set_presentation`]).
@@ -924,6 +946,7 @@ impl Session {
         let snapshot = self.sim.snapshot();
         self.outputs.add(&snapshot.audio, &snapshot.events);
         self.bodies.clear();
+        self.swing.clear();
         self.driver.restart(snapshot);
         if self.stepping {
             self.driver.step_mut().step_once();
@@ -1010,6 +1033,7 @@ impl Session {
             directives,
             resume_input,
             bodies,
+            swing,
             ..
         } = self;
         let report = driver.frame(Duration::from_micros(us), || {
@@ -1053,6 +1077,7 @@ impl Session {
                 rows.push(TraceRow::capture(sim, n, source));
             }
             *ticks += 1;
+            swing.after_tick(sim, snapshot.tick);
             bodies.absorb(&view, &mut snapshot);
             snapshot
         });
@@ -1065,12 +1090,25 @@ impl Session {
         }
     }
 
-    /// The frame to draw: interpolated between the last two ticks, or the
+    /// The frame to draw: interpolated between the last two ticks (with a
+    /// rope swing smoothed, see [`Session::set_smooth_rope`]), or the
     /// latest tick alone.
     pub fn interpolated(&self, interpolate: bool) -> InterpolatedFrame<'_> {
         // A death's circles show the game as it stands between the ticks.
         if interpolate && self.circles_us.is_none() {
-            self.driver.interpolated()
+            let mut frame = self.driver.interpolated();
+            if self.smooth_rope {
+                let view = &self.sim.config().view;
+                self.swing.smooth(
+                    &mut frame,
+                    self.driver.previous(),
+                    self.driver.current(),
+                    self.driver.alpha(),
+                    self.sim.level().plane(),
+                    (view.logic_width, view.logic_height),
+                );
+            }
+            frame
         } else {
             self.driver.latest()
         }

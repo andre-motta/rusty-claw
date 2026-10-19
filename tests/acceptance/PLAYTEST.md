@@ -138,6 +138,7 @@ hazards, Claw's rope swing and the two thieves.
 8. A knife or an arrow that reaches Claw costs 10 health and is gone; one that reaches a wall stops there.
 9. Knock a thief out and lift it with Z: Claw carries it and throws it as he does an officer, and a thrown thief hurts the enemies it lands on. A beaten thief drops the loot it carries and stops attacking once it starts to fall.
 10. Watch a route or a recording in the window (`--replay FILE.csv`): the level music and the game's sounds play from the level's start as in play, the boss and powerup tunes come in where play would start them, and sound carries on after the recording ends and the keyboard takes over. Where the recording paused or opened a menu, the sounds stop and the music holds, then both carry on as in play. The Pause key and switching to another window pause the sound as in play; `--no-audio` (or `audio = off`) keeps the replay silent.
+11. Rope swing, smooth: on a 60 Hz display, swing on a rope: Claw, the rope's end and the level around him move smoothly on every frame, with Claw always on the rope's end. Start with `--smooth-rope off` (or `smooth_rope = off`): the swing goes back to the original's stepped look, the view standing still on some frames (about one in three on a rope of the usual speed).
 
 ## Milestone 3, LEVEL4 early
 

@@ -6,6 +6,10 @@
 //! integer centre; the view rectangle is the centre minus half the view
 //! size, pushed back inside the plane at the edges. The rectangle moves at
 //! the edges, the centre does not.
+//!
+//! [`view_origin`] is the same placement for a point between whole pixels:
+//! drawing only, for a presentation that moves the view between the
+//! positions the game gives it.
 
 use crate::object::Rect;
 
@@ -91,6 +95,30 @@ impl PlaneView {
     }
 }
 
+/// The top-left corner of the view of `view` pixels for a camera point
+/// `point` that may lie between whole pixels: [`PlaneView::new`]'s rule
+/// without the truncation, so a whole point gives exactly the corner of
+/// its [`PlaneView`] and the corner moves continuously with the point.
+/// Drawing only; the game always places its view on whole points.
+pub fn view_origin(plane: PlaneGeometry, point: (f64, f64), view: (u32, u32)) -> (f64, f64) {
+    let axis = |pos: f64, size: i32, wrap: bool, v: u32| -> f64 {
+        let size = f64::from(size.max(1));
+        let v = f64::from(i32::try_from(v).unwrap_or(i32::MAX).max(1));
+        let half = (v / 2.0).floor();
+        if wrap {
+            let lo = pos.rem_euclid(size) - half;
+            return if lo < 0.0 { lo + size } else { lo };
+        }
+        let c = pos.clamp(0.0, size - 1.0);
+        let lo = (c - half).max(0.0);
+        if lo + v > size { size - v } else { lo }
+    };
+    (
+        axis(point.0, plane.width, plane.wrap_x, view.0),
+        axis(point.1, plane.height, plane.wrap_y, view.1),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +169,47 @@ mod tests {
         assert_eq!(v.centre.0, 100);
         assert_eq!(v.rect.left, 6400 - 220);
         assert_eq!(v.activation_centre(plane).0, 100);
+    }
+
+    #[test]
+    fn the_origin_of_a_whole_point_is_the_corner_of_its_view() {
+        let wrapping = PlaneGeometry {
+            wrap_x: true,
+            wrap_y: true,
+            ..PLANE
+        };
+        let small = PlaneGeometry {
+            width: 500,
+            height: 300,
+            ..PLANE
+        };
+        for plane in [PLANE, wrapping, small] {
+            for x in [
+                -50, 0, 100, 319, 320, 321, 3000, 6079, 6080, 6399, 6400, 9000,
+            ] {
+                for y in [-10, 0, 239, 240, 1000, 2320, 2559, 2560, 5000] {
+                    for view in [(640, 480), (641, 481)] {
+                        let r = PlaneView::new(plane, (x, y), view).rect;
+                        assert_eq!(
+                            view_origin(plane, (f64::from(x), f64::from(y)), view),
+                            (f64::from(r.left), f64::from(r.top)),
+                            "{plane:?} ({x}, {y}) {view:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_origin_moves_continuously_between_whole_points() {
+        let o = view_origin(PLANE, (1000.25, 1000.75), (640, 480));
+        assert_eq!(o, (680.25, 760.75));
+        // Held at the edges as the whole points are.
+        assert_eq!(view_origin(PLANE, (100.5, 100.5), (640, 480)), (0.0, 0.0));
+        assert_eq!(
+            view_origin(PLANE, (6398.5, 2558.5), (640, 480)),
+            (5760.0, 2080.0)
+        );
     }
 }
