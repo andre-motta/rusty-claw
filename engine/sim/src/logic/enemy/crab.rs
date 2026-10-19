@@ -1065,7 +1065,10 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
 /// more, the last crab a drawn -200 to 200 px/s. With three crabs that
 /// is -75, -25 and the drawn one. A crab is built at once where the nest
 /// is (on the floor below it) and starts falling; its first tick comes
-/// in the next update pass.
+/// in the next update pass. Its flight starts from [`DROP_START`] px
+/// above the nest, where its drop to the floor began, so on its first
+/// tick it shows that much higher, and it lands later than a fall from
+/// the floor would.
 ///
 /// A record whose second user value is set throws its loot instead of
 /// crabs; loot (the record's powerup and its two user boxes) goes to the
@@ -1135,6 +1138,10 @@ pub mod nest {
     /// Record field of the second user value: set, the nest throws loot
     /// instead of crabs.
     pub const USER_1: usize = 44;
+    /// How far above the nest a hatched crab's flight starts, px: its
+    /// building drops it from there onto the floor, but it flies on from
+    /// where the drop began.
+    pub const DROP_START: i32 = 32;
 
     /// The nest's states, in its object's state.
     pub mod state {
@@ -1313,10 +1320,18 @@ pub mod nest {
                 } else {
                     f
                 };
+                let at = w.objects.get(crab).map(|o| (o.x, o.y));
                 if let Some(e) = crate::logic::enemy::data_mut(w, crab) {
                     e.vx = f64::from(vx);
                     e.vy = f64::from(vy);
                     e.ay = super::NEST_GRAVITY;
+                    // Its building puts it on the floor, but its flight
+                    // starts from where that drop began, 32 px above the
+                    // nest.
+                    if let Some(at) = at {
+                        e.carry = (0.0, f64::from(y - DROP_START - at.1));
+                        e.moved_to = Some(at);
+                    }
                 }
                 super::enter_tumble(w, crab);
                 super::set_bomber(w, crab, bomber);
