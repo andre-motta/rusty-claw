@@ -213,6 +213,7 @@ infinite_lives = off       # play-test aid: a death never costs a life
 vsync = true
 fps_cap = 300              # with vsync off; 0 for no cap
 interpolation = true
+smooth_rope = on           # off: rope swings move in the rope's own steps
 status_bar = "edges"       # edges, or centred in the 4:3 area
 audio = on                 # on or off
 sound_volume = 80          # 0 to 100
@@ -311,7 +312,17 @@ positions interpolated between steps, at any resolution.
 | `--fps-cap N` | with vsync off, draw at most N frames per second (default 300) |
 | `--uncapped` | no frame-rate cap with vsync off (same as `--fps-cap 0`); for measuring throughput only |
 | `--no-interp` | draw the latest game tick only |
+| `--smooth-rope on\|off` | draw rope swings smoothly between the rope's frames (default on); off shows the rope's own steps |
 | `--pack DIR` | an image pack with higher-resolution replacement images |
+
+A swinging rope steps through its frames a little slower than the game's
+18 ms steps, so Claw, the rope's end and the view following him stand still
+on some steps; at 60 Hz they would move on about two frames in three, a
+stepped look the original has too. The smooth rope swing (on by default,
+`smooth_rope` in the config file) draws them on a smooth path between the
+rope's frames instead. It changes only what is drawn: the game, its
+recordings and its replays are the same either way. It needs the
+interpolation between steps (`--no-interp` turns both off).
 
 The status bar sits at the edges of the picture; on a wide display
 `status_bar = "centred"` (or the video options) keeps it in the 4:3

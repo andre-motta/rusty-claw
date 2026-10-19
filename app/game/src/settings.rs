@@ -23,6 +23,7 @@
 //! vsync = true
 //! fps_cap = 300             # with vsync off, 1 to 10000
 //! interpolation = true
+//! smooth_rope = on          # off: rope swings move in the rope's own steps
 //! status_bar = "edges"      # edges, or centred in the 4:3 area
 //! front_layer = on          # off: the level's front plane is not drawn
 //! audio = on                # on or off
@@ -108,6 +109,13 @@
 //!
 //! The front layer switch (`front_layer`, also in the Display menu) only
 //! changes what is drawn: off, the level's front plane is left out.
+//!
+//! The smooth rope swing (`smooth_rope`, `--smooth-rope`, on by default)
+//! also only changes what is drawn: on, Claw, the rope he hangs from and
+//! the view following him move smoothly between the rope's frames at the
+//! display's refresh; off, they move in the rope's own steps, as in the
+//! original (see [`crate::rope_swing`]). It takes the interpolation
+//! between ticks (`interpolation`) to be on.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -306,6 +314,10 @@ pub struct Args {
     /// Draw the latest tick only, without interpolating between ticks.
     #[arg(long)]
     pub no_interp: bool,
+    /// Draw rope swings smoothly between the rope's frames: on (the
+    /// default) or off (the rope's own steps). Drawing only.
+    #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
+    pub smooth_rope: Option<bool>,
     /// Image pack folder with higher-resolution replacements.
     #[arg(long, value_name = "DIR")]
     pub pack: Option<PathBuf>,
@@ -471,6 +483,9 @@ pub struct Settings {
     pub fps_cap: Option<u32>,
     /// Interpolate between ticks.
     pub interpolation: bool,
+    /// Draw rope swings smoothly between the rope's frames (drawing only;
+    /// with [`Settings::interpolation`] on).
+    pub smooth_rope: bool,
     /// Keep the status bar inside the centred 4:3 area rather than at the
     /// picture's edges.
     pub status_bar_centred: bool,
@@ -563,6 +578,7 @@ impl Settings {
             vsync: true,
             fps_cap: Some(DEFAULT_FPS_CAP),
             interpolation: true,
+            smooth_rope: true,
             status_bar_centred: false,
             front_layer: true,
             tuning: None,
@@ -663,6 +679,10 @@ impl Settings {
         if args.no_interp {
             s.interpolation = false;
             cli.insert("interpolation");
+        }
+        if let Some(on) = args.smooth_rope {
+            s.smooth_rope = on;
+            cli.insert("smooth_rope");
         }
         if args.pack.is_some() {
             s.pack.clone_from(&args.pack);
@@ -887,6 +907,7 @@ impl Settings {
             "vsync" => self.vsync.to_string(),
             "fps_cap" => self.fps_cap?.to_string(),
             "interpolation" => self.interpolation.to_string(),
+            "smooth_rope" => on_off(self.smooth_rope),
             "status_bar" => if self.status_bar_centred {
                 "centred"
             } else {
@@ -1094,7 +1115,7 @@ pub struct ConfigFile {
 
 /// Keys a config file may hold, besides the `key_<action>` and
 /// `pad_<action>` bindings.
-pub const CONFIG_KEYS: [&str; 27] = [
+pub const CONFIG_KEYS: [&str; 28] = [
     "install",
     "level",
     "custom",
@@ -1111,6 +1132,7 @@ pub const CONFIG_KEYS: [&str; 27] = [
     "vsync",
     "fps_cap",
     "interpolation",
+    "smooth_rope",
     "status_bar",
     "front_layer",
     "pack",
@@ -1229,6 +1251,7 @@ impl ConfigFile {
                     s.fps_cap = fps_cap(n).map_err(|e| err(key, e))?;
                 }
                 "interpolation" => s.interpolation = flag(key, v)?,
+                "smooth_rope" => s.smooth_rope = flag(key, v)?,
                 "status_bar" => {
                     s.status_bar_centred = match v.to_ascii_lowercase().as_str() {
                         "edges" => false,

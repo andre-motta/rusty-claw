@@ -7,6 +7,8 @@
 //!   and writing changed options back to the config file;
 //! - [`load`]: reading a retail or community custom level from the install;
 //! - [`session`]: the simulation, the fixed-step frame driver and input;
+//! - [`rope_swing`]: drawing Claw's rope swings smoothly between the
+//!   rope's frames;
 //! - [`keymap`]: the keyboard and gamepad maps, and rebinding;
 //! - [`input`]: the input router every key and gamepad goes through, and
 //!   recording the input of a game (its pauses, menus and end of a life
@@ -38,6 +40,7 @@ pub mod input;
 pub mod keymap;
 pub mod load;
 pub mod pause;
+pub mod rope_swing;
 pub mod saves;
 pub mod session;
 pub mod settings;

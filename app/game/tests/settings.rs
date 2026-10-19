@@ -660,6 +660,55 @@ fn recordings_carry_the_mid_air_hit_fix() {
 }
 
 #[test]
+fn the_smooth_rope_swing_is_a_drawing_setting_on_by_default() {
+    let parse = |text: &str| ConfigFile::parse(text, "test").and_then(|f| f.check().map(|_| f));
+    let resolve = |text: &str, cli: &[&str]| {
+        let file = parse(text).unwrap();
+        let args = ["x", "--install", "/i"].iter().chain(cli);
+        Settings::resolve(&Args::try_parse_from(args).unwrap(), Some(&file)).unwrap()
+    };
+    assert!(resolve("", &[]).smooth_rope, "on by default");
+    assert!(!resolve("smooth_rope = off\n", &[]).smooth_rope);
+    assert!(resolve("smooth_rope = on\n", &[]).smooth_rope);
+    assert!(parse("smooth_rope = sometimes\n").is_err());
+    // The command line wins and is not written back.
+    let s = resolve("smooth_rope = on\n", &["--smooth-rope", "off"]);
+    assert!(!s.smooth_rope);
+    assert!(s.from_command_line.contains("smooth_rope"));
+    assert!(resolve("smooth_rope = off\n", &["--smooth-rope", "on"]).smooth_rope);
+    let mut s = resolve("", &[]);
+    assert_eq!(s.config_value("smooth_rope").as_deref(), Some("on"));
+    s.smooth_rope = false;
+    assert_eq!(s.config_value("smooth_rope").as_deref(), Some("off"));
+    // Saved with the other settings and read back on the next run.
+    let root = tempfile::tempdir().unwrap();
+    let path = config_in(root.path(), REALISTIC);
+    let file = ConfigFile::load(&path).unwrap();
+    let mut s = Settings::resolve(
+        &Args::try_parse_from(["x", "--install", "/i"]).unwrap(),
+        Some(&file),
+    )
+    .unwrap();
+    s.config_path = Some(path.clone());
+    s.smooth_rope = false;
+    assert_eq!(s.write_back(&["smooth_rope"]).unwrap(), vec!["smooth_rope"]);
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with(REALISTIC), "{text}");
+    assert!(text.lines().any(|l| l == "smooth_rope = off"), "{text}");
+    let again = Settings::resolve(
+        &Args::try_parse_from(["x", "--install", "/i"]).unwrap(),
+        Some(&ConfigFile::load(&path).unwrap()),
+    )
+    .unwrap();
+    assert!(!again.smooth_rope);
+    // Drawing only: the game is set up the same either way.
+    assert_eq!(
+        again.sim_config((1280, 960)),
+        resolve("", &[]).sim_config((1280, 960))
+    );
+}
+
+#[test]
 fn the_front_layer_is_a_setting_that_survives_a_reload() {
     let parse = |text: &str| ConfigFile::parse(text, "test").and_then(|f| f.check().map(|_| f));
     let resolve = |text: &str| {
