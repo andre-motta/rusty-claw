@@ -138,7 +138,7 @@ pub const CONTROL_ACTIONS: [&str; 12] = [
 /// One step of the pad dead zone on the controls page, in hundredths.
 pub const DEAD_ZONE_STEP: i32 = 5;
 /// The Video page's settings in order.
-pub const VIDEO_SETTINGS: [VideoSetting; 8] = [
+pub const VIDEO_SETTINGS: [VideoSetting; 9] = [
     VideoSetting::Resolution,
     VideoSetting::Aspect,
     VideoSetting::Scale,
@@ -146,6 +146,7 @@ pub const VIDEO_SETTINGS: [VideoSetting; 8] = [
     VideoSetting::Vsync,
     VideoSetting::FrameCap,
     VideoSetting::Interpolation,
+    VideoSetting::SmoothRope,
     VideoSetting::StatusBar,
 ];
 
@@ -407,6 +408,7 @@ pub fn video_text(v: VideoSetting, settings: &Settings) -> String {
             None => "FRAME CAP NONE".to_string(),
         },
         VideoSetting::Interpolation => format!("SMOOTH MOTION {}", on(settings.interpolation)),
+        VideoSetting::SmoothRope => format!("SMOOTH ROPE {}", on(settings.smooth_rope)),
         VideoSetting::StatusBar => {
             let place = if settings.status_bar_centred {
                 "CENTRED"
@@ -1421,6 +1423,10 @@ impl Flow {
             VideoSetting::Interpolation => {
                 s.interpolation = !s.interpolation;
                 Some("interpolation")
+            }
+            VideoSetting::SmoothRope => {
+                s.smooth_rope = !s.smooth_rope;
+                Some("smooth_rope")
             }
             VideoSetting::StatusBar => {
                 s.status_bar_centred = !s.status_bar_centred;

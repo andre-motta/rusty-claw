@@ -1261,6 +1261,12 @@ impl App {
                 }
             }
             VideoSetting::Interpolation => self.interp = s.interpolation,
+            VideoSetting::SmoothRope => {
+                self.settings.smooth_rope = s.smooth_rope;
+                if let Some(l) = &mut self.level {
+                    l.session.set_smooth_rope(s.smooth_rope);
+                }
+            }
             VideoSetting::StatusBar => {
                 if let Some(l) = &mut self.level {
                     l.status.set_centred(centred);

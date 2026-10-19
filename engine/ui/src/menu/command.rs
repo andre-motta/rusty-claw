@@ -148,6 +148,8 @@ pub enum VideoSetting {
     FrameCap,
     /// Smooth motion between game steps.
     Interpolation,
+    /// Rope swings drawn smoothly between the rope's frames.
+    SmoothRope,
     /// Status bar at the picture's edges or in the centred 4:3 area.
     StatusBar,
 }
