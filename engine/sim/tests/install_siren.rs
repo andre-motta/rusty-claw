@@ -37,10 +37,10 @@
 //! `CLAW_REFERENCE_RUNS`, by default `rt` next to the reference store):
 //! exactly at the 18 ms step, and at 60 frames per second its spans
 //! within the feel tolerance's slack. At the 18 ms step so are the
-//! Siren's position and state and whether Claw shows his dazed picture
-//! (`obj-log.csv` there), her states lined up by the numbers the run
-//! gives them ([`REFERENCE_STATES`]). While Mercat is not built the
-//! random stream is taken from the run at every row ([`MERCAT_STREAM`]).
+//! Siren's position, state and health and whether Claw shows his dazed
+//! picture (`obj-log.csv` there), her states lined up by the numbers the
+//! run gives them ([`REFERENCE_STATES`]). The Mercat below her floor is
+//! awake in every route and draws from the same stream, in both games.
 //! Divergences that are known, with their causes, are listed in
 //! [`KNOWN`]; any other fails the test. The routes are written below;
 //! each store's own copy of its route must agree with them. Needs
@@ -57,7 +57,7 @@ use std::path::{Path, PathBuf};
 
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_sim::input::ScriptTuning;
-use claw_sim::logic::enemy::{self, EnemyState, mercat, siren};
+use claw_sim::logic::enemy::{self, EnemyState, siren};
 use claw_sim::logic::projectile::scream;
 use claw_sim::object::ObjectId;
 use claw_sim::player::state;
@@ -214,8 +214,8 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// The first reference time (ms) at which each column already leaves its
 /// tolerance, per store and clock; a column not listed must stay within
 /// it, and one listed must not leave it earlier. Besides the trace's
-/// columns: `lock` (the lockout), `siren_x`, `siren_y`, `siren_state` and
-/// `dazed` (Claw shows his dazed picture).
+/// columns: `lock` (the lockout), `siren_x`, `siren_y`, `siren_state`,
+/// `siren_health` and `dazed` (Claw shows his dazed picture).
 ///
 /// - The held keys (siren-jump, siren-walk, siren-duck, siren-air, from
 ///   the first locked row): the original's trace shows the keys its
@@ -231,11 +231,13 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   comes 39 rows earlier and so does the next lockout (row 308 against
 ///   347).
 /// - siren-stand at 60 frames per second: the random stream is stepped a
-///   different number of times at the two clocks, so her wait after her
-///   first song is another draw and her second song, with its lockout,
-///   comes at another time; the first lockout is within the slack.
+///   different number of times at the two clocks (every enemy's roll comes
+///   every third step, and the original's steps are shorter there), so her
+///   wait after her first song is another draw and her second song, with
+///   its lockout, comes earlier (its lockout from 5652 ms against the
+///   run's 6050); the first lockout is within the slack.
 const KNOWN: &[Known] = &[
-    ("siren-stand", "c60", &[("lock", 6050)]),
+    ("siren-stand", "c60", &[("lock", 5652)]),
     ("siren-jump", "c18", &[("held", 1188)]),
     ("siren-walk", "c18", &[("held", 1908)]),
     ("siren-duck", "c18", &[("held", 1170)]),
@@ -252,53 +254,11 @@ const KNOWN: &[Known] = &[
     ),
 ];
 
-/// The divergences Mercat, while not built, causes, per store and clock,
-/// as [`KNOWN`]: the Mercat below the Siren's floor is awake in every
-/// route and in the original's runs draws from the shared random stream
-/// from the second row on (see [`MERCAT_STREAM`]).
-const UNBUILT_MERCAT: &[Known] = &[
-    ("siren-stand", "c18", &[("rng", 36)]),
-    ("siren-jump", "c18", &[("rng", 36)]),
-    ("siren-walk", "c18", &[("rng", 36)]),
-    ("siren-duck", "c18", &[("rng", 36)]),
-    ("siren-air", "c18", &[("rng", 36)]),
-    ("siren-screens", "c18", &[("rng", 36)]),
-    ("siren-death", "c18", &[("rng", 36)]),
-];
-
 fn known(store: &str, clock: &str) -> Vec<(&'static str, u64)> {
-    let mut out: Vec<(&'static str, u64)> = KNOWN
+    KNOWN
         .iter()
         .filter(|(s, c, _)| *s == store && *c == clock)
         .flat_map(|(_, _, k)| k.iter().copied())
-        .collect();
-    if !mercat::BUILT {
-        for (s, c, k) in UNBUILT_MERCAT {
-            if *s == store && *c == clock {
-                out.extend(k.iter().copied());
-            }
-        }
-    }
-    out
-}
-
-/// Whether the routes take the random stream from the original's runs:
-/// while Mercat is not built, the Mercat below the Siren's floor, awake
-/// in every route, makes none of his draws, so the stream would leave the
-/// original's on the second row and with it every later draw of the
-/// Siren's. Until he is built, each row's random stream starts from the
-/// original's state after the row before (at the 18 ms step, where the
-/// runs give it), so the Siren's own draws are made from the original's
-/// stream; the stream itself is still compared and its divergence is
-/// listed in [`UNBUILT_MERCAT`]. The route checks below need
-/// `CLAW_REFERENCE` for it until then.
-const MERCAT_STREAM: bool = !mercat::BUILT;
-
-/// The original's random state after each row of a reference trace.
-fn reference_stream(reference: &[TraceRow]) -> Vec<u32> {
-    reference
-        .iter()
-        .map(|row| row.rng.expect("the reference trace has the random stream"))
         .collect()
 }
 
@@ -513,8 +473,8 @@ fn time_zero(dir: &Path, clock: &str) -> Option<(u64, u32)> {
     Some((t0, seed))
 }
 
-/// The Siren on a row: her position and state.
-type SirenAt = (i32, i32, Option<EnemyState>);
+/// The Siren on a row: her position, state and health.
+type SirenAt = (i32, i32, Option<EnemyState>, i32);
 
 /// A row of a run's object log: the row, the Siren (when logged) and
 /// whether Claw shows his dazed picture.
@@ -537,11 +497,8 @@ struct Played {
 }
 
 /// Plays route `r` at `clock` from its time zero for `rows` rows (with the
-/// original's random state there), calling `each` after every row. With
-/// `stream`, the original's random state after each row, the random
-/// stream starts every row from the original's state after the row before
-/// (see [`MERCAT_STREAM`]).
-#[allow(clippy::too_many_arguments)]
+/// original's random state there, set once), calling `each` after every
+/// row.
 fn play_rows(
     level: &SimLevel,
     r: &Route,
@@ -549,18 +506,12 @@ fn play_rows(
     t0: u64,
     seed: u32,
     rows: usize,
-    stream: Option<&[u32]>,
     mut each: impl FnMut(usize, &Sim, ObjectId),
 ) {
     let mut sim = at_time_zero(level, clock, r, t0, seed);
     let id = find_siren(&sim);
     let ticks = route_ticks(r);
     for k in 0..rows {
-        if k > 0
-            && let Some(&state) = stream.and_then(|s| s.get(k - 1))
-        {
-            sim.with_world(|w| *w.rng = Rng::new(state));
-        }
         for &(row, hold) in r.holds {
             if row == k {
                 hold.apply(&mut sim);
@@ -587,22 +538,12 @@ fn play(level: &SimLevel, root: &Path, r: &Route, clock: &str) -> Played {
     }
     let end_ms = reference.last().map_or(0, |row| row.t_ms);
     let n = end_ms.div_ceil(TICK) as usize;
-    let stream = (MERCAT_STREAM && clock == "c18").then(|| reference_stream(&reference));
     let mut rows = Vec::new();
     let mut extra = Vec::new();
-    play_rows(
-        level,
-        r,
-        clock,
-        t0,
-        seed,
-        n,
-        stream.as_deref(),
-        |k, sim, id| {
-            rows.push(TraceRow::capture(sim, k as u64, "script"));
-            extra.push(extra_of(sim, id));
-        },
-    );
+    play_rows(level, r, clock, t0, seed, n, |k, sim, id| {
+        rows.push(TraceRow::capture(sim, k as u64, "script"));
+        extra.push(extra_of(sim, id));
+    });
     Played {
         rows,
         reference,
@@ -616,7 +557,7 @@ fn extra_of(sim: &Sim, id: ObjectId) -> Extra {
         siren: sim
             .objects()
             .get(id)
-            .map(|o| (o.x, o.y, EnemyState::from_id(o.state))),
+            .map(|o| (o.x, o.y, EnemyState::from_id(o.state), o.health)),
         dazed: sim.player().is_some_and(|o| o.frame == scream::DAZED_FRAME),
     }
 }
@@ -687,20 +628,21 @@ fn compare_lock_feel(played: &[Extra], lock: &[(usize, u64, u32)]) -> Option<u64
     (ours.len() > theirs.len()).then(|| ours[theirs.len()].0)
 }
 
-/// The run's rows, by row: the Siren nearest her place (position and
-/// state) and whether Claw shows his dazed picture (`obj-log.csv`).
+/// The run's rows, by row: the Siren nearest her place (position, state
+/// and health) and whether Claw shows his dazed picture (`obj-log.csv`).
 fn reference_objects(run: &Path) -> Option<Vec<RunRow>> {
     let text = std::fs::read_to_string(run.join("obj-log.csv")).ok()?;
     let mut lines = text.lines();
     let head: Vec<&str> = lines.next()?.split(',').collect();
     let col = |name: &str| head.iter().position(|h| *h == name);
-    let (tick, logic, st, x, y, frame) = (
+    let (tick, logic, st, x, y, frame, health) = (
         col("tick")?,
         col("logic_name")?,
         col("state")?,
         col("x")?,
         col("y")?,
         col("frame")?,
+        col("health")?,
     );
     let int = |s: &str| s.trim().parse::<i32>().ok();
     let mut out: Vec<RunRow> = Vec::new();
@@ -715,8 +657,11 @@ fn reference_objects(run: &Path) -> Option<Vec<RunRow>> {
             Some("Siren") => {
                 let at = (int(f[x])?, int(f[y])?);
                 let near = |p: (i32, i32)| (p.0 - SIREN.0).abs() + (p.1 - SIREN.1).abs();
-                if out[k].1.is_none_or(|(ox, oy, _)| near(at) < near((ox, oy))) {
-                    out[k].1 = Some((at.0, at.1, reference_state(int(f[st])?)));
+                if out[k]
+                    .1
+                    .is_none_or(|(ox, oy, _, _)| near(at) < near((ox, oy)))
+                {
+                    out[k].1 = Some((at.0, at.1, reference_state(int(f[st])?), int(f[health])?));
                 }
             }
             _ => {}
@@ -727,7 +672,7 @@ fn reference_objects(run: &Path) -> Option<Vec<RunRow>> {
 
 /// The first reference time (ms) at which the replay leaves the run in
 /// the extra columns (`lock`, `siren_x`, `siren_y`, `siren_state`,
-/// `dazed`).
+/// `siren_health`, `dazed`).
 fn compare_extra(
     played: &[Extra],
     lock: &[(usize, u64, u32)],
@@ -750,7 +695,7 @@ fn compare_extra(
             note("dazed", k);
         }
         match (p.siren, siren) {
-            (Some((x, y, s)), Some((wx, wy, ws))) => {
+            (Some((x, y, s, h)), Some((wx, wy, ws, wh))) => {
                 if x != wx {
                     note("siren_x", k);
                 }
@@ -760,11 +705,14 @@ fn compare_extra(
                 if ws.is_none() || s != ws {
                     note("siren_state", k);
                 }
+                if h != wh {
+                    note("siren_health", k);
+                }
             }
             // Not logged: out of the run's window around Claw.
             (_, None) => {}
             (None, Some(_)) => {
-                for name in ["siren_x", "siren_y", "siren_state"] {
+                for name in ["siren_x", "siren_y", "siren_state", "siren_health"] {
                     note(name, k);
                 }
             }
@@ -909,47 +857,27 @@ struct Look {
 }
 
 /// Plays `rows` rows of `store`'s route at the 18 ms step from its time
-/// zero with the original's random state there; `None` (the test skips)
-/// when the route needs the original's random stream (see
-/// [`MERCAT_STREAM`]) and `CLAW_REFERENCE` is not set.
-fn watch(level: &SimLevel, store: &str, rows: usize) -> Option<Vec<Look>> {
+/// zero with the original's random state there.
+fn watch(level: &SimLevel, store: &str, rows: usize) -> Vec<Look> {
     let r = route_named(store);
-    let stream = if MERCAT_STREAM {
-        let root = reference_root()?;
-        let path = root.join("level11").join(store).join("trace-c18-r1.csv");
-        let text =
-            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        Some(reference_stream(&trace::parse(&text).unwrap()))
-    } else {
-        None
-    };
     let mut looks = Vec::new();
-    play_rows(
-        level,
-        r,
-        "c18",
-        T0_MS,
-        SEED,
-        rows,
-        stream.as_deref(),
-        |_, sim, id| {
-            let c = sim.player().expect("Claw");
-            looks.push(Look {
-                x: c.x,
-                y: c.y,
-                state: c.state,
-                health: sim.claw().stats.health,
-                lives: sim.claw().stats.lives,
-                lock: sim.scream_lock_ms(),
-                dazed: c.frame == scream::DAZED_FRAME,
-                siren: sim
-                    .objects()
-                    .get(id)
-                    .and_then(|o| EnemyState::from_id(o.state)),
-            });
-        },
-    );
-    Some(looks)
+    play_rows(level, r, "c18", T0_MS, SEED, rows, |_, sim, id| {
+        let c = sim.player().expect("Claw");
+        looks.push(Look {
+            x: c.x,
+            y: c.y,
+            state: c.state,
+            health: sim.claw().stats.health,
+            lives: sim.claw().stats.lives,
+            lock: sim.scream_lock_ms(),
+            dazed: c.frame == scream::DAZED_FRAME,
+            siren: sim
+                .objects()
+                .get(id)
+                .and_then(|o| EnemyState::from_id(o.state)),
+        });
+    });
+    looks
 }
 
 /// The spans (first, last) of the rows on which `f` holds.
@@ -972,9 +900,7 @@ fn spans_of(rows: &[Look], f: impl Fn(&Look) -> bool) -> Vec<(usize, usize)> {
 #[test]
 fn install_siren_her_songs_lock_a_standing_claw_three_times() {
     let Some(level) = level11() else { return };
-    let Some(rows) = watch(&level, "siren-stand", 812) else {
-        return;
-    };
+    let rows = watch(&level, "siren-stand", 812);
     // She decides on row 28 and sings until row 133 (her call and first
     // scream on row 39, home on 134), and again from 311 and 594.
     let songs = spans_of(&rows, |l| l.siren == Some(EnemyState::Singing));
@@ -1001,9 +927,7 @@ fn install_siren_her_songs_lock_a_standing_claw_three_times() {
 #[test]
 fn install_siren_a_held_jump_fires_when_the_lockout_ends() {
     let Some(level) = level11() else { return };
-    let Some(rows) = watch(&level, "siren-jump", 612) else {
-        return;
-    };
+    let rows = watch(&level, "siren-jump", 612);
     let jumps: Vec<usize> = (1..rows.len())
         .filter(|&k| rows[k].state == state::JUMP && rows[k - 1].state != state::JUMP)
         .collect();
@@ -1016,9 +940,7 @@ fn install_siren_a_held_jump_fires_when_the_lockout_ends() {
 #[test]
 fn install_siren_a_walk_stops_while_locked() {
     let Some(level) = level11() else { return };
-    let Some(rows) = watch(&level, "siren-walk", 300) else {
-        return;
-    };
+    let rows = watch(&level, "siren-walk", 300);
     // Hit on row 104: the walk stops on 105 and starts again on 267.
     assert_eq!(rows[104].lock, 2000);
     assert_eq!(rows[104].state, state::MOVE_RIGHT);
@@ -1031,9 +953,7 @@ fn install_siren_a_walk_stops_while_locked() {
 #[test]
 fn install_siren_the_scream_touches_a_crouching_claw() {
     let Some(level) = level11() else { return };
-    let Some(rows) = watch(&level, "siren-duck", 300) else {
-        return;
-    };
+    let rows = watch(&level, "siren-duck", 300);
     // One row earlier than a standing Claw; the crouch rises while locked
     // and comes back on the first free row, Down held all along.
     assert_eq!(rows[62].lock, 0);
@@ -1046,9 +966,7 @@ fn install_siren_the_scream_touches_a_crouching_claw() {
 #[test]
 fn install_siren_a_rising_jump_loses_its_hold() {
     let Some(level) = level11() else { return };
-    let Some(rows) = watch(&level, "siren-air", 120) else {
-        return;
-    };
+    let rows = watch(&level, "siren-air", 120);
     // Hit on row 64, two rows into the jump: the rise ends on row 68 at
     // 2725 (2651 with the hold), he falls from row 69 and lands on row 80.
     assert_eq!(rows[64].lock, 2000);
@@ -1063,18 +981,14 @@ fn install_siren_screens_stop_the_lockout_and_a_death_keeps_it() {
     let Some(level) = level11() else { return };
     // The pauses, the help screen and the menu hold the counter: it reads
     // what it would without them and runs out on row 226.
-    let Some(rows) = watch(&level, "siren-screens", 240) else {
-        return;
-    };
+    let rows = watch(&level, "siren-screens", 240);
     assert_eq!(spans_of(&rows, |l| l.lock > 0), [(64, 226)]);
     assert_eq!((rows[120].lock, rows[121].lock), (1910, 1892));
     assert_eq!((rows[160].lock, rows[161].lock), (1190, 1172));
     // The end of life on row 100: he dies, respawns at the level's start
     // on row 194 with a life less, and the lockout runs on to row 209,
     // 111 rows after the third scream's hit.
-    let Some(rows) = watch(&level, "siren-death", 260) else {
-        return;
-    };
+    let rows = watch(&level, "siren-death", 260);
     assert_eq!(rows[100].health, 0);
     assert_eq!((rows[194].x, rows[194].y), (3393, 1167));
     assert_eq!(rows[194].lives, rows[99].lives - 1);

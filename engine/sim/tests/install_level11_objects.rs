@@ -43,7 +43,7 @@ use std::path::{Path, PathBuf};
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_frame::{AudioCue, GameEvent};
 use claw_sim::input::ScriptTuning;
-use claw_sim::logic::enemy::{fish, mercat, siren};
+use claw_sim::logic::enemy::{self, EnemyState, mercat, siren};
 use claw_sim::logic::{ObjectData, break_plank, laser};
 use claw_sim::object::ObjectId;
 use claw_sim::rng::Rng;
@@ -141,101 +141,22 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 
 /// The first reference time (ms) at which each column already leaves its
 /// tolerance, per store and clock; a column not listed must stay within
-/// it, and one listed must not leave it earlier. [`UNBUILT`] lists what
-/// the families not built yet change. What these come from:
-///
-/// - c18, start-drop, belt-left and plank-walk (`rng`): the Mercat by the
-///   start room's opening stands 3 px inside the enemies' window once the
-///   window is placed around Claw on the start room's floor. The original
-///   wakes and builds him in the level's first tick; the replay's first
-///   tick still places the window around the level's start point, 79 px
-///   higher, so he wakes and builds a tick later. His build's draw and his
-///   idle poses' draws (one every second) come a tick later on start-drop
-///   (18 ms), his second pose a tick later on belt-left (198 ms), and on
-///   plank-walk, where Claw comes back to the start after his fall, the
-///   original finds him built already while the replay builds him then,
-///   so a pose's draw comes on another row (6066 ms). Nothing else
-///   changes: his poses touch nothing, and the stream is the original's
-///   again once the late draw is made.
-const KNOWN: &[Known] = &[
-    ("start-drop", "c18", &[("rng", 18)]),
-    ("belt-left", "c18", &[("rng", 198)]),
-    ("plank-walk", "c18", &[("rng", 6066)]),
-];
-
-/// Which families a route meets besides the objects it is about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Neighbours {
-    /// The Siren pacing beside the laser and the Mercat below her floor,
-    /// both awake in the laser routes, each with an enemy's roll on every
-    /// third tick.
-    SirenAndMercat,
-    /// The Mercat by the start room's opening and the fish of the first
-    /// pool, or the Mercat and the fish within reach of the plank.
-    MercatAndFish,
-}
-
-impl Neighbours {
-    /// True while one of them is not built.
-    fn unbuilt(self) -> bool {
-        match self {
-            Neighbours::SirenAndMercat => !(siren::BUILT && mercat::BUILT),
-            Neighbours::MercatAndFish => !(mercat::BUILT && fish::BUILT),
-        }
-    }
-}
-
-/// The divergences an unbuilt neighbour causes, per store and clock, as
-/// [`KNOWN`]: in the original's runs the neighbours draw from the shared
-/// random stream (every enemy's roll on every third tick, their decisions'
-/// draws), so the random state leaves the original's on the second row
-/// (36 ms); nothing else changes, except on start-drop, where the Mercat
-/// by the opening throws a bolt that reaches Claw at 4248 ms in the
-/// original's run.
-const UNBUILT: &[(Neighbours, Known)] = &[
-    (
-        Neighbours::SirenAndMercat,
-        ("laser-cycle", "c18", &[("rng", 36)]),
-    ),
-    (
-        Neighbours::SirenAndMercat,
-        ("laser-stand", "c18", &[("rng", 36)]),
-    ),
-    (
-        Neighbours::MercatAndFish,
-        ("plank-walk", "c18", &[("rng", 36)]),
-    ),
-    (
-        Neighbours::MercatAndFish,
-        ("belt-left", "c18", &[("rng", 36)]),
-    ),
-    (
-        Neighbours::MercatAndFish,
-        (
-            "start-drop",
-            "c18",
-            &[
-                ("rng", 18),
-                ("state_id", 4248),
-                ("physics_type", 4248),
-                ("health", 4248),
-            ],
-        ),
-    ),
-];
+/// it, and one listed must not leave it earlier. None: every route follows
+/// its store exactly at the 18 ms step and within the feel tolerances at
+/// 60 frames per second, the Siren and the Mercat beside the laser, the
+/// Mercat by the start room's opening and the fish of the first pool
+/// included. What the original's runs did before their time zero, which
+/// the replay does not play the same way, is put in step there instead
+/// ([`wake_laser_a_tick_earlier`], [`put_siren_in_step`],
+/// [`put_start_mercat_in_step`]).
+const KNOWN: &[Known] = &[];
 
 fn known(store: &str, clock: &str) -> Vec<(&'static str, u64)> {
-    let mut out: Vec<(&'static str, u64)> = KNOWN
+    KNOWN
         .iter()
         .filter(|(s, c, _)| *s == store && *c == clock)
         .flat_map(|(_, _, k)| k.iter().copied())
-        .collect();
-    for (n, (s, c, k)) in UNBUILT {
-        if n.unbuilt() && *s == store && *c == clock {
-            out.extend(k.iter().copied());
-        }
-    }
-    out
+        .collect()
 }
 
 fn route_named(store: &str) -> &'static Route {
@@ -339,6 +260,10 @@ fn at_time_zero(level: &SimLevel, clock: &str, r: &Route, t0_ms: u64, seed: u32)
     }
     if r.store.starts_with("laser-") {
         wake_laser_a_tick_earlier(&mut sim);
+        put_siren_in_step(&mut sim, clock);
+    }
+    if r.store == "belt-left" {
+        put_start_mercat_in_step(&mut sim);
     }
     sim.with_world(|w| *w.rng = Rng::new(seed));
     sim
@@ -355,6 +280,66 @@ fn wake_laser_a_tick_earlier(sim: &mut Sim) {
             && let ObjectData::Laser(d) = &mut o.data
         {
             d.start_ms -= TICK;
+        }
+    });
+}
+
+/// Where the Siren beside the laser stands.
+const SIREN: (i32, i32) = (8559, 2783);
+
+/// The Siren's wait at home at time zero, by clock: when it started, on
+/// the replay's clock, and how long it is. The original built her in the
+/// tick it put Claw down in, at the replay's game time 0 (10 at 60 frames
+/// per second), and drew a wait of 1327 ms from the random stream before
+/// time zero, which the replay does not have.
+fn siren_wait_at_time_zero(clock: &str) -> enemy::Timer {
+    if clock == "c18" {
+        enemy::Timer::new(0, 1327)
+    } else {
+        enemy::Timer::new(10, 1327)
+    }
+}
+
+/// Puts the Siren beside the laser where the original's run shows her at
+/// time zero: at home, her wait started when she was built (see
+/// [`siren_wait_at_time_zero`]), and not counting Claw out of her range
+/// (the replay builds her a tick later, before she is drawn).
+fn put_siren_in_step(sim: &mut Sim, clock: &str) {
+    let id = find(sim, siren::NAMES[0], SIREN);
+    sim.with_world(|w| {
+        let o = w.objects.get(id).expect("the Siren");
+        assert_eq!((o.x, o.y), SIREN, "the Siren stands where the run shows");
+        assert_eq!(enemy::state(w, id), Some(EnemyState::Home));
+        if let Some(s) = siren::siren_mut(w, id) {
+            s.wait = siren_wait_at_time_zero(clock);
+        }
+        if let Some(d) = enemy::data_mut(w, id) {
+            d.out_of_range = false;
+            d.miss_since = None;
+            d.deferred = None;
+        }
+    });
+}
+
+/// Where the Mercat by the start room's opening stands.
+const START_MERCAT: (i32, i32) = (3935, 1753);
+
+/// Puts the Mercat by the start room's opening where the original's run
+/// of belt-left shows him at time zero. He is built in the level's first
+/// tick in both games; the original's run then puts Claw down with the
+/// game's own teleport, which runs every awake object's logic once more
+/// at that tick's time, and in that call he takes his first idle pose
+/// (its draw comes right after his build's, before any other object's,
+/// and his next pose comes 1000 ms later, a row earlier than the
+/// replay's). The replay's warp runs only the first calls of the objects
+/// it wakes, so his first pose comes in its second tick. His pose's wait
+/// is put where the run shows it.
+fn put_start_mercat_in_step(sim: &mut Sim) {
+    let id = find(sim, mercat::NAMES[0], START_MERCAT);
+    sim.with_world(|w| {
+        assert_eq!(enemy::state(w, id), Some(EnemyState::Idle));
+        if let Some(m) = mercat::mercat_data_mut(w, id) {
+            m.wait = enemy::Timer::new(0, mercat::POSE_MS);
         }
     });
 }

@@ -490,6 +490,7 @@ pub static CLASS: Class = Class {
     go_idle,
     carry: Some(CARRY),
     pick_lift_voice,
+    lift_roll: true,
     anims: ANIMS,
     sounds: SOUNDS,
 };

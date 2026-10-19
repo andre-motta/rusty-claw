@@ -17,10 +17,13 @@ use claw_frame::TickInput;
 use claw_sim::activation::ActivationConfig;
 use claw_sim::anim::Animation;
 use claw_sim::level::ObjectSpec;
+use claw_sim::logic;
 use claw_sim::logic::enemy::{self, EnemyState, Timer, field, siren};
 use claw_sim::logic::projectile::{self, ProjectileSpec, scream};
 use claw_sim::object::{LogicKind, ObjectId, types};
+use claw_sim::player::attack::kind as attack_kind;
 use claw_sim::player::state;
+use claw_sim::rng::Rng;
 use claw_sim::{Buttons, GameLogic, Sim, SimConfig, SimLevel};
 use common::*;
 
@@ -72,11 +75,11 @@ const LIMITS: (i32, i32) = (2950, 3060);
 /// level.
 const LEFT: i32 = 139;
 
-/// The flat floor (feet rest on 959) as the eleventh level, with a Siren
-/// at `AT` between `LIMITS`.
-fn arena() -> SimLevel {
+/// The flat floor (feet rest on 959) as level `number` (the eleventh,
+/// for her timings), with a Siren at `AT` between `LIMITS`.
+fn arena_on(number: u32) -> SimLevel {
     let mut level = flat_level();
-    level.number = 11;
+    level.number = number;
     for a in siren_anims() {
         level.animations.insert(a.key.clone(), a);
     }
@@ -90,7 +93,12 @@ fn arena() -> SimLevel {
 /// The arena with Claw put `LEFT` px left of the Siren on the first tick;
 /// every object awake.
 fn with_claw() -> (Sim, ObjectId) {
-    let level = arena();
+    with_claw_on(11)
+}
+
+/// [`with_claw`] on level `number`.
+fn with_claw_on(number: u32) -> (Sim, ObjectId) {
+    let level = arena_on(number);
     let (w, h) = (level.map.width() as u32, level.map.height() as u32);
     let mut sim = Sim::new(
         level,
@@ -124,6 +132,22 @@ fn wait_over(sim: &mut Sim, id: ObjectId) {
             s.wait = Timer::default();
         }
     });
+}
+
+/// A stream whose next draw of 0..`n` is `want`.
+fn stream_drawing(n: u32, want: u32) -> Rng {
+    (1..100_000)
+        .map(Rng::new)
+        .find(|r| r.clone().below(n) == want)
+        .expect("a seed")
+}
+
+fn sdata(sim: &Sim, id: ObjectId) -> siren::SirenData {
+    sim.objects()
+        .get(id)
+        .and_then(siren::siren_data_of)
+        .cloned()
+        .expect("a Siren")
 }
 
 fn screams(sim: &Sim) -> Vec<(ObjectId, i32, i32)> {
@@ -423,4 +447,89 @@ fn a_crouching_claw_is_screamed_at_too() {
     assert!(first_hit.is_some(), "the scream reaches a crouching Claw");
     // The crouch rises while locked.
     assert_eq!(sim.player().unwrap().state, state::STAND);
+}
+
+#[test]
+fn lifted_she_says_her_line_and_makes_no_draw() {
+    let (mut sim, id) = with_claw();
+    sim.with_world(|w| {
+        let claw = w.claw_id.unwrap();
+        let before = w.rng.state();
+        logic::lifted(w, id, claw);
+        assert_eq!(w.rng.state(), before, "no draw, hers or the shared lift's");
+    });
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Lifted));
+    assert!(!siren::CLASS.lift_roll);
+}
+
+/// Claw's blow, facing right (towards her) or left, with the stream set to
+/// draw `roll` of 0..100 next, then her pre-tick step.
+fn blow(sim: &mut Sim, id: ObjectId, facing_right: bool, roll: u32) {
+    sim.with_world(|w| {
+        w.claw.attack.kind = attack_kind::SWIPE;
+        w.claw.facing_right = facing_right;
+        *w.rng = stream_drawing(100, roll);
+        siren::pre_tick(w, id);
+    });
+}
+
+#[test]
+fn on_the_twelfth_level_a_close_attack_facing_her_makes_her_hop_back() {
+    let (mut sim, id) = with_claw_on(12);
+    let mode = |sim: &Sim| sim.objects().get(id).and_then(enemy::data_of).unwrap().mode;
+    let deferred = |sim: &Sim| {
+        sim.objects()
+            .get(id)
+            .and_then(enemy::data_of)
+            .unwrap()
+            .deferred
+            .is_some()
+    };
+    // Claw 139 px to her left: mode 3.
+    assert_eq!(mode(&sim), 3);
+    assert_eq!(sdata(&sim, id).hop_chance, siren::HOP_CHANCE);
+    // A blow facing away from her draws nothing.
+    blow(&mut sim, id, false, 0);
+    assert_eq!(sim.rng_state(), stream_drawing(100, 0).state());
+    assert!(!deferred(&sim));
+    // Facing her, a draw at or above the chance changes nothing; the next
+    // blow draws again.
+    blow(&mut sim, id, true, 90);
+    assert_eq!(sdata(&sim, id).hop_chance, 90);
+    assert!(!deferred(&sim));
+    // Below it: the hop is deferred to the tick's end, the chance goes
+    // down by 30 and the wait between two draws starts.
+    blow(&mut sim, id, true, 89);
+    let s = sdata(&sim, id);
+    assert_eq!(s.hop_chance, siren::HOP_CHANCE - siren::HOP_CHANCE_STEP);
+    assert_eq!(s.hop_wait.len, siren::HOP_WAIT_MS);
+    assert!(deferred(&sim));
+    // Within the 500 ms no second draw, whatever the blow.
+    for _ in 0..3 {
+        let before = stream_drawing(100, 0).state();
+        blow(&mut sim, id, true, 0);
+        assert_eq!(sim.rng_state(), before, "no draw within the wait");
+    }
+    assert_eq!(sdata(&sim, id).hop_chance, 60);
+}
+
+#[test]
+fn on_the_eleventh_level_her_hop_is_never_drawn() {
+    let (mut sim, id) = with_claw();
+    assert_eq!(
+        sim.objects().get(id).and_then(enemy::data_of).unwrap().mode,
+        3
+    );
+    blow(&mut sim, id, true, 0);
+    assert_eq!(sim.rng_state(), stream_drawing(100, 0).state(), "no draw");
+    let s = sdata(&sim, id);
+    assert_eq!(s.hop_chance, siren::HOP_CHANCE);
+    assert!(
+        sim.objects()
+            .get(id)
+            .and_then(enemy::data_of)
+            .unwrap()
+            .deferred
+            .is_none()
+    );
 }

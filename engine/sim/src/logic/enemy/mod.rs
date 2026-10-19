@@ -859,6 +859,10 @@ pub struct Class {
     /// Picks the line it says when lifted (into
     /// [`EnemyFields::lifted_voice`]).
     pub pick_lift_voice: fn(&mut World, ObjectId),
+    /// Whether the shared lift draws its one of 0..100 for saying the
+    /// lifted line (see [`lift::lifted`]); false for a class that always
+    /// says its own line and makes no draw for it.
+    pub lift_roll: bool,
     /// Animations the shared states play.
     pub anims: ClassAnims,
     /// Sounds the shared states play.

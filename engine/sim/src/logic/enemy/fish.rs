@@ -193,6 +193,7 @@ pub static CLASS: Class = Class {
     go_idle,
     carry: None,
     pick_lift_voice: nothing,
+    lift_roll: true,
     anims: ClassAnims {
         fall: DEATH_ANIM,
         ..ClassAnims::NONE

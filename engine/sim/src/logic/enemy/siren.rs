@@ -54,7 +54,9 @@
 //! - home, when her wait is over in modes 0 and 1: one of 0..=100; then
 //!   what it leads to (singing refused by the cooldown goes home);
 //! - singing: none but going home's at its end;
-//! - lifted: none (the shared lift's own draw is not made for her);
+//! - lifted: none (her class has no lift roll,
+//!   [`super::Class::lift_roll`], so the shared lift makes no draw for
+//!   her);
 //! - the twelfth level's hop: one of 0..100 per close attack;
 //! - the shared ones: the pulse roll, the human idle and pacing, hits and
 //!   death.
@@ -95,7 +97,6 @@ use crate::logic::projectile::{self, ProjectileSpec, scream};
 use crate::logic::{ObjectData, World, sound};
 use crate::object::{ObjectId, Rect, types};
 use crate::player::attack::kind as attack_kind;
-use crate::rng::Rng;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["Siren"];
@@ -247,6 +248,7 @@ pub static CLASS: Class = Class {
     go_idle: human::go_idle,
     carry: Some(CARRY),
     pick_lift_voice,
+    lift_roll: false,
     anims: ANIMS,
     sounds: SOUNDS,
 };
@@ -546,29 +548,16 @@ pub fn pre_tick(w: &mut World, id: ObjectId) {
     }
 }
 
-/// The multiplier that undoes one step of the random stream.
-const RNG_STEP_BACK: u32 = 3_115_528_533;
-/// The increment of one step of the random stream.
-const RNG_INCREMENT: u32 = 2_531_011;
-
-/// The state the random stream was in one draw before `state`.
-pub fn rng_state_before(state: u32) -> u32 {
-    state
-        .wrapping_sub(RNG_INCREMENT)
-        .wrapping_mul(RNG_STEP_BACK)
-}
-
 /// Lifted: her running line stops and she always says her lifted line.
-/// She makes no draw: the shared lift's draw right after this step is
-/// given back here, so the stream is left where it was.
+/// She makes no draw, and her class has no lift roll
+/// ([`super::Class::lift_roll`]), so the shared lift makes none for her
+/// either.
 pub fn pick_lift_voice(w: &mut World, id: ObjectId) {
     sound::enemy_silence(w, id);
     say(w, id, LIFTED_LINE);
     if let Some(d) = data_mut(w, id) {
         d.lifted_voice = "";
     }
-    let back = rng_state_before(w.rng.state());
-    *w.rng = Rng::new(back);
 }
 
 #[cfg(test)]
@@ -626,11 +615,7 @@ mod tests {
     }
 
     #[test]
-    fn a_step_of_the_stream_can_be_undone() {
-        for seed in [0u32, 1, 111_567, 1_980_168_385, u32::MAX] {
-            let mut rng = Rng::new(seed);
-            rng.next_u15();
-            assert_eq!(rng_state_before(rng.state()), seed);
-        }
+    fn her_class_has_no_lift_roll() {
+        assert!(!CLASS.lift_roll, "the shared lift draws nothing for her");
     }
 }

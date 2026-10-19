@@ -1,13 +1,16 @@
 //! How play starts: keys already down count only once released and pressed
-//! again, the level's objects are set up while it loads, and the frame
+//! again, the level's objects are set up while it loads, the first tick
+//! wakes the objects around Claw where the load dropped him, and the frame
 //! pulse that times the enemies' per-tick roll.
 
 mod common;
 
+use claw_sim::activation::ActivationConfig;
 use claw_sim::logic::enemy::{self, EnemyState};
 use claw_sim::object::{LogicKind, ObjectId, engine_state};
 use claw_sim::player::state;
 use claw_sim::sim::{LEVEL_LOAD_SEED, PULSE_MS, PULSE_START_MS};
+use claw_sim::tiles::TileMap;
 use claw_sim::{Buttons, GameLogic, InputScript, Sim, SimConfig, SimLevel, TickInput};
 use common::*;
 
@@ -159,6 +162,54 @@ fn the_level_objects_are_set_up_while_the_level_loads() {
     // Without objects nothing draws while loading.
     let empty = Sim::new(flat_level(), SimConfig::default());
     assert_eq!(empty.rng_after_set_up(), LEVEL_LOAD_SEED);
+}
+
+/// A tall level whose start point (1000, 600) lies 939 px above the floor
+/// Claw drops onto (feet on 1599), with an officer on that floor 300 px to
+/// his right: 939 px below the start point, outside the enemies' window
+/// around it (600 px down), and inside the one around Claw (the view's
+/// centre held 240 px above the level's bottom, at 1488).
+fn deep_start_level() -> SimLevel {
+    let mut rows = vec![".".repeat(40); 25];
+    rows.push("#".repeat(40));
+    rows.push("#".repeat(40));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut l = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600));
+    l.objects
+        .push(claw_sim::level::ObjectSpec::at("Officer", 1300, 1539, 4000));
+    l
+}
+
+#[test]
+fn the_first_tick_wakes_the_objects_around_claw_where_the_load_dropped_him() {
+    // Reference store level11/start-drop, c18: the Mercat below the start
+    // room, outside the window around the level's start point but inside
+    // the one around Claw on the floor, is built in the level's first tick
+    // (its draw on the first row), not a tick later.
+    let cfg = SimConfig {
+        activation: ActivationConfig::original(),
+        ..SimConfig::default()
+    };
+    let mut sim = Sim::new(deep_start_level(), cfg);
+    assert_eq!(
+        sim.player().map(|o| o.y),
+        Some(1539),
+        "dropped to the floor"
+    );
+    let id = officer(&sim);
+    let state = |sim: &Sim| sim.objects().get(id).map(|o| o.state);
+    assert_eq!(
+        state(&sim),
+        Some(engine_state::INIT),
+        "not woken by the load"
+    );
+    assert!(!sim.objects().get(id).unwrap().is_listed());
+    sim.step(TickInput::default());
+    assert_ne!(
+        state(&sim),
+        Some(engine_state::INIT),
+        "built in the first tick"
+    );
 }
 
 #[test]

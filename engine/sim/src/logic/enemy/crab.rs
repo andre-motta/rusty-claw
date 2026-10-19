@@ -274,6 +274,7 @@ pub static CLASS: Class = Class {
     go_idle: nothing,
     carry: None,
     pick_lift_voice: nothing,
+    lift_roll: true,
     anims: ClassAnims {
         advance: RUN_ANIM,
         fast_advance: RUN_ANIM,

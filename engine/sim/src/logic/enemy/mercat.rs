@@ -109,8 +109,8 @@
 //!   ([`super::HUMAN_HIT_BY`]) and the shared reaction to the level's own
 //!   shots: no health lost (a beam deals 0), a flinch.
 //! - The shared lift draws one of 0..100 for a lifted line; he says his
-//!   own line instead and makes no such draw, so his lift step takes that
-//!   draw back from the stream before it is made ([`pick_lift_voice`]).
+//!   own line instead and makes no such draw: his class has no lift roll
+//!   ([`super::Class::lift_roll`], [`pick_lift_voice`]).
 //!
 //! Its data ([`MercatData`]) holds the shared enemy data, which the shared
 //! enemy behaviour reaches through [`super::data`] and [`super::with_data`].
@@ -131,7 +131,6 @@ use crate::logic::projectile::trident;
 use crate::logic::{ObjectData, World, sound};
 use crate::object::{ObjectId, Rect, flags};
 use crate::physics::ptype;
-use crate::rng::Rng;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["Mercat"];
@@ -358,6 +357,7 @@ pub static CLASS: Class = Class {
     go_idle,
     carry: Some(CARRY),
     pick_lift_voice,
+    lift_roll: false,
     anims: ANIMS,
     sounds: SOUNDS,
 };
@@ -883,30 +883,16 @@ fn blow_rule(w: &mut World, id: ObjectId, attacker: ObjectId, high: bool) {
 // ----------------------------------------------------------------------
 // Lifted
 
-/// The multiplier that undoes one step of the shared random stream.
-const RNG_UNSTEP_MUL: u32 = 3_115_528_533;
-/// The increment of one step of the shared random stream.
-const RNG_STEP_ADD: u32 = 2_531_011;
-
-/// The stream one draw back: the state whose next draw leads to `state`.
-pub fn rng_one_back(state: u32) -> u32 {
-    state
-        .wrapping_sub(RNG_STEP_ADD)
-        .wrapping_mul(RNG_UNSTEP_MUL)
-}
-
 /// Lifted: his own running line stops and he says his lifted line, always.
-/// He makes none of the shared lift's draws: the stream is set one draw
-/// back, so the shared lift's draw of 0..100 that follows this step leaves
-/// it where it was (see the module documentation).
+/// He makes no draw, and his class has no lift roll
+/// ([`super::Class::lift_roll`]), so the shared lift makes none for him
+/// either.
 pub fn pick_lift_voice(w: &mut World, id: ObjectId) {
     sound::enemy_silence(w, id);
     say(w, id, LIFTED_LINE);
     if let Some(d) = data_mut(w, id) {
         d.lifted_voice = "";
     }
-    let back = rng_one_back(w.rng.state());
-    *w.rng = Rng::new(back);
 }
 
 #[cfg(test)]
@@ -957,12 +943,8 @@ mod tests {
     }
 
     #[test]
-    fn one_step_back_undoes_one_draw() {
-        for seed in [0u32, 1, 111_567, 1_980_168_385, u32::MAX] {
-            let mut r = Rng::new(rng_one_back(seed));
-            r.next_u15();
-            assert_eq!(r.state(), seed);
-        }
+    fn his_class_has_no_lift_roll() {
+        assert!(!CLASS.lift_roll, "the shared lift draws nothing for him");
     }
 
     #[test]
