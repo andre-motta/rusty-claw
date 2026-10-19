@@ -77,7 +77,8 @@
 //!   way, and once his frenzy is over the attack box is cleared and it
 //!   goes idle. Facing right, a picture other than the strike's leaves
 //!   it the attack box [`FRENZY_RIGHT_BOX`]: one row at its own height
-//!   from its x to the far right of the level.
+//!   from its x to the far right of the level. Whatever turns it back
+//!   left (the next swipe, going idle, the reset) leaves it no box.
 //! - Hits: none while dead, grabbing, squeezing or thrashing; the attack
 //!   of Claw that hit it last hits no more (whatever the attacker is);
 //!   otherwise a hit burst, a pistol shot is used up, and it dies.
@@ -466,7 +467,19 @@ pub fn go_idle(w: &mut World, id: ObjectId) {
     if let Some(t) = tentacle_mut(w, id) {
         t.idle = Timer::new(now, IDLE_MS + extra as u64);
     }
-    set_facing(w, id, false);
+    turn(w, id, false);
+}
+
+/// Turns it to face right (`right`) or left. Its box facing right on
+/// another picture than the strike's turns into no box at all when it
+/// turns left, whatever turns it: mirrored, that box would reach its
+/// whole row to its left.
+fn turn(w: &mut World, id: ObjectId, right: bool) {
+    let o = obj_mut(w, id);
+    if !right && o.attack_rect == FRENZY_RIGHT_BOX {
+        o.attack_rect = Rect::UNSET;
+    }
+    set_facing(w, id, right);
 }
 
 /// Idle (see the module documentation). Draws: the attack choice's.
@@ -625,7 +638,7 @@ pub fn squeeze_tick(w: &mut World, id: ObjectId) {
 pub fn enter_frenzy(w: &mut World, id: ObjectId) {
     set_state(w, id, EnemyState::SuperFrenzy);
     set_anim(w, id, STRIKE_ANIM);
-    set_facing(w, id, false);
+    turn(w, id, false);
     let now = w.now_ms;
     let delay = rand(w, FRENZY_DELAY_MS + 1);
     if let Some(t) = tentacle_mut(w, id) {
@@ -644,12 +657,7 @@ pub fn frenzy_tick(w: &mut World, id: ObjectId) {
     if obj(w, id).anim.is_done() {
         set_anim(w, id, STRIKE_ANIM);
         let right = faces_right(obj(w, id));
-        let was = obj(w, id).attack_rect;
-        set_facing(w, id, !right);
-        if was == FRENZY_RIGHT_BOX {
-            // Turned back left, that box is no box.
-            obj_mut(w, id).attack_rect = Rect::UNSET;
-        }
+        turn(w, id, !right);
     }
     if !w.aquatis_link().frenzy {
         obj_mut(w, id).attack_rect = Rect::UNSET;

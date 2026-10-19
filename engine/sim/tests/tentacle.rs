@@ -10,7 +10,7 @@
 //! grabbing a held Claw and a third one's strike ending both holds, the
 //! thrashing of Aquatis's frenzy (its delay, the swipes facing each way in
 //! turn, the box that reaches everything right of it on its row, nothing
-//! hurts it), the attack choice that replaces a frenzy started in the same
+//! hurts it, a reset facing right that leaves it no box), the attack choice that replaces a frenzy started in the same
 //! call, death by any hit, the hidden splash, regrowth after 20 s or at
 //! once in a frenzy and never after Aquatis's death, the reset Aquatis
 //! asks for, and its depth against Claw.
@@ -507,6 +507,45 @@ fn in_aquatis_frenzy_it_thrashes_both_ways_and_nothing_hurts_it() {
         obj(&sim, id).draw_flags & claw_sim::object::draw_flags::MIRROR,
         0
     );
+}
+
+#[test]
+fn a_reset_while_it_thrashes_facing_right_leaves_it_idle_and_harmless() {
+    // Claw 600 px left of it on its row: beyond its strike and its reach.
+    let (mut sim, ids) = arena_sim(1, -600, true);
+    let id = ids[0];
+    sim.with_world(|w| w.aquatis_link_mut().frenzy = true);
+    let mirrored = |sim: &Sim| obj(sim, id).draw_flags & claw_sim::object::draw_flags::MIRROR != 0;
+    let mut k = 0;
+    while !(mirrored(&sim)
+        && obj(&sim, id).frame != tentacle::STRIKE_FRAME
+        && obj(&sim, id).attack_rect.is_set())
+    {
+        sim.step(TickInput::default());
+        k += 1;
+        assert!(k < 200, "never thrashed facing right");
+    }
+    assert_eq!(state_of(&sim, id), Some(EnemyState::SuperFrenzy));
+    assert_eq!(obj(&sim, id).attack_rect, tentacle::FRENZY_RIGHT_BOX);
+    // Aquatis asks for its reset as his frenzy ends (Claw came back).
+    let bit = tdata(&sim, id).bit;
+    sim.with_world(|w| {
+        let link = w.aquatis_link_mut();
+        link.frenzy = false;
+        link.reset_bits |= bit;
+    });
+    let full = health(&sim);
+    sim.step(TickInput::default());
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Idle));
+    assert!(!mirrored(&sim), "facing left");
+    assert!(!obj(&sim, id).attack_rect.is_set(), "no box turned left");
+    // Idle until it may attack, it never reaches him.
+    for _ in 0..50 {
+        sim.step(TickInput::default());
+        assert_eq!(state_of(&sim, id), Some(EnemyState::Idle));
+        assert!(!obj(&sim, id).attack_rect.is_set());
+    }
+    assert_eq!(health(&sim), full, "hurt from far left of it");
 }
 
 #[test]
