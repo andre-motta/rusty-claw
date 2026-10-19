@@ -105,32 +105,32 @@
 #       383-384 0x0 nothing
 #       385-398 0x2000001 right and jump
 #       399-433 0x2000000 right
-#     level4-original.level5.csv: route ticks 10371 to 10847
-#         0-9   0x0 nothing
-#        10-19  0x2000000 right
-#        20-112 0x0 nothing
-#       113-126 0x1 jump
-#       127-156 0x0 nothing
-#       157-170 0x1 jump
-#       171-201 0x0 nothing
-#       202-215 0x1 jump
-#       216-240 0x0 nothing
-#       241-254 0x1 jump
-#       255-273 0x0 nothing
-#       274-287 0x2000001 right and jump
-#       288-307 0x2000000 right
-#       308-314 0x0 nothing
-#       315-316 0x100 dynamite (selects it)
-#       317-318 0x0 nothing
-#       319-322 0x8000000 down
-#       323-324 0x8000004 down and throw
-#       325-326 0x8000000 down
-#       327-374 0x0 nothing
-#       375-376 0x2000000 right
-#       377-385 0x2000001 right and jump
-#       386-425 0x2000000 right
-#       426-427 0x0 nothing
-#       428-441 0x2000001 right and jump
-#       442-476 0x2000000 right
+#     level4-original.level5.csv: route ticks 10366 to 10847
+#         0-17  0x0 nothing
+#        18-25  0x2000000 right
+#        26-117 0x0 nothing
+#       118-131 0x1 jump
+#       132-161 0x0 nothing
+#       162-175 0x1 jump
+#       176-206 0x0 nothing
+#       207-220 0x1 jump
+#       221-245 0x0 nothing
+#       246-259 0x1 jump
+#       260-278 0x0 nothing
+#       279-292 0x2000001 right and jump
+#       293-312 0x2000000 right
+#       313-319 0x0 nothing
+#       320-321 0x100 dynamite (selects it)
+#       322-323 0x0 nothing
+#       324-327 0x8000000 down
+#       328-329 0x8000004 down and throw
+#       330-331 0x8000000 down
+#       332-379 0x0 nothing
+#       380-381 0x2000000 right
+#       382-390 0x2000001 right and jump
+#       391-430 0x2000000 right
+#       431-432 0x0 nothing
+#       433-446 0x2000001 right and jump
+#       447-481 0x2000000 right
 # 14. Down the shaft through its rows of breaking planks and along the
 #     floor to the gem: no goal.
