@@ -237,6 +237,7 @@ fn gated(column: &str) -> bool {
 }
 
 #[test]
+#[ignore = "the level7/crab-lift reference runs are not recorded yet"]
 fn install_level7_lifting_a_hiding_crab_follows_the_reference_traces() {
     let Some(level) = level7() else { return };
     let Some(root) = reference_root() else { return };
