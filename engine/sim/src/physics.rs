@@ -12,6 +12,14 @@
 //! an object whose feet were above it before the step. A ladder's top row is
 //! a floor except while climbing. Death tiles mark the object.
 //!
+//! An object whose movement box is inside a floor finds nothing to stand
+//! on: the ground movers count a floor pixel as support only with a free
+//! pixel above it, and the fall mover lands only on a floor with a free
+//! pixel between the old and the new feet. So an object standing up or
+//! put down with its feet inside Solid or Ground turns to Fall and falls
+//! through every such tile until its feet come out into clear air, then
+//! lands on the next floor as usual. Walls still stop it sideways.
+//!
 //! Probes are not swept: each tests only the requested position, plus the
 //! pixels between the old and the new edge in one column for floors and
 //! ceilings. The 14 px step keeps every step shorter than a tile.
@@ -612,6 +620,36 @@ mod tests {
         // Feet rest on row 191, one pixel above the floor at 192.
         assert_eq!((o.y, o.physics_type), (131, ptype::STAND));
         assert_eq!(r & (res::HIT | res::FLOOR), res::HIT | res::FLOOR);
+    }
+
+    #[test]
+    fn an_object_inside_a_floor_falls_through_until_clear() {
+        // Three rows of Solid, two of air, a floor at 384.
+        let map = TileMap::from_ascii(64, &["...", "###", "###", "###", "...", "...", "###"]);
+        let c = Collider::new(&map);
+        // Feet 1 px inside the top row: nothing holds him.
+        let mut o = body(96, 4, ptype::STAND);
+        physics(&c, &mut o, 96, 4, 0);
+        assert_eq!((o.y, o.physics_type), (4, ptype::FALL));
+        // The fall passes the Solid and lands on the floor below.
+        let mut ys = Vec::new();
+        for _ in 0..40 {
+            if o.physics_type != ptype::FALL {
+                break;
+            }
+            let y = o.y + 12;
+            physics(&c, &mut o, 96, y, 0);
+            ys.push(o.y);
+        }
+        assert_eq!((o.y, o.physics_type), (384 - 61, ptype::STAND));
+        assert!(ys.windows(2).all(|p| p[1] > p[0]), "{ys:?}");
+        // Feet on the top row's top: he stands there and is not moved.
+        let mut o = body(96, 3, ptype::STAND);
+        physics(&c, &mut o, 96, 3, 0);
+        assert_eq!((o.y, o.physics_type), (3, ptype::STAND));
+        let mut o = body(96, -40, ptype::FALL);
+        physics(&c, &mut o, 96, 30, 0);
+        assert_eq!((o.y, o.physics_type), (3, ptype::STAND));
     }
 
     #[test]
