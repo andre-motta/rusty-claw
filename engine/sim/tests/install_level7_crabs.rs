@@ -729,6 +729,9 @@ fn compare_crabs(
 ///   rise and land on other rows, so their snips and bombs reach Claw at
 ///   other times, and from the first one that does the random stream and
 ///   the crabs' choices differ.
+///   In `nest-hatch` the two crabs leave the list three steps earlier
+///   (2952 ms) since the fifth level's enemy rules: a consequence of
+///   their path, which already parts from 648 ms, not a new divergence.
 /// - c60 (the default tuning played tick by tick): the crabs count 18 ms
 ///   ticks where the original at 60 frames per second counts frames of
 ///   16 and 17 ms, so their crouches, snips and hides end at other times
@@ -751,8 +754,8 @@ const KNOWN: &[Known] = &[
             ("crab0_state", 1638),
             ("crab1_state", 1476),
             ("crab1_x", 1476),
-            ("crab0_listed", 3006),
-            ("crab1_listed", 3006),
+            ("crab0_listed", 2952),
+            ("crab1_listed", 2952),
             ("state_id", 1350),
             ("health", 1350),
             ("x", 1368),
