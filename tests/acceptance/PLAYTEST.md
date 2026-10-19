@@ -449,11 +449,15 @@ the level at its start).
 11. The jump-switch room (the warp down at x about 15380 takes Claw there): the tigers and the two Chameleons pace their ledges, and one that paces onto a hidden switch leaps across the room to another ledge.
 12. The lava: falling into the lava anywhere on the level kills Claw (he sinks into it); he starts again at the last checkpoint passed (at the level's start before the first).
 
-<!-- Omar's lines (the warp into his chamber and the fall onto the ladder
-top, the staged introduction with no skip by a jump, the end of a life
-during it, his ring of fire or ice and the opposite sword, the second
-phase in the hall with his energy balls, his death and the gem) follow
-here with his fight. -->
+13. Omar, the arrival: walk right into the warp near the level's end (left of x 31171): Claw appears falling a little above the ladder top in the corridor over Omar's chamber, drops onto it a moment later and freezes; the camera pans down to Omar standing over the chamber's right ledge inside his turning ring of fire, his line, back to Claw, Claw's line, then the name banner drops with a thud and slides off; about 11 s after arriving the fight is on, with his health bar full. Omar does nothing through it but turn to face Claw and taunt now and then.
+14. No skip by a jump: jumping at once on arriving (or a moment later) changes nothing: Claw still lands on the ladder top and the introduction runs in full.
+15. The end of a life during the introduction (Escape, END LIFE, confirm, right after the freeze starts): Claw falls dead at once, and about 2 s later he is back on the ladder top with 100 health and one life fewer, free to move while the lines and the banner play on over him; the banner still drops at its usual moment and nothing freezes him again. Omar is back over the right ledge at full health with his ring of fire.
+16. The ring: nine balls of fire circle Omar about 80 px out with a wide gap (about a quarter of the circle) that comes round about every 1.4 s. A pistol shot or a magic shot that meets a ball is gone; touching a ball costs Claw 1; Omar's own body costs 30, even while he flashes.
+17. Fire and ice: with the ice sword (east of the arena) a sword shot through the gap of the fire ring costs him a quarter of his health; he flashes in place with a thunderclap for 2 s and appears over the other ledge, and the ring turns to ice and turns the other way. Then only the fire sword's shots (west of the arena) hurt him, and so on. A shot of the ring's own element, the plain magic claw or the lightning sword heals him a quarter (never above full) and he says a short line; for half a second after any magic hit, more magic does nothing. Sword blows, pistol shots and dynamite never hurt him behind the ring (pistol shots and dynamite are gone with a block).
+18. The second phase: the fourth good shot ends the ring: his health bar fills again, he flashes for 2 s and appears in the hall above (by the elevator up the shaft), over its right floor. There only Claw's sword hurts him, a quarter of his health a blow; each blow sends him flashing to the hall's other end, where he appears 2 s later. Magic there only makes him block.
+19. His energy ball: from time to time in the hall he raises his hands and, about half a second later, sends a slow glowing ball along the hall at standing height (about 300 px a second) toward the side he faced when he began; it costs 15 and is gone when it hits Claw or a wall.
+20. His death: the fourth blow in the hall kills him where it finds him: he falls with his last line and, about 3.2 s after the blow, the gem rises out of him and flies to a point over the shaft, with Claw frozen where he is until it arrives; taking it ends the level.
+21. Losing a life during the fight starts it over: Omar is back over the chamber's right ledge at full health inside a new ring of fire. If Claw is dead when Omar's death fall ends, no gem comes at all: Omar is back in his ring after the respawn but nothing can hurt him any more, so the level cannot be won on that play.
 
 ## Milestone 3, the end of the game
 

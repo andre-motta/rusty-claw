@@ -357,7 +357,10 @@ mod tests {
             r.get("Laser").unwrap().kind,
             LogicKind::Game(logic::GameLogic::Laser)
         );
-        assert_eq!(r.get("OmarBullet").unwrap().kind, LogicKind::Inert);
+        assert_eq!(
+            r.get("OmarBullet").unwrap().kind,
+            LogicKind::Game(logic::GameLogic::OmarBullet)
+        );
         // Claimed by a family that is not built yet: still a placeholder.
         for name in ["PunkRat", "TowerCannonLeft", "Raux", "BossStager"] {
             let built = logic::runs(name).is_some();

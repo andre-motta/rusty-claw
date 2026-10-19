@@ -12,9 +12,8 @@
 //! the twelfth level's Aquatis ([`aquatis`]) with his helpers and the
 //! tentacles ([`tentacle`]), the thirteenth level's Chameleon
 //! ([`chameleon`]) and RedTail ([`redtail`]) with his stakes and his wind,
-//! and the fourteenth level's tiger guards ([`tiger_guard`]), with Omar
-//! ([`omar`]), his shield and his energy balls declared but not built
-//! yet.
+//! and the fourteenth level's tiger guards ([`tiger_guard`]) and Omar
+//! ([`omar`]) with his shield and his energy balls.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
