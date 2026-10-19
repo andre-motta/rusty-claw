@@ -517,3 +517,62 @@ fn claw_attacking_him_from_close_by_makes_him_dodge_by_the_roll() {
     });
     assert_eq!(got, None);
 }
+
+/// Part of the bridge trick: Marrow running at Claw when the whistle comes
+/// (Claw left his range before his last decision) keeps running through
+/// the whistle at 120 px/s, about 2 px a tick, which moves the point the
+/// parrot takes hold of him; he stands still only from the call on.
+#[test]
+fn whistling_he_keeps_running_until_the_call() {
+    let (mut sim, id) = with_claw(-600, fight::NONE, 2);
+    // Running at Claw, on his left, when the whistle comes.
+    sim.with_world(|w| {
+        enemy::states::enter_fast_advance(w, id);
+        w.objects.get_mut(id).unwrap().health = 75;
+        w.marrow_link_mut().unwrap().phase_health = 100;
+        marrow::enter_wait(w, id);
+    });
+    let speed = enemy::data_of(obj(&sim, id)).expect("built").vx;
+    assert_eq!(speed, -enemy::states::FAST_ADVANCE_SPEED);
+    let x0 = obj(&sim, id).x;
+    let mut ticks = 0;
+    while !link(&sim).parrot_call {
+        sim.step(TickInput::default());
+        ticks += 1;
+        assert!(ticks < 100, "no call");
+        assert_eq!(state_of(&sim, id), Some(EnemyState::WaitForParrot));
+    }
+    let ran = x0 - obj(&sim, id).x;
+    let want = enemy::states::FAST_ADVANCE_SPEED * 0.018 * f64::from(ticks - 1);
+    assert!(
+        (f64::from(ran) - want).abs() <= 1.0,
+        "ran {ran} px in {ticks} ticks"
+    );
+    assert!(ran >= 30, "{ran}");
+    let x = obj(&sim, id).x;
+    idle(&mut sim, 20);
+    assert_eq!(obj(&sim, id).x, x, "still from the call on");
+    assert_eq!(state_of(&sim, id), Some(EnemyState::WaitForParrot));
+}
+
+/// The timeout of an unanswered whistle sets the phase health to his
+/// health whatever it is, not to the old phase health less 25, so the next
+/// whistle comes 25 below where this one ended.
+#[test]
+fn an_unanswered_whistle_ends_with_the_phase_health_his_health() {
+    let (mut sim, id) = with_claw(-300, fight::NONE, 2);
+    sim.with_world(|w| {
+        w.objects.get_mut(id).unwrap().health = 49;
+        w.marrow_link_mut().unwrap().phase_health = 75;
+    });
+    sim.step(TickInput::default());
+    assert_eq!(state_of(&sim, id), Some(EnemyState::WaitForParrot));
+    let mut k = 0;
+    while obj(&sim, id).flags & flags::SAFE != 0 {
+        sim.step(TickInput::default());
+        k += 1;
+        assert!(k < 400);
+    }
+    assert_eq!(k, 278, "5000 ms at the 18 ms step");
+    assert_eq!(link(&sim).phase_health, 49);
+}

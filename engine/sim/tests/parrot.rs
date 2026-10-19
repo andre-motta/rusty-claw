@@ -343,3 +343,148 @@ fn a_death_of_claws_puts_it_back_on_its_perch_flying() {
     assert_eq!(at(&sim, id).0, PERCH.0, "climbing from its perch");
     assert!(at(&sim, id).1 < PERCH.1 && at(&sim, id).1 > PERCH.1 - 12);
 }
+
+/// Steps until the parrot is in `s`, at most `limit` ticks.
+fn until(sim: &mut Sim, id: ObjectId, s: EnemyState, limit: usize) {
+    for _ in 0..limit {
+        if state_of(sim, id) == Some(s) {
+            return;
+        }
+        sim.step(TickInput::default());
+    }
+    panic!("never {s:?}");
+}
+
+/// A whistle answered from the perch with Claw standing at `whistle` while
+/// Marrow whistles, at `flight` from the start of the bird's flight to
+/// him (so on the carry's first step), and at `after` once the carry is
+/// under way: where the carry is aimed across, and where Marrow is dropped.
+fn carry(whistle: i32, flight: i32, after: i32) -> (i32, i32) {
+    let mut sim = room(true);
+    let id = find(&sim, "Parrot");
+    let m = find(&sim, "Marrow");
+    sim.teleport_player(whistle, FLOOR - 61);
+    idle(&mut sim, 5);
+    sim.with_world(|w| {
+        parrot::go_idle(w, id);
+        w.objects.get_mut(m).unwrap().health = 75;
+        w.marrow_link_mut().unwrap().phase_health = 100;
+    });
+    until(&mut sim, id, EnemyState::FlyToMarrow, 100);
+    sim.teleport_player(flight, FLOOR - 61);
+    until(&mut sim, id, EnemyState::CarryMarrow, 100);
+    assert_eq!(sim.player().expect("Claw").x, flight);
+    let ObjectData::Parrot(p) = &obj(&sim, id).data else {
+        panic!("its data");
+    };
+    let aim = p.target.0;
+    sim.teleport_player(after, FLOOR - 61);
+    for _ in 0..300 {
+        sim.step(TickInput::default());
+        if state_of(&sim, id) != Some(EnemyState::CarryMarrow) {
+            break;
+        }
+    }
+    assert_eq!(state_of(&sim, id), Some(EnemyState::FlyAbout), "let go");
+    assert_eq!(obj(&sim, m).physics_type, ptype::STAND, "dropped");
+    (aim, obj(&sim, m).x)
+}
+
+/// The rule the bridge trick rests on: the carry goes to the ledge away
+/// from Claw's x on the carry's first step, 40808 (the room's centre) and
+/// over counting as Marrow's half, so a Claw at 40808 or right of it then
+/// sends Marrow to the left ledge, his own side; where Claw was during the
+/// whistle, or goes once the carry is under way, changes nothing.
+#[test]
+fn the_carry_is_aimed_once_from_claws_x_on_its_first_step() {
+    let (left, right) = (parrot::CARRY_X.1, parrot::CARRY_X.0);
+    assert_eq!(marrow::ROOM_CENTRE_X, 40808);
+    let (aim, x) = carry(40808, 40808, 40808);
+    assert_eq!(aim, left, "at the centre: to the left ledge");
+    assert!(x < marrow::ROOM_CENTRE_X, "dropped on the left, at {x}");
+    let (aim, x) = carry(40807, 40807, 40807);
+    assert_eq!(aim, right, "a pixel left of it: to the right ledge");
+    assert!(x > marrow::ROOM_CENTRE_X, "dropped on the right, at {x}");
+    assert_eq!(carry(40600, 40820, 40820).0, left, "the flight's x counts");
+    assert_eq!(carry(40820, 40600, 40600).0, right, "not the whistle's");
+    assert_eq!(carry(40600, 40820, 40600).0, left, "decided once");
+}
+
+/// Away from its perch it never answers: a whistle while it patrols goes
+/// unanswered, and Marrow drops back after his 5000 ms (278 ticks of
+/// 18 ms) with the phase health his health, however far below the old
+/// one it is.
+#[test]
+fn a_whistle_while_it_patrols_goes_unanswered_into_the_timeout() {
+    let mut sim = room(true);
+    let id = find(&sim, "Parrot");
+    let m = find(&sim, "Marrow");
+    idle(&mut sim, 30);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::FlyAbout));
+    sim.with_world(|w| {
+        w.objects.get_mut(m).unwrap().health = 49;
+        w.marrow_link_mut().unwrap().phase_health = 75;
+    });
+    sim.step(TickInput::default());
+    assert_eq!(state_of(&sim, m), Some(EnemyState::WaitForParrot));
+    let mut called = false;
+    let mut drop = None;
+    for k in 1..400 {
+        sim.step(TickInput::default());
+        called |= sim.marrow_link().expect("link").parrot_call;
+        assert!(
+            !matches!(
+                state_of(&sim, id),
+                Some(EnemyState::FlyToMarrow | EnemyState::CarryMarrow)
+            ),
+            "answered on tick {k}"
+        );
+        if obj(&sim, m).flags & flags::SAFE == 0 {
+            drop = Some(k);
+            break;
+        }
+    }
+    assert!(called, "he calls it");
+    assert_eq!(drop, Some(278));
+    assert_eq!(
+        (marrow::WAIT_FOR_PARROT_MS as usize).div_ceil(18),
+        278,
+        "5000 ms"
+    );
+    let l = *sim.marrow_link().expect("link");
+    assert_eq!((l.phase_health, l.parrot_call), (49, false));
+    assert_eq!(state_of(&sim, id), Some(EnemyState::FlyAbout));
+}
+
+/// Only the third hit sends it to its perch: with two, the fight on and
+/// Claw on the floor, it patrols and swoops for a minute and a half and
+/// never perches, so the slabs are never asked to close.
+#[test]
+fn without_a_third_hit_it_never_perches() {
+    let mut sim = room(true);
+    let id = find(&sim, "Parrot");
+    idle(&mut sim, 30);
+    for _ in 0..2 {
+        sim.with_world(|w| w.objects.get_mut(id).unwrap().flags &= !flags::NO_COLLIDE);
+        hit(&mut sim, id);
+        idle(&mut sim, 25);
+    }
+    assert_eq!(hits(&sim, id), 2);
+    sim.with_world(|w| w.set_boss_fight(fight::ON));
+    let mut dives = 0;
+    for _ in 0..5000 {
+        let before = state_of(&sim, id);
+        sim.step(TickInput::default());
+        let now = state_of(&sim, id);
+        if now == Some(EnemyState::StrikeSetup) && before != now {
+            dives += 1;
+        }
+        assert!(
+            !matches!(now, Some(EnemyState::Idle | EnemyState::FlyToIdle)),
+            "it perches"
+        );
+        assert!(sim.marrow_link().expect("link").open_request);
+    }
+    assert!(dives > 0, "it swoops meanwhile");
+    assert_eq!(hits(&sim, id), 2);
+}
