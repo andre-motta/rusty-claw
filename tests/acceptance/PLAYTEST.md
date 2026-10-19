@@ -226,6 +226,7 @@ the bear sailors and the bear hug, and the crabs, their nests and their bombs.
 10. Crabs, snipping: stand next to a crab: it crouches, then charges or snips; a snip costs 5 health. Hitting a crab while it is out of its shell (charging, snipping or throwing) kills it at once.
 11. Crabs, knocking shells: swing at a crab that is hiding or crouched: it slides about 37 px away per standing swing, with one small boink, and does not die; only the magic claw kills a crab fully withdrawn into its shell.
 12. Crab bombs: a dark bomber crab lobs a bomb at Claw at most every 4 s; it bounces and explodes 1 s after the throw, or at once if it touches him (5 health). The blast also kills crabs caught out of their shells, the thrower included.
+13. Crabs, lifting: walk up to a crab hiding in its shell and press Lift (or Up with Attack): Claw picks it up without a sound from it and carries it over his head, withdrawn in its shell; throw it at a pirate: it hurts the pirate (and breaks a crate it flies into) but passes through other crabs, lands, and carries on as a crab. A crab out of its shell (crouching, charging, snipping) cannot be lifted.
 
 ## Milestone 3, LEVEL8
 

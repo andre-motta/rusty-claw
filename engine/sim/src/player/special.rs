@@ -21,7 +21,7 @@
 //! [`begin_lift`] picks up a liftable object (the lift key or Up with
 //! Attack, see [`super::attack`]): Claw plays his lifting animation (the
 //! low one for objects lifted from a crouch), the object's family is told
-//! through [`logic::lifted`] and his movement box grows by
+//! through [`tell_lifted`] and his movement box grows by
 //! [`LIFT_RAISE`] px upwards. Once lifted he carries it: Left and Right
 //! turn him and walk at [`CARRY_SPEED`] px/s (no step on the walk's event
 //! frames). Walking off a ledge lets go of the object with a sideways
@@ -30,17 +30,23 @@
 //! [`LIFT_HOLD_MS`] of carrying the object is put down and he stands.
 //!
 //! Attack or Lift starts the throw, and the object's family is told that
-//! Claw winds up ([`logic::wind_up`]). Holding the key charges it, up to
+//! Claw winds up ([`tell_wind_up`]). Holding the key charges it, up to
 //! [`THROW_CHARGE_MS`]; the animation waits meanwhile. On the throw
 //! animation's event 1 the object leaves with a power `p` from 0 to 100
 //! that grows with the charge, at `200 + 3p` px/s forwards and
-//! `600 + 2p` px/s upwards ([`logic::thrown`]), and Claw grunts. When the
+//! `600 + 2p` px/s upwards ([`tell_thrown`]), and Claw grunts. When the
 //! animation ends he stands (an object still in his hands then, because
 //! the animation has no release frame, is dropped). Falling off a ledge
 //! while throwing drops the object too.
 //!
 //! Every interruption (a hit, a freeze, any state change that cancels the
-//! attack) lets go of the carried object through [`logic::dropped`].
+//! attack) lets go of the carried object through [`tell_dropped`].
+//!
+//! A hiding hermit crab is lifted, carried and thrown the same way: its
+//! family hears of it through its own entries (see
+//! [`crate::logic::enemy::crab`]), every other family through
+//! [`logic::lifted`], [`logic::wind_up`], [`logic::thrown`] and
+//! [`logic::dropped`].
 //!
 //! # Frozen (5009)
 //!
@@ -82,6 +88,7 @@ use std::sync::Arc;
 use claw_frame::{Buttons, SoundChannel, TickInput};
 
 use super::{Ctx, attack, fallback_tick, state};
+use crate::logic::enemy::crab;
 use crate::logic::world_boss::fight;
 use crate::logic::{self, World};
 use crate::object::{LogicKind, Object, ObjectId, Rect, flags};
@@ -299,7 +306,44 @@ pub fn begin_lift(c: &mut Ctx, target: ObjectId) {
     c.o.move_rect.top -= LIFT_RAISE;
     c.p.mover.zero_carries();
     let id = c.id;
-    c.with_world(|w| logic::lifted(w, target, id));
+    c.with_world(|w| tell_lifted(w, target, id));
+}
+
+/// Tells the family of `id` that `carrier` (Claw) lifted it.
+pub fn tell_lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
+    if crab::is_crab(w, id) {
+        crab::lifted(w, id, carrier);
+    } else {
+        logic::lifted(w, id, carrier);
+    }
+}
+
+/// Tells the family of the carried `id` that Claw winds up a throw.
+pub fn tell_wind_up(w: &mut World, id: ObjectId) {
+    if crab::is_crab(w, id) {
+        crab::wind_up(w, id);
+    } else {
+        logic::wind_up(w, id);
+    }
+}
+
+/// Tells the family of the carried `id` that Claw threw it at (vx, vy)
+/// px/s.
+pub fn tell_thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
+    if crab::is_crab(w, id) {
+        crab::thrown(w, id, vx, vy);
+    } else {
+        logic::thrown(w, id, vx, vy);
+    }
+}
+
+/// Tells the family of the carried `id` that Claw let go of it.
+pub fn tell_dropped(w: &mut World, id: ObjectId) {
+    if crab::is_crab(w, id) {
+        crab::dropped(w, id);
+    } else {
+        logic::dropped(w, id);
+    }
 }
 
 /// Puts the movement box back as it was before lifting.
@@ -315,9 +359,9 @@ fn let_go(c: &mut Ctx, vx: i32) {
     if let Some(id) = c.p.special.lifted.take() {
         c.with_world(|w| {
             if vx == 0 {
-                logic::dropped(w, id);
+                tell_dropped(w, id);
             } else {
-                logic::thrown(w, id, vx, 0);
+                tell_thrown(w, id, vx, 0);
             }
         });
     }
@@ -381,7 +425,7 @@ pub fn lift_tick(c: &mut Ctx) {
     }
     if c.p.special.carrying && (c.pressed(Buttons::ATTACK) || c.pressed(Buttons::LIFT)) {
         if let Some(id) = c.p.special.lifted {
-            c.with_world(|w| logic::wind_up(w, id));
+            c.with_world(|w| tell_wind_up(w, id));
         }
         restore_move_rect(c);
         begin_throw(c);
@@ -451,7 +495,7 @@ pub fn throw_tick(c: &mut Ctx) {
         && let Some(id) = c.p.special.lifted.take()
     {
         let (vx, vy) = throw_velocity(c.p.special.throw_ms, c.p.facing_right);
-        c.with_world(|w| logic::thrown(w, id, vx, vy));
+        c.with_world(|w| tell_thrown(w, id, vx, vy));
         c.play(THROW_SOUND, SoundChannel::Effect);
     }
     if c.o.anim.is_done() {
