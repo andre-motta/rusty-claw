@@ -424,6 +424,10 @@ fn a_stalactite_reels_him_and_starts_his_frenzy_of_alternating_punches() {
     assert_eq!(st(&sim), Some(EnemyState::StalactiteHit));
     assert_eq!(obj(&sim, boss(&sim)).health, 80);
     assert_eq!(ad(&sim).stalactites, 1);
+    // A second stalactite while he reels is lost.
+    cool_down(&mut sim);
+    hit(&mut sim, spike);
+    assert_eq!(obj(&sim, boss(&sim)).health, 80);
     // The reel: his second pose, then the frenzy.
     let mut reel = 0;
     while st(&sim) == Some(EnemyState::StalactiteHit) {

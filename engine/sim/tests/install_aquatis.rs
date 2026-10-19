@@ -15,14 +15,16 @@
 //! - the intro skip: the same walk and Jump on Claw's first row in the
 //!   room (31 at the original's speeds, 27 at the default ones), which
 //!   leaves Aquatis waiting for the fight for good; the arrival jump takes
-//!   the stick of dynamite the helper put down, and at the default speeds
-//!   the first two tentacles grab him in turn; and Jump one row late,
+//!   the stick of dynamite the helper put down, and in the original's run
+//!   at the default speeds the first two tentacles grab him in turn (not
+//!   reached here, see [`KNOWN`]); and Jump one row late,
 //!   which runs the introduction;
 //! - the lift: from the hidden floor right of the tentacles, Jump into
 //!   Aquatis's body at the jump's peak, Lift on the row after the stand
 //!   that follows his contact hit: he is lifted, dropped at once and dies
 //!   in the water; with a help screen 12 rows later the gem turns into the
-//!   level's end on Claw on the return (at both speeds); without it the
+//!   level's end on Claw on the return (at the original's speeds; at the
+//!   default ones the lift fails here, see [`KNOWN`]); without it the
 //!   gem flies off and Claw dies in the water;
 //! - the crack: a full-charge throw from the ledge's end lands the stick
 //!   on the block right of the water, its blast cracks the wall, the quake
