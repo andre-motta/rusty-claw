@@ -6,7 +6,9 @@
 //! original's runs put him there (between two ticks, as a warp does, a
 //! little above the floor he lands on); waits until the level clock
 //! reaches the time the original's run started at; and starts the shared
-//! random stream from the run's state, once. Then, by route:
+//! random stream from the run's state, once: the stream is never set
+//! again, so every draw of the room is compared on every row. Then, by
+//! route:
 //!
 //! - intro-normal: left of the boss room's warp, Right from row 15 walks
 //!   Claw into it; the warp drops him falling onto the ladder top, he
@@ -27,7 +29,9 @@
 //!   of the pillar with the fire sword, fire shots until the first phase
 //!   ends, teleports into the hall above, a sword blow, Omar's energy
 //!   balls, his health set to 25, the killing blow, his death and the
-//!   gem, and a teleport onto the gem's rest point that takes it;
+//!   gem, and a teleport onto the gem's rest point that takes it (each
+//!   teleport with the draws the runs' teleports make, see
+//!   [`teleport_draws`]);
 //! - kill-dead: the fight to the killing blow with the respawn point in
 //!   the chamber, and the End Life while Omar falls dead: no gem comes.
 //!
@@ -290,17 +294,58 @@ const ROUTES: [Route; 10] = [
     ),
 ];
 
-/// True for the row of route `r` that follows one of the fight's
-/// teleports. The teleports are the original's runs' own way of moving
-/// Claw between two steps (a part of the measuring set-up, not of the
-/// game): unlike a warp door, they run the objects around him twice more
-/// with no game time, so Omar makes his frame pulse roll twice there. The
-/// replay moves Claw between the ticks as a warp does and, after that row,
-/// takes the run's random stream at the original's speeds (c18; at the
-/// default speeds the stream is not compared).
-fn after_teleport(r: &Route, k: usize) -> bool {
-    r.fight
-        .is_some_and(|f| k > 0 && f.teleports.iter().any(|t| t.0 == k - 1))
+/// The draws the original's runs' teleports make. The teleports are the
+/// runs' own way of moving Claw between two steps (a part of the
+/// measuring set-up, not of the game): unlike a warp door, they run the
+/// objects in the update pass twice more with no game time. Of the room's
+/// objects, two draw there, on each of the two passes and in the pass's
+/// order:
+///
+/// - Omar, once built: his frame pulse roll (one of 0..=1000) when the
+///   step before the teleport was a frame pulse tick, as his pre-tick
+///   does; nothing else, for none of these rolls is low enough to start a
+///   taunt or a cast (checked here);
+/// - each energy ball in flight: its sparks (a draw across its box, then
+///   one up and down, for each), with no move since no time passes.
+///
+/// The other objects of the room (the lava hands, the geysers and their
+/// sparks, Claw's shots) make no draw on those passes. The replay moves
+/// Claw between the ticks as a warp does, then makes these draws, so the
+/// stream goes on from the same state as the run's and is compared on the
+/// rows that follow too.
+fn teleport_draws(sim: &mut Sim) {
+    let pulse = sim.pulse();
+    let drawing: Vec<ObjectId> = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| o.is_listed())
+        .filter(|(_, o)| {
+            (&*o.logic == omar::NAMES[0] && o.state != claw_sim::object::engine_state::INIT)
+                || (&*o.logic == bullet::NAMES[0] && o.state == bullet::FLYING)
+        })
+        .map(|(id, _)| id)
+        .collect();
+    sim.with_world(|w| {
+        for _ in 0..2 {
+            for &id in &drawing {
+                let Some(o) = w.objects.get(id) else { continue };
+                if &*o.logic == omar::NAMES[0] {
+                    if pulse {
+                        let roll = w.rng.below(1001);
+                        assert!(roll > 49, "a teleport's pass rolls {roll} for Omar");
+                    }
+                } else {
+                    let r = o.move_rect;
+                    for _ in 0..bullet::SPARKS {
+                        for (lo, hi) in [(r.left, r.right), (r.top, r.bottom)] {
+                            w.rng
+                                .below(u32::try_from(hi - lo + 1).expect("a ball's box"));
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// Half the size of the window an energy ball stays in around the camera,
@@ -720,6 +765,7 @@ fn set_up_after(sim: &mut Sim, r: &Route, k: usize) {
         } else {
             sim.with_world(|w| w.claw.special.warp_to = Some(to));
         }
+        teleport_draws(sim);
     }
 }
 
@@ -746,17 +792,8 @@ struct Played {
     completed: bool,
 }
 
-/// Plays `r` at `clock` from its time zero for `rows` rows. With the
-/// `reference` rows of the original's run, the random stream is put in
-/// step with the run's after each row that follows one of the fight's
-/// teleports (see [`after_teleport`]).
-fn play(
-    level: &SimLevel,
-    r: &Route,
-    clock: &str,
-    rows: usize,
-    reference: Option<&[TraceRow]>,
-) -> Played {
+/// Plays `r` at `clock` from its time zero for `rows` rows.
+fn play(level: &SimLevel, r: &Route, clock: &str, rows: usize) -> Played {
     let mut sim = at_time_zero(level, clock, r);
     let ticks = route_ticks(r);
     let mut out = Played {
@@ -769,12 +806,6 @@ fn play(
     let mut id = None;
     for k in 0..rows {
         step_row(&mut sim, r, &ticks, k);
-        if clock == "c18"
-            && after_teleport(r, k)
-            && let Some(state) = reference.and_then(|rows| rows.get(k)?.rng)
-        {
-            sim.with_world(|w| *w.rng = Rng::new(state));
-        }
         out.completed |= sim
             .last_events()
             .iter()
@@ -1141,7 +1172,7 @@ fn install_omar_routes_follow_the_reference_traces() {
             let text = std::fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             let reference = trace::parse(&text).unwrap();
-            let played = play(&level, r, clock, reference.len(), Some(&reference));
+            let played = play(&level, r, clock, reference.len());
             if let Some(out) = std::env::var_os("CLAW_L14B_TRACE") {
                 let out = PathBuf::from(out).join(format!("{store}-{clock}.csv"));
                 std::fs::write(&out, trace::to_csv(&played.rows)).expect("the trace is written");
@@ -1223,24 +1254,9 @@ struct Look {
 const DELAYED_MOUTH: (i32, i32) = (42144, 1903);
 
 /// Plays `rows` rows of `store`'s route at `clock` from its time zero,
-/// with the original's random state there. A fight route takes the run's
-/// random stream after its teleports (see [`after_teleport`]), so it needs
-/// `CLAW_REFERENCE` (`None` without it).
-fn watch(level: &SimLevel, store: &str, clock: &str, rows: usize) -> Option<Vec<Look>> {
+/// with the original's random state there.
+fn watch(level: &SimLevel, store: &str, clock: &str, rows: usize) -> Vec<Look> {
     let r = route_named(store);
-    let reference = match r.fight {
-        Some(_) => {
-            let root = reference_root()?;
-            let path = root
-                .join("level14")
-                .join(store)
-                .join(format!("trace-{clock}-r1.csv"));
-            let text = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-            Some(trace::parse(&text).unwrap())
-        }
-        None => None,
-    };
     let mut sim = at_time_zero(level, clock, r);
     let ticks = route_ticks(r);
     let mut out = Vec::new();
@@ -1248,12 +1264,6 @@ fn watch(level: &SimLevel, store: &str, clock: &str, rows: usize) -> Option<Vec<
     let mut checkpoint = None;
     for k in 0..rows {
         step_row(&mut sim, r, &ticks, k);
-        if clock == "c18"
-            && after_teleport(r, k)
-            && let Some(state) = reference.as_deref().and_then(|rows| rows.get(k)?.rng)
-        {
-            sim.with_world(|w| *w.rng = Rng::new(state));
-        }
         if id.is_none() {
             id = omar_id(&sim);
         }
@@ -1305,7 +1315,7 @@ fn watch(level: &SimLevel, store: &str, clock: &str, rows: usize) -> Option<Vec<
         });
         set_up_after(&mut sim, r, k);
     }
-    Some(out)
+    out
 }
 
 fn st(l: &Look) -> Option<EnemyState> {
@@ -1351,9 +1361,7 @@ fn clock_after(k: usize) -> u64 {
 #[test]
 fn install_omar_the_warp_drops_claw_falling_into_the_616_step_introduction() {
     let Some(level) = level14() else { return };
-    let Some(rows) = watch(&level, "boss-intro-normal", "c18", 700) else {
-        return;
-    };
+    let rows = watch(&level, "boss-intro-normal", "c18", 700);
     // N = 34: Claw falls from the warp's point for three ticks, lands in
     // the trigger's box on T = N + 3, which makes his place the checkpoint.
     let n = 34;
@@ -1395,12 +1403,8 @@ fn install_omar_the_warp_drops_claw_falling_into_the_616_step_introduction() {
 #[test]
 fn install_omar_a_jump_on_the_first_rows_in_the_room_skips_nothing() {
     let Some(level) = level14() else { return };
-    let Some(normal) = watch(&level, "boss-intro-normal", "c18", 700) else {
-        return;
-    };
-    let Some(skip) = watch(&level, "boss-skip-c18", "c18", 700) else {
-        return;
-    };
+    let normal = watch(&level, "boss-intro-normal", "c18", 700);
+    let skip = watch(&level, "boss-skip-c18", "c18", 700);
     // Jump pressed on Claw's first row in the room: he falls all the same,
     // lands on the same tick and the introduction runs on the same ticks.
     for k in 34..40 {
@@ -1416,9 +1420,7 @@ fn install_omar_a_jump_on_the_first_rows_in_the_room_skips_nothing() {
 fn install_omar_the_end_life_in_the_freeze_brings_claw_back_free_at_full_health() {
     let Some(level) = level14() else { return };
     for (store, health) in [("boss-end-life-c18", 100), ("boss-end-life-h90-c18", 90)] {
-        let Some(rows) = watch(&level, store, "c18", 700) else {
-            return;
-        };
+        let rows = watch(&level, store, "c18", 700);
         let t = 37;
         assert_eq!(rows[t + 2].claw.2, claw_state::FREEZE, "{store}");
         assert_eq!(rows[t + 2].claw_health, health, "{store}");
@@ -1478,9 +1480,7 @@ fn install_omar_the_end_life_in_the_freeze_brings_claw_back_free_at_full_health(
 #[test]
 fn install_omar_the_first_phase_takes_four_good_shots_through_the_gap() {
     let Some(level) = level14() else { return };
-    let Some(rows) = watch(&level, "boss-fight-c18", "c18", 700) else {
-        return;
-    };
+    let rows = watch(&level, "boss-fight-c18", "c18", 700);
     // The measuring set-up: his health 50 from the first row.
     assert_eq!(rows[1].omar.map(|a| a.health), Some(50));
     // The first ice shot through the fire ring's gap: 25 off, the ring of
@@ -1516,9 +1516,7 @@ fn install_omar_the_first_phase_takes_four_good_shots_through_the_gap() {
 #[test]
 fn install_omar_the_hall_phase_his_blows_balls_touch_death_and_gem() {
     let Some(level) = level14() else { return };
-    let Some(rows) = watch(&level, "boss-fight-c18", "c18", 1500) else {
-        return;
-    };
+    let rows = watch(&level, "boss-fight-c18", "c18", 1500);
     // The blow on row 564: 25 off, his move to the hall's left end.
     assert_eq!(rows[563].omar.map(|a| a.health), Some(100));
     assert_eq!(rows[564].omar.map(|a| a.health), Some(75));
@@ -1562,9 +1560,7 @@ fn install_omar_the_hall_phase_his_blows_balls_touch_death_and_gem() {
 #[test]
 fn install_omar_claw_dead_at_his_falls_end_leaves_no_gem_for_good() {
     let Some(level) = level14() else { return };
-    let Some(rows) = watch(&level, "boss-kill-dead-c18", "c18", 1700) else {
-        return;
-    };
+    let rows = watch(&level, "boss-kill-dead-c18", "c18", 1700);
     assert_eq!(starts(&rows, EnemyState::Dead), vec![1115]);
     assert_eq!(rows[1215].claw.2, claw_state::DEATH_FALL);
     // His fall ends on 1291 with Claw dead: no gem.
