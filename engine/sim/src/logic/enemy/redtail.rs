@@ -33,8 +33,10 @@
 //! is low when his y is greater than it, RedTail when he also stands. Two
 //! figures are on the same level when both are low or neither is.
 //!
-//! - Built: the current boss and the link's RedTail; his body box
-//!   [`BODY_RECT`] for moving and touching, [`HIT_RECT`] for being hit;
+//! - Built: the link's RedTail, and the current boss from his first logic
+//!   call on (built by a warp between two ticks, he keeps his own health
+//!   through the tick that follows it); his body box [`BODY_RECT`] for
+//!   moving and touching, [`HIT_RECT`] for being hit;
 //!   [`HEALTH`] health and [`DAMAGE`] (times the difficulty factors); the
 //!   range boxes [`RANGES`]; no patrol limits until his first landing;
 //!   never liftable; going by sight; always active. He drops onto the
@@ -464,6 +466,8 @@ pub struct RedTailData {
     /// Ticks of his death since a line of his last ran (see
     /// [`SPEAKER_TAIL`]).
     pub quiet: u32,
+    /// He has been named the current boss (on his first logic call).
+    pub named: bool,
 }
 
 impl Default for RedTailData {
@@ -487,6 +491,7 @@ impl Default for RedTailData {
             falls: false,
             stand_vy: BUILT_STAND_SPEED,
             quiet: 0,
+            named: false,
         }
     }
 }
@@ -609,7 +614,8 @@ fn taunt(w: &mut World, id: ObjectId) {
 /// One logic call (see the module documentation): the reset when Claw
 /// has respawned, then the human logic call with the post-tick call of a
 /// hit made before his movement step, and the exact height he stands at.
-/// Being removed, he is no longer the current boss nor named in the link.
+/// The first call names him the current boss. Being removed, he is no
+/// longer the current boss nor named in the link.
 pub fn tick(w: &mut World, id: ObjectId) {
     let raw = obj(w, id).state;
     if raw == engine_state::DESTROYING {
@@ -619,6 +625,16 @@ pub fn tick(w: &mut World, id: ObjectId) {
         if w.redtail_link().redtail == Some(id) {
             w.redtail_link_mut().redtail = None;
         }
+    }
+    // Built by a warp's set-up between two ticks, he is the current boss
+    // from his first logic call on: a boss health set-up made between
+    // two ticks reaches him after that tick, which shows his own health.
+    if raw != engine_state::DESTROYING
+        && let Some(d) = redtail_mut(w, id)
+        && !d.named
+    {
+        d.named = true;
+        w.set_current_boss(Some(id));
     }
     if EnemyState::from_id(raw).is_none() {
         super::tick(w, id, &CLASS);
@@ -742,7 +758,6 @@ pub fn construct(w: &mut World, id: ObjectId) {
         let o = obj(w, id);
         (o.x, o.y)
     };
-    w.set_current_boss(Some(id));
     let full_health = scaled(HEALTH, super::HEALTH_FACTOR);
     let fields = EnemyFields {
         ranges: RANGES,
