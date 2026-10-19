@@ -1,8 +1,8 @@
-//! The search through the second level's boss room on your own install
-//! (skipped without `CLAW_INSTALL`): from beside the door, Claw goes
-//! through it, sits through Raux's introduction (or skips it with the
-//! jump-in), fights Raux down and takes the gem his defeat releases.
-//! Nothing from an install is stored in the repository.
+//! The search through the second and sixth levels' boss rooms on your own
+//! install (skipped without `CLAW_INSTALL`): from beside the door, Claw
+//! goes through it, sits through the boss's introduction (or skips it with
+//! the jump-in), fights Raux or Wolvington down and takes the gem his
+//! defeat releases. Nothing from an install is stored in the repository.
 
 use std::path::PathBuf;
 
@@ -12,31 +12,43 @@ use claw_bot::search::{BossStage, Intro, boss_end, boss_stage};
 use claw_bot::{Goal, SearchConfig, search_report};
 use claw_sim::claw_frame::GameEvent;
 use claw_sim::logic::world_boss::fight;
-use claw_sim::{InputScript, Sim, SimLevel};
+use claw_sim::{Buttons, InputScript, Sim, SimLevel};
 
 /// Beside the boss room's door, where the reference runs of the room
 /// start.
 const DOOR_SIDE: (i32, i32) = (20150, 2091);
 
+/// Under the sixth level's boss room door, where the reference runs of
+/// that room start (a jump takes Claw into the door).
+const DOOR_UNDER_6: (i32, i32) = (30685, 4175);
+
 /// The random state those runs set when Claw has settled there.
 const SEGMENT_SEED: u32 = 111_567;
 
-fn level2() -> Option<SimLevel> {
+fn retail(n: u32) -> Option<SimLevel> {
     let Some(root) = std::env::var_os("CLAW_INSTALL").map(PathBuf::from) else {
         eprintln!("skipped: CLAW_INSTALL is not set");
         return None;
     };
     let store = Install::open(&root).unwrap().store().unwrap();
-    let data = LevelData::build(&store, LevelSource::Retail(2)).unwrap();
+    let data = LevelData::build(&store, LevelSource::Retail(n)).unwrap();
     Some(SimLevel::from_level(&data, &store).unwrap())
 }
 
-/// The game settled beside the door, as a segment of the reference runs
-/// starts.
-fn beside_the_door(level: SimLevel, tuning: TuningName) -> Sim {
+fn level2() -> Option<SimLevel> {
+    retail(2)
+}
+
+/// The game settled at `at`, as a segment of the reference runs starts.
+fn settled(level: SimLevel, tuning: TuningName, at: (i32, i32)) -> Sim {
     let mut sim = Sim::new(level, route::sim_config(tuning, SEGMENT_SEED));
-    route::settle_at(&mut sim, DOOR_SIDE.0, DOOR_SIDE.1, SEGMENT_SEED);
+    route::settle_at(&mut sim, at.0, at.1, SEGMENT_SEED);
     sim
+}
+
+/// The second level's game settled beside the door.
+fn beside_the_door(level: SimLevel, tuning: TuningName) -> Sim {
+    settled(level, tuning, DOOR_SIDE)
 }
 
 /// What a route did in the boss room: the fight flag's values in order,
@@ -111,4 +123,57 @@ fn install_level2_the_search_finds_the_jump_in_that_skips_the_introduction() {
     assert_eq!(flags, vec![fight::NONE], "the introduction never starts");
     assert!(defeated.is_some() && won.is_some() && defeated < won);
     assert!(found.stats.entries_pruned > 0, "walking in starts it");
+}
+
+#[test]
+fn install_level6_the_search_sits_through_the_introduction_and_beats_wolvington() {
+    let Some(level) = retail(6) else { return };
+    let start = settled(level, TuningName::Original, DOOR_UNDER_6);
+    let end = boss_end(&start).expect("the sixth level ends with a boss");
+    assert_eq!(end.gem, (34909, 4330));
+    let found = search_report(&start, Goal::LevelComplete, &cfg(Intro::Play)).expect("a route");
+    let (flags, defeated, won) = play(&start, &found.script);
+    println!(
+        "introduction played: {} ticks, Wolvington defeated at {defeated:?}, won at {won:?}, {} nodes, {} health lost",
+        found.script.ticks.len(),
+        found.stats.expanded,
+        found.stats.health_lost
+    );
+    assert_eq!(flags, vec![fight::NONE, fight::STAGING, fight::ON]);
+    assert!(defeated.is_some() && won.is_some() && defeated < won);
+}
+
+#[test]
+fn install_level6_the_search_finds_the_jump_in_and_beats_the_dormant_wolvington() {
+    let Some(level) = retail(6) else { return };
+    let start = settled(level, TuningName::Original, DOOR_UNDER_6);
+    let end = boss_end(&start).expect("the sixth level ends with a boss");
+    let found = search_report(&start, Goal::LevelComplete, &cfg(Intro::Skip)).expect("a route");
+    let (flags, defeated, won) = play(&start, &found.script);
+    println!(
+        "jump-in: {} ticks, Wolvington defeated at {defeated:?}, won at {won:?}, {} nodes, {} entries dropped",
+        found.script.ticks.len(),
+        found.stats.expanded,
+        found.stats.entries_pruned
+    );
+    assert_eq!(flags, vec![fight::NONE], "the introduction never starts");
+    assert!(defeated.is_some() && won.is_some() && defeated < won);
+    // The jump is pressed on the first tick in the room, toward
+    // Wolvington, and held 12 ticks, as the original's players make it.
+    let mut sim = start.clone();
+    let first = found
+        .script
+        .ticks
+        .iter()
+        .position(|&t| {
+            sim.step(t);
+            sim.player().is_some_and(|o| o.x > end.room.0 - 100)
+        })
+        .expect("the room");
+    let held = |i: usize| found.script.ticks[i].held;
+    assert!(found.script.ticks[first].pressed.contains(Buttons::JUMP));
+    for i in first..first + 12 {
+        assert!(held(i).contains(Buttons::JUMP | Buttons::RIGHT), "tick {i}");
+    }
+    assert!(!held(first + 12).contains(Buttons::JUMP));
 }

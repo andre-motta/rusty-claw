@@ -1,0 +1,50 @@
+# Waypoints for the sixth level with the default tuning, from the level's
+# geometry (the same stretches as at the original speeds). The route is
+# searched a stretch at a time: each stretch below runs with its waypoints
+# as --hints (with --hints-on-foot) and ends at its goal (--goal X,Y), and
+# the next carries on from it (--from-route, --from-tick at its last
+# tick); the last stretch has no goal and ends at the gem. Every stretch
+# uses --seed level and --fragile-cost 100.
+#
+# 1. Down the ladder past the start, through the sewer under it, up on
+#    the blower in its floor and up the long ladder to the street and the
+#    first checkpoint: no waypoints, goal 3406,4765.
+# 2. Down through the hole by the first checkpoint, across the rope and up
+#    the shaft to the second checkpoint: goal 4452,4381.
+3769,5251
+4199,5121
+4238,4616
+# 3. To the third checkpoint, riding the elevator over the goo: goal
+#    7087,4189.
+6080,4315
+6900,4315
+# 4. Down into the pit by the goo vent, up its ladder and along the
+#    street to the first super checkpoint: goal 9165,4732.
+7935,4410
+8100,4182
+# 5. To the checkpoint: no waypoints, goal 10201,4764.
+# 6. Up on the blower by the wall and along the top to the checkpoint
+#    past the goo: no waypoints, goal 14272,4993.
+# 7. Down into the sewer, across the two ropes, along its floor and up the
+#    ladder to the checkpoint: goal 16418,4765.
+14696,5570
+15266,5630
+15899,5670
+16031,5454
+# 8. Up on the low blower to the ladder above it, over the goo to the
+#    checkpoint: no waypoints, goal 17854,3995.
+# 9. Down the long shaft to the second super checkpoint: no waypoints,
+#    goal 19831,6021.
+# 10. Across the two ropes over the goo, past the two stepping stones and
+#     up the shaft of sliding elevators to the checkpoint: goal
+#     22323,4958.
+20087,5890
+20508,5890
+21080,6021
+21529,5893
+# 11. To the checkpoint: no waypoints, goal 27069,5150.
+# 12. To the checkpoint: no waypoints, goal 28947,4510.
+# 13. Down to the sewer under the boss room's door, along it over the
+#     goo on the elevator, up on the blower at its end, back along the
+#     passage above and up the ladder to the door; the boss and the gem:
+#     no waypoints, no goal.

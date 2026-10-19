@@ -469,6 +469,33 @@ fn a_wait_for_a_stepping_stone_is_progress() {
     }
 }
 
+#[test]
+fn a_wait_over_a_blower_or_beside_a_goo_vent_is_progress_and_far_from_them_is_not() {
+    // Claw stands at x 200 on a floor whose top is at y 320. Over a
+    // blower's nozzle (the blower 90 px above the floor), or beside a goo
+    // vent, each wait is a state of its own: the throw or the end of the
+    // eruption comes nearer.
+    for object in [
+        ObjectSpec::at("GroundBlower", 200, 230, 0),
+        ObjectSpec::at("GooVent", 330, 300, 0),
+    ] {
+        let keys = keys_while_waiting(object.clone(), 10);
+        for w in keys.windows(2) {
+            assert_ne!(w[0], w[1], "{}", object.logic);
+        }
+    }
+    // The same objects out of reach: every wait is the same state.
+    for object in [
+        ObjectSpec::at("GroundBlower", 600, 230, 0),
+        ObjectSpec::at("GooVent", 700, 300, 0),
+    ] {
+        let keys = keys_while_waiting(object.clone(), 4);
+        for w in keys.windows(2) {
+            assert_eq!(w[0], w[1], "{}", object.logic);
+        }
+    }
+}
+
 /// A level numbered 5 (the fifth level's plank geometry) with a floor at
 /// y 960 and a row of five breaking planks from x 807 at y 793, 500 ms
 /// apart: their one-way floor tiles in row 11, columns 12 to 16, 28 px

@@ -64,13 +64,13 @@ use std::time::{Duration, Instant};
 
 use claw_sim::claw_frame::GameEvent;
 use claw_sim::logic::world_boss::fight;
-use claw_sim::logic::{ObjectData, boss_stage, enemy, floor_spike, pickup, platform};
+use claw_sim::logic::{ObjectData, boss_stage, enemy, floor_spike, goo_vent, pickup, platform};
 use claw_sim::player::special::BOSS_END;
 use claw_sim::player::state;
 use claw_sim::{Buttons, InputScript, Sim, TickInput};
 
 use crate::actions::{self, Action, Arena, MIN_SPACING};
-use crate::field::{DistanceField, Grid, Reach, UNREACHABLE};
+use crate::field::{BLOWER_HALF_WIDTH, DistanceField, Grid, Reach, UNREACHABLE};
 
 /// What ends the search.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -504,7 +504,9 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
 
 /// The bosses whose defeat ends a level, by logic name.
 pub fn is_boss(logic: &str) -> bool {
-    enemy::raux::NAMES.contains(&logic) || enemy::katherine::NAMES.contains(&logic)
+    enemy::raux::NAMES.contains(&logic)
+        || enemy::katherine::NAMES.contains(&logic)
+        || enemy::wolvington::NAMES.contains(&logic)
 }
 
 /// Record fields of the boss room's door: where it leads, x and y.
@@ -569,6 +571,14 @@ pub fn boss_stage(sim: &Sim) -> BossStage {
 /// How finely the search tells apart the moments of a floor spike's
 /// cycle, ms.
 pub const SPIKE_STEP_MS: i64 = 100;
+
+/// How near a goo vent, across and up or down, Claw must be for a wait
+/// beside it to count as progress, px.
+pub const VENT_NEAR: (u32, u32) = (200, 150);
+
+/// How far above a ground blower Claw may be and still count as over its
+/// nozzle for a wait there, px (standing, he is about 30 px below it).
+pub const BLOWER_NEAR_Y: u32 = 120;
 
 /// The distance of the gem stage's start, px: any state of the fight is
 /// guided as at least this far from the goal.
@@ -1419,6 +1429,32 @@ pub fn state_key(sim: &Sim) -> u64 {
             // Where the rope is in its swing decides where a grab or a
             // release takes Claw.
             k.add(&[4, i64::from(id), i64::from(r.frame / 2)]);
+        } else if let ObjectData::GroundBlower(_) = &o.data {
+            // A wait over a blower's nozzle for its throw is progress: the
+            // jet's picture and, since the last picture lasts a long while,
+            // the time.
+            if o.x.abs_diff(c.x) <= BLOWER_HALF_WIDTH.unsigned_abs()
+                && o.y.abs_diff(c.y) <= BLOWER_NEAR_Y
+            {
+                k.add(&[
+                    10,
+                    i64::from(id),
+                    i64::from(o.frame),
+                    (sim.tick() / actions::STEP as u64) as i64,
+                ]);
+            }
+        } else if let ObjectData::GooVent(_) = &o.data {
+            // A wait beside a goo vent for its eruption to end is progress:
+            // whether it is dangerous, its picture and the time.
+            if o.x.abs_diff(c.x) <= VENT_NEAR.0 && o.y.abs_diff(c.y) <= VENT_NEAR.1 {
+                k.add(&[
+                    11,
+                    i64::from(id),
+                    i64::from(goo_vent::dangerous(o)),
+                    i64::from(o.frame),
+                    (sim.tick() / actions::STEP as u64) as i64,
+                ]);
+            }
         } else if let ObjectData::FloorSpike(d) = &o.data {
             // A wait for a spike to sink is progress: where the spike is
             // in its cycle, to a tenth of a second.

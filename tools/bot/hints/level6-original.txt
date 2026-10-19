@@ -1,0 +1,77 @@
+# Waypoints for the sixth level at the original speeds, from the level's
+# geometry. The route is searched a stretch at a time: each stretch below
+# runs with its waypoints as --hints (with --hints-on-foot) and ends at its
+# goal (--goal X,Y), and the next carries on from it (--from-route,
+# --from-tick at its last tick); the last stretch has no goal and ends at
+# the gem. Every stretch uses --seed level and --fragile-cost 100.
+# The jump-in route (level6-introskip.csv) shares the first twelve
+# stretches and runs the last with --intro skip. The sixth level of the
+# fifth level's game (level5-original.level6.csv) runs the same stretches
+# with --carry naming its start lines, and with the waypoints given for it
+# below.
+#
+# 1. Down the ladder past the start, through the sewer under it, up on
+#    the blower in its floor and up the long ladder to the street and the
+#    first checkpoint: no waypoints, goal 3406,4765.
+# 2. Down through the hole by the first checkpoint, across the rope and up
+#    the shaft to the second checkpoint: no waypoints, goal 4452,4381.
+#    The fifth level's game: 3769,5251 (on the rope), 4199,5121 and
+#    4238,4616.
+# 3. To the third checkpoint, riding the elevator over the goo: goal
+#    7087,4189.
+6080,4315
+6900,4315
+# 4. Down into the pit by the goo vent, up its ladder and along the
+#    street to the first super checkpoint: goal 9165,4732.
+7935,4410
+8100,4182
+# 5. To the checkpoint: no waypoints, goal 10201,4764.
+# 6. Up on the blower by the wall and along the top to the checkpoint
+#    past the goo: no waypoints, goal 14272,4993.
+# 7. Down into the sewer, across the two ropes, along its floor and up the
+#    ladder to the checkpoint: no waypoints, goal 16418,4765. The fifth
+#    level's game: 14599,5685, 15266,5630, 15899,5670 and 16031,5454.
+# 8. Up on the low blower to the ladder above it, over the goo to the
+#    checkpoint: no waypoints, goal 17854,3995.
+# 9. Down the long shaft to the second super checkpoint: no waypoints,
+#    goal 19831,6021.
+# 10. Across the two ropes over the goo, over the blocks beyond and up the
+#     shaft of sliding elevators to the checkpoint, in three parts.
+#     a. To Claw hanging from the first rope: no waypoints, goal
+#        19980,5920 with --goal-on-foot.
+#     b. Not searched: at these speeds a release from the first rope
+#        catches the second only when the two swing a long way out of
+#        step, so Claw hangs on until they come round, lets go with a
+#        jump to the right, catches the second rope, swings and lets go
+#        on to the block beyond. The stretch is written into the route as
+#        these held buttons (masks of the route file), in ticks counted
+#        from the stretch's first tick, each range inclusive; each wait is
+#        the middle of the waits that work.
+#        level6-original.csv: route ticks 7807 to 8536
+#           0-591 0x0 nothing
+#         592-605 0x2000001 right and jump
+#         606-626 0x2000000 right
+#         627-685 0x0 nothing
+#         686-699 0x2000001 right and jump
+#         700-729 0x2000000 right
+#        level5-original.level6.csv: route ticks 7996 to 8549
+#           0-402 0x0 nothing
+#         403-416 0x2000001 right and jump
+#         417-437 0x2000000 right
+#         438-507 0x0 nothing
+#         508-521 0x2000001 right and jump
+#         522-553 0x2000000 right
+#     c. From the block over the blocks beyond and up the shaft: goal
+#        22323,4958.
+21317,5906
+21648,5778
+22138,5877
+# 11. To the checkpoint: no waypoints, goal 27069,5150.
+# 12. To the checkpoint: no waypoints, goal 28947,4510.
+# 13. Down to the sewer under the boss room's door, along it over the
+#     goo on the elevator, up on the blower at its end, back along the
+#     passage above and up the ladder to the door; the boss and the gem:
+#     no goal.
+31534,5458
+30500,5079
+30432,4400

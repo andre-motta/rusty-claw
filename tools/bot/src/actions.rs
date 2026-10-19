@@ -13,9 +13,11 @@
 //!   either side, and jumps to leap clear (the retreat) or over him; the
 //!   walks are the approach;
 //! - the door's, offered on the ground near the boss room's door: walk
-//!   toward the door for a few ticks, then jump on through it, so that one
-//!   of them jumps on Claw's first tick in the room (the jump-in entry,
-//!   which skips the boss's introduction). A door overhead is jumped up
+//!   toward the door for a few ticks, then jump on through it toward the
+//!   boss's side of the room, so that one of them jumps on Claw's first
+//!   tick in the room (the jump-in entry, which skips the boss's
+//!   introduction, toward the boss as the original's players make it). A
+//!   door overhead is jumped up
 //!   into instead: jump held for a few ticks, let go for a few, then a
 //!   fresh jump toward the boss, so that one of them presses jump on the
 //!   first tick in the room.
@@ -134,14 +136,16 @@ pub enum Action {
         /// The side to strike: -1 left, 1 right.
         dir: i8,
     },
-    /// Walk `dir` for `walk` ticks, then jump on in that direction (jump
-    /// held [`ENTRY_JUMP`] ticks): through a door, a jump on the first tick
+    /// Walk `dir` for `walk` ticks, then jump toward `jump` (jump held
+    /// [`ENTRY_JUMP`] ticks): through a door, a jump on the first tick
     /// beyond it.
     Entry {
-        /// Direction: -1 left, 1 right.
+        /// Direction of the walk: -1 left, 1 right.
         dir: i8,
         /// Ticks walked before the jump.
         walk: u8,
+        /// Direction of the jump: -1 left, 1 right.
+        jump: i8,
     },
     /// Jump up holding the button for `hold` ticks, let go for `wait`,
     /// then jump toward `dir` (held [`ENTRY_JUMP`] ticks): into a door
@@ -192,11 +196,11 @@ impl Action {
                 seg(ATTACK, MIN_SPACING);
                 seg(0, STEP - MIN_SPACING);
             }
-            Action::Entry { dir, walk } => {
-                let d = dir_mask(dir);
-                seg(d, usize::from(walk).max(MIN_SPACING));
-                seg(d | JUMP, ENTRY_JUMP);
-                seg(d, MIN_SPACING);
+            Action::Entry { dir, walk, jump } => {
+                seg(dir_mask(dir), usize::from(walk).max(MIN_SPACING));
+                let j = dir_mask(jump);
+                seg(j | JUMP, ENTRY_JUMP);
+                seg(j, MIN_SPACING);
             }
             Action::RiseEntry { dir, hold, wait } => {
                 let d = dir_mask(dir);
@@ -217,7 +221,7 @@ impl Action {
             }
             Action::Strike { dir } => format!("strike{dir:+}"),
             Action::Catch { dir } => format!("catch{dir:+}"),
-            Action::Entry { dir, walk } => format!("entry{dir:+}x{walk}"),
+            Action::Entry { dir, walk, jump } => format!("entry{dir:+}x{walk}j{jump:+}"),
             Action::RiseEntry { dir, hold, wait } => format!("rise{dir:+}x{hold}w{wait}"),
             other => format!("{other:?}").to_lowercase(),
         }
@@ -295,7 +299,12 @@ pub fn choices_in(sim: &Sim, arena: &Arena) -> Vec<Action> {
         let across = dx - o.x;
         if across.abs() <= DOOR_REACH && (dy - o.y).abs() <= DOOR_REACH {
             let dir = if across >= 0 { 1 } else { -1 };
-            out.extend(ENTRY_WALKS.map(|walk| Action::Entry { dir, walk }));
+            let jump = if arena.boss_side == 0 {
+                dir
+            } else {
+                arena.boss_side
+            };
+            out.extend(ENTRY_WALKS.map(|walk| Action::Entry { dir, walk, jump }));
         }
         if across.abs() <= RISE_REACH && RISE_HEIGHT.contains(&(o.y - dy)) {
             let dir = if arena.boss_side < 0 { -1 } else { 1 };
@@ -438,7 +447,9 @@ mod tests {
         ];
         for dir in [-1i8, 1] {
             for walk in ENTRY_WALKS {
-                all.push(Action::Entry { dir, walk });
+                for jump in [-1i8, 1] {
+                    all.push(Action::Entry { dir, walk, jump });
+                }
             }
             for hold in RISE_HOLDS {
                 for wait in RISE_WAITS {
@@ -473,5 +484,19 @@ mod tests {
             // the next jump is a fresh press.
             assert_eq!(m.last().unwrap() & JUMP, 0, "{a:?}");
         }
+    }
+
+    #[test]
+    fn a_door_entry_walks_toward_the_door_and_jumps_toward_the_boss() {
+        let m = Action::Entry {
+            dir: -1,
+            walk: 3,
+            jump: 1,
+        }
+        .masks();
+        let mut want = vec![LEFT; 3];
+        want.extend([RIGHT | JUMP; ENTRY_JUMP]);
+        want.extend([RIGHT; MIN_SPACING]);
+        assert_eq!(m, want);
     }
 }
