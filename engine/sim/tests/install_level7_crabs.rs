@@ -742,11 +742,7 @@ fn compare_crabs(
 type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 
 const KNOWN: &[Known] = &[
-    (
-        "nest-hatch",
-        "c18",
-        &[("crab0_y", 2070), ("crab1_y", 2070)],
-    ),
+    ("nest-hatch", "c18", &[("crab0_y", 2070), ("crab1_y", 2070)]),
     (
         "nest-hatch",
         "c60",
