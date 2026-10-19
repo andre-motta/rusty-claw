@@ -71,7 +71,21 @@
 # 13. Down to the sewer under the boss room's door, along it over the
 #     goo on the elevator, up on the blower at its end, back along the
 #     passage above and up the ladder to the door; the boss and the gem:
-#     no goal.
+#     no goal, in two parts.
+#     a. To the door, through the tick Claw touches it: no goal.
+#     b. From the door on, Wolvington and the gem: searched again once a
+#        warp door ran every awake object once more before Claw's first
+#        tick in the room, which changes the fight. The route up to the
+#        touching tick is kept as it is, and the search carries on from
+#        the tick after it (--from-route with --from-tick one past the
+#        touching tick, no --hints, so the header keeps naming these
+#        waypoints), with --intro play, or
+#        --intro skip for the jump-in route. The touching tick and the
+#        fragile cost: level6-original.csv 13248 and 400,
+#        level6-introskip.csv 13316 and 100, level5-original.level6.csv
+#        12914 and 400 (of the two costs tried, the one whose route kept
+#        more health, or won more often with a change of the held buttons
+#        a tick early or late).
 31534,5458
 30500,5079
 30432,4400
