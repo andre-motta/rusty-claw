@@ -339,4 +339,4 @@ takes it; the game starts the level at its start).
 16. Keys held through the freeze act the moment it ends: holding Jump jumps at once, holding Right walks on at once, holding Down crouches again.
 17. The pause key, the help screen (F1) and the in-game menu still open while Claw is frozen, and the freeze waits while they are up; losing a life while frozen does not end it: it runs on after the respawn.
 
-<!-- Standing up inside the floor at a pool's left wall after a crouched hit, and falling through it: its lines go here. -->
+18. The floor clip at the first fish pool (x 4067 to 4450): walk left to the pool's left wall, crouch there and stay down while the fish knock Claw back and forth. A touch from his right slides him, still crouched, under the ledge left of the wall; when the hit ends he stands up inside the floor and falls straight through it to the hall below the pool, landing near x 4000. A stick of dynamite blowing up between Claw and the wall pushes him away from it instead, and there is no fall.
