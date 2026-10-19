@@ -1318,6 +1318,11 @@ impl Sim {
         self.out.scream_lock_ms()
     }
 
+    /// The Aquatis link (see [`crate::logic::enemy::aquatis::AquatisLink`]).
+    pub fn aquatis_link(&self) -> &crate::logic::enemy::aquatis::AquatisLink {
+        self.out.aquatis()
+    }
+
     /// The camera's scripted point, when one is set (by Claw's code, a
     /// logic or [`Sim::set_camera_point`]).
     pub fn camera_override(&self) -> Option<(i32, i32)> {
@@ -1565,14 +1570,16 @@ impl Sim {
     /// screen (with [`SimConfig::fuse_clock`] at its original default).
     ///
     /// The game time then counts as the game time of the last tick run
-    /// plus `ms`, for the fuse only: every lit stick of dynamite whose fuse
+    /// plus `ms`, for the fuse: every lit stick of dynamite whose fuse
     /// has burnt by then goes off at once, as if it had gone off in the
     /// last tick before the screen (its blast hurts in the 8th tick after
     /// the screen, against the 9th after a stick that goes off in a tick).
-    /// Nothing else sees that time and the game time stays as it was; no
-    /// other object runs and nothing is drawn from the random stream. With
-    /// [`FuseClock::Frozen`] it does nothing, and the pause and the
-    /// in-game menu never call it: their time never reaches play.
+    /// The same time reaches Aquatis's fight
+    /// ([`logic::enemy::aquatis::pass_help_time`]), for what of it runs on
+    /// game time. Nothing else sees that time and the game time stays as it
+    /// was; no other object runs and nothing is drawn from the random
+    /// stream. With [`FuseClock::Frozen`] it does nothing, and the pause
+    /// and the in-game menu never call it: their time never reaches play.
     pub fn pass_menu_time(&mut self, ms: u32) {
         if self.cfg.fuse_clock == FuseClock::Frozen || ms == 0 {
             return;
@@ -1582,6 +1589,7 @@ impl Sim {
         {
             let mut w = runner.world(objects);
             logic::projectile::pass_fuse_time(&mut w, at);
+            logic::enemy::aquatis::pass_help_time(&mut w, at);
         }
         runner.list_spawned(objects);
     }

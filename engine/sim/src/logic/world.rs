@@ -10,6 +10,7 @@ use claw_frame::{AudioCue, GameEvent, PaletteFade, RemovedBody, ScreenTransition
 use crate::anim::{Animation, FRAME_SOUND_IN_VIEW, FRAME_SOUND_POSITIONAL};
 use crate::container::Container;
 use crate::level::SimLevel;
+use crate::logic::enemy::aquatis::AquatisLink;
 use crate::logic::enemy::marrow::MarrowLink;
 use crate::logic::sound;
 use crate::logic::world_boss::BossState;
@@ -42,8 +43,8 @@ pub struct VoiceRequest {
 /// The boss fight state ([`BossState`], see [`super::world_boss`]) is a
 /// state too: it lasts the whole level and starts cleared with it. So are
 /// the Marrow link ([`MarrowLink`], see [`World::marrow_link`]), the
-/// scream lockout ([`World::scream_lock_ms`]) and the fish's flop toggle
-/// ([`World::fish_flop`]).
+/// scream lockout ([`World::scream_lock_ms`]), the fish's flop toggle
+/// ([`World::fish_flop`]) and the Aquatis link ([`World::aquatis_link`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Outbox {
     audio: Vec<AudioCue>,
@@ -63,6 +64,9 @@ pub struct Outbox {
     /// The fish's flop toggle reads 0 (see
     /// [`crate::logic::enemy::fish`]); it starts at 1.
     pub(crate) fish_flop_zero: bool,
+    /// What Aquatis's helpers and tentacles share with him (see
+    /// [`crate::logic::enemy::aquatis`]).
+    pub(crate) aquatis: AquatisLink,
     falling: Vec<ObjectId>,
     removed_bodies: Vec<RemovedBody>,
 }
@@ -160,6 +164,11 @@ impl Outbox {
     /// [`World::marrow_link`]).
     pub fn marrow(&self) -> Option<&MarrowLink> {
         self.marrow.as_ref()
+    }
+
+    /// The Aquatis link (see [`World::aquatis_link`]).
+    pub fn aquatis(&self) -> &AquatisLink {
+        &self.aquatis
     }
 
     /// The scream lockout, ms: 0 while Claw's controls are free (see
