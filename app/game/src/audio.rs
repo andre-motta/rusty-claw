@@ -325,6 +325,8 @@ pub struct AudioBridge {
     paused: bool,
     font: Option<Bank>,
     music: Option<MusicPlayer>,
+    /// Length of one pass of each loaded track, ms.
+    lengths: BTreeMap<Track, f64>,
     /// Looping sounds started with a handle and not stopped, by handle.
     loops: BTreeMap<u32, PlayRequest>,
 }
@@ -360,6 +362,7 @@ impl AudioBridge {
             paused: false,
             font,
             music: None,
+            lengths: BTreeMap::new(),
             loops: BTreeMap::new(),
         }
     }
@@ -393,6 +396,7 @@ impl AudioBridge {
             Track::Powerup,
             Track::Monolith,
             Track::Chord,
+            Track::Credits,
         ];
         let (count, failed) = self.load_music(store, registries, &tracks);
         report.music_tracks = count;
@@ -433,6 +437,7 @@ impl AudioBridge {
     ) -> (usize, Vec<(String, String)>) {
         let enabled = self.settings.music;
         self.music = None;
+        self.lengths.clear();
         self.engine.set_music(None);
         let Some(font) = self.font.as_ref() else {
             return (0, Vec::new());
@@ -483,6 +488,10 @@ impl AudioBridge {
         };
         match music(font, &songs, rate) {
             Ok((mut player, source)) => {
+                self.lengths = songs
+                    .iter()
+                    .map(|(t, song)| (*t, song.seconds() * 1000.0))
+                    .collect();
                 player.set_enabled(enabled);
                 self.engine.set_music(Some(Box::new(source)));
                 self.music = Some(player);
@@ -644,6 +653,19 @@ impl AudioBridge {
         if let Some(m) = self.music.as_mut() {
             m.play(Track::Chord, false);
         }
+    }
+
+    /// Starts `track` (looping or once), stopping the one playing; nothing
+    /// happens when it is not loaded.
+    pub fn play_track(&mut self, track: Track, looped: bool) {
+        if let Some(m) = self.music.as_mut() {
+            m.play(track, looped);
+        }
+    }
+
+    /// Length of one pass of `track`, ms, when it is loaded.
+    pub fn track_ms(&self, track: Track) -> Option<f64> {
+        self.lengths.get(&track).copied()
     }
 
     /// Restarts the current track from its beginning, looping, as the game

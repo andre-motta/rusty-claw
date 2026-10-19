@@ -5,14 +5,17 @@
 //! - images: the menu's (`MENU_...`), the dialogs' (`DIALOGS_...`), the
 //!   end-of-level screens' (`BOOTY_...`) and the game's (`GAME_...`, for
 //!   the bitmap font);
-//! - sounds: the menu's and the title's (no prefix) and the end-of-level
-//!   screens' (`BOOTY_...`);
+//! - sounds: the menu's and the title's (no prefix), the end-of-level
+//!   screens' (`BOOTY_...`) and the credits' (`CREDITS_...`);
 //! - animations: the menu's (`MENU_...`) and the end-of-level screens'
 //!   (`BOOTY_...`).
 //!
 //! Menu entries are pictures of the PCX kind as well as the usual sprite
 //! images; both are read, and palette index 0 of a picture is transparent.
 //! Full-screen pictures (`SCREENS/...`) come with their own palette.
+//!
+//! Music: the credits' track (`CREDITS`) and the developer's tune
+//! (`MONOLITH`) are registered for the credits screen.
 
 use std::collections::BTreeMap;
 
@@ -25,6 +28,7 @@ use claw_render::ImageSource;
 use claw_render::images::{MAX_IMAGE_DIMENSION, SourceFrame};
 
 use crate::menu::command::MenuKind;
+use crate::screens::credits::CREDITS_TEXT;
 
 /// Where each menu file is.
 pub fn menu_file(kind: MenuKind) -> (&'static str, &'static str) {
@@ -49,6 +53,12 @@ pub const BOOTY_SCREENS: &str = "STATES/BOOTY/SCREENS";
 pub const HELP_SCREENS: &str = "STATES/HELP/SCREENS";
 /// The help picture: the controls page.
 pub const HELP_PICTURE: &str = "HELP";
+
+/// The music of the screens: registry name and file.
+pub const MUSIC: [(&str, &str); 2] = [
+    ("CREDITS", "STATES/CREDITS/MUSIC/PLAY.XMI"),
+    ("MONOLITH", "GAME/MUSIC/MONOLITH.XMI"),
+];
 
 /// Decodes an image file of the screens: a sprite image or a picture.
 pub fn decode_frame(data: &[u8], type_code: u32) -> Option<Frame> {
@@ -143,7 +153,7 @@ impl ScreenAssets {
     pub fn load(store: AssetStore) -> ScreenAssets {
         let mut reg = Registries::new();
         let mut missing = Vec::new();
-        let maps: [(&str, &str, u8); 10] = [
+        let maps: [(&str, &str, u8); 11] = [
             ("STATES/MENU/IMAGES", "MENU", 0),
             ("STATES/DIALOGS/IMAGES", "DIALOGS", 0),
             ("STATES/BOOTY/IMAGES", "BOOTY", 0),
@@ -151,6 +161,7 @@ impl ScreenAssets {
             ("STATES/MENU/SOUNDS", "", 1),
             ("STATES/ATTRACT/SOUNDS", "", 1),
             ("STATES/BOOTY/SOUNDS", "BOOTY", 1),
+            ("STATES/CREDITS/SOUNDS", "CREDITS", 1),
             ("STATES/MENU/ANIS", "MENU", 2),
             ("STATES/BOOTY/ANIS", "BOOTY", 2),
             ("GAME/ANIS", "GAME", 2),
@@ -162,6 +173,14 @@ impl ScreenAssets {
                     1 => reg.map_sounds(&store, dir, prefix),
                     _ => reg.map_anis(&store, dir, prefix),
                 },
+                _ => missing.push(path.to_string()),
+            }
+        }
+        for (name, path) in MUSIC {
+            match store.lookup(path) {
+                Ok(Some(id)) => {
+                    reg.music.insert(name.to_string(), id);
+                }
                 _ => missing.push(path.to_string()),
             }
         }
@@ -205,6 +224,14 @@ impl ScreenAssets {
             .ok()??;
         let (img, pal) = pcx::decode(&self.store.read(id).ok()?).ok()?;
         Some((img, pal?))
+    }
+
+    /// The credits text, read whole; `None` when the install has none.
+    /// Bytes outside ASCII are read as Latin-1.
+    pub fn credits_text(&self) -> Option<String> {
+        let id = self.store.lookup(CREDITS_TEXT).ok()??;
+        let data = self.store.read(id).ok()?;
+        Some(data.iter().map(|&b| char::from(b)).collect())
     }
 
     /// Length of sound `key`, ms.

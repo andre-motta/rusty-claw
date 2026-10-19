@@ -1,5 +1,5 @@
 //! The game flow: title, main menu, options, loading, play, the in-game
-//! menu, the end-of-level tally and the end of a game.
+//! menu, the end-of-level tally, the end of a game and the credits.
 //!
 //! [`Flow`] is a state machine with no window, GPU or audio device: the
 //! window (or a test) feeds it menu inputs, the time that passed and the
@@ -15,6 +15,7 @@
 //! | main menu | new game at level n | play, new-game values |
 //! | main menu | load (level n, start or save point) | play from the save |
 //! | main menu | quit, confirmed | the program ends |
+//! | main menu | credits | credits (the menu rolls up, the parchment unrolls) |
 //! | play | Escape or pad Start (not while the pause key holds play) | in-game menu |
 //! | play | F1 (also while the pause key holds play) | help |
 //! | in-game menu | help, or F1 | help |
@@ -23,8 +24,10 @@
 //! | in-game menu | end life, confirmed | play: Claw dies at the next tick |
 //! | in-game menu | end the game, confirmed | main menu |
 //! | play | level complete, after its delay | tally |
+//! | play of level 14 | level complete, after its delay | a short black hold, then the tally |
 //! | tally of level n below 14 | done | play: level n + 1, progress carried |
-//! | tally of level 14 | done | main menu (the credits come later) |
+//! | tally of level 14 | done | the tally fades, then the credits |
+//! | credits | Escape, Space, Enter, a non-direction input, a click outside the top-left corner | main menu |
 //! | tally of a community custom level | done | main menu |
 //! | play | game over | the frozen game fades, then the main menu |
 //!
@@ -40,10 +43,19 @@
 //! level just saved (whether or not it could be written), with one more
 //! life when the tally was perfect and gave one; that life is not in the
 //! saved start, as in the original. Levels whose objects are not all built
-//! yet load and play with those objects drawn but still. After the last
-//! level the original shows the credits; until they are built, the game
-//! returns to the main menu there. A community custom level ends at the
-//! main menu.
+//! yet load and play with those objects drawn but still. A community
+//! custom level ends at the main menu.
+//!
+//! The end of the game: when level 14 is won, the end-of-level movie of the
+//! original is not played (the game has no movie player); the screen holds
+//! black for [`CUT_SCREEN_MS`] in its place (Escape, Space or Enter end it
+//! at once), then the map screen and the tally follow as after every level.
+//! When the tally is done it fades out over
+//! [`claw_ui::screens::credits::FADE_OUT_MS`] and the credits follow (see
+//! [`claw_ui::screens::credits`]); they lead back to the main menu, which
+//! then shows at once, without its unroll. Finishing level 14 saves nothing
+//! more: there is no level after it. The main menu's Credits entry opens
+//! the same credits.
 //!
 //! End life asks for a confirmation; its question is the low-lives one
 //! when Claw has fewer than 2 lives left, since that death ends the game.
@@ -87,7 +99,11 @@ use claw_ui::menu::command::{
 };
 use claw_ui::menu::draw::{self, FontArt, MenuState};
 use claw_ui::menu::{MenuAction, MenuInput, MenuTree, Navigator};
-use claw_ui::screens::{BootyScreen, BootyStats, GameOverScreen, HelpScreen, TitleScreen};
+use claw_ui::screens::credits::{self, Click};
+use claw_ui::screens::{
+    BootyScreen, BootyStats, CreditsEntry, CreditsScreen, CreditsTune, GameOverScreen, HelpScreen,
+    TitleScreen,
+};
 use winit::keyboard::KeyCode;
 
 use crate::input::{CaptureOutcome, Captured};
@@ -98,6 +114,9 @@ use crate::settings::{LevelChoice, PAD_DEAD_ZONE_RANGE, Scale, Settings, WINDOW_
 
 /// Length of a screen's fade out or in, ms.
 pub const FADE_MS: f64 = 700.0;
+/// The black hold in place of the end-of-game movie, between the end of
+/// level 14 and its map screen, ms.
+pub const CUT_SCREEN_MS: f64 = 1000.0;
 /// Idle time at the top of the main menu before the title shows, ms.
 pub const IDLE_ROOT_MS: f64 = 120_000.0;
 /// Idle time in a submenu before the title shows, ms.
@@ -176,6 +195,8 @@ pub enum Screen {
     Booty,
     /// The frozen level fading out after the last life.
     GameOver,
+    /// The credits.
+    Credits,
     /// The program ends.
     Exit,
 }
@@ -230,6 +251,17 @@ pub enum Effect {
     /// Show the end-of-level screens: hand a [`BootyScreen`] for these
     /// stats to [`Flow::set_booty`].
     ShowBooty(BootyStats),
+    /// Show the credits: hand a [`CreditsScreen`] opened from this entry
+    /// to [`Flow::set_credits`].
+    ShowCredits(CreditsEntry),
+    /// Start a music track of the screens (looping or once), stopping the
+    /// one playing.
+    Music {
+        /// The track.
+        track: claw_audio::music::Track,
+        /// Loop it.
+        looped: bool,
+    },
     /// End the program.
     Quit,
 }
@@ -239,6 +271,7 @@ pub enum Effect {
 enum Pending {
     Screen(Screen),
     Start(LevelChoice, StartState),
+    Credits(CreditsEntry),
     Quit,
 }
 
@@ -246,6 +279,7 @@ enum Pending {
 struct Fade {
     out: bool,
     elapsed: f64,
+    len: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -462,6 +496,11 @@ pub struct Flow {
     help: Option<HelpScreen>,
     booty: Option<BootyScreen>,
     game_over: Option<GameOverScreen>,
+    credits: Option<CreditsScreen>,
+    /// The tally on screen is the last level's: the credits follow it.
+    ending: bool,
+    /// Time left of the black hold before the last level's map screen, ms.
+    cut_left: Option<f64>,
     state: MenuState,
     music_available: bool,
     play: Option<Play>,
@@ -530,6 +569,9 @@ impl Flow {
             help: None,
             booty: None,
             game_over: None,
+            credits: None,
+            ending: false,
+            cut_left: None,
             state,
             music_available: true,
             play: None,
@@ -564,6 +606,7 @@ impl Flow {
                 flow.fade = Some(Fade {
                     out: false,
                     elapsed: 0.0,
+                    len: FADE_MS,
                 });
             }
             Start::Play => {
@@ -742,6 +785,16 @@ impl Flow {
         self.game_over.as_ref()
     }
 
+    /// The credits.
+    pub fn credits(&self) -> Option<&CreditsScreen> {
+        self.credits.as_ref()
+    }
+
+    /// True during the black hold before the last level's map screen.
+    pub fn cut_screen(&self) -> bool {
+        self.cut_left.is_some()
+    }
+
     /// What the menus show besides their entries.
     pub fn menu_state(&self) -> MenuState {
         self.state
@@ -764,10 +817,16 @@ impl Flow {
 
     /// Brightness of the screen that shows, 0 to 1, for its fade.
     pub fn brightness(&self) -> f64 {
+        if self.cut_left.is_some() {
+            return 0.0;
+        }
         match self.fade {
             Some(f) => {
-                let t = (f.elapsed / FADE_MS).clamp(0.0, 1.0);
+                let t = (f.elapsed / f.len).clamp(0.0, 1.0);
                 if f.out { 1.0 - t } else { t }
+            }
+            None if self.screen == Screen::Credits => {
+                self.credits.as_ref().map_or(0.0, CreditsScreen::brightness)
             }
             None => 1.0,
         }
@@ -805,6 +864,42 @@ impl Flow {
     pub fn set_booty(&mut self, booty: BootyScreen) {
         self.booty = Some(booty);
         self.drain_booty_audio();
+    }
+
+    /// Hands over the credits asked for by [`Effect::ShowCredits`].
+    pub fn set_credits(&mut self, credits: CreditsScreen) {
+        self.credits = Some(credits);
+        self.drain_credits();
+    }
+
+    /// A newly pressed input other than the four directions and the menu
+    /// keys (a game key binding or a pad button): on the credits it goes
+    /// back to the main menu.
+    pub fn credits_press(&mut self) {
+        if self.screen == Screen::Credits
+            && self.pending.is_none()
+            && let Some(c) = self.credits.as_mut()
+            && c.press()
+        {
+            self.leave_credits();
+        }
+    }
+
+    /// A click at (x, y) of the 640x480 screen: on the credits, the
+    /// top-left corner toggles the developer's tune and anywhere else goes
+    /// back to the main menu.
+    pub fn click(&mut self, x: i32, y: i32) {
+        if self.screen != Screen::Credits || self.pending.is_some() {
+            return;
+        }
+        let Some(c) = self.credits.as_mut() else {
+            return;
+        };
+        match c.click(x, y) {
+            Click::Leave => self.leave_credits(),
+            Click::Corner => self.drain_credits(),
+            Click::Ignored => {}
+        }
     }
 
     /// Shows `text` as a notice, for example a problem found at start-up.
@@ -857,6 +952,10 @@ impl Flow {
     }
 
     fn fade_to(&mut self, pending: Pending) {
+        self.fade_to_over(pending, FADE_MS);
+    }
+
+    fn fade_to_over(&mut self, pending: Pending, len: f64) {
         if self.pending.is_some() {
             return;
         }
@@ -867,6 +966,7 @@ impl Flow {
         self.fade = Some(Fade {
             out: true,
             elapsed: 0.0,
+            len,
         });
         if matches!(self.screen, Screen::MainMenu | Screen::Title) {
             self.sound("ROLLUP");
@@ -877,6 +977,7 @@ impl Flow {
         self.fade = Some(Fade {
             out: false,
             elapsed: 0.0,
+            len: FADE_MS,
         });
     }
 
@@ -940,11 +1041,19 @@ impl Flow {
                 self.booty = None;
                 self.next = None;
                 self.game_over = None;
+                self.credits = None;
+                self.ending = false;
+                self.cut_left = None;
                 if let Some(n) = self.main.as_mut() {
                     n.reset();
                 }
                 self.refresh_enabled();
-                self.sound("UNROLL");
+                // After the credits the menu shows at once, without its
+                // unroll.
+                let unroll = from != Screen::Credits;
+                if unroll {
+                    self.sound("UNROLL");
+                }
                 if !self.intro_played {
                     self.intro_played = true;
                     self.sound("INTRO");
@@ -952,7 +1061,11 @@ impl Flow {
                 self.bed_volume = 0;
                 self.set_bed(1.0);
                 self.bed_to(MENU_BED_VOLUME, MENU_BED_RISE_MS);
-                self.fade_in();
+                if unroll {
+                    self.fade_in();
+                } else {
+                    self.fade = None;
+                }
             }
             Screen::Title => {
                 self.effects.push(Effect::ShowTitle);
@@ -1007,6 +1120,7 @@ impl Flow {
             MenuCommand::Open(Page::LoadEntries { level }) => progress.can_start(level),
             MenuCommand::Load { level, entry: 0 } => progress.can_start(level),
             MenuCommand::Load { level, entry } => progress.has(level, entry),
+            MenuCommand::Unavailable(Unavailable::Credits) => true,
             MenuCommand::Unavailable(_) => false,
             MenuCommand::Toggle(Toggle::Voice | Toggle::Ambient) => sound,
             MenuCommand::Toggle(Toggle::Music) => music,
@@ -1062,11 +1176,22 @@ impl Flow {
                 }
             }
             Screen::Booty => {
-                if matches!(input, MenuInput::Confirm | MenuInput::Back)
-                    && let Some(b) = self.booty.as_mut()
-                {
+                if !matches!(input, MenuInput::Confirm | MenuInput::Back) {
+                    return;
+                }
+                if self.cut_left.is_some() {
+                    self.end_cut_screen();
+                } else if let Some(b) = self.booty.as_mut() {
                     b.skip();
                     self.drain_booty_audio();
+                }
+            }
+            Screen::Credits => {
+                if matches!(input, MenuInput::Confirm | MenuInput::Back)
+                    && let Some(c) = self.credits.as_mut()
+                    && c.press()
+                {
+                    self.leave_credits();
                 }
             }
             Screen::GameOver => {
@@ -1284,6 +1409,11 @@ impl Flow {
             }
             MenuCommand::Unavailable(Unavailable::Help) => {
                 self.help_key();
+            }
+            MenuCommand::Unavailable(Unavailable::Credits) => {
+                if self.screen == Screen::MainMenu {
+                    self.fade_to(Pending::Credits(CreditsEntry::FromMenu));
+                }
             }
             MenuCommand::Open(_)
             | MenuCommand::Back
@@ -1584,6 +1714,7 @@ impl Flow {
         let number = retail_number(&play.level);
         let custom = matches!(play.level, LevelChoice::Custom(_));
         self.next = None;
+        self.ending = number == Some(LEVELS);
         let stats = match sim {
             Some(sim) => {
                 let s = sim.stats();
@@ -1627,10 +1758,29 @@ impl Flow {
         self.screen = Screen::Booty;
         self.booty = None;
         self.effects.push(Effect::ShowBooty(stats));
-        self.fade_in();
+        if self.ending {
+            // The black in place of the end-of-game movie; the map screen
+            // fades in after it.
+            self.fade = None;
+            self.cut_left = Some(CUT_SCREEN_MS);
+        } else {
+            self.fade_in();
+        }
+    }
+
+    /// Ends the black hold before the last level's map screen.
+    fn end_cut_screen(&mut self) {
+        if self.cut_left.take().is_some() {
+            self.fade_in();
+            self.drain_booty_audio();
+        }
     }
 
     fn drain_booty_audio(&mut self) {
+        if self.cut_left.is_some() {
+            // The map screen's sounds wait for the end of the black.
+            return;
+        }
         if let Some(b) = self.booty.as_mut() {
             for a in b.take_audio() {
                 self.effects.push(Effect::Sound(a));
@@ -1660,7 +1810,7 @@ impl Flow {
         self.update_bed(dt);
         if let Some(f) = self.fade.as_mut() {
             f.elapsed += dt;
-            if f.elapsed >= FADE_MS {
+            if f.elapsed >= f.len {
                 let out = f.out;
                 self.fade = None;
                 if out {
@@ -1718,6 +1868,13 @@ impl Flow {
                 }
             }
             Screen::Booty => {
+                if let Some(left) = self.cut_left.as_mut() {
+                    *left -= dt;
+                    if *left <= 0.0 {
+                        self.end_cut_screen();
+                    }
+                    return;
+                }
                 let done = match self.booty.as_mut() {
                     Some(b) => {
                         b.update(dt);
@@ -1742,13 +1899,77 @@ impl Flow {
                     self.enter(Screen::MainMenu);
                 }
             }
+            Screen::Credits => {
+                match self.credits.as_mut() {
+                    Some(c) => c.update(dt),
+                    // Without the screen there is nothing to show.
+                    None => {
+                        self.enter(Screen::MainMenu);
+                        return;
+                    }
+                }
+                self.drain_credits();
+            }
             Screen::Help | Screen::Exit => {}
         }
     }
 
-    /// The tally ended: the next level, or the main menu after the last
-    /// level and after a community custom level.
+    /// Opens the credits from `entry`.
+    fn enter_credits(&mut self, entry: CreditsEntry) {
+        self.screen = Screen::Credits;
+        self.idle_ms = 0.0;
+        self.fade = None;
+        self.booty = None;
+        self.next = None;
+        self.ending = false;
+        self.cut_left = None;
+        self.credits = None;
+        if self.bed_volume > 0 || self.bed.is_some() {
+            self.effects.push(Effect::Sound(AudioCue::Stop {
+                voice: MENU_BED_VOICE,
+            }));
+            self.bed_volume = 0;
+            self.bed = None;
+        }
+        self.effects.push(Effect::ShowCredits(entry));
+    }
+
+    /// The credits' sounds and music.
+    fn drain_credits(&mut self) {
+        let Some(c) = self.credits.as_mut() else {
+            return;
+        };
+        let audio = c.take_audio();
+        let music = c.take_music();
+        for a in audio {
+            self.effects.push(Effect::Sound(a));
+        }
+        for tune in music {
+            let (track, looped) = match tune {
+                CreditsTune::Credits => (claw_audio::music::Track::Credits, true),
+                CreditsTune::Monolith => (claw_audio::music::Track::Monolith, false),
+            };
+            self.effects.push(Effect::Music { track, looped });
+        }
+    }
+
+    /// Leaves the credits for the main menu: their music stops.
+    fn leave_credits(&mut self) {
+        self.drain_credits();
+        self.effects.push(Effect::Sound(AudioCue::StopMusic));
+        self.enter(Screen::MainMenu);
+    }
+
+    /// The tally ended: the next level, the credits after the last level,
+    /// or the main menu after a community custom level.
     fn after_booty(&mut self) {
+        if self.ending && self.next.is_none() {
+            self.fade_to_over(
+                Pending::Credits(CreditsEntry::AfterGame),
+                credits::FADE_OUT_MS,
+            );
+            return;
+        }
         match self.next.take() {
             Some((level, mut start)) => {
                 // A perfect tally's extra life goes with Claw.
@@ -1769,6 +1990,7 @@ impl Flow {
         match p {
             Pending::Screen(s) => self.enter(s),
             Pending::Start(level, start) => self.begin_play(level, start),
+            Pending::Credits(entry) => self.enter_credits(entry),
             Pending::Quit => {
                 self.screen = Screen::Exit;
                 self.effects.push(Effect::Quit);
@@ -1803,6 +2025,6 @@ pub fn menu_input(m: crate::input::MenuInput) -> MenuInput {
 pub fn is_standalone(screen: Screen) -> bool {
     matches!(
         screen,
-        Screen::Title | Screen::MainMenu | Screen::Booty | Screen::Help
+        Screen::Title | Screen::MainMenu | Screen::Booty | Screen::Help | Screen::Credits
     )
 }

@@ -1,12 +1,14 @@
 //! The first level's sounds decode for the audio engine (skipped without
 //! `CLAW_INSTALL`): every sound the level registers, its own and the shared
 //! ones, becomes playable samples, and a bridge plays the level's cues
-//! without opening a device.
+//! without opening a device. The credits' music is found and converts.
 
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_audio::AudioSettings;
+use claw_audio::music::{BankMode, Song, Track};
 use claw_frame::{AudioCue, SoundCue};
-use claw_game::audio::{AudioBridge, ViewInfo, decode_bank};
+use claw_game::audio::{AudioBridge, ViewInfo, decode_bank, music_file, read_music};
+use claw_ui::screens::ScreenAssets;
 
 #[test]
 fn every_first_level_sound_decodes() {
@@ -61,5 +63,47 @@ fn every_first_level_sound_decodes() {
     assert_eq!(
         bridge.engine().bank().map(|b| b.len()),
         Some(report.decoded)
+    );
+}
+
+/// The credits' music and the developer's tune of the credits' corner come
+/// from the screens' registries, in both arrangements' rules, and convert
+/// for the synthesizer; a level's registries never give the credits track.
+#[test]
+fn the_credits_music_is_found_and_converts() {
+    let Some(path) = std::env::var_os("CLAW_INSTALL") else {
+        eprintln!("skipped: CLAW_INSTALL is not set");
+        return;
+    };
+    let install = Install::open(path).expect("install opens");
+    let store = install.store().expect("store");
+    let assets = ScreenAssets::load(store.clone());
+    for (track, file) in [
+        (Track::Credits, "STATES/CREDITS/MUSIC/PLAY.XMI"),
+        (Track::Monolith, "GAME/MUSIC/MONOLITH.XMI"),
+    ] {
+        let want = store
+            .lookup(file)
+            .unwrap()
+            .expect("the file is in the install");
+        for mode in [BankMode::GeneralMidi, BankMode::Original] {
+            let id = music_file(&assets.store, &assets.registries, track, mode)
+                .unwrap_or_else(|| panic!("{track:?} is found"));
+            assert_eq!(id, want, "{track:?} {mode:?}");
+            let events = read_music(&store.read(id).unwrap()).expect("the track reads");
+            let song = Song::from_xmidi(&events, mode).expect("the track converts");
+            assert!(song.seconds() > 5.0, "{track:?} lasts {} s", song.seconds());
+        }
+    }
+    let level = LevelData::build(&store, LevelSource::Retail(1)).expect("level 1 loads");
+    assert_eq!(
+        music_file(
+            &store,
+            &level.registries,
+            Track::Credits,
+            BankMode::Original
+        ),
+        None,
+        "a level has no credits music"
     );
 }
