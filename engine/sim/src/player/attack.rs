@@ -1150,8 +1150,9 @@ fn sword_shot(c: &mut Ctx) {
 /// and Claw can no longer hit anything. Claw's special states read the
 /// end of their own entry from here too (see [`special::SpecialData`]).
 ///
-/// The jump's handover to the fall at its top does not come here while an
-/// air attack runs (see [`carry_over_jump_top`]).
+/// The jump's handover to the fall, at its top or at a ceiling, does not
+/// come here while an air attack runs (see [`carry_over_jump_top`] and
+/// [`defer_fall_anim`]).
 ///
 /// Every cancel also takes Left and Right off the key latch: a direction
 /// still held counts as pressed again on the next tick (see
@@ -1177,17 +1178,26 @@ pub fn cancel(c: &mut Ctx) {
 /// Keeps an air attack (the jumping swipe, shot, magic or dynamite throw)
 /// going when the jump turns into a fall at its top; true when one does.
 /// The fall's own animation is then the one to come back to when the
-/// attack ends. Only the jump's handover to the fall asks this; every
-/// other change of state ends the attack through [`cancel`].
+/// attack ends. Only the jump's handovers to the fall keep an air attack
+/// (here, and at a ceiling through [`defer_fall_anim`]); every other
+/// change of state ends the attack through [`cancel`].
 pub fn carry_over_jump_top(c: &mut Ctx) -> bool {
     let at_top = air_attack_running(c)
         && c.o.state == state::JUMP
         && c.o.physics_type == ptype::JUMP
         && c.o.y <= c.p.jump_peak_y;
     if at_top {
-        c.p.attack.restore_anim = Some("CLAW_FALL".to_string());
+        defer_fall_anim(c);
     }
     at_top
+}
+
+/// Makes the fall's own animation the one to come back to when the
+/// running air attack ends, which keeps playing its own animation until
+/// then: at the top of the jump (see [`carry_over_jump_top`]) and when a
+/// ceiling stops the rise.
+pub fn defer_fall_anim(c: &mut Ctx) {
+    c.p.attack.restore_anim = Some("CLAW_FALL".to_string());
 }
 
 /// True while an air attack runs: the jumping swipe, shot, magic or

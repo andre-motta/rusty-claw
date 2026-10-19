@@ -1185,7 +1185,12 @@ fn jump_integrate(c: &mut Ctx, vx: f64) {
     match c.o.physics_type {
         ptype::FALL => {
             if attack::air_attack_running(c) {
-                fall_from_rest(c, false);
+                // A ceiling stopped the rise while an air attack runs: as
+                // at the top of the jump, the attack keeps its animation
+                // and the fall animation waits for the attack's end, so
+                // another attack press does nothing until then.
+                attack::defer_fall_anim(c);
+                fall_from_rest(c, true);
             } else {
                 begin_fall(c, false);
             }
