@@ -19,6 +19,7 @@ use claw_sim::player::attack::{self, kind};
 use claw_sim::player::special;
 use claw_sim::player::state;
 use claw_sim::rng::Rng;
+use claw_sim::tiles::TileMap;
 use claw_sim::tuning::{Behaviour, Tuning};
 use claw_sim::{ObjectData, Sim, SimConfig, SimLevel};
 use common::*;
@@ -478,6 +479,72 @@ fn the_fall_animation_comes_back_after_an_air_attack_carried_over_the_top() {
     assert_eq!(claw(&sim).state, state::FALL);
     assert!(sim.claw().attacking, "the swipe carries on into the fall");
     assert_eq!(sim.claw().attack.restore_anim.as_deref(), Some("CLAW_FALL"));
+}
+
+/// The arena with a Solid ceiling over Claw (tile row 11, its underside
+/// at y 767), low enough to stop his rise; he stands on the floor below.
+fn ceiling_arena(jump_swipe: &[(i32, i32, i32)]) -> Sim {
+    let mut rows = vec![".".repeat(200); 15];
+    rows[11].replace_range(10..20, &"#".repeat(10));
+    rows.push("#".repeat(200));
+    rows.push("#".repeat(200));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 899));
+    for a in claw_anims() {
+        level.animations.insert(a.key.clone(), a);
+    }
+    let swipe = anim("CLAW_JUMPSWIPE", jump_swipe, true);
+    level.animations.insert(swipe.key.clone(), swipe);
+    let mut sim = Sim::new(level, SimConfig::default());
+    idle(&mut sim, 30);
+    assert_eq!(claw(&sim).state, state::STAND);
+    sim
+}
+
+#[test]
+fn a_ceiling_keeps_an_air_attack_and_its_animation_until_it_ends() {
+    let mut sim = ceiling_arena(&[(284, 50, 0), (283, 100, 1), (284, 50, 0)]);
+    sim.step(press(JUMP));
+    for _ in 0..9 {
+        sim.step(hold(JUMP));
+        assert_eq!(claw(&sim).physics_type, ptype::JUMP, "still rising");
+    }
+    // Attack near the top of the rise; the ceiling stops it on the next
+    // tick.
+    sim.step(press(ATTACK | JUMP));
+    assert_eq!(sim.claw().attack.kind, kind::JUMP_SWIPE);
+    assert_eq!(claw(&sim).state, state::JUMP);
+    sim.step(hold(JUMP));
+    assert_eq!(claw(&sim).state, state::FALL, "the ceiling ends the rise");
+    assert_eq!(claw(&sim).physics_type, ptype::FALL);
+    assert!(sim.claw().attacking, "the swipe carries on");
+    assert_eq!(
+        claw(&sim).anim.key(),
+        Some("CLAW_JUMPSWIPE"),
+        "with its frames"
+    );
+    assert_eq!(sim.claw().attack.restore_anim.as_deref(), Some("CLAW_FALL"));
+    // On to the swipe's long frame, then press Attack again: the swipe
+    // runs on, nothing starts over.
+    for _ in 0..3 {
+        sim.step(TickInput::default());
+    }
+    assert_eq!(claw(&sim).frame, 283);
+    sim.step(press(ATTACK));
+    assert_eq!(claw(&sim).frame, 283, "the second press is ignored");
+    assert_eq!(claw(&sim).anim.key(), Some("CLAW_JUMPSWIPE"));
+    let mut frames = vec![claw(&sim).frame];
+    while sim.claw().attacking {
+        assert_eq!(claw(&sim).state, state::FALL, "the swipe ends in the air");
+        sim.step(TickInput::default());
+        frames.push(claw(&sim).frame);
+        assert!(frames.len() < 40, "the swipe ends");
+    }
+    assert!(frames.contains(&284), "the swipe's last frame plays");
+    // Only once the swipe is over does the fall's own animation come back.
+    assert_eq!(claw(&sim).state, state::FALL);
+    assert_eq!(claw(&sim).anim.key(), Some("CLAW_FALL"));
+    assert_eq!(sim.claw().attack.kind, kind::NONE);
 }
 
 #[test]
