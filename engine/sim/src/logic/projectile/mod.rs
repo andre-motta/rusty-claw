@@ -79,8 +79,16 @@
 //! its own box grown by 40 px on every side. Dynamite also shakes the
 //! screen for half a second then. They are removed when the explosion
 //! animation ends.
+//!
+//! Mercat's trident bolt ([`trident`]) and the Siren's scream ([`scream`])
+//! are projectiles of their own classes, each in its own file: the shared
+//! code here sets them up, runs their calls and passes Claw's touch of a
+//! bolt through those files. Until their families are built a bolt or a
+//! scream asked for is an inert placeholder holding the request.
 
 mod motion;
+pub mod scream;
+pub mod trident;
 
 pub use motion::Motion;
 
@@ -194,6 +202,10 @@ pub enum Class {
     /// Wolvington's magic shot (see
     /// [`crate::logic::enemy::wolvington::shot`]).
     WolvingtonBullet,
+    /// Mercat's trident bolt (see [`trident`]).
+    TridentBullet,
+    /// The Siren's scream (see [`scream`]).
+    SirenBullet,
 }
 
 impl Class {
@@ -210,8 +222,21 @@ impl Class {
             "RatBomb" => Class::RatBomb,
             "CannonBall" => Class::CannonBall,
             "WolvingtonBullet" => Class::WolvingtonBullet,
+            "TridentBullet" => Class::TridentBullet,
+            "SirenBullet" => Class::SirenBullet,
             _ => return None,
         })
+    }
+
+    /// Whether this build flies the class yet: the trident bolt and the
+    /// scream wait for their families ([`trident::BUILT`],
+    /// [`scream::BUILT`]); every other class flies.
+    pub fn built(self) -> bool {
+        match self {
+            Class::TridentBullet => trident::BUILT,
+            Class::SirenBullet => scream::BUILT,
+            _ => true,
+        }
     }
 
     /// The image set it is drawn from.
@@ -227,6 +252,8 @@ impl Class {
             Class::RatBomb => "LEVEL_RATBOMB",
             Class::CannonBall => "LEVEL_CANNONBALL",
             Class::WolvingtonBullet => wolvington::shot::IMAGE_SET,
+            Class::TridentBullet => trident::IMAGE_SET,
+            Class::SirenBullet => scream::IMAGE_SET,
         }
     }
 
@@ -241,6 +268,7 @@ impl Class {
             Class::Dynamite => Some("GAME_DYNAMITELIT"),
             Class::CannonBall => Some("LEVEL_CANNONBALL_FALL"),
             Class::WolvingtonBullet => Some(wolvington::shot::ANIM),
+            Class::SirenBullet => Some(scream::ANIM),
             _ => None,
         }
     }
@@ -260,6 +288,8 @@ impl Class {
             Class::RatBomb => Rect::new(-17, 33, 6, 54),
             Class::CannonBall => Rect::new(-9, -10, 22, 9),
             Class::WolvingtonBullet => wolvington::shot::FRAME_BOX,
+            Class::TridentBullet => trident::FRAME_BOX,
+            Class::SirenBullet => scream::FRAME_BOX,
         }
     }
 
@@ -351,6 +381,10 @@ pub struct ProjectileData {
     /// A shot of Claw's whose first logic call has not come yet: the
     /// attack box that call sets (see [`hold_first_call`]).
     pub held_attack_rect: Option<Rect>,
+    /// What a trident bolt keeps besides (see [`trident::Fields`]).
+    pub trident: trident::Fields,
+    /// What a scream keeps besides (see [`scream::Fields`]).
+    pub scream: scream::Fields,
 }
 
 /// What to launch.
@@ -464,6 +498,8 @@ pub fn tick(w: &mut World, id: ObjectId) {
         return;
     }
     match (d.phase, class) {
+        (_, Class::TridentBullet) => trident::step(w, id, d),
+        (_, Class::SirenBullet) => scream::step(w, id, d),
         (Phase::Exploding, _) => exploding(w, id, d, class),
         (Phase::Flying, Class::Dynamite) => dynamite_tick(w, id, d),
         (Phase::Flying, Class::RatBomb) => rat_bomb_tick(w, id, d),
@@ -485,8 +521,8 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 /// special flags ask for this): a rat bomb explodes where it is, even when
 /// it is already exploding (its explosion starts again, and its box grows
 /// again when it arms); one of Gabriel's bombs in flight explodes where it
-/// is ([`crate::logic::enemy::gabriel::bomb::impact`]). Other projectiles
-/// do nothing.
+/// is ([`crate::logic::enemy::gabriel::bomb::impact`]); a trident bolt
+/// bursts ([`trident`]). Other projectiles do nothing.
 pub fn impact(w: &mut World, id: ObjectId) {
     if matches!(
         w.objects.get(id).map(|o| &o.data),
@@ -498,9 +534,16 @@ pub fn impact(w: &mut World, id: ObjectId) {
     let Some((mut d, class)) = load(w, id) else {
         return;
     };
-    if class == Class::RatBomb {
-        explode(w, id, &mut d, class);
-        store(w, id, d);
+    match class {
+        Class::RatBomb => {
+            explode(w, id, &mut d, class);
+            store(w, id, d);
+        }
+        Class::TridentBullet => {
+            trident::impact(w, id, &mut d);
+            store(w, id, d);
+        }
+        _ => {}
     }
 }
 
@@ -532,7 +575,8 @@ pub fn throw_velocity(power: i32) -> (f64, f64) {
 
 /// Launches a projectile and returns its id; `None` when no logic of that
 /// name exists. A known logic this build does not fly yet leaves an inert
-/// placeholder whose data holds `spec`.
+/// placeholder whose data holds `spec`, and so does a class whose family
+/// is not built yet ([`Class::built`]).
 ///
 /// The projectile is set up at once, joins the live list at the end of the
 /// current pass and moves from the next update pass on. Class rules
@@ -542,7 +586,7 @@ pub fn throw_velocity(power: i32) -> (f64, f64) {
 /// always an enemy shot drawn from its own set, dealing
 /// [`CANNON_BALL_DAMAGE`] unless asked for more.
 pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
-    let Some(class) = Class::from_logic(spec.logic) else {
+    let Some(class) = Class::from_logic(spec.logic).filter(|c| c.built()) else {
         Registry::shared().get(spec.logic)?;
         let data = ObjectData::Projectile(ProjectileData {
             spec: Some(spec),
@@ -632,6 +676,8 @@ pub fn spawn(w: &mut World, spec: ProjectileSpec) -> Option<ObjectId> {
                 o.mirror_rects();
             }
         }
+        Class::TridentBullet => trident::set_up(&mut o, &mut d, &spec),
+        Class::SirenBullet => scream::set_up(&mut o, &mut d, &spec),
         Class::CannonBall => {
             o.type_flags = types::ENEMY_SHOT;
             o.hit_type_flags = CANNON_BALL_HIT_BY;

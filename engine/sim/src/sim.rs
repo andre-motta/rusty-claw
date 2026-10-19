@@ -12,6 +12,7 @@ use crate::activation::{Activation, ActivationConfig, ActivationMode, Centres};
 use crate::camera::{Camera, Followed};
 use crate::container::{CollisionEvent, Container};
 use crate::level::{ObjectSpec, SimLevel};
+use crate::logic::projectile::scream;
 use crate::logic::{self, BossState, Outbox, World};
 use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags};
 use crate::physics::Platform;
@@ -766,6 +767,8 @@ impl Sim {
             let dirs = self.claw_input.held.0 & (Buttons::LEFT.0 | Buttons::RIGHT.0);
             self.claw_input.pressed = Buttons(self.claw_input.pressed.0 | dirs);
         }
+        // A scream's lockout takes the keys from Claw while it runs.
+        scream::lock_input(&mut self.out.scream_lock_ms, TICK_MS, &mut self.claw_input);
         self.pulse_left = match self.pulse_left {
             0 => PULSE_MS,
             left if left <= TICK_MS => 0,
@@ -798,6 +801,9 @@ impl Sim {
             runner.apply_shake();
         }
         self.tick += 1;
+        if let Some(o) = self.player.and_then(|id| self.objects.get_mut(id)) {
+            scream::after_tick(self.out.scream_lock_ms, o);
+        }
         let (audio, events) = self.out.take_tick();
         self.ended = events
             .iter()
@@ -1279,6 +1285,12 @@ impl Sim {
     /// object exists (see [`crate::logic::enemy::marrow::MarrowLink`]).
     pub fn marrow_link(&self) -> Option<&crate::logic::enemy::marrow::MarrowLink> {
         self.out.marrow()
+    }
+
+    /// The scream lockout, ms: 0 while Claw's controls are free (see
+    /// [`crate::logic::projectile::scream`]).
+    pub fn scream_lock_ms(&self) -> u32 {
+        self.out.scream_lock_ms()
     }
 
     /// The camera's scripted point, when one is set (by Claw's code, a

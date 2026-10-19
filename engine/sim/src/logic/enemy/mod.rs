@@ -6,8 +6,10 @@
 //! ([`townguard`]), Wolvington ([`wolvington`]), the red-tail pirates
 //! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
 //! ([`crab`]), Gabriel with his bomb ([`gabriel`]), the hook-handed
-//! pirate ([`hook_pirate`]), PegLeg with his bullet ([`pegleg`]), and
-//! Marrow ([`marrow`]) with his parrot ([`parrot`]).
+//! pirate ([`hook_pirate`]), PegLeg with his bullet ([`pegleg`]),
+//! Marrow ([`marrow`]) with his parrot ([`parrot`]), and the eleventh
+//! level's Mercat ([`mercat`]), Siren ([`siren`]) and Fish ([`fish`]),
+//! declared but not built yet.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -60,6 +62,7 @@ use crate::tuning::TICK_MS;
 pub mod bear_sailor;
 pub mod crab;
 pub mod cutthroat;
+pub mod fish;
 pub mod gabriel;
 pub mod goo;
 pub mod hook_pirate;
@@ -67,6 +70,7 @@ pub mod human;
 pub mod katherine;
 pub mod lift;
 pub mod marrow;
+pub mod mercat;
 pub mod motion;
 pub mod officer;
 pub mod parrot;
@@ -77,6 +81,7 @@ pub mod raux;
 pub mod redtail_pirate;
 pub mod robberthief;
 pub mod seagull;
+pub mod siren;
 pub mod soldier;
 pub mod states;
 pub mod townguard;
@@ -203,7 +208,9 @@ pub mod field {
 /// and 2220-2239 the ninth level's (PegLeg's rolls and the hook hold, see
 /// [`hook_pirate::STATE_BLOCK`]) and 2240-2259 the tenth level's
 /// (Marrow's whistle and the parrot's flights, see
-/// [`marrow::STATE_BLOCK`]); later families take blocks of 20 from 2260.
+/// [`marrow::STATE_BLOCK`]) and 2260-2279 the eleventh level's (the
+/// Fish's swim, leap and flop and the Siren's song from 2270, see
+/// [`mercat::STATE_BLOCK`]); later families take blocks of 20 from 2280.
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -366,11 +373,19 @@ pub enum EnemyState {
     FlyToMarrow = 2244,
     /// Carrying Marrow across the pit (Marrow's parrot).
     CarryMarrow = 2245,
+    /// Swimming up and down its pool (the Fish).
+    Swim = 2270,
+    /// Leaping out of the water at Claw (the Fish).
+    JumpStrike = 2271,
+    /// Flopping on dry ground until it slides back in (the Fish).
+    OutOfWater = 2272,
+    /// Singing, a scream every few ticks (the Siren).
+    Singing = 2273,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 76] = [
+    pub const ALL: [EnemyState; 80] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -447,6 +462,10 @@ impl EnemyState {
         EnemyState::FlyToIdle,
         EnemyState::FlyToMarrow,
         EnemyState::CarryMarrow,
+        EnemyState::Swim,
+        EnemyState::JumpStrike,
+        EnemyState::OutOfWater,
+        EnemyState::Singing,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -537,6 +556,10 @@ impl EnemyState {
             EnemyState::FlyToIdle => "FlyToIdle",
             EnemyState::FlyToMarrow => "FlyToMarrow",
             EnemyState::CarryMarrow => "CarryMarrow",
+            EnemyState::Swim => "Swim",
+            EnemyState::JumpStrike => "JumpStrike",
+            EnemyState::OutOfWater => "OutOfWater",
+            EnemyState::Singing => "Singing",
         }
     }
 }
@@ -961,6 +984,9 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::PegLeg => Some(&pegleg::CLASS),
         GameLogic::Marrow => Some(&marrow::CLASS),
         GameLogic::Parrot => Some(&parrot::CLASS),
+        GameLogic::Mercat => Some(&mercat::CLASS),
+        GameLogic::Siren => Some(&siren::CLASS),
+        GameLogic::Fish => Some(&fish::CLASS),
         _ => None,
     }
 }
@@ -996,7 +1022,8 @@ impl ObjectData {
     /// inside a family's own data (the punk rat's, Raux's, the thieves',
     /// Katherine's, the town guards', the seagull's, Wolvington's, the
     /// red-tail pirates', the bear sailors', the crabs', Gabriel's, the
-    /// hook-handed pirates', PegLegs', Marrow's and his parrot's).
+    /// hook-handed pirates', PegLegs', Marrow's and his parrot's, and the
+    /// Mercats', Sirens' and Fish's).
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -1016,6 +1043,9 @@ impl ObjectData {
             ObjectData::PegLeg(d) => Some(&d.enemy),
             ObjectData::Marrow(d) => Some(&d.enemy),
             ObjectData::Parrot(d) => Some(&d.enemy),
+            ObjectData::Mercat(d) => Some(&d.enemy),
+            ObjectData::Siren(d) => Some(&d.enemy),
+            ObjectData::Fish(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -1040,6 +1070,9 @@ impl ObjectData {
             ObjectData::PegLeg(d) => Some(&mut d.enemy),
             ObjectData::Marrow(d) => Some(&mut d.enemy),
             ObjectData::Parrot(d) => Some(&mut d.enemy),
+            ObjectData::Mercat(d) => Some(&mut d.enemy),
+            ObjectData::Siren(d) => Some(&mut d.enemy),
+            ObjectData::Fish(d) => Some(&mut d.enemy),
             _ => None,
         }
     }
