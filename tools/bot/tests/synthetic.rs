@@ -1,15 +1,20 @@
 //! The search on small levels built in code: a gap, a ladder and a
-//! stand-in hazard, a boss room, and the same seed giving the same route.
+//! stand-in hazard, a boss room, breaking planks, and the same seed giving
+//! the same route.
 
 use claw_bot::actions;
 use claw_bot::route::{self, spacing_violations};
 use claw_bot::search::{BossStage, Intro, boss_end, boss_stage};
 use claw_bot::{Goal, SearchConfig, search, search_report};
 use claw_sim::activation::ActivationConfig;
-use claw_sim::level::ObjectSpec;
+use claw_sim::anim::Animation;
+use claw_sim::level::{ImageFrames, ObjectSpec};
+use claw_sim::logic::break_plank::{self, FALLBACK_MOVE_RECT};
 use claw_sim::logic::enemy;
 use claw_sim::logic::world_boss::fight;
-use claw_sim::{InputScript, Sim, SimConfig, SimLevel, TileMap};
+use claw_sim::tiles::{CLEAR, Descriptor, GROUND};
+use claw_sim::{InputScript, Sim, SimConfig, SimLevel, TickInput, TileMap};
+use std::sync::Arc;
 
 /// A level from text rows of 64 px tiles (see [`TileMap::from_ascii`]).
 fn level(rows: &[String], start: (i32, i32)) -> SimLevel {
@@ -68,6 +73,18 @@ fn crosses_a_gap_over_a_pit() {
         },
     );
     assert!(script.ticks.len() < 400);
+    // The same point on foot: the route goes on until Claw stands there.
+    let stand = Goal::Stand {
+        x: 22 * 64,
+        y: 9 * 64 - 61,
+        radius: 40,
+    };
+    let script = solve(&start, stand);
+    let mut end = start.clone();
+    for t in &script.ticks {
+        end.step(*t);
+    }
+    assert!(claw_bot::search::on_foot(&end), "the route ends on foot");
 }
 
 #[test]
@@ -450,4 +467,75 @@ fn a_wait_for_a_stepping_stone_is_progress() {
     for w in keys.windows(2) {
         assert_ne!(w[0], w[1]);
     }
+}
+
+/// A level numbered 5 (the fifth level's plank geometry) with a floor at
+/// y 960 and a row of five breaking planks from x 807 at y 793, 500 ms
+/// apart: their one-way floor tiles in row 11, columns 12 to 16, 28 px
+/// below the cells' tops. Claw starts above the floor left of the row.
+fn plank_level() -> SimLevel {
+    let mut rows = vec![".".repeat(30); 15];
+    rows.push("#".repeat(30));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut map = TileMap::from_ascii(64, &rows);
+    let plank = map.add_descriptor(Descriptor::Double {
+        width: 64,
+        height: 64,
+        outside: CLEAR,
+        inside: GROUND,
+        rect: [0, 28, 63, 63],
+    });
+    for c in 12..17 {
+        map.set_cell(c, 11, plank);
+    }
+    let mut level = SimLevel::synthetic(map, (500, 860));
+    level.number = 5;
+    let mut spec = ObjectSpec::at(break_plank::SPAWNER, 807, 793, 1010);
+    spec.record[break_plank::DELAY_FIELD] = 500;
+    spec.record[break_plank::WIDTH_FIELD] = 5;
+    level.objects.push(spec);
+    let mut frames = ImageFrames::range(1, 12);
+    frames.boxes.insert(1, FALLBACK_MOVE_RECT);
+    level
+        .images
+        .insert(break_plank::IMAGE_SET.to_string(), frames);
+    let idle = Animation::once(break_plank::IDLE_ANIM, &[(1, 0)]);
+    let crumble: Vec<(i32, i32)> = (1..=12).map(|i| (i, 75)).collect();
+    let crumble = Animation::once(break_plank::CRUMBLE_ANIM, &crumble);
+    for a in [idle, crumble] {
+        level.animations.insert(a.key.clone(), Arc::new(a));
+    }
+    level
+}
+
+/// Steps `sim` with nothing held for `ticks` ticks.
+fn idle(sim: &mut Sim, ticks: usize) {
+    for _ in 0..ticks {
+        sim.step(TickInput::default());
+    }
+}
+
+#[test]
+fn claw_back_where_he_stood_with_the_planks_broken_is_another_state() {
+    let mut s = sim(plank_level());
+    idle(&mut s, 60);
+    let at = s.player().map(|o| (o.x, o.y)).unwrap();
+    let whole = claw_bot::search::state_key(&s);
+    // On to the row: the pieces under him wait, crumble and let him fall
+    // to the floor below.
+    s.teleport_player(807 + 64, 640);
+    idle(&mut s, 150);
+    assert!(
+        s.player().unwrap().y > 800,
+        "Claw fell through the broken row"
+    );
+    // Back where he stood, standing still again.
+    s.teleport_player(at.0, at.1 - 40);
+    idle(&mut s, 60);
+    assert_eq!(s.player().map(|o| (o.x, o.y)), Some(at));
+    assert_ne!(
+        claw_bot::search::state_key(&s),
+        whole,
+        "the broken row tells the states apart"
+    );
 }

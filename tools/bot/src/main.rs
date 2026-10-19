@@ -7,7 +7,8 @@
 //!          [--seed S|level] [--hints FILE] [--from-route FILE --from-tick T]
 //!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--threads N]
 //!          [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot]
-//!          [--intro any|play|skip] [--carry FILE] [--goal X,Y] [--quiet]
+//!          [--intro any|play|skip] [--carry FILE] [--goal X,Y] [--goal-on-foot]
+//!          [--quiet]
 //! ```
 //!
 //! The route is an input script (`tick,held_mask,pressed_mask`, one row
@@ -73,6 +74,9 @@
 //! [`GOAL_RADIUS`] px of (X, Y) instead of at the level's end: a leg of a
 //! longer route, which `--from-route` then continues, so a long level can
 //! be searched a stretch at a time. Its report counts the goal as the win.
+//! With `--goal-on-foot` the goal counts only with Claw on his feet, on a
+//! ladder or on a rope there, so the stretch never ends in the middle of
+//! a jump or a fall.
 //!
 //! No route is written whose held mask changes twice less than two ticks
 //! apart.
@@ -95,7 +99,7 @@ const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S|level] [--hints FILE] \
 [--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
 [--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot] \
-[--intro any|play|skip] [--carry FILE] [--goal X,Y] [--quiet]";
+[--intro any|play|skip] [--carry FILE] [--goal X,Y] [--goal-on-foot] [--quiet]";
 
 /// The random state a route starts from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +142,7 @@ struct Args {
     intro: Intro,
     carry: Option<PathBuf>,
     goal: Option<(i32, i32)>,
+    goal_on_foot: bool,
     quiet: bool,
 }
 
@@ -165,6 +170,7 @@ impl Default for Args {
             intro: Intro::Any,
             carry: None,
             goal: None,
+            goal_on_foot: false,
             quiet: false,
         }
     }
@@ -186,6 +192,10 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         }
         if flag == "--hints-on-foot" {
             a.hints_on_foot = true;
+            continue;
+        }
+        if flag == "--goal-on-foot" {
+            a.goal_on_foot = true;
             continue;
         }
         let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -240,6 +250,9 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
     }
     if a.from_route.is_some() != a.from_tick.is_some() {
         return Err(format!("--from-route and --from-tick go together\n{USAGE}"));
+    }
+    if a.goal_on_foot && a.goal.is_none() {
+        return Err(format!("--goal-on-foot needs --goal\n{USAGE}"));
     }
     if a.start.is_some() && a.from_route.is_some() {
         return Err(format!(
@@ -408,7 +421,7 @@ fn run(a: Args) -> Result<bool, String> {
             s
         }
     };
-    let mut start = start_sim(sim_level, a.tuning, seed, a.start, carry.as_ref());
+    let mut start = start_sim(sim_level.clone(), a.tuning, seed, a.start, carry.as_ref());
 
     let mut prefix = InputScript::default();
     let mut prefix_hints = None;
@@ -476,6 +489,11 @@ fn run(a: Args) -> Result<bool, String> {
         ..SearchConfig::default()
     };
     let goal = match a.goal {
+        Some((x, y)) if a.goal_on_foot => Goal::Stand {
+            x,
+            y,
+            radius: GOAL_RADIUS,
+        },
         Some((x, y)) => Goal::Reach {
             x,
             y,
@@ -515,13 +533,10 @@ fn run(a: Args) -> Result<bool, String> {
     std::fs::write(&out, route::route_csv(&header, &script))
         .map_err(|e| format!("writing {}: {e}", out.display()))?;
 
-    let fresh = start_sim(
-        start.level().clone(),
-        a.tuning,
-        seed,
-        a.start,
-        carry.as_ref(),
-    );
+    // The level as loaded: the game after the prefix holds the level as
+    // the prefix left it (a breaking plank's floor gone, say), not as a
+    // route from the start finds it.
+    let fresh = start_sim(sim_level, a.tuning, seed, a.start, carry.as_ref());
     let played = route::play(&fresh, &script, &goal);
     if !played.won() {
         return Err("the route found does not win when played from the start".into());
@@ -634,6 +649,9 @@ mod tests {
         );
         assert_eq!(a.goal, None);
         assert!(args("--goal 4851").is_err());
+        assert!(!a.goal_on_foot);
+        assert!(args("--goal 1,2 --goal-on-foot").unwrap().goal_on_foot);
+        assert!(args("--goal-on-foot").is_err());
         assert_eq!(a.intro, Intro::Any);
         assert_eq!(args("--intro skip").map(|a| a.intro), Ok(Intro::Skip));
         assert_eq!(args("--intro play").map(|a| a.intro), Ok(Intro::Play));

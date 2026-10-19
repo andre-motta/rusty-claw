@@ -1,0 +1,62 @@
+# Waypoints for the fifth level with the default tuning, from the level's
+# geometry. The route is searched a stretch at a time: each stretch below
+# runs with its waypoints as --hints (with --hints-on-foot) and ends at its
+# goal (--goal X,Y), and the next carries on from it (--from-route,
+# --from-tick at its last tick); the last stretch has no goal and ends at
+# the gem. Every stretch uses --seed level and --fragile-cost 100.
+#
+# 1. Down from the start along the rooftops to the first checkpoint:
+#    goal 4933,3039.
+# 2. Over the spike pits on the ledges and down the steps to the second
+#    checkpoint: goal 7364,3295.
+# 3. Up the ladder to the ledge above the second checkpoint, up the
+#    toggling pegs to the elevator, over to the high ledge, down to the
+#    long ledge over the spike pit and on to the third checkpoint: goal
+#    10101,3679.
+7700,3095
+7795,2740
+8400,2741
+9200,2933
+# 4. Over the two breaking plank rows above the spikes, up the ladder
+#    by the wall and on to the fourth checkpoint on top of it: goal
+#    12331,3231.
+12128,3520
+# 5. Along the top of the wall and down the steps to the first super
+#    checkpoint: goal 14022,3935.
+# 6. Down the steps past the first super checkpoint and along the
+#    street to the checkpoint by the spikes: goal 17006,4639.
+# 7. Over the toggling pegs above the spikes to the low ledge, up the
+#    ladder to the high ledge and across onto the column with the
+#    checkpoint: goal 18481,4447.
+18000,4567
+17760,4420
+18100,4247
+# 8. Off the column on to the breaking planks beside it, down through
+#    them and along the floor to the checkpoint: goal 19383,5151.
+# 9. Up the two ladders by the checkpoint to the top ledge, across to the
+#    long ledge over the spikes and down the ledges beyond to the floor,
+#    over the long spikes on the three rows of breaking planks, up the
+#    stack of toggling pegs, over the column and down to the second super
+#    checkpoint: goal 23430,5535.
+19616,5100
+19424,4740
+19600,4603
+20100,4729
+20950,5407
+21650,5343
+22100,5279
+22700,5471
+22878,4667
+# 10. Over the spikes on the sliding elevator to the low ledge, up the
+#     toggling pegs, back over the small ledge to the high ledge and
+#     across on to the column with the checkpoint: goal 26063,5087.
+24960,5414
+25650,5464
+25670,5188
+25300,5047
+25600,4951
+# 11. Off the column on to the tower of breaking planks, down through
+#     its rows to the floor and the checkpoint: goal 26771,5983.
+# 12. Up the stack of toggling pegs, across on to the block beyond, down
+#     the shaft through its rows of breaking planks and along the floor to
+#     the gem: no goal.

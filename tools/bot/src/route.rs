@@ -254,12 +254,7 @@ pub fn play(start: &Sim, script: &InputScript, goal: &Goal) -> Played {
                 _ => {}
             }
         }
-        if let Goal::Reach { x, y, radius } = *goal
-            && sim.player().is_some_and(|o| {
-                let (dx, dy) = (i64::from(o.x - x), i64::from(o.y - y));
-                dx * dx + dy * dy <= i64::from(radius) * i64::from(radius)
-            })
-        {
+        if goal.met_at(&sim) {
             out.done_at.get_or_insert(i as u64);
         }
         if dying(&sim) || sim.stats().lives < lives {
