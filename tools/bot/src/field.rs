@@ -11,9 +11,10 @@
 //! of a rope (Claw hangs from its end and lets go with a jump from
 //! anywhere along it), the top of a springboard or the top of a stepping
 //! stone (which is there only part of the time, so the search still times
-//! the hop). Above every springboard is its throw: the cells up to the
-//! throw's height over its top, and a jump's width to either side, where
-//! Claw rises and steers after it throws him. Moves between neighbouring
+//! the hop). Above every springboard and every ground blower is its throw:
+//! the cells up to the throw's height over its top (a blower's floor), and
+//! a jump's width to either side, where Claw rises and steers after it
+//! throws him. Moves between neighbouring
 //! open cells follow what Claw can do, generously:
 //!
 //! - down: always (falling), except through a one-way floor (a ground
@@ -24,7 +25,8 @@
 //!   on a ladder, or within a jump's reach and Claw's height below one
 //!   (he catches a ladder with his body, so a jump from the floor reaches
 //!   a ladder that ends higher than his feet can), or in a springboard's
-//!   throw;
+//!   or a blower's throw, or within Claw's height above a throw and below
+//!   a ladder (he catches it at the top of the throw);
 //! - sideways: only within a jump's reach above support somewhere within
 //!   a jump's width, or in a springboard's throw, so a gap can be crossed
 //!   but open sky cannot.
@@ -38,7 +40,9 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use claw_sim::SimLevel;
-use claw_sim::logic::{break_plank, path_elevator, platform, rope, springboard, stepping_stone};
+use claw_sim::logic::{
+    break_plank, ground_blower, path_elevator, platform, rope, springboard, stepping_stone,
+};
 use claw_sim::player::swing;
 use claw_sim::tiles::{CLIMB, DEATH, GROUND, SOLID};
 
@@ -89,6 +93,14 @@ const TRACK: [usize; 4] = [51, 52, 53, 54];
 const TRACK_WIDTH: usize = 61;
 const TRACK_HEIGHT: usize = 62;
 
+/// How far either side of a ground blower its nozzle reaches, px: the
+/// nozzle box is about the width of the jet's picture and a little more.
+pub const BLOWER_HALF_WIDTH: i32 = 48;
+
+/// How far below a ground blower its floor is looked for, px (the floor
+/// of the level's blowers is 90 px below them).
+const BLOWER_FLOOR_SEARCH: i32 = 200;
+
 /// Record fields of a path elevator: its built-in route, and the first of
 /// the sixteen that hold its legs.
 const PATH_BUILT_IN: usize = 15;
@@ -115,9 +127,13 @@ pub struct Grid {
     /// through open cells (0 on a ladder), saturating; `u16::MAX` with
     /// none before a closed cell.
     to_ladder: Vec<u16>,
-    /// The cell is in a springboard's throw: Claw rises through it and
-    /// steers across it.
+    /// The cell is in a springboard's or a ground blower's throw: Claw rises
+    /// through it and steers across it.
     thrown: Vec<bool>,
+    /// The cell is at most Claw's height above a throw's cell in the same
+    /// column, through open cells: at the top of a throw his body reaches
+    /// it, so he catches a ladder there.
+    lifted: Vec<bool>,
     reach_cells: u16,
     body_cells: u16,
 }
@@ -198,6 +214,7 @@ impl Grid {
             env: Vec::new(),
             to_ladder: Vec::new(),
             thrown: vec![false; n],
+            lifted: Vec::new(),
             reach_cells: (reach.jump_height / CELL).max(1) as u16,
             body_cells: (BODY / CELL) as u16,
         };
@@ -206,7 +223,23 @@ impl Grid {
         grid.mark_ropes(level, &mut support);
         grid.mark_stepping_stones(level, &mut support);
         grid.mark_springboards(level, &mut support, reach);
+        grid.mark_blowers(level, &mut support, reach);
         grid.mark_planks(level);
+        grid.lifted = vec![false; n];
+        for c in 0..cols {
+            let mut since = u16::MAX;
+            for r in (0..rows).rev() {
+                let i = grid.index(c, r);
+                since = if !grid.open[i] {
+                    u16::MAX
+                } else if grid.thrown[i] {
+                    0
+                } else {
+                    since.saturating_add(1)
+                };
+                grid.lifted[i] = since <= grid.body_cells;
+            }
+        }
         grid.to_ladder = vec![u16::MAX; n];
         for c in 0..cols {
             let mut above = u16::MAX;
@@ -366,7 +399,6 @@ impl Grid {
     /// throw's height, as wide as its top and a jump's width either side.
     fn mark_springboards(&mut self, level: &SimLevel, support: &mut [bool], reach: Reach) {
         let rect = springboard::surface(level.number);
-        let mut thrown = std::mem::take(&mut self.thrown);
         for spec in &level.objects {
             if !springboard::NAMES.contains(&spec.logic.as_str()) {
                 continue;
@@ -375,25 +407,50 @@ impl Grid {
             let (x, top) = (r[5], r[6] + rect.top);
             let height = springboard::height_of(r[springboard::HEIGHT_FIELD]);
             self.mark_band(x + rect.left, x + rect.right, top - CELL, top, support);
-            let (left, right) = (
-                x + rect.left - reach.jump_width,
-                x + rect.right + reach.jump_width,
-            );
-            let mut yy = top - height;
-            while yy <= top {
-                let mut xx = left;
-                while xx <= right {
-                    if let Some(i) = self.cell_index(xx, yy)
-                        && self.open[i]
-                    {
-                        thrown[i] = true;
-                    }
-                    xx += CELL;
-                }
-                yy += CELL;
-            }
+            self.mark_throw(x + rect.left, x + rect.right, top, height, reach);
         }
-        self.thrown = thrown;
+    }
+
+    /// Marks the floor under every ground blower's nozzle as support, and
+    /// the cells of its throw (see [`Grid::thrown`]): from the floor up to
+    /// the throw's height, as wide as the nozzle and a jump's width either
+    /// side. A blower throws Claw whenever he is over its nozzle as the jet
+    /// starts, standing or not, so the search still times the throw.
+    fn mark_blowers(&mut self, level: &SimLevel, support: &mut [bool], reach: Reach) {
+        for spec in &level.objects {
+            if !ground_blower::NAMES.contains(&spec.logic.as_str()) {
+                continue;
+            }
+            let r = &spec.record;
+            let (x, y) = (r[5], r[6]);
+            let floor = (y..=y + BLOWER_FLOOR_SEARCH)
+                .find(|&yy| matches!(level.map.attr(x, yy), SOLID | GROUND))
+                .unwrap_or(y + BLOWER_FLOOR_SEARCH);
+            let height = ground_blower::height_of(r[ground_blower::HEIGHT_FIELD]);
+            let (left, right) = (x - BLOWER_HALF_WIDTH, x + BLOWER_HALF_WIDTH);
+            self.mark_band(left, right, floor - CELL, floor, support);
+            self.mark_throw(left, right, floor, height, reach);
+        }
+    }
+
+    /// Marks the open cells of a throw from a top spanning `left` to
+    /// `right` up to `height` above it, a jump's width either side, as
+    /// [`Grid::thrown`].
+    fn mark_throw(&mut self, left: i32, right: i32, top: i32, height: i32, reach: Reach) {
+        let (left, right) = (left - reach.jump_width, right + reach.jump_width);
+        let mut yy = top - height;
+        while yy <= top {
+            let mut xx = left;
+            while xx <= right {
+                if let Some(i) = self.cell_index(xx, yy)
+                    && self.open[i]
+                {
+                    self.thrown[i] = true;
+                }
+                xx += CELL;
+            }
+            yy += CELL;
+        }
     }
 
     /// Lets Claw fall through the floor of every breaking plank: the cells
@@ -545,7 +602,7 @@ impl Grid {
                     || self.climb[b]
                     || below.is_some_and(|i| self.climb[i])
                     || (self.to_ladder[b] <= self.body_cells
-                        && self.air[b] <= self.reach_cells + self.body_cells));
+                        && (self.air[b] <= self.reach_cells + self.body_cells || self.lifted[b])));
             let mut relax = |a: usize, cost: u32, heap: &mut BinaryHeap<Reverse<(u32, usize)>>| {
                 if !self.open[a] {
                     return;
@@ -881,6 +938,73 @@ mod tests {
         assert!(!thrown(21 * 16, 29 * 16 - 220));
         assert!(thrown(21 * 16 - 32 - 180, 20 * 16));
         assert!(!thrown(21 * 16 - 32 - 210, 20 * 16));
+    }
+
+    #[test]
+    fn a_ground_blower_throws_claw_up_a_cliff_too_high_to_jump() {
+        let (floor, top) = (28 * 16 + 8, 4 * 16 + 8);
+        let field = |level: &SimLevel| {
+            Grid::build(level, Reach::default())
+                .field_to(30 * 16, top, 16)
+                .at(5 * 16, floor)
+        };
+        // A blower set into the floor by the cliff, 90 px above the floor's
+        // top as the sixth level's are; its floor is found below it.
+        let blower = |height: i32| {
+            let mut b = ObjectSpec::at("GroundBlower", 21 * 16, 29 * 16 - 90, 0);
+            b.record[ground_blower::HEIGHT_FIELD] = height;
+            b
+        };
+        let with = |b: ObjectSpec| {
+            let mut level = cliff_level(vec![b]);
+            level.number = 6;
+            level
+        };
+        // The usual throw (450 px) clears the cliff; a throw of 200 px
+        // does not.
+        assert_ne!(field(&with(blower(0))), UNREACHABLE);
+        let low = with(blower(200));
+        assert_eq!(field(&low), UNREACHABLE);
+        // The throw's cells: up to its height over the floor, and a jump's
+        // width beside the nozzle.
+        let g = Grid::build(&low, Reach::default());
+        let thrown = |x: i32, y: i32| g.thrown[g.cell_index(x, y).unwrap()];
+        assert!(thrown(21 * 16, 29 * 16 - 190));
+        assert!(!thrown(21 * 16, 29 * 16 - 220));
+        assert!(thrown(21 * 16 - BLOWER_HALF_WIDTH - 180, 20 * 16));
+        assert!(!thrown(21 * 16 - BLOWER_HALF_WIDTH - 210, 20 * 16));
+    }
+
+    #[test]
+    fn claw_catches_a_ladder_at_the_top_of_a_throw() {
+        // The cliff of 384 px with a ladder on its face (column 23, from
+        // row 2 down to row `foot`), and a blower whose 200 px throw alone
+        // falls short: his body catches the ladder when its foot is within
+        // his height above the throw's top (464 - 200 = 264 px).
+        let (floor, top) = (28 * 16 + 8, 4 * 16 + 8);
+        let field = |foot: usize| {
+            let mut rows = vec![".".repeat(40); 30];
+            rows[29] = "#".repeat(40);
+            for row in rows.iter_mut().skip(5) {
+                row.replace_range(24..40, &"#".repeat(16));
+            }
+            for row in rows.iter_mut().take(foot + 1).skip(2) {
+                row.replace_range(23..24, "H");
+            }
+            let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+            let mut level = SimLevel::synthetic(TileMap::from_ascii(16, &rows), (40, 40));
+            level.number = 6;
+            let mut b = ObjectSpec::at("GroundBlower", 18 * 16, 29 * 16 - 90, 0);
+            b.record[ground_blower::HEIGHT_FIELD] = 200;
+            level.objects = vec![b];
+            Grid::build(&level, Reach::default())
+                .field_to(30 * 16, top, 16)
+                .at(5 * 16, floor)
+        };
+        // The ladder's foot at 176 px, 88 px above the throw's top.
+        assert_ne!(field(10), UNREACHABLE);
+        // At 112 px, 152 px above it: out of reach.
+        assert_eq!(field(6), UNREACHABLE);
     }
 
     #[test]
