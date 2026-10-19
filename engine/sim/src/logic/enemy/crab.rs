@@ -36,13 +36,14 @@
 //! The states, with their ticks at the 18 ms step:
 //!
 //! - [`EnemyState::Regroup`]: the crab faces Claw on entering it (and can
-//!   no longer be lifted), and on its one tick decides: far from Claw
-//!   (modes 0, 1, 5 and 6) it hides when a draw of 0..100 is below 40,
-//!   else it crouches; close (modes 2 to 4) it crouches.
+//!   no longer be lifted, see [Lifting](#lifting)), and on its one tick
+//!   decides: far from Claw (modes 0, 1, 5 and 6) it hides when a draw of
+//!   0..100 is below 40, else it crouches; close (modes 2 to 4) it
+//!   crouches.
 //! - [`EnemyState::Hide`]: withdrawn ([`HIDE_ANIM`]) for 1000 to 3000 ms
 //!   (drawn when the last hide time has run out, else the old one goes
 //!   on), then each tick a draw of 0..100 below 90 sends it back to
-//!   regroup.
+//!   regroup. Going into hiding makes it liftable.
 //! - [`EnemyState::Defense`]: crouched ([`DEFENSE_ANIM`]); on its 16th
 //!   tick, by the mode, it hides, backs off 75 to 125 px at 150 px/s
 //!   ([`EnemyState::MoveBack`], with its scuttle sound), or attacks: a
@@ -69,6 +70,28 @@
 //!   puts that spot behind it, so each blow moves it one 5.4 px step.
 //!
 //! The crab's snip, scuttle and shell sounds share one 200 ms timer.
+//!
+//! # Lifting
+//!
+//! A crab can be lifted only from the moment it goes into hiding
+//! ([`enter_hide`]) until its next regroup ([`go_home`]); it is not
+//! liftable when built. A blow on the crouched shell makes it hide and
+//! knocks it aside at once, and the knock's regroup ends the window a
+//! tick or two later. Claw lifts it as he lifts a guard (his own lift,
+//! [`super::lift`]), with these differences:
+//!
+//! - Lifted ([`lifted`]): it says nothing and draws nothing; its movement
+//!   box while carried is a single point ([`CARRY`]). On Claw's lift frame
+//!   it shows [`LIFT_ANIM`] 0 px (facing left) or -10 px (facing right)
+//!   across and 15 px up from him; then, flailing, the withdrawn shell
+//!   ([`HIDE_ANIM`]) over his head, 10 or -10 px across and 69 px up.
+//! - Thrown ([`thrown`]): it falls ([`FALL_ANIM`]) as a thrown object,
+//!   hurting what a thrown object hurts (the human enemies and the crates
+//!   it flies into; other crabs let it pass), with no time limit. On
+//!   landing ([`thrown_tick`]) it stops, takes its own movement box back
+//!   with its feet where they are, is an enemy again and regroups: no
+//!   bounce, no rest and no damage.
+//! - Dropped: as a guard is, then it regroups.
 //!
 //! # State numbers
 //!
@@ -102,8 +125,9 @@
 //! - Under a widened view a dead crab leaves the screen, and a nest wakes
 //!   with its window, by the rules the built enemies and the triggers that
 //!   wake around Claw already use.
-//! - A hiding crab is not lifted yet: Claw's lift does not reach the crab
-//!   family, so it never offers itself to be carried.
+//! - A crab's movement box while carried is a single point at its
+//!   position (the game sets none for the crab), so a thrown crab lands
+//!   when its position reaches the floor and its feet are put back there.
 //! - A nest crab falls onto platforms as the other enemies do.
 //!
 //! Its data ([`HermitCrabData`]) holds the shared enemy data, which the
@@ -112,13 +136,15 @@
 
 use std::ops::RangeInclusive;
 
+use super::lift::{self, Carry};
 use super::{
     Body, Class, ClassAnims, ClassSounds, DeathKind, EnemyData, EnemyFields, EnemyState, Handler,
     Timer, UNBOUNDED, build, data, data_mut, die, face_claw, facing_rect, field, human, limit,
-    nothing, obj, obj_mut, play, rand, record, record_bounds, set_anim, set_facing, set_state,
+    nothing, obj, obj_mut, play, rand, record, record_bounds, set_anim, set_anim_now, set_facing,
+    set_state,
 };
 use crate::logic::{ObjectData, World, pickup};
-use crate::object::{Object, ObjectId, Rect, types};
+use crate::object::{Object, ObjectId, Rect, flags, special, types};
 use crate::physics::ptype;
 
 /// Logic names this family runs.
@@ -238,8 +264,10 @@ pub const DEFENSE_ANIM: &str = "LEVEL_HERMITCRAB_CROUCH4";
 pub const HIDE_ANIM: &str = "LEVEL_HERMITCRAB_HIDE";
 /// Charging and backing off.
 pub const RUN_ANIM: &str = "LEVEL_HERMITCRAB_FASTADVANCE";
-/// Falling out of a nest.
+/// Falling out of a nest, and flying when thrown by Claw.
 pub const FALL_ANIM: &str = "LEVEL_HERMITCRAB_FALL";
+/// Being lifted by Claw.
+pub const LIFT_ANIM: &str = "LEVEL_HERMITCRAB_LIFT";
 /// The body flying off after death.
 pub const DEATH_ANIM: &str = "LEVEL_HERMITCRAB_KILLFALL";
 /// The snip's sound.
@@ -257,6 +285,14 @@ pub const DEATH_SOUND: &str = "LEVEL_HERMITCRAB_CRABDEATH";
 /// The side value with which a regroup faces right.
 pub const SIDE_RIGHT: i32 = 2;
 
+/// How Claw carries a crab: beside him on his lift frame, then over his
+/// head, and a single point as its movement box meanwhile.
+pub const CARRY: Carry = Carry {
+    beside: (0, -10, -15),
+    overhead: (10, -10, -69),
+    move_rect: Rect::new(0, 0, 0, 0),
+};
+
 /// Whether picture `frame` is a shell picture, on which a hit only knocks
 /// the crab aside.
 pub fn is_shell_frame(frame: i32) -> bool {
@@ -272,7 +308,7 @@ pub static CLASS: Class = Class {
     handler,
     go_home,
     go_idle: nothing,
-    carry: None,
+    carry: Some(CARRY),
     pick_lift_voice: nothing,
     anims: ClassAnims {
         advance: RUN_ANIM,
@@ -284,8 +320,8 @@ pub static CLASS: Class = Class {
         home: "",
         jump: "",
         fall: FALL_ANIM,
-        lifted: "",
-        lifted2: "",
+        lifted: LIFT_ANIM,
+        lifted2: HIDE_ANIM,
         bounce: "",
     },
     sounds: ClassSounds::NONE,
@@ -365,6 +401,7 @@ fn handler(s: EnemyState) -> Option<Handler> {
         EnemyState::Nudge => Some(nudge_tick),
         EnemyState::Launch => Some(launch_tick),
         EnemyState::MoveBack => Some(human::move_tick),
+        EnemyState::Thrown => Some(thrown_tick),
         _ => None,
     }
 }
@@ -499,7 +536,7 @@ fn regroup_by_side(w: &mut World, id: ObjectId) {
 
 fn enter_regroup(w: &mut World, id: ObjectId) {
     set_state(w, id, EnemyState::Regroup);
-    obj_mut(w, id).special_flags &= !crate::object::special::LIFTABLE;
+    obj_mut(w, id).special_flags &= !special::LIFTABLE;
 }
 
 fn mode(w: &World, id: ObjectId) -> u8 {
@@ -529,8 +566,8 @@ pub fn regroup_tick(w: &mut World, id: ObjectId) {
 }
 
 /// Hides: a new hide time of 1000 to 3000 ms when the last one has run
-/// out (else the old one goes on), stopped, withdrawn. Draws: one of
-/// 0..2001 for a new hide time.
+/// out (else the old one goes on), stopped, withdrawn, and liftable until
+/// its next regroup. Draws: one of 0..2001 for a new hide time.
 pub fn enter_hide(w: &mut World, id: ObjectId) {
     let now = w.now_ms;
     if fields(w, id).is_some_and(|f| f.hide.done(now)) {
@@ -543,6 +580,7 @@ pub fn enter_hide(w: &mut World, id: ObjectId) {
     set_vx(w, id, 0.0);
     set_state(w, id, EnemyState::Hide);
     set_anim(w, id, HIDE_ANIM);
+    obj_mut(w, id).special_flags |= special::LIFTABLE;
 }
 
 /// Hide: once the hide time is over, a draw of 0..100 below 90 each tick
@@ -825,6 +863,134 @@ pub fn nudge_tick(w: &mut World, id: ObjectId) {
     let arrived = if vx < 0.0 { exact <= tx } else { exact >= tx };
     if arrived || exact == f64::from(pre) {
         go_home(w, id);
+    }
+}
+
+// ----------------------------------------------------------------------
+// Lifted, thrown and dropped by Claw
+
+/// True when `id` is a built hermit crab.
+pub fn is_crab(w: &World, id: ObjectId) -> bool {
+    fields(w, id).is_some()
+}
+
+/// `carrier` (Claw) picked up crab `id`: as a guard is lifted (see
+/// [`lift::lifted`]), but with no line and no draw. It is busy, cannot be
+/// hit, stays active everywhere, loses its patrol limits, takes the
+/// carried movement box of [`CARRY`] and no longer moves by itself. A
+/// crab being removed is not taken, nor a dead one that is no longer an
+/// enemy. Draws nothing.
+pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
+    let Some(dead) = data(w, id).map(|d| d.dead) else {
+        return;
+    };
+    let o = obj(w, id);
+    if o.flags & flags::DESTROY != 0 || (dead && o.type_flags != types::ENEMY) {
+        return;
+    }
+    let z = w.objects.get(carrier).map(|c| c.z.saturating_add(1));
+    if let Some(d) = data_mut(w, id) {
+        d.z_sort = false;
+    }
+    if let Some(z) = z {
+        let o = obj_mut(w, id);
+        o.z = z;
+        o.flags |= flags::RESORT;
+    }
+    set_state(w, id, EnemyState::Lifted);
+    let o = obj_mut(w, id);
+    o.physics_type = ptype::DIRECT;
+    o.y -= 1;
+    o.flags |= flags::ALWAYS_ACTIVE | flags::SAFE;
+    let saved = facing_rect(o, o.move_rect);
+    o.move_rect = facing_rect(o, CARRY.move_rect);
+    if let Some(d) = data_mut(w, id) {
+        d.busy = true;
+        d.bounds = UNBOUNDED;
+        d.bounds_y = UNBOUNDED;
+        d.frozen = true;
+        d.winding_up = false;
+        d.saved_move_rect = saved;
+        d.vx = 0.0;
+        d.vy = 0.0;
+    }
+}
+
+/// Claw starts winding up a throw of crab `id`: held over his head, it
+/// shifts a little back and down (see [`lift::wind_up`]).
+pub fn wind_up(w: &mut World, id: ObjectId) {
+    lift::wind_up(w, id);
+}
+
+/// Claw threw crab `id` at (vx, vy) px/s: as a guard is thrown (see
+/// [`lift::thrown`]), a thrown object that hurts what it flies into, but
+/// falling ([`FALL_ANIM`]) and with no time limit in the air. Nothing
+/// happens unless it is carried.
+pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
+    if !matches!(
+        super::state(w, id),
+        Some(EnemyState::Lifted | EnemyState::Flailing)
+    ) {
+        return;
+    }
+    lift::thrown(w, id, vx, vy);
+    set_anim(w, id, FALL_ANIM);
+    if let Some(d) = data_mut(w, id) {
+        d.thrown_timer = Timer::default();
+    }
+}
+
+/// Claw let go of crab `id`: it is dropped as a guard is (see
+/// [`lift::dropped`]), and regroups when it gets up.
+pub fn dropped(w: &mut World, id: ObjectId) {
+    lift::dropped(w, id);
+}
+
+/// Thrown: once it has landed it is free, may leave the active area
+/// again, starts its fall afresh and stops; it takes its own movement box
+/// back with its feet where they are, is an enemy that can be hit again,
+/// and regroups. No bounce, no rest and no damage.
+pub fn thrown_tick(w: &mut World, id: ObjectId) {
+    w.advance_anim(id);
+    if obj(w, id).physics_type != ptype::STAND {
+        return;
+    }
+    if let Some(d) = data_mut(w, id) {
+        d.busy = false;
+    }
+    obj_mut(w, id).flags &= !flags::ALWAYS_ACTIVE;
+    set_anim_now(w, id, FALL_ANIM);
+    set_vx(w, id, 0.0);
+    restore_move_rect(w, id);
+    let o = obj_mut(w, id);
+    o.type_flags = types::ENEMY;
+    o.flags &= !flags::SAFE;
+    go_home(w, id);
+}
+
+/// The movement box saved at the lift, keeping the feet where they are;
+/// the move to the new height drops the fraction of a pixel carried up
+/// and down, as a guard's does.
+fn restore_move_rect(w: &mut World, id: ObjectId) {
+    let Some(saved) = data(w, id).map(|d| d.saved_move_rect) else {
+        return;
+    };
+    if !saved.is_set() {
+        return;
+    }
+    let o = obj_mut(w, id);
+    let before = (o.x, o.y);
+    let r = facing_rect(o, saved);
+    if o.move_rect.is_set() {
+        o.y += o.move_rect.bottom - r.bottom;
+    }
+    o.move_rect = r;
+    let after = (o.x, o.y);
+    if let Some(d) = data_mut(w, id)
+        && d.moved_to == Some(before)
+    {
+        d.moved_to = Some(after);
+        d.carry.1 = 0.0;
     }
 }
 
