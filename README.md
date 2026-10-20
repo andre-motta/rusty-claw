@@ -96,6 +96,9 @@ of its two save points), options (sound, video, controls) and quit.
 or the gamepad's Start button open the in-game menu: resume, options and
 end the game. Finishing a level shows the treasure tally, then the main
 menu; the next level is then open in the new game and load lists.
+Finishing the fourteenth level shows its map and tally, then the credits
+over the parchment; Escape, Enter, a game key or a click returns to the
+main menu, whose Credits entry shows them again.
 
 The game pauses when its window loses focus.
 
@@ -213,6 +216,7 @@ infinite_lives = off       # play-test aid: a death never costs a life
 vsync = true
 fps_cap = 300              # with vsync off; 0 for no cap
 interpolation = true
+smooth_rope = on           # off: rope swings move in the rope's own steps
 status_bar = "edges"       # edges, or centred in the 4:3 area
 audio = on                 # on or off
 sound_volume = 80          # 0 to 100
@@ -311,7 +315,17 @@ positions interpolated between steps, at any resolution.
 | `--fps-cap N` | with vsync off, draw at most N frames per second (default 300) |
 | `--uncapped` | no frame-rate cap with vsync off (same as `--fps-cap 0`); for measuring throughput only |
 | `--no-interp` | draw the latest game tick only |
+| `--smooth-rope on\|off` | draw rope swings smoothly between the rope's frames (default on); off shows the rope's own steps |
 | `--pack DIR` | an image pack with higher-resolution replacement images |
+
+A swinging rope steps through its frames a little slower than the game's
+18 ms steps, so Claw, the rope's end and the view following him stand still
+on some steps; at 60 Hz they would move on about two frames in three, a
+stepped look the original has too. The smooth rope swing (on by default,
+`smooth_rope` in the config file) draws them on a smooth path between the
+rope's frames instead. It changes only what is drawn: the game, its
+recordings and its replays are the same either way. It needs the
+interpolation between steps (`--no-interp` turns both off).
 
 The status bar sits at the edges of the picture; on a wide display
 `status_bar = "centred"` (or the video options) keeps it in the 4:3
@@ -534,6 +548,12 @@ unless `--uncapped` is given.
   and other objects do not move or act yet.
 - No movies or cut scenes, and no multiplayer (curses only act in
   multiplayer games, so they vanish in single player as in the original).
+  After the last level the ending movie is left out: a short black hold
+  stands in for it before the map screen, and the credits show over the
+  parchment rather than over a moving background.
+- The credits text uses the game's bitmap font, which has capitals, digits
+  and a few signs only: letters show as capitals, and other signs
+  (hyphens, apostrophes, slashes, quotes, colons) show as spaces.
 - A few details still follow a reasonable guess rather than a measurement
   of the original: carrying an object walks at 30 px/s, rats that reach a
   wall turn back at walking speed, enemies treat goo like spikes, and a
@@ -553,7 +573,7 @@ unless `--uncapped` is given.
 | `engine/render` | `claw-render` | palette renderer, screen sprites and transitions |
 | `engine/sim` | `claw-sim` | headless simulation and the level logics |
 | `engine/audio` | `claw-audio` | mixer, output device and music synthesis |
-| `engine/ui` | `claw-ui` | status bar, menus and the title, tally and game-over screens |
+| `engine/ui` | `claw-ui` | status bar, menus and the title, tally, game-over and credits screens |
 | `app/info` | `claw-info` | level summary tool |
 | `app/viewer` | `claw-viewer` | level viewer |
 | `app/game` | `claw-game` | the game (`rusty-claw` binary) |

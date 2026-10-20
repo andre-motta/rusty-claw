@@ -20,7 +20,10 @@
 //! files. A segment of a level that starts away from the level's start
 //! names its start point (`teleport = "X,Y"`): Claw is placed there and
 //! left to settle before the route's time zero, and the random stream is
-//! set to `rng_at_t0` once he stands.
+//! set to `rng_at_t0` once he stands. A diagnostic route that moved Claw's
+//! respawn point at its time zero says so in a `# checkpoint X,Y` comment
+//! line ([`script_checkpoint`]), and one that gave Claw a health there in a
+//! `# health N` line ([`script_health`]); the replay sets the same there.
 //!
 //! [`Store::compare_clock`] replays the route in the game with that clock's
 //! tuning and the random state at time zero (and, for a later level of one
@@ -456,6 +459,12 @@ impl Driver {
     }
 }
 
+/// The respawn point a route's `# checkpoint X,Y` comment line sets at
+/// its time zero, and the health its `# health N` line gives Claw there
+/// (see [`claw_sim::input::script_checkpoint`] and
+/// [`claw_sim::input::script_health`]).
+pub use claw_sim::input::{script_checkpoint, script_health};
+
 /// The game at a route's time zero: the level just loaded with `cfg`
 /// (with the progress `carry` a game brought into it, for a later level of
 /// one game), or, with `start`, Claw placed at that point and left to
@@ -670,7 +679,17 @@ impl Store {
         let seed = cfg.seed;
         let carry =
             parse_start_lines(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?;
-        let sim = start_game(bundle, cfg, run.teleport, carry)?;
+        let mut sim = start_game(bundle, cfg, run.teleport, carry)?;
+        if let Some(p) =
+            script_checkpoint(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?
+        {
+            sim.set_checkpoint(Some(p));
+        }
+        if let Some(h) =
+            script_health(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?
+        {
+            sim.set_health(h);
+        }
         let rebuild = replay_from(sim, &script, &route_text, until, driver)?;
         let traces = references
             .into_iter()
@@ -1100,6 +1119,21 @@ traces = ["trace-c60-r1.csv"]
         assert_eq!(cfg.seed, 4_105_512_405);
         assert!(cfg.tuning.behaviour.fix_double_jump);
         assert!(!replay_config(c60, "").tuning.behaviour.fix_double_jump);
+    }
+
+    #[test]
+    fn a_diagnostic_route_names_the_respawn_point_it_sets() {
+        assert_eq!(
+            script_checkpoint("# level 10\n# checkpoint 40600,7245\ntick,a,b\n"),
+            Ok(Some((40600, 7245)))
+        );
+        assert_eq!(
+            script_checkpoint("# checkpoint = 1, 2\n# checkpoint 3,4\n"),
+            Ok(Some((3, 4)))
+        );
+        assert_eq!(script_checkpoint("# checkpoints are flags\n"), Ok(None));
+        assert_eq!(script_checkpoint("tick,a,b\n0,0,0\n"), Ok(None));
+        assert!(script_checkpoint("# checkpoint at the door\n").is_err());
     }
 
     #[test]

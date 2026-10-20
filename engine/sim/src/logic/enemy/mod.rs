@@ -5,7 +5,15 @@
 //! Katherine ([`katherine`]), the boss of the fourth level, the town guards
 //! ([`townguard`]), Wolvington ([`wolvington`]), the red-tail pirates
 //! ([`redtail_pirate`]), the bear sailors ([`bear_sailor`]), the crabs
-//! ([`crab`]) and Gabriel with his bomb ([`gabriel`]).
+//! ([`crab`]), Gabriel with his bomb ([`gabriel`]), the hook-handed
+//! pirate ([`hook_pirate`]), PegLeg with his bullet ([`pegleg`]),
+//! Marrow ([`marrow`]) with his parrot ([`parrot`]), the eleventh
+//! level's Mercat ([`mercat`]), Siren ([`siren`]) and Fish ([`fish`]),
+//! the twelfth level's Aquatis ([`aquatis`]) with his helpers and the
+//! tentacles ([`tentacle`]), the thirteenth level's Chameleon
+//! ([`chameleon`]) and RedTail ([`redtail`]) with his stakes and his wind,
+//! and the fourteenth level's tiger guards ([`tiger_guard`]) and Omar
+//! ([`omar`]) with his shield and his energy balls.
 //!
 //! Every enemy is a small state machine over named states ([`EnemyState`]).
 //! Each class handles a few states itself and inherits every other one from
@@ -55,24 +63,37 @@ use crate::physics::ptype;
 use crate::tiles::SOLID;
 use crate::tuning::TICK_MS;
 
+pub mod aquatis;
 pub mod bear_sailor;
+pub mod chameleon;
 pub mod crab;
 pub mod cutthroat;
+pub mod fish;
 pub mod gabriel;
 pub mod goo;
+pub mod hook_pirate;
 pub mod human;
 pub mod katherine;
 pub mod lift;
+pub mod marrow;
+pub mod mercat;
 pub mod motion;
 pub mod officer;
+pub mod omar;
+pub mod parrot;
+pub mod pegleg;
 pub mod punkrat;
 pub mod rat;
 pub mod raux;
+pub mod redtail;
 pub mod redtail_pirate;
 pub mod robberthief;
 pub mod seagull;
+pub mod siren;
 pub mod soldier;
 pub mod states;
+pub mod tentacle;
+pub mod tiger_guard;
 pub mod townguard;
 pub mod wolvington;
 
@@ -193,8 +214,20 @@ pub mod field {
 /// 2180-2199 the seventh level's (the bear's hug and the pirate's boss
 /// mode from 2180, the crabs' states from 2190, see
 /// [`bear_sailor::STATE_BLOCK`]) and 2200-2219 the eighth level's
-/// (Gabriel's attacks, hits and death acts, see [`gabriel::STATE_BLOCK`]);
-/// later families take blocks of 20 from 2220.
+/// (Gabriel's attacks, hits and death acts, see [`gabriel::STATE_BLOCK`])
+/// and 2220-2239 the ninth level's (PegLeg's rolls and the hook hold, see
+/// [`hook_pirate::STATE_BLOCK`]) and 2240-2259 the tenth level's
+/// (Marrow's whistle and the parrot's flights, see
+/// [`marrow::STATE_BLOCK`]) and 2260-2279 the eleventh level's (the
+/// Fish's swim, leap and flop and the Siren's song from 2270, see
+/// [`mercat::STATE_BLOCK`]) and 2280-2299 the twelfth level's (Aquatis's
+/// punches, frenzy, stalactite hit and fright from 2280, the tentacles'
+/// grab, squeeze and regrowth from 2290, see [`aquatis::STATE_BLOCK`])
+/// and 2300-2319 the thirteenth level's (RedTail's attacks and jumps from
+/// 2300, the Chameleon's fade out and back from 2310, see
+/// [`redtail::STATE_BLOCK`]) and 2320-2339 the fourteenth level's (the
+/// tiger guards' lunge and flips from 2320, Omar's cast, move and wait
+/// from 2330, see [`tiger_guard::STATE_BLOCK`]).
 /// Numbers of a block that no state has yet stay free, so the
 /// numbers have gaps ([`EnemyState::from_id`] knows them).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -338,11 +371,86 @@ pub enum EnemyState {
     DeadAct3 = 2207,
     /// The last death act, which ends the fight (Gabriel).
     DeadAct4 = 2208,
+    /// Rolling towards Claw (PegLeg).
+    RollForward = 2220,
+    /// Rolling away from Claw (PegLeg).
+    RollBackward = 2221,
+    /// Holding the hook out, its whole picture hurting on contact (the
+    /// hook-handed pirate).
+    HoldHook = 2222,
+    /// Whistling for the parrot and waiting to be carried, Safe (Marrow).
+    WaitForParrot = 2240,
+    /// Patrolling the line near the top of the room (Marrow's parrot).
+    FlyAbout = 2241,
+    /// Turning down towards a dive point (Marrow's parrot).
+    StrikeSetup = 2242,
+    /// Flying home to the perch (Marrow's parrot).
+    FlyToIdle = 2243,
+    /// Flying to Marrow to take hold of him (Marrow's parrot).
+    FlyToMarrow = 2244,
+    /// Carrying Marrow across the pit (Marrow's parrot).
+    CarryMarrow = 2245,
+    /// Swimming up and down its pool (the Fish).
+    Swim = 2270,
+    /// Leaping out of the water at Claw (the Fish).
+    JumpStrike = 2271,
+    /// Flopping on dry ground until it slides back in (the Fish).
+    OutOfWater = 2272,
+    /// Singing, a scream every few ticks (the Siren).
+    Singing = 2273,
+    /// A punch high over the water (Aquatis).
+    HighPunch = 2280,
+    /// A punch low along the water (Aquatis).
+    LowPunch = 2281,
+    /// Thrashing in a frenzy after a stalactite's hit (Aquatis and the
+    /// tentacles).
+    SuperFrenzy = 2282,
+    /// Reeling from a stalactite that fell on him (Aquatis).
+    StalactiteHit = 2283,
+    /// Cowering, during an earthquake or after three flinches (Aquatis).
+    Scared = 2284,
+    /// Taking hold of Claw (a tentacle).
+    StartGrab = 2290,
+    /// Squeezing the held Claw (a tentacle).
+    Squeeze = 2291,
+    /// Growing back out of the water (a tentacle).
+    Respawn = 2292,
+    /// Throwing three knives at Claw on the other level (RedTail).
+    KnifeAttack = 2300,
+    /// Kicking at Claw beside him (RedTail).
+    KickAttack = 2301,
+    /// Sliding along the sand at Claw (RedTail).
+    SlideAttack = 2302,
+    /// Firing the flare gun (RedTail).
+    GunAttack = 2303,
+    /// Raising the wind from the ledge (RedTail).
+    WindAttack = 2304,
+    /// Leaping up from the sand to the ledge (RedTail).
+    JumpUp = 2305,
+    /// Leaping down from the ledge to the sand (RedTail).
+    JumpDown = 2306,
+    /// Fading out where it stands (the Chameleon).
+    PhaseOut = 2310,
+    /// Hidden somewhere else, then fading back in (the Chameleon).
+    PhaseIn = 2311,
+    /// Crouching, then dashing at where Claw stood, claws out (the tiger
+    /// guards).
+    LungeAttack = 2320,
+    /// Somersaulting towards Claw (the tiger guards).
+    FrontFlip = 2321,
+    /// Somersaulting away from Claw (the tiger guards).
+    BackFlip = 2322,
+    /// Casting an energy ball at Claw (Omar).
+    MagicAttack = 2330,
+    /// Flashing in place before he appears somewhere else (Omar).
+    MoveToPosition = 2331,
+    /// Doing nothing for the rest of the level (Omar, after his death).
+    Wait = 2332,
 }
 
 impl EnemyState {
     /// Every state, in number order.
-    pub const ALL: [EnemyState; 67] = [
+    pub const ALL: [EnemyState; 103] = [
         EnemyState::Idle,
         EnemyState::Home,
         EnemyState::Strike,
@@ -410,6 +518,42 @@ impl EnemyState {
         EnemyState::DeadAct2,
         EnemyState::DeadAct3,
         EnemyState::DeadAct4,
+        EnemyState::RollForward,
+        EnemyState::RollBackward,
+        EnemyState::HoldHook,
+        EnemyState::WaitForParrot,
+        EnemyState::FlyAbout,
+        EnemyState::StrikeSetup,
+        EnemyState::FlyToIdle,
+        EnemyState::FlyToMarrow,
+        EnemyState::CarryMarrow,
+        EnemyState::Swim,
+        EnemyState::JumpStrike,
+        EnemyState::OutOfWater,
+        EnemyState::Singing,
+        EnemyState::HighPunch,
+        EnemyState::LowPunch,
+        EnemyState::SuperFrenzy,
+        EnemyState::StalactiteHit,
+        EnemyState::Scared,
+        EnemyState::StartGrab,
+        EnemyState::Squeeze,
+        EnemyState::Respawn,
+        EnemyState::KnifeAttack,
+        EnemyState::KickAttack,
+        EnemyState::SlideAttack,
+        EnemyState::GunAttack,
+        EnemyState::WindAttack,
+        EnemyState::JumpUp,
+        EnemyState::JumpDown,
+        EnemyState::PhaseOut,
+        EnemyState::PhaseIn,
+        EnemyState::LungeAttack,
+        EnemyState::FrontFlip,
+        EnemyState::BackFlip,
+        EnemyState::MagicAttack,
+        EnemyState::MoveToPosition,
+        EnemyState::Wait,
     ];
 
     /// The state with this number; `None` for a number no state has,
@@ -491,6 +635,42 @@ impl EnemyState {
             EnemyState::DeadAct2 => "DeadAct2",
             EnemyState::DeadAct3 => "DeadAct3",
             EnemyState::DeadAct4 => "DeadAct4",
+            EnemyState::RollForward => "RollForward",
+            EnemyState::RollBackward => "RollBackward",
+            EnemyState::HoldHook => "HoldHook",
+            EnemyState::WaitForParrot => "WaitForParrot",
+            EnemyState::FlyAbout => "FlyAbout",
+            EnemyState::StrikeSetup => "StrikeSetup",
+            EnemyState::FlyToIdle => "FlyToIdle",
+            EnemyState::FlyToMarrow => "FlyToMarrow",
+            EnemyState::CarryMarrow => "CarryMarrow",
+            EnemyState::Swim => "Swim",
+            EnemyState::JumpStrike => "JumpStrike",
+            EnemyState::OutOfWater => "OutOfWater",
+            EnemyState::Singing => "Singing",
+            EnemyState::HighPunch => "HighPunch",
+            EnemyState::LowPunch => "LowPunch",
+            EnemyState::SuperFrenzy => "SuperFrenzy",
+            EnemyState::StalactiteHit => "StalactiteHit",
+            EnemyState::Scared => "Scared",
+            EnemyState::StartGrab => "StartGrab",
+            EnemyState::Squeeze => "Squeeze",
+            EnemyState::Respawn => "Respawn",
+            EnemyState::KnifeAttack => "KnifeAttack",
+            EnemyState::KickAttack => "KickAttack",
+            EnemyState::SlideAttack => "SlideAttack",
+            EnemyState::GunAttack => "GunAttack",
+            EnemyState::WindAttack => "WindAttack",
+            EnemyState::JumpUp => "JumpUp",
+            EnemyState::JumpDown => "JumpDown",
+            EnemyState::PhaseOut => "PhaseOut",
+            EnemyState::PhaseIn => "PhaseIn",
+            EnemyState::LungeAttack => "LungeAttack",
+            EnemyState::FrontFlip => "FrontFlip",
+            EnemyState::BackFlip => "BackFlip",
+            EnemyState::MagicAttack => "MagicAttack",
+            EnemyState::MoveToPosition => "MoveToPosition",
+            EnemyState::Wait => "Wait",
         }
     }
 }
@@ -656,6 +836,12 @@ pub struct EnemyFields {
     pub last_move_ms: Option<u64>,
     /// No movement at all (dead in place, or carried by Claw).
     pub frozen: bool,
+    /// An x the enemy's own logic wrote as its new position in this tick
+    /// (the Chameleon's phase): the next movement step starts from it
+    /// instead of where the object stands, moving the object there through
+    /// the tiles, and a wall or a ledge that stops the move makes it the
+    /// patrol limit on that side (see [`motion`]). `None` otherwise.
+    pub teleport_to: Option<i32>,
     /// Call scheduled for the post-tick.
     pub deferred: Option<Deferred>,
     /// Object holding the level's strike token.
@@ -741,6 +927,7 @@ impl Default for EnemyFields {
             last_result: 0,
             last_move_ms: None,
             frozen: false,
+            teleport_to: None,
             deferred: None,
             token_at: None,
             contact_rect: Rect::UNSET,
@@ -795,6 +982,10 @@ pub struct Class {
     /// Picks the line it says when lifted (into
     /// [`EnemyFields::lifted_voice`]).
     pub pick_lift_voice: fn(&mut World, ObjectId),
+    /// Whether the shared lift draws its one of 0..100 for saying the
+    /// lifted line (see [`lift::lifted`]); false for a class that always
+    /// says its own line and makes no draw for it.
+    pub lift_roll: bool,
     /// Animations the shared states play.
     pub anims: ClassAnims,
     /// Sounds the shared states play.
@@ -916,6 +1107,19 @@ pub fn class(g: GameLogic) -> Option<&'static Class> {
         GameLogic::BearSailor => Some(&bear_sailor::CLASS),
         GameLogic::HermitCrab => Some(&crab::CLASS),
         GameLogic::Gabriel => Some(&gabriel::CLASS),
+        GameLogic::HookPirate => Some(&hook_pirate::CLASS),
+        GameLogic::PegLeg => Some(&pegleg::CLASS),
+        GameLogic::Marrow => Some(&marrow::CLASS),
+        GameLogic::Parrot => Some(&parrot::CLASS),
+        GameLogic::Mercat => Some(&mercat::CLASS),
+        GameLogic::Siren => Some(&siren::CLASS),
+        GameLogic::Fish => Some(&fish::CLASS),
+        GameLogic::Aquatis => Some(&aquatis::CLASS),
+        GameLogic::Tentacle => Some(&tentacle::CLASS),
+        GameLogic::Chameleon => Some(&chameleon::CLASS),
+        GameLogic::RedTail => Some(&redtail::CLASS),
+        GameLogic::TigerGuard => Some(&tiger_guard::CLASS),
+        GameLogic::Omar => Some(&omar::CLASS),
         _ => None,
     }
 }
@@ -950,7 +1154,10 @@ impl ObjectData {
     /// The enemy data this holds: plain enemy data, or the enemy data
     /// inside a family's own data (the punk rat's, Raux's, the thieves',
     /// Katherine's, the town guards', the seagull's, Wolvington's, the
-    /// red-tail pirates', the bear sailors', the crabs' and Gabriel's).
+    /// red-tail pirates', the bear sailors', the crabs', Gabriel's, the
+    /// hook-handed pirates', PegLegs', Marrow's and his parrot's, the
+    /// Mercats', Sirens' and Fish's, Aquatis's and the tentacles', the
+    /// Chameleons' and RedTail's, and the tiger guards' and Omar's).
     pub fn enemy(&self) -> Option<&EnemyData> {
         match self {
             ObjectData::Enemy(d) => Some(d),
@@ -966,6 +1173,19 @@ impl ObjectData {
             ObjectData::BearSailor(d) => Some(&d.enemy),
             ObjectData::HermitCrab(d) => Some(&d.enemy),
             ObjectData::Gabriel(d) => Some(&d.enemy),
+            ObjectData::HookPirate(d) => Some(&d.enemy),
+            ObjectData::PegLeg(d) => Some(&d.enemy),
+            ObjectData::Marrow(d) => Some(&d.enemy),
+            ObjectData::Parrot(d) => Some(&d.enemy),
+            ObjectData::Mercat(d) => Some(&d.enemy),
+            ObjectData::Siren(d) => Some(&d.enemy),
+            ObjectData::Fish(d) => Some(&d.enemy),
+            ObjectData::Aquatis(d) => Some(&d.enemy),
+            ObjectData::Tentacle(d) => Some(&d.enemy),
+            ObjectData::Chameleon(d) => Some(&d.enemy),
+            ObjectData::RedTail(d) => Some(&d.enemy),
+            ObjectData::TigerGuard(d) => Some(&d.enemy),
+            ObjectData::Omar(d) => Some(&d.enemy),
             _ => None,
         }
     }
@@ -986,6 +1206,19 @@ impl ObjectData {
             ObjectData::BearSailor(d) => Some(&mut d.enemy),
             ObjectData::HermitCrab(d) => Some(&mut d.enemy),
             ObjectData::Gabriel(d) => Some(&mut d.enemy),
+            ObjectData::HookPirate(d) => Some(&mut d.enemy),
+            ObjectData::PegLeg(d) => Some(&mut d.enemy),
+            ObjectData::Marrow(d) => Some(&mut d.enemy),
+            ObjectData::Parrot(d) => Some(&mut d.enemy),
+            ObjectData::Mercat(d) => Some(&mut d.enemy),
+            ObjectData::Siren(d) => Some(&mut d.enemy),
+            ObjectData::Fish(d) => Some(&mut d.enemy),
+            ObjectData::Aquatis(d) => Some(&mut d.enemy),
+            ObjectData::Tentacle(d) => Some(&mut d.enemy),
+            ObjectData::Chameleon(d) => Some(&mut d.enemy),
+            ObjectData::RedTail(d) => Some(&mut d.enemy),
+            ObjectData::TigerGuard(d) => Some(&mut d.enemy),
+            ObjectData::Omar(d) => Some(&mut d.enemy),
             _ => None,
         }
     }
@@ -1539,7 +1772,8 @@ pub fn pre_tick(w: &mut World, id: ObjectId, class: &Class) {
     let exact = exact_x(w, id);
     let claw = w.claw_object().map(|c| (c.x, c.y));
     let invisible = claw_invisible(w);
-    let screen = on_screen(w, id);
+    // A hidden enemy is not drawn, so it is never on screen.
+    let screen = on_screen(w, id) && obj(w, id).draw_flags & draw_flags::HIDDEN == 0;
     let now = w.now_ms;
     let Some(d) = data_mut(w, id) else { return };
     d.roll = roll;

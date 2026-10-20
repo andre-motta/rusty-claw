@@ -22,6 +22,16 @@
 //! solid in every state. Its landing surface and its two animations come
 //! from the level ([`level_table`]).
 //!
+//! The thirteenth level's water rocks ([`WATER_ROCK_NAME`]) are a second
+//! variant of the same machine: a flat stone at the surface of a pool
+//! that a water spout under it throws Claw up from. They keep their own
+//! landing surface ([`WATER_ROCK_RECT`], used as it is) and their own two
+//! animations ([`WATER_ROCK`]) whatever the level's table says; their
+//! spring animation is one call shorter than a fern's, so a rock is idle
+//! again on L + 48 (T + 47 with T = L + 1, the rock's first call that
+//! sees Claw) and sees him again from L + 49, one tick before a fern
+//! would. At 60 frames per second the throw comes on frame L + 22.
+//!
 //! # Timing
 //!
 //! With L the tick in which Claw lands on a fern (the springboard updates
@@ -51,7 +61,10 @@ use crate::object::{Object, ObjectId, Rect, flags};
 use crate::player;
 
 /// Logic names this family runs.
-pub const NAMES: &[&str] = &["SpringBoard"];
+pub const NAMES: &[&str] = &["SpringBoard", WATER_ROCK_NAME];
+
+/// The logic name of the water rock variant.
+pub const WATER_ROCK_NAME: &str = "WaterRock";
 
 /// Image sets this family may switch an object to.
 pub const IMAGE_SETS: &[&str] = &[];
@@ -65,6 +78,8 @@ pub const ANIM_PREFIXES: &[&str] = &[
     ROCK.spring_anim,
     BOX.idle_anim,
     BOX.spring_anim,
+    WATER_ROCK.idle_anim,
+    WATER_ROCK.spring_anim,
 ];
 
 /// Whether this family runs its logics yet (see [`super::built`]).
@@ -138,6 +153,19 @@ const BOX: LevelSprings = LevelSprings {
     idle_anim: "LEVEL_SPRINGBOX_IDLE",
     spring_anim: "LEVEL_SPRINGBOX_SPRING",
 };
+
+/// The water rock's own data: its landing surface (used as it is, with
+/// no [`SURFACE_DEPTH`] added: [`WATER_ROCK_RECT`]) and its two
+/// animations.
+pub const WATER_ROCK: LevelSprings = LevelSprings {
+    rect: (-25, 90, 25, 172),
+    idle_anim: "LEVEL_WATERROCK_IDLE",
+    spring_anim: "LEVEL_WATERROCK_SPRING",
+};
+
+/// The water rock's landing surface, relative to its position: its
+/// surface is 90 px below the position, from 25 px left to 25 px right.
+pub const WATER_ROCK_RECT: Rect = Rect::new(-25, 90, 25, 172);
 
 /// The springboard data of levels 1 to 14; the first three levels have
 /// none.
@@ -243,9 +271,18 @@ fn set_up(w: &mut World, id: ObjectId, d: &mut SpringBoardData) {
     let Some(o) = w.objects.get_mut(id) else {
         return;
     };
-    d.anims = level_table(number);
+    let rock = &*o.logic == WATER_ROCK_NAME;
+    d.anims = if rock {
+        Some(WATER_ROCK)
+    } else {
+        level_table(number)
+    };
     d.frames = Some(frames_of(level, o, d.frames));
-    o.hit_rect = surface(number);
+    o.hit_rect = if rock {
+        WATER_ROCK_RECT
+    } else {
+        surface(number)
+    };
     o.flags |= flags::NO_COLLIDE;
     o.special_flags |= special::ENEMY_ARMABLE | special::MARKER;
     o.type_flags = PLATFORM;
@@ -354,6 +391,18 @@ mod tests {
         let s = level_table(4).expect("the fourth level has springboards");
         assert_eq!(s, FERN);
         assert_eq!(surface(4), Rect::new(-32, 10, 24, 64));
+    }
+
+    #[test]
+    fn a_water_rock_keeps_its_own_surface_and_art() {
+        let r = WATER_ROCK.rect;
+        assert_eq!(WATER_ROCK_RECT, Rect::new(r.0, r.1, r.2, r.3));
+        assert!(NAMES.contains(&WATER_ROCK_NAME));
+        assert!(ANIM_PREFIXES.contains(&WATER_ROCK.idle_anim));
+        assert!(ANIM_PREFIXES.contains(&WATER_ROCK.spring_anim));
+        // Its surface lies 80 px below a fern's on the same level.
+        assert_eq!(WATER_ROCK_RECT.top - surface(13).top, 80);
+        assert_eq!(level_table(13), Some(FERN));
     }
 
     #[test]

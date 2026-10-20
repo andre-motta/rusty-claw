@@ -6,7 +6,8 @@
 //! features this game does not have (multiplayer, movies, help, credits,
 //! community custom level picking, score upload, player profiles) map to
 //! [`MenuCommand::Unavailable`]: they stay in the menu, greyed out, and
-//! play the disabled sound.
+//! play the disabled sound. The game enables two of them where it has the
+//! screen: the in-game menu's help and the main menu's credits.
 
 /// Which menu a tree belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -148,6 +149,8 @@ pub enum VideoSetting {
     FrameCap,
     /// Smooth motion between game steps.
     Interpolation,
+    /// Rope swings drawn smoothly between the rope's frames.
+    SmoothRope,
     /// Status bar at the picture's edges or in the centred 4:3 area.
     StatusBar,
 }

@@ -1160,7 +1160,7 @@ fn sword_shot(c: &mut Ctx) {
 pub fn cancel(c: &mut Ctx) {
     c.p.repress_directions = true;
     if let Some(held) = c.p.special.lifted.take() {
-        c.with_world(|w| logic::dropped(w, held));
+        c.with_world(|w| special::tell_dropped(w, held));
     }
     special::forget_entries(c);
     c.p.attack.kind = kind::NONE;

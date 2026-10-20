@@ -800,6 +800,7 @@ pub mod guard1 {
         go_idle,
         carry: Some(CARRY),
         pick_lift_voice: nothing,
+        lift_roll: true,
         anims: GUARD1.anims,
         sounds: SOUNDS,
     };
@@ -833,6 +834,7 @@ pub mod guard2 {
         go_idle,
         carry: Some(CARRY),
         pick_lift_voice: nothing,
+        lift_roll: true,
         anims: GUARD2.anims,
         sounds: SOUNDS,
     };

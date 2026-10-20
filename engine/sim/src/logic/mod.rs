@@ -53,12 +53,15 @@ use crate::level::SimLevel;
 use crate::object::{LogicKind, Object, ObjectId, flags};
 use crate::registry::{REG_ALWAYS, REG_CLASS_1, REG_CLASS_2, Registry};
 
+pub mod boss;
 pub mod boss_stage;
 pub mod break_plank;
 pub mod cannon;
 pub mod cannon_switch;
 pub mod checkpoint;
+pub mod conveyor_belt;
 pub mod crates;
+pub mod dart_trap;
 pub mod decor;
 pub mod effect;
 pub mod enemy;
@@ -68,14 +71,21 @@ pub mod goo_vent;
 pub mod ground_blower;
 pub mod jump_switch;
 pub mod keg;
+pub mod laser;
+pub mod lava;
+pub mod marrow_floor;
 pub mod path_elevator;
 pub mod pickup;
 pub mod platform;
 pub mod projectile;
 pub mod rope;
+pub mod saw_blade;
+pub mod shake;
+pub mod skull_cannon;
 pub mod sound;
 pub mod sound_object;
 pub mod springboard;
+pub mod stalactite;
 pub mod statue;
 pub mod stepping_stone;
 pub mod world;
@@ -180,10 +190,88 @@ pub enum GameLogic {
     CannonButton,
     /// Gabriel's deck cannon.
     GabrielCannon,
+    /// The hook-handed pirate, who holds his hook out and parries.
+    HookPirate,
+    /// PegLeg, the rolling gunner.
+    PegLeg,
+    /// Dart traps that shoot arrows while Claw stands in their rectangle.
+    DartTrap,
+    /// Conveyor belt pieces that push Claw along.
+    ConveyorBelt,
+    /// Saw blades that rise and sink on the level clock.
+    SawBlade,
+    /// Skull cannons that fire a cannonball every three seconds.
+    SkullCannon,
+    /// Marrow, the boss of the tenth level.
+    Marrow,
+    /// Marrow's parrot, which swoops at Claw and carries Marrow.
+    Parrot,
+    /// The two slabs that bridge the spike pit of Marrow's room.
+    MarrowFloor,
+    /// Mercat, the merman who throws trident bolts.
+    Mercat,
+    /// The Siren, whose scream locks Claw's controls.
+    Siren,
+    /// The pond fish that leap at Claw from the wading pools.
+    Fish,
+    /// The electric traps across the eleventh level's corridors.
+    Laser,
+    /// Mercat's trident bolt.
+    TridentBullet,
+    /// The Siren's scream.
+    SirenBullet,
+    /// Aquatis, the boss of the twelfth level.
+    Aquatis,
+    /// The crack in the wall behind Aquatis that a blast sets off.
+    AquatisCrack,
+    /// The hidden helper that puts a stick of dynamite back in Aquatis's
+    /// room.
+    AquatisDynamite,
+    /// The five stalactites over Aquatis that fall on him one by one.
+    AquatisStalactite,
+    /// Aquatis's tentacles, which strike at Claw and grab him.
+    Tentacle,
+    /// The falling stalactites of the twelfth level's caves.
+    Stalactite,
+    /// The invisible earthquake triggers of the twelfth level.
+    Shake,
+    /// The Chameleon, the lizard that fades out and back in elsewhere on
+    /// its ledge.
+    Chameleon,
+    /// RedTail, the boss of the thirteenth level.
+    RedTail,
+    /// The stakes at the left wall of RedTail's arena.
+    RedTailSpikes,
+    /// The wind RedTail raises across his arena.
+    RedTailWind,
+    /// RedTail's knives.
+    RedTailKnife,
+    /// RedTail's flares.
+    RedTailBullet,
+    /// The grass, leaves and sand RedTail's wind blows across the arena.
+    WindDebris,
+    /// The tiger guards of the fourteenth level.
+    TigerGuard,
+    /// The lava fountains of the fourteenth level.
+    LavaGeyser,
+    /// The stone mouths that drip lava from the fourteenth level's
+    /// ceilings.
+    LavaMouth,
+    /// The hands that rise out of the fourteenth level's lava and throw
+    /// lava balls.
+    LavaHand,
+    /// A lava hand's lava ball.
+    LavaHandProjectile,
+    /// Omar, the boss of the fourteenth level.
+    Omar,
+    /// The pieces of Omar's ring of fire or ice.
+    OmarShield,
+    /// Omar's energy balls.
+    OmarBullet,
 }
 
 /// Every family, in a fixed order.
-pub const ALL: [GameLogic; 45] = [
+pub const ALL: [GameLogic; 82] = [
     GameLogic::Officer,
     GameLogic::Soldier,
     GameLogic::Rat,
@@ -229,6 +317,43 @@ pub const ALL: [GameLogic; 45] = [
     GameLogic::CannonSwitch,
     GameLogic::CannonButton,
     GameLogic::GabrielCannon,
+    GameLogic::HookPirate,
+    GameLogic::PegLeg,
+    GameLogic::DartTrap,
+    GameLogic::ConveyorBelt,
+    GameLogic::SawBlade,
+    GameLogic::SkullCannon,
+    GameLogic::Marrow,
+    GameLogic::Parrot,
+    GameLogic::MarrowFloor,
+    GameLogic::Mercat,
+    GameLogic::Siren,
+    GameLogic::Fish,
+    GameLogic::Laser,
+    GameLogic::TridentBullet,
+    GameLogic::SirenBullet,
+    GameLogic::Aquatis,
+    GameLogic::AquatisCrack,
+    GameLogic::AquatisDynamite,
+    GameLogic::AquatisStalactite,
+    GameLogic::Tentacle,
+    GameLogic::Stalactite,
+    GameLogic::Shake,
+    GameLogic::Chameleon,
+    GameLogic::RedTail,
+    GameLogic::RedTailSpikes,
+    GameLogic::RedTailWind,
+    GameLogic::RedTailKnife,
+    GameLogic::RedTailBullet,
+    GameLogic::WindDebris,
+    GameLogic::TigerGuard,
+    GameLogic::LavaGeyser,
+    GameLogic::LavaMouth,
+    GameLogic::LavaHand,
+    GameLogic::LavaHandProjectile,
+    GameLogic::Omar,
+    GameLogic::OmarShield,
+    GameLogic::OmarBullet,
 ];
 
 /// A logic's own data, by family.
@@ -321,6 +446,76 @@ pub enum ObjectData {
     CannonButton(cannon_switch::button::ButtonData),
     /// Gabriel's cannon.
     GabrielCannon(cannon_switch::cannon::CannonData),
+    /// A hook-handed pirate.
+    HookPirate(enemy::hook_pirate::HookPirateData),
+    /// A PegLeg.
+    PegLeg(enemy::pegleg::PegLegData),
+    /// A dart trap.
+    DartTrap(dart_trap::DartTrapData),
+    /// A conveyor belt piece.
+    ConveyorBelt(conveyor_belt::BeltData),
+    /// A saw blade.
+    SawBlade(saw_blade::SawData),
+    /// A skull cannon.
+    SkullCannon(skull_cannon::SkullCannonData),
+    /// Marrow.
+    Marrow(enemy::marrow::MarrowData),
+    /// Marrow's parrot.
+    Parrot(enemy::parrot::ParrotData),
+    /// A slab of Marrow's trap floor.
+    MarrowFloor(marrow_floor::FloorData),
+    /// A Mercat.
+    Mercat(enemy::mercat::MercatData),
+    /// A Siren.
+    Siren(enemy::siren::SirenData),
+    /// A fish.
+    Fish(enemy::fish::FishData),
+    /// A laser.
+    Laser(laser::LaserData),
+    /// Aquatis.
+    Aquatis(enemy::aquatis::AquatisData),
+    /// The crack behind Aquatis.
+    AquatisCrack(enemy::aquatis::crack::CrackData),
+    /// The dynamite helper of Aquatis's room.
+    AquatisDynamite(enemy::aquatis::dynamite::DynamiteData),
+    /// One of the five stalactites over Aquatis.
+    AquatisStalactite(enemy::aquatis::stalactite::StalactiteData),
+    /// A tentacle.
+    Tentacle(enemy::tentacle::TentacleData),
+    /// A falling stalactite of the caves.
+    Stalactite(stalactite::StalactiteData),
+    /// An earthquake trigger.
+    Shake(shake::ShakeData),
+    /// A Chameleon.
+    Chameleon(enemy::chameleon::ChameleonData),
+    /// RedTail.
+    RedTail(enemy::redtail::RedTailData),
+    /// The stakes of RedTail's arena.
+    RedTailSpikes(boss::spikes::SpikesData),
+    /// RedTail's wind.
+    RedTailWind(boss::wind::WindData),
+    /// One of RedTail's knives.
+    RedTailKnife(boss::knife::KnifeData),
+    /// One of RedTail's flares.
+    RedTailBullet(boss::flare::FlareData),
+    /// A piece of the wind's debris.
+    WindDebris(boss::debris::DebrisData),
+    /// A tiger guard.
+    TigerGuard(enemy::tiger_guard::TigerGuardData),
+    /// A lava fountain.
+    LavaGeyser(lava::geyser::GeyserData),
+    /// A lava mouth.
+    LavaMouth(lava::mouth::MouthData),
+    /// A lava hand.
+    LavaHand(lava::hand::HandData),
+    /// A lava hand's lava ball.
+    LavaHandProjectile(lava::ball::BallData),
+    /// Omar.
+    Omar(enemy::omar::OmarData),
+    /// A piece of Omar's ring.
+    OmarShield(enemy::omar::shield::ShieldData),
+    /// One of Omar's energy balls.
+    OmarBullet(enemy::omar::bullet::BulletData),
 }
 
 /// Calls `$f($args)` in the module of family `$g`.
@@ -372,6 +567,43 @@ macro_rules! dispatch {
             GameLogic::CannonSwitch => cannon_switch::$f($($arg),*),
             GameLogic::CannonButton => cannon_switch::button::$f($($arg),*),
             GameLogic::GabrielCannon => cannon_switch::cannon::$f($($arg),*),
+            GameLogic::HookPirate => enemy::hook_pirate::$f($($arg),*),
+            GameLogic::PegLeg => enemy::pegleg::$f($($arg),*),
+            GameLogic::DartTrap => dart_trap::$f($($arg),*),
+            GameLogic::ConveyorBelt => conveyor_belt::$f($($arg),*),
+            GameLogic::SawBlade => saw_blade::$f($($arg),*),
+            GameLogic::SkullCannon => skull_cannon::$f($($arg),*),
+            GameLogic::Marrow => enemy::marrow::$f($($arg),*),
+            GameLogic::Parrot => enemy::parrot::$f($($arg),*),
+            GameLogic::MarrowFloor => marrow_floor::$f($($arg),*),
+            GameLogic::Mercat => enemy::mercat::$f($($arg),*),
+            GameLogic::Siren => enemy::siren::$f($($arg),*),
+            GameLogic::Fish => enemy::fish::$f($($arg),*),
+            GameLogic::Laser => laser::$f($($arg),*),
+            GameLogic::TridentBullet => projectile::trident::$f($($arg),*),
+            GameLogic::SirenBullet => projectile::scream::$f($($arg),*),
+            GameLogic::Aquatis => enemy::aquatis::$f($($arg),*),
+            GameLogic::AquatisCrack => enemy::aquatis::crack::$f($($arg),*),
+            GameLogic::AquatisDynamite => enemy::aquatis::dynamite::$f($($arg),*),
+            GameLogic::AquatisStalactite => enemy::aquatis::stalactite::$f($($arg),*),
+            GameLogic::Tentacle => enemy::tentacle::$f($($arg),*),
+            GameLogic::Stalactite => stalactite::$f($($arg),*),
+            GameLogic::Shake => shake::$f($($arg),*),
+            GameLogic::Chameleon => enemy::chameleon::$f($($arg),*),
+            GameLogic::RedTail => enemy::redtail::$f($($arg),*),
+            GameLogic::RedTailSpikes => boss::spikes::$f($($arg),*),
+            GameLogic::RedTailWind => boss::wind::$f($($arg),*),
+            GameLogic::RedTailKnife => boss::knife::$f($($arg),*),
+            GameLogic::RedTailBullet => boss::flare::$f($($arg),*),
+            GameLogic::WindDebris => boss::debris::$f($($arg),*),
+            GameLogic::TigerGuard => enemy::tiger_guard::$f($($arg),*),
+            GameLogic::LavaGeyser => lava::geyser::$f($($arg),*),
+            GameLogic::LavaMouth => lava::mouth::$f($($arg),*),
+            GameLogic::LavaHand => lava::hand::$f($($arg),*),
+            GameLogic::LavaHandProjectile => lava::ball::$f($($arg),*),
+            GameLogic::Omar => enemy::omar::$f($($arg),*),
+            GameLogic::OmarShield => enemy::omar::shield::$f($($arg),*),
+            GameLogic::OmarBullet => enemy::omar::bullet::$f($($arg),*),
         }
     };
 }
@@ -425,6 +657,43 @@ macro_rules! constant {
             GameLogic::CannonSwitch => cannon_switch::$c,
             GameLogic::CannonButton => cannon_switch::button::$c,
             GameLogic::GabrielCannon => cannon_switch::cannon::$c,
+            GameLogic::HookPirate => enemy::hook_pirate::$c,
+            GameLogic::PegLeg => enemy::pegleg::$c,
+            GameLogic::DartTrap => dart_trap::$c,
+            GameLogic::ConveyorBelt => conveyor_belt::$c,
+            GameLogic::SawBlade => saw_blade::$c,
+            GameLogic::SkullCannon => skull_cannon::$c,
+            GameLogic::Marrow => enemy::marrow::$c,
+            GameLogic::Parrot => enemy::parrot::$c,
+            GameLogic::MarrowFloor => marrow_floor::$c,
+            GameLogic::Mercat => enemy::mercat::$c,
+            GameLogic::Siren => enemy::siren::$c,
+            GameLogic::Fish => enemy::fish::$c,
+            GameLogic::Laser => laser::$c,
+            GameLogic::TridentBullet => projectile::trident::$c,
+            GameLogic::SirenBullet => projectile::scream::$c,
+            GameLogic::Aquatis => enemy::aquatis::$c,
+            GameLogic::AquatisCrack => enemy::aquatis::crack::$c,
+            GameLogic::AquatisDynamite => enemy::aquatis::dynamite::$c,
+            GameLogic::AquatisStalactite => enemy::aquatis::stalactite::$c,
+            GameLogic::Tentacle => enemy::tentacle::$c,
+            GameLogic::Stalactite => stalactite::$c,
+            GameLogic::Shake => shake::$c,
+            GameLogic::Chameleon => enemy::chameleon::$c,
+            GameLogic::RedTail => enemy::redtail::$c,
+            GameLogic::RedTailSpikes => boss::spikes::$c,
+            GameLogic::RedTailWind => boss::wind::$c,
+            GameLogic::RedTailKnife => boss::knife::$c,
+            GameLogic::RedTailBullet => boss::flare::$c,
+            GameLogic::WindDebris => boss::debris::$c,
+            GameLogic::TigerGuard => enemy::tiger_guard::$c,
+            GameLogic::LavaGeyser => lava::geyser::$c,
+            GameLogic::LavaMouth => lava::mouth::$c,
+            GameLogic::LavaHand => lava::hand::$c,
+            GameLogic::LavaHandProjectile => lava::ball::$c,
+            GameLogic::Omar => enemy::omar::$c,
+            GameLogic::OmarShield => enemy::omar::shield::$c,
+            GameLogic::OmarBullet => enemy::omar::bullet::$c,
         }
     };
 }
@@ -480,6 +749,43 @@ pub fn built(g: GameLogic) -> bool {
         GameLogic::CannonSwitch => cannon_switch::BUILT,
         GameLogic::CannonButton => cannon_switch::button::BUILT,
         GameLogic::GabrielCannon => cannon_switch::cannon::BUILT,
+        GameLogic::HookPirate => enemy::hook_pirate::BUILT,
+        GameLogic::PegLeg => enemy::pegleg::BUILT,
+        GameLogic::DartTrap => dart_trap::BUILT,
+        GameLogic::ConveyorBelt => conveyor_belt::BUILT,
+        GameLogic::SawBlade => saw_blade::BUILT,
+        GameLogic::SkullCannon => skull_cannon::BUILT,
+        GameLogic::Marrow => enemy::marrow::BUILT,
+        GameLogic::Parrot => enemy::parrot::BUILT,
+        GameLogic::MarrowFloor => marrow_floor::BUILT,
+        GameLogic::Mercat => enemy::mercat::BUILT,
+        GameLogic::Siren => enemy::siren::BUILT,
+        GameLogic::Fish => enemy::fish::BUILT,
+        GameLogic::Laser => laser::BUILT,
+        GameLogic::TridentBullet => projectile::trident::BUILT,
+        GameLogic::SirenBullet => projectile::scream::BUILT,
+        GameLogic::Aquatis => enemy::aquatis::BUILT,
+        GameLogic::AquatisCrack => enemy::aquatis::crack::BUILT,
+        GameLogic::AquatisDynamite => enemy::aquatis::dynamite::BUILT,
+        GameLogic::AquatisStalactite => enemy::aquatis::stalactite::BUILT,
+        GameLogic::Tentacle => enemy::tentacle::BUILT,
+        GameLogic::Stalactite => stalactite::BUILT,
+        GameLogic::Shake => shake::BUILT,
+        GameLogic::Chameleon => enemy::chameleon::BUILT,
+        GameLogic::RedTail => enemy::redtail::BUILT,
+        GameLogic::RedTailSpikes => boss::spikes::BUILT,
+        GameLogic::RedTailWind => boss::wind::BUILT,
+        GameLogic::RedTailKnife => boss::knife::BUILT,
+        GameLogic::RedTailBullet => boss::flare::BUILT,
+        GameLogic::WindDebris => boss::debris::BUILT,
+        GameLogic::TigerGuard => enemy::tiger_guard::BUILT,
+        GameLogic::LavaGeyser => lava::geyser::BUILT,
+        GameLogic::LavaMouth => lava::mouth::BUILT,
+        GameLogic::LavaHand => lava::hand::BUILT,
+        GameLogic::LavaHandProjectile => lava::ball::BUILT,
+        GameLogic::Omar => enemy::omar::BUILT,
+        GameLogic::OmarShield => enemy::omar::shield::BUILT,
+        GameLogic::OmarBullet => enemy::omar::bullet::BUILT,
         _ => true,
     }
 }
@@ -496,6 +802,7 @@ pub fn runs(name: &str) -> Option<LogicKind> {
 pub fn runtime_image_sets() -> Vec<&'static str> {
     let mut sets: BTreeSet<&'static str> = enemy::IMAGE_SETS.iter().copied().collect();
     sets.extend(enemy::human::IMAGE_SETS.iter().copied());
+    sets.extend(enemy::hook_pirate::derived_image_sets());
     for g in ALL {
         sets.extend(constant!(g, IMAGE_SETS).iter().copied());
     }
@@ -507,6 +814,7 @@ pub fn runtime_image_sets() -> Vec<&'static str> {
 pub fn runtime_anim_prefixes() -> Vec<&'static str> {
     let mut prefixes: BTreeSet<&'static str> = enemy::ANIM_PREFIXES.iter().copied().collect();
     prefixes.extend(enemy::human::ANIM_PREFIXES.iter().copied());
+    prefixes.extend(enemy::hook_pirate::derived_anim_prefixes());
     for g in ALL {
         prefixes.extend(constant!(g, ANIM_PREFIXES).iter().copied());
     }
@@ -555,8 +863,10 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 
 /// `carrier` lifted `id`. Kegs, crates and the human enemies Claw can
 /// carry (officers, soldiers, cutthroats, robber thieves, Katherine, the
-/// town guards, Wolvington, the red-tail pirates, the bear sailors and
-/// Gabriel, see [`enemy::lift`]) react; other families ignore it.
+/// town guards, Wolvington, the red-tail pirates, the bear sailors,
+/// Gabriel, the hook-handed pirates, PegLegs, the Mercats, the Sirens,
+/// Aquatis and the tiger guards, see [`enemy::lift`]) react; other
+/// families ignore it.
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     match family(w, id) {
         Some(GameLogic::Keg) => keg::lifted(w, id, carrier),
@@ -572,8 +882,14 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
             | GameLogic::Wolvington
             | GameLogic::RedTailPirate
             | GameLogic::BearSailor
-            | GameLogic::Gabriel,
+            | GameLogic::Gabriel
+            | GameLogic::HookPirate
+            | GameLogic::PegLeg
+            | GameLogic::Mercat
+            | GameLogic::Siren
+            | GameLogic::TigerGuard,
         ) => enemy::lift::lifted(w, id, carrier),
+        Some(GameLogic::Aquatis) => enemy::aquatis::lifted(w, id, carrier),
         _ => {}
     }
 }
@@ -594,7 +910,13 @@ pub fn thrown(w: &mut World, id: ObjectId, vx: i32, vy: i32) {
             | GameLogic::Wolvington
             | GameLogic::RedTailPirate
             | GameLogic::BearSailor
-            | GameLogic::Gabriel,
+            | GameLogic::Gabriel
+            | GameLogic::HookPirate
+            | GameLogic::PegLeg
+            | GameLogic::Mercat
+            | GameLogic::Siren
+            | GameLogic::Aquatis
+            | GameLogic::TigerGuard,
         ) => enemy::lift::thrown(w, id, vx, vy),
         _ => {}
     }
@@ -617,6 +939,12 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
                 | GameLogic::RedTailPirate
                 | GameLogic::BearSailor
                 | GameLogic::Gabriel
+                | GameLogic::HookPirate
+                | GameLogic::PegLeg
+                | GameLogic::Mercat
+                | GameLogic::Siren
+                | GameLogic::Aquatis
+                | GameLogic::TigerGuard
         )
     ) {
         enemy::lift::wind_up(w, id);
@@ -639,7 +967,13 @@ pub fn dropped(w: &mut World, id: ObjectId) {
             | GameLogic::Wolvington
             | GameLogic::RedTailPirate
             | GameLogic::BearSailor
-            | GameLogic::Gabriel,
+            | GameLogic::Gabriel
+            | GameLogic::HookPirate
+            | GameLogic::PegLeg
+            | GameLogic::Mercat
+            | GameLogic::Siren
+            | GameLogic::Aquatis
+            | GameLogic::TigerGuard,
         ) => enemy::lift::dropped(w, id),
         _ => {}
     }
@@ -689,6 +1023,14 @@ impl Look {
 ///   ([`crates::first_look`]).
 /// - A pickup shows its glitter next to it; a curse, which goes on its
 ///   first call in a single-player game, nothing ([`pickup::first_look`]).
+/// - Dart traps, conveyor belt pieces, saw blades and skull cannons answer
+///   for themselves ([`dart_trap::first_look`],
+///   [`conveyor_belt::first_look`], [`saw_blade::first_look`],
+///   [`skull_cannon::first_look`]).
+/// - The slabs of Marrow's trap floor answer for themselves
+///   ([`marrow_floor::first_look`]).
+/// - A tiger guard shows its colour (white or orange, by its record) on
+///   the floor below its place ([`enemy::tiger_guard::first_look`]).
 ///
 /// It reads the object and the level only, on copies: nothing in the game
 /// changes, no logic runs and no random number is drawn.
@@ -697,6 +1039,12 @@ pub fn first_look(level: &SimLevel, o: &Object) -> Option<Vec<Look>> {
         LogicKind::Game(GameLogic::Keg) => keg::first_look(level, o).map(|l| vec![l]),
         LogicKind::Game(GameLogic::Crate) => crates::first_look(level, o),
         LogicKind::Game(GameLogic::Pickup) => pickup::first_look(level, o),
+        LogicKind::Game(GameLogic::DartTrap) => dart_trap::first_look(level, o),
+        LogicKind::Game(GameLogic::ConveyorBelt) => conveyor_belt::first_look(level, o),
+        LogicKind::Game(GameLogic::SawBlade) => saw_blade::first_look(level, o),
+        LogicKind::Game(GameLogic::SkullCannon) => skull_cannon::first_look(level, o),
+        LogicKind::Game(GameLogic::MarrowFloor) => marrow_floor::first_look(level, o),
+        LogicKind::Game(GameLogic::TigerGuard) => enemy::tiger_guard::first_look(level, o),
         _ => None,
     }
 }

@@ -2,8 +2,9 @@
 //! have goo pools.
 //!
 //! What a death tile is depends on the level, not on the tile: the levels
-//! with goo pools (2, 4, 6, 7, 8, 9, 12, 13 and 14, see [`GOO_LEVELS`])
-//! have goo, the others spikes. The movement step of an enemy reports when
+//! with goo pools (2, 4, 6, 7, 8, 9, 12, 13 and 14, see [`GOO_LEVELS`];
+//! water on some, the fourteenth level's lava) have goo, the others
+//! spikes. The movement step of an enemy reports when
 //! it ends on a death tile while alive and not flying off as a body;
 //! [`super::die`] then hands the enemy to [`enter_goo`], which decides how
 //! it dies there:
@@ -35,9 +36,10 @@ pub fn is_goo_level(number: u32) -> bool {
 
 /// How far above Claw the splash of his own goo death rises, px, on the
 /// levels whose value is known: 50 on the second level, 40 on the
-/// fourth, 10 on the sixth, 60 on the seventh and 0 on the eighth (on
-/// both, the death tiles are water). Later levels add theirs with their
-/// slices.
+/// fourth, 10 on the sixth, 60 on the seventh, 0 on the eighth (on
+/// both, the death tiles are water), 50 on the ninth, 50 on the twelfth
+/// and 50 on the thirteenth (water on both), and 50 on the fourteenth
+/// (lava).
 pub fn splash_y(number: u32) -> Option<i32> {
     match number {
         2 => Some(50),
@@ -45,6 +47,10 @@ pub fn splash_y(number: u32) -> Option<i32> {
         6 => Some(10),
         7 => Some(60),
         8 => Some(0),
+        9 => Some(50),
+        12 => Some(50),
+        13 => Some(50),
+        14 => Some(50),
         _ => None,
     }
 }
@@ -125,6 +131,17 @@ mod tests {
         assert_eq!(splash_y(7), Some(60));
         assert_eq!(splash_y(8), Some(0));
         assert!(is_goo_level(8), "the eighth level's water kills as goo");
+        assert_eq!(splash_y(9), Some(50));
+        assert!(is_goo_level(9));
+        assert_eq!(splash_y(12), Some(50));
+        assert!(is_goo_level(12), "the twelfth level's water kills as goo");
+        assert_eq!(splash_y(13), Some(50));
+        assert!(
+            is_goo_level(13),
+            "the thirteenth level's water kills as goo"
+        );
+        assert_eq!(splash_y(14), Some(50));
+        assert!(is_goo_level(14), "the fourteenth level's lava kills as goo");
         assert_eq!(splash_y(1), None);
         assert_eq!(splash_y(5), None);
     }

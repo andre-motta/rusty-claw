@@ -99,6 +99,7 @@ pub static CLASS: Class = Class {
         move_rect: CARRIED_MOVE_RECT,
     }),
     pick_lift_voice,
+    lift_roll: true,
     anims: ClassAnims {
         advance: "LEVEL_OFFICER_ADVANCE",
         fast_advance: "LEVEL_OFFICER_FASTADVANCE",

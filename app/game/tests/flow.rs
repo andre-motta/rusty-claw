@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use claw_assets::Palette;
 use claw_assets::ifc::IfcNode;
+use claw_audio::music::Track;
 use claw_audio::{AudioSettings, AudioStats, Pcm, SoundBank};
 use claw_frame::{AudioCue, Buttons, GameEvent, SoundChannel, SoundCue, Weapon};
 use claw_game::Session;
@@ -29,11 +30,16 @@ use claw_sim::logic::checkpoint::{MESSAGE_NOT_SAVED, MESSAGE_SAVED};
 use claw_sim::trace::TraceRow;
 use claw_sim::tuning::{FuseClock, PlayAids};
 use claw_sim::{Carry, SavePos, Sim, SimConfig, SimLevel, StartState, TileMap};
-use claw_ui::menu::command::{CommandCatalogue, GameplaySetting, MenuCommand, MenuKind, Page};
+use claw_ui::menu::command::{
+    CommandCatalogue, GameplaySetting, MenuCommand, MenuKind, Page, Unavailable,
+};
 use claw_ui::menu::draw::FontArt;
 use claw_ui::menu::nav::PRESS_MS;
 use claw_ui::menu::{MenuInput, MenuTree};
 use claw_ui::screens::booty::{BootyArt, BootyScreen};
+use claw_ui::screens::credits::{
+    self, BLACK_MS, CreditsArt, CreditsEntry, CreditsPhase, CreditsScreen, FontMetrics, UNROLL_MS,
+};
 use claw_ui::screens::title::TitleScreen;
 use tempfile::TempDir;
 
@@ -135,6 +141,8 @@ struct Rig {
     started: Vec<(LevelChoice, StartState)>,
     captures: Vec<(claw_game::keymap::Action, bool)>,
     sounds: Vec<String>,
+    /// Music started (track, looped), and `None` for a stop.
+    music: Vec<Option<(Track, bool)>>,
     ended: usize,
     paused: bool,
     quit: bool,
@@ -151,6 +159,10 @@ impl Rig {
     /// A rig whose settings name `level` (played at once with
     /// [`Start::Play`]).
     fn with_level(start: Start, level: LevelChoice, prepare: impl FnOnce(&Path)) -> Rig {
+        Rig::build(start, level, main_menu(), prepare)
+    }
+
+    fn build(start: Start, level: LevelChoice, menu: MenuTree, prepare: impl FnOnce(&Path)) -> Rig {
         let dir = TempDir::new().unwrap();
         let saves = dir.path().join("saves");
         fs::create_dir_all(&saves).unwrap();
@@ -163,7 +175,7 @@ impl Rig {
         let flow = Flow::new(
             settings,
             Some(store),
-            Some(main_menu()),
+            Some(menu),
             FontArt::uniform(8, 10),
             start,
         );
@@ -173,6 +185,7 @@ impl Rig {
             started: Vec::new(),
             captures: Vec::new(),
             sounds: Vec::new(),
+            music: Vec::new(),
             ended: 0,
             paused: false,
             quit: false,
@@ -208,6 +221,17 @@ impl Rig {
                     Effect::PauseGame => self.paused = true,
                     Effect::ResumeGame => self.paused = false,
                     Effect::Sound(AudioCue::Play(c)) => self.sounds.push(c.key),
+                    Effect::Sound(AudioCue::StopMusic) => self.music.push(None),
+                    Effect::Music { track, looped } => self.music.push(Some((track, looped))),
+                    Effect::ShowCredits(entry) => {
+                        let mut art = CreditsArt::plain(FontMetrics::uniform(8));
+                        art.tune_ms = Some(5000.0);
+                        self.flow.set_credits(CreditsScreen::new(
+                            entry,
+                            "THE END\r\n\r\nTHANK YOU FOR PLAYING\r\n",
+                            art,
+                        ));
+                    }
                     Effect::ShowTitle => {
                         self.flow
                             .set_title(TitleScreen::new(None, Palette::default(), Some(1000)))
@@ -430,26 +454,174 @@ fn win_and_skip_the_tally(r: &mut Rig) {
     }
 }
 
-#[test]
-fn the_tally_of_level_14_leads_to_the_main_menu() {
-    let mut r = Rig::with_level(Start::Play, LevelChoice::Retail(14), |_| {});
-    assert_eq!(r.flow.screen(), Screen::Play);
+/// Wins level 14 and goes through its black hold and its tally to the
+/// credits.
+fn finish_the_game(r: &mut Rig) {
     r.update(300.0);
     r.events(&[GameEvent::LevelComplete { after_ms: 100 }]);
     r.update(200.0);
     assert_eq!(r.flow.screen(), Screen::Booty);
     assert_eq!(r.flow.booty().unwrap().level(), 14);
     assert!(r.flow.next_level().is_none(), "no level after the last");
-    let mut store = SaveStore::open(&r.saves).unwrap();
-    assert!(store.list().unwrap().is_empty(), "no level 15 to save");
-    drop(store);
+    // The black in place of the movie: the map screen waits, its sounds
+    // too.
+    assert!(r.flow.cut_screen());
+    assert_eq!(r.flow.brightness(), 0.0);
+    let before = r.sounds.len();
+    r.update(flow::CUT_SCREEN_MS - 300.0);
+    assert!(r.flow.cut_screen());
+    assert_eq!(r.sounds.len(), before, "no map screen sound in the black");
+    r.update(300.0);
+    assert!(!r.flow.cut_screen());
+    assert!(r.sounds.len() > before, "the map screen's sounds");
+    r.update(FADE_MS);
+    assert_eq!(r.flow.brightness(), 1.0);
+    // The tally, skipped.
     for _ in 0..3 {
         r.input(MenuInput::Confirm);
     }
-    r.reach_main_menu();
-    assert_eq!(r.started.len(), 1, "back to the main menu");
+    let mut guard = 0;
+    while r.flow.screen() == Screen::Booty {
+        r.update(50.0);
+        guard += 1;
+        assert!(guard < 100, "stuck at the tally");
+    }
+}
+
+#[test]
+fn the_end_of_level_14_leads_to_the_credits_then_the_main_menu() {
+    let mut r = Rig::with_level(Start::Play, LevelChoice::Retail(14), |_| {});
+    assert_eq!(r.flow.screen(), Screen::Play);
+    finish_the_game(&mut r);
+    let mut store = SaveStore::open(&r.saves).unwrap();
+    assert!(store.list().unwrap().is_empty(), "no level 15 to save");
+    drop(store);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    let c = r.flow.credits().expect("the credits");
+    assert_eq!(c.entry(), CreditsEntry::AfterGame);
+    assert_eq!(c.phase(), CreditsPhase::Black);
+    assert_eq!(r.flow.brightness(), 0.0);
+    assert!(
+        r.sounds
+            .contains(&credits::DELAYED_UNROLL_SOUND.to_string())
+    );
+    assert!(r.music.is_empty(), "no music before the text");
+    // Keys while the parchment opens do nothing.
+    r.input(MenuInput::Confirm);
+    r.update(BLACK_MS);
+    assert_eq!(r.flow.credits().unwrap().phase(), CreditsPhase::Unroll);
+    r.update(UNROLL_MS + 20.0);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert_eq!(r.flow.credits().unwrap().phase(), CreditsPhase::Text);
+    assert_eq!(r.music, vec![Some((Track::Credits, true))]);
+    // The text rises and loops for as long as nobody presses anything.
+    r.update(60_000.0);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert!(r.flow.credits().unwrap().loops() >= 1);
+    // A direction does not leave; Enter does, straight to the menu.
+    r.input(MenuInput::Down);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    let sounds = r.sounds.len();
+    r.input(MenuInput::Confirm);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert_eq!(r.music.last(), Some(&None), "the credits music stops");
+    assert_eq!(r.flow.brightness(), 1.0, "no unroll on the menu side");
+    assert!(!r.sounds[sounds..].contains(&"UNROLL".to_string()));
+    assert!(r.sounds[sounds..].contains(&MENU_BED.to_string()));
+    assert!(r.flow.credits().is_none());
+    assert_eq!(r.started.len(), 1, "no level after the credits");
     assert_eq!(r.ended, 1);
     assert_eq!(r.page(), Page::Root);
+}
+
+#[test]
+fn the_credits_leave_on_a_game_key_or_a_click_and_the_corner_plays_the_tune() {
+    let mut r = Rig::with_level(Start::Play, LevelChoice::Retail(14), |_| {});
+    finish_the_game(&mut r);
+    // Presses and clicks while the parchment opens are ignored.
+    r.flow.credits_press();
+    r.flow.click(300, 300);
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    r.update(BLACK_MS + UNROLL_MS + 20.0);
+    // The corner toggles the developer's tune.
+    r.flow.click(20, 20);
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert!(r.flow.credits().unwrap().monolith());
+    assert_eq!(r.music.last(), Some(&Some((Track::Monolith, false))));
+    r.update(5000.0);
+    assert!(!r.flow.credits().unwrap().monolith(), "the tune ended");
+    assert_eq!(r.music.last(), Some(&Some((Track::Credits, true))));
+    // A game key leaves.
+    r.flow.credits_press();
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+
+    let mut r = Rig::with_level(Start::Play, LevelChoice::Retail(14), |_| {});
+    finish_the_game(&mut r);
+    r.update(BLACK_MS + UNROLL_MS + 20.0);
+    // So does a click outside the corner.
+    r.flow.click(320, 240);
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert_eq!(r.music.last(), Some(&None));
+}
+
+/// The synthetic main menu with the Credits entry before Quit.
+fn main_menu_with_credits() -> MenuTree {
+    let mut tree = main_menu();
+    let root = 0;
+    let quit = *tree.items[root].children.last().unwrap();
+    let credits = tree.add_text(
+        root,
+        "CREDITS",
+        MenuCommand::Unavailable(Unavailable::Credits),
+    );
+    let kids = &mut tree.items[root].children;
+    let n = kids.len();
+    kids.swap(n - 1, n - 2);
+    assert_eq!(tree.items[root].children[n - 1], quit);
+    assert_eq!(tree.items[root].children[n - 2], credits);
+    tree
+}
+
+#[test]
+fn the_main_menu_credits_entry_opens_the_credits() {
+    let mut r = Rig::build(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu_with_credits(),
+        |_| {},
+    );
+    r.reach_main_menu();
+    let entries = main_entries(&r);
+    let at = entries
+        .iter()
+        .position(|&c| c == MenuCommand::Unavailable(Unavailable::Credits))
+        .expect("a Credits entry");
+    let nav = r.flow.main_menu().unwrap();
+    let id = nav.entries()[at];
+    assert!(nav.tree.items[id].enabled, "the credits can be opened");
+    for _ in 0..at {
+        r.input(MenuInput::Down);
+    }
+    r.update(100.0);
+    r.sounds.clear();
+    r.choose();
+    // The menu rolls up, then the parchment unrolls at once.
+    assert!(r.sounds.contains(&"ROLLUP".to_string()));
+    r.update(FADE_MS);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    let c = r.flow.credits().unwrap();
+    assert_eq!(c.entry(), CreditsEntry::FromMenu);
+    assert_eq!(c.phase(), CreditsPhase::Unroll);
+    assert!(r.sounds.contains(&credits::UNROLL_SOUND.to_string()));
+    r.update(UNROLL_MS + 20.0);
+    assert_eq!(r.music, vec![Some((Track::Credits, true))]);
+    r.input(MenuInput::Back);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert!(r.started.is_empty());
 }
 
 #[test]

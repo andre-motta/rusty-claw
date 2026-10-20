@@ -5,7 +5,7 @@
 //! - [`hud`]: the status bar (score, health, lives, weapon and ammunition,
 //!   the powerup stopwatch) and the in-game messages;
 //! - [`menu`]: menu trees and navigation;
-//! - [`screens`]: the title, end-of-level and game-over screens.
+//! - [`screens`]: the title, end-of-level, game-over and credits screens.
 
 #![forbid(unsafe_code)]
 

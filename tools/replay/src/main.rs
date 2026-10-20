@@ -6,7 +6,7 @@
 //! claw-replay --install PATH [--level N | --custom FILE.WWD] --script ROUTE.csv
 //!             [--trace OUT.csv] [--tuning default|original] [--seed N]
 //!             [--res WxH] [--aspect pillarbox|frozen|widened]
-//!             [--start X,Y] [--logics on|off] [--mid-air-hit-fix on|off]
+//!             [--start X,Y] [--checkpoint X,Y] [--logics on|off] [--mid-air-hit-fix on|off]
 //!             [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]]
 //!             [--expect-complete]
 //!             [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
@@ -60,6 +60,27 @@
 //! its state at the script's time zero, as for a segment of a level in a
 //! reference store (`make compare` reads the start point from the store).
 //!
+//! `--checkpoint X,Y` sets the point Claw respawns at to (X, Y) at the
+//! script's time zero (after `--start` has settled him), a place no
+//! checkpoint of the level need give him: a diagnostic set-up, for
+//! comparing a reference run that moved his respawn point the same way.
+//! A script's `# checkpoint X,Y` comment line stands in for the flag when
+//! it is not given. The run is still plain play and can be compared.
+//!
+//! A script's `# health N` comment line gives Claw health N at the
+//! script's time zero (after `--start` has settled him, as the reference
+//! store's runs of such a route set it): a diagnostic set-up too, for a
+//! stretch that starts from a health plain play does not bring there; the
+//! run can still be compared with those runs. A respawn refills it as any
+//! respawn does.
+//!
+//! A script's `# boss_health N` comment line is a set-up for measuring a
+//! stretch of a boss fight: the level's boss is given health N on the
+//! first arena step, after the first tick that has him as the current
+//! boss (see `claw_sim::SimConfig::boss_health`), as the reference
+//! store's runs of such a route set it. Like `--checkpoint`, it is a
+//! diagnostic set-up; the run can still be compared with those runs.
+//!
 //! `--expect-complete` checks that the level ends (a level-complete event)
 //! within the script.
 //!
@@ -70,6 +91,17 @@
 //! trace leading up to it, and with `--report` writes the same text to a
 //! file.
 //!
+//! A reference trace in a reference store (`trace-<clock>-r<k>.csv` beside
+//! the store's `meta.toml`) of a segment that the store's runs started by
+//! placing Claw on the level's first tick (`t0_rule = "teleport"`, the
+//! start point in `teleport = "X,Y"`) starts the run the way those runs
+//! did: Claw is placed at the start point on the level's first tick and
+//! left there, without settling, until the route's time zero (`t0_ms` of
+//! the trace's clock, in whole 18 ms ticks), and the random stream is set
+//! there, once, to the store's state at time zero (`rng_at_t0`). The
+//! store's start point and random state stand in for `--start` and
+//! `--seed` when those are not given ([`StoreStart`]).
+//!
 //! Exit status: 0 when everything passed, 1 on a divergence, 2 on a usage
 //! or input error, 3 when `--expect-complete` saw no level end.
 
@@ -78,17 +110,19 @@ use std::process::ExitCode;
 
 use claw_assets::{Install, LevelData, LevelSource, Source};
 use claw_sim::claw_frame::{AspectPolicy, GameEvent, ViewConfig};
-use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
+use claw_sim::input::{
+    DirectiveKind, ScriptCommand, ScriptTuning, script_checkpoint, script_health,
+};
 use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Tolerances, TraceRow};
-use claw_sim::tuning::PlayAids;
+use claw_sim::tuning::{PlayAids, TICK_MS};
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel, StartState};
 
 const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FILE.WWD] \
 --script ROUTE.csv [--trace OUT.csv] [--tuning default|original] [--seed N] [--res WxH] \
-[--aspect pillarbox|frozen|widened] [--start X,Y] [--logics on|off] \
+[--aspect pillarbox|frozen|widened] [--start X,Y] [--checkpoint X,Y] [--logics on|off] \
 [--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]] \
 [--expect-complete] \
 [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]";
@@ -98,6 +132,98 @@ const BEHAVIOUR_KEY: &str = "mid_air_hit_fix";
 
 /// Rows of each trace shown before a divergence.
 const CONTEXT_ROWS: usize = 5;
+
+/// How the runs of a reference store started a segment of a level: Claw
+/// placed at `start` on the level's first tick and left there until the
+/// route's time zero, `t0_ms` of game time, where the random stream was
+/// `seed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StoreStart {
+    start: Option<(i32, i32)>,
+    t0_ms: u64,
+    seed: Option<u32>,
+}
+
+impl StoreStart {
+    /// The ticks played before the route's first tick.
+    fn ticks(&self) -> u64 {
+        self.t0_ms.div_ceil(u64::from(TICK_MS))
+    }
+}
+
+/// A value of a store's `meta.toml`: `key` in the table `[section]`, or
+/// at the top when `section` is empty, unquoted.
+fn meta_value(meta: &str, section: &str, key: &str) -> Option<String> {
+    let mut current = String::new();
+    for line in meta.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            current = name.trim().to_string();
+        } else if current == section
+            && let Some((k, v)) = line.split_once('=')
+            && k.trim() == key
+        {
+            return Some(v.trim().trim_matches('"').to_string());
+        }
+    }
+    None
+}
+
+/// The clock of a reference trace named `trace-<clock>-r<k>.csv`.
+fn trace_clock(trace: &std::path::Path) -> Option<String> {
+    let name = trace.file_name()?.to_str()?;
+    let rest = name.strip_prefix("trace-")?;
+    let (clock, _) = rest.split_once('-')?;
+    (!clock.is_empty()).then(|| clock.to_string())
+}
+
+/// How the store's runs of the clock `clock` started, from its `meta.toml`
+/// (the clock's own table first, then the top level): `None` unless they
+/// placed Claw on the level's first tick (`t0_rule = "teleport"`) and the
+/// meta names the time zero (`t0_ms`). Without a clock, the store's one
+/// clock (`clock = ...` at the top) is used.
+fn store_start(meta: &str, clock: Option<&str>) -> Result<Option<StoreStart>, String> {
+    let top_clock = meta_value(meta, "", "clock");
+    let clock = clock.map(str::to_string).or(top_clock).unwrap_or_default();
+    let get = |key: &str| meta_value(meta, &clock, key).or_else(|| meta_value(meta, "", key));
+    if get("t0_rule").as_deref() != Some("teleport") {
+        return Ok(None);
+    }
+    let Some(t0) = get("t0_ms") else {
+        return Ok(None);
+    };
+    let t0_ms = t0
+        .parse()
+        .map_err(|_| format!("meta.toml: bad t0_ms {t0:?}"))?;
+    let seed = get("rng_at_t0")
+        .map(|v| {
+            v.parse()
+                .map_err(|_| format!("meta.toml: bad rng_at_t0 {v:?}"))
+        })
+        .transpose()?;
+    let start = get("teleport")
+        .map(|v| parse_point(&v).ok_or_else(|| format!("meta.toml: bad teleport {v:?}")))
+        .transpose()?;
+    Ok(Some(StoreStart { start, t0_ms, seed }))
+}
+
+/// How the store holding the reference trace `trace` started its runs of
+/// the trace's clock (see [`store_start`]); `None` when no `meta.toml`
+/// lies beside it.
+fn store_start_of(trace: &std::path::Path) -> Result<Option<StoreStart>, String> {
+    let Some(dir) = trace.parent() else {
+        return Ok(None);
+    };
+    let path = dir.join("meta.toml");
+    let Ok(meta) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    store_start(&meta, trace_clock(trace).as_deref())
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
 
 #[derive(Debug, Default)]
 struct Args {
@@ -110,6 +236,7 @@ struct Args {
     aspect: Option<AspectPolicy>,
     seed: Option<u32>,
     start: Option<(i32, i32)>,
+    checkpoint: Option<(i32, i32)>,
     logics: Option<bool>,
     mid_air_hit_fix: Option<bool>,
     aids: PlayAids,
@@ -172,11 +299,14 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
             }
             "--start" => {
                 let v = value()?;
-                let p = v
-                    .split_once(',')
-                    .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
-                    .ok_or_else(|| format!("bad start {v:?}, expected X,Y"))?;
+                let p = parse_point(&v).ok_or_else(|| format!("bad start {v:?}, expected X,Y"))?;
                 a.start = Some(p);
+            }
+            "--checkpoint" => {
+                let v = value()?;
+                let p =
+                    parse_point(&v).ok_or_else(|| format!("bad checkpoint {v:?}, expected X,Y"))?;
+                a.checkpoint = Some(p);
             }
             "--logics" => {
                 let v = value()?;
@@ -217,6 +347,12 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         return Err(format!("--report needs --compare\n{USAGE}"));
     }
     Ok(a)
+}
+
+/// `X,Y` as a point.
+fn parse_point(v: &str) -> Option<(i32, i32)> {
+    let (x, y) = v.split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
 }
 
 fn parse_on_off(v: &str) -> Option<bool> {
@@ -290,6 +426,12 @@ fn run(args: Args) -> Result<Outcome, String> {
             }
         ));
     }
+    let checkpoint = match args.checkpoint {
+        Some(p) => Some(p),
+        None => script_checkpoint(&text).map_err(|e| format!("{}: {e}", script_path.display()))?,
+    };
+    let start_health =
+        script_health(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
     let fix = args
         .mid_air_hit_fix
         .or(script_behaviour(&text))
@@ -323,6 +465,17 @@ fn run(args: Args) -> Result<Outcome, String> {
         },
         _ => return Err(format!("pass only one of --level and --custom\n{USAGE}")),
     };
+    let store_t0 = match &args.compare {
+        Some(path) => store_start_of(path)?,
+        None => None,
+    };
+    if let (Some(flag), Some(want)) = (args.seed, store_t0.and_then(|t| t.seed))
+        && flag != want
+    {
+        eprintln!(
+            "claw-replay: --seed {flag} overrides the store's random state {want} at time zero"
+        );
+    }
     let level = LevelData::build(&store, source).map_err(|e| format!("loading level: {e}"))?;
     let sim_level =
         SimLevel::from_level(&level, &store).map_err(|e| format!("preparing level: {e}"))?;
@@ -340,7 +493,7 @@ fn run(args: Args) -> Result<Outcome, String> {
     if let Some(tuning) = tuning {
         cfg.tuning = tuning.tuning();
     }
-    if let Some(seed) = args.seed.or(header.seed) {
+    if let Some(seed) = args.seed.or(store_t0.and_then(|t| t.seed)).or(header.seed) {
         cfg.seed = seed;
     }
     if let Some(on) = args.logics {
@@ -349,6 +502,11 @@ fn run(args: Args) -> Result<Outcome, String> {
     cfg.tuning.behaviour.fix_double_jump = fix;
     cfg.aids = aids;
     cfg.start_powerup = powerup;
+    cfg.boss_health = claw_sim::input::script_boss_health(&text)
+        .map_err(|e| format!("{}: {e}", script_path.display()))?;
+    if let Some(h) = cfg.boss_health {
+        eprintln!("claw-replay: the boss is given health {h} on the first arena step");
+    }
     let carried = carry.as_ref().map(|c| {
         format!(
             ", carried in: score {}, health {}, lives {}",
@@ -356,8 +514,27 @@ fn run(args: Args) -> Result<Outcome, String> {
         )
     });
     let mut sim = Sim::with_start(sim_level, cfg, StartState { carry, save: None });
-    if let Some((x, y)) = args.start {
-        settle_at(&mut sim, x, y);
+    let start = args.start.or(store_t0.and_then(|t| t.start));
+    match (start, store_t0) {
+        (Some((x, y)), Some(t0)) => {
+            start_at_time_zero(&mut sim, (x, y), t0);
+            eprintln!(
+                "claw-replay: as the store's runs: Claw placed at {x},{y} on the level's first \
+                 tick, the route's time zero at {} ms ({} ticks), the random stream set to {} there",
+                t0.t0_ms,
+                t0.ticks(),
+                sim.config().seed
+            );
+        }
+        (Some((x, y)), None) => settle_at(&mut sim, x, y),
+        (None, _) => {}
+    }
+    if let Some(p) = checkpoint {
+        sim.set_checkpoint(Some(p));
+    }
+    if let Some(h) = start_health {
+        sim.set_health(h);
+        eprintln!("claw-replay: Claw's health set to {h} at the script's time zero");
     }
     let mut rows = Vec::with_capacity(script.ticks.len());
     let mut completed = false;
@@ -394,7 +571,7 @@ fn run(args: Args) -> Result<Outcome, String> {
         );
     }
     eprintln!(
-        "claw-replay: {} ticks, {} directives ({} commands), tuning {}, seed {}, mid-air hit fix {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}{}",
+        "claw-replay: {} ticks, {} directives ({} commands), tuning {}, seed {}, mid-air hit fix {}, activation {}, level logics {}, {} objects ({} with unknown logics, {} with logics not run yet, {} records dropped){}{}{}",
         rows.len(),
         script.directives().len(),
         commands,
@@ -412,6 +589,9 @@ fn run(args: Args) -> Result<Outcome, String> {
         inert,
         d.dropped_records,
         carried.unwrap_or_default(),
+        checkpoint
+            .map(|(x, y)| format!(", respawn point set to {x},{y} at time zero"))
+            .unwrap_or_default(),
         args.trace
             .as_ref()
             .map(|p| format!(", trace {}", p.display()))
@@ -469,6 +649,19 @@ fn run(args: Args) -> Result<Outcome, String> {
     Ok(outcome)
 }
 
+/// Starts a segment as a reference store's runs started it (see
+/// [`StoreStart`]): Claw placed at `at` on the level's first tick and left
+/// there, with no button held, for the whole ticks up to the route's time
+/// zero, then the shared random stream set to the configured seed, once.
+fn start_at_time_zero(sim: &mut Sim, at: (i32, i32), t0: StoreStart) {
+    sim.teleport_player(at.0, at.1);
+    for _ in 0..t0.ticks() {
+        sim.step(Default::default());
+    }
+    let seed = sim.config().seed;
+    sim.with_world(|w| *w.rng = Rng::new(seed));
+}
+
 /// Moves Claw and waits until he and the camera have stood still for ten
 /// ticks (at most four seconds), then sets the shared random stream to the
 /// configured seed: the script starts from it.
@@ -522,7 +715,8 @@ mod tests {
 
     #[test]
     fn parses_the_documented_arguments() {
-        let a = args("--install /i --level 1 --script s.csv --trace t.csv --res 3440x1440 --aspect widened --seed 7 --start 6272,3150 --logics off").unwrap();
+        let a = args("--install /i --level 1 --script s.csv --trace t.csv --res 3440x1440 --aspect widened --seed 7 --start 6272,3150 --checkpoint 6300,3150 --logics off").unwrap();
+        assert_eq!(a.checkpoint, Some((6300, 3150)));
         assert_eq!(a.logics, Some(false));
         assert!(args("--logics maybe").is_err());
         assert_eq!(a.start, Some((6272, 3150)));
@@ -559,6 +753,84 @@ mod tests {
         assert_eq!(load_tolerances("exact").unwrap(), Tolerances::exact());
         assert_eq!(load_tolerances("feel").unwrap(), Tolerances::feel());
         assert!(load_tolerances("/nonexistent/tolerances.toml").is_err());
+    }
+
+    #[test]
+    fn the_respawn_point_comes_from_the_flag_or_the_script() {
+        let a = args("--install /i --script s.csv --checkpoint 40600,7245").unwrap();
+        assert_eq!(a.checkpoint, Some((40600, 7245)));
+        assert!(args("--checkpoint 40600").is_err());
+        assert!(args("--checkpoint a,b").is_err());
+        assert_eq!(
+            args("--install /i --script s.csv").unwrap().checkpoint,
+            None
+        );
+        assert_eq!(
+            script_checkpoint("# level 10\n# checkpoint 40600,7245\ntick,a,b\n0,0,0\n"),
+            Ok(Some((40600, 7245)))
+        );
+        assert_eq!(
+            script_checkpoint("# checkpoint = 1, 2\n# checkpoint 3,4\n"),
+            Ok(Some((3, 4))),
+            "the last line counts"
+        );
+        assert_eq!(script_checkpoint("# checkpoints are flags\n"), Ok(None));
+        assert_eq!(script_checkpoint("# level 10\ntick,a,b\n"), Ok(None));
+        assert!(script_checkpoint("# checkpoint here\n").is_err());
+    }
+
+    #[test]
+    fn a_respawn_point_set_at_time_zero_is_where_claw_respawns() {
+        use claw_sim::{SimConfig, TileMap};
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (300, 880));
+        let mut sim = Sim::new(level, SimConfig::default());
+        sim.set_checkpoint(Some((1500, 880)));
+        sim.end_life();
+        for _ in 0..400 {
+            sim.step(Default::default());
+            if sim.player().is_some_and(|c| c.x == 1500) {
+                break;
+            }
+        }
+        assert_eq!(
+            sim.player().map(|c| c.x),
+            Some(1500),
+            "respawned at the set point"
+        );
+    }
+
+    #[test]
+    fn a_health_set_at_time_zero_holds_until_a_respawn_refills_it() {
+        use claw_sim::{SimConfig, TileMap};
+        assert_eq!(
+            script_health("# level 14\n# health 90\ntick,a,b\n0,0,0\n"),
+            Ok(Some(90))
+        );
+        assert_eq!(script_health("# level 14\ntick,a,b\n"), Ok(None));
+        assert!(script_health("# health ninety\n").is_err());
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (300, 880));
+        let mut sim = Sim::new(level, SimConfig::default());
+        sim.step(Default::default());
+        sim.set_health(90);
+        sim.step(Default::default());
+        assert_eq!(sim.claw().stats.health, 90);
+        assert_eq!(sim.hud().health, 90);
+        sim.end_life();
+        let mut refilled = false;
+        for _ in 0..400 {
+            sim.step(Default::default());
+            if sim.claw().stats.health == 100 {
+                refilled = true;
+                break;
+            }
+        }
+        assert!(refilled, "a respawn refills it");
     }
 
     #[test]
@@ -738,6 +1010,105 @@ mod tests {
         assert_eq!(claw.x, 700);
         assert!(claw.y > 700, "landed on the floor: {}", claw.y);
         assert_eq!(sim.rng_state(), 111_567);
+    }
+
+    /// A store's meta as the reference stores write it, with one clock
+    /// table.
+    const META: &str = "# Reference store.\nlevel = 10\nname = \"boss-x-c18\"\n\
+        clock = \"c18\"\nrng_at_t0 = 111567\n\n[c18]\nclock = \"c18\"\n\
+        traces = [\"trace-c18-r1.csv\"]\nt0_ms = 828\nt0_rule = \"teleport\"\n\
+        rng_at_t0 = 111567\nteleport = \"32340,7740\"\n";
+
+    #[test]
+    fn a_stores_time_zero_comes_from_its_meta() {
+        let want = StoreStart {
+            start: Some((32340, 7740)),
+            t0_ms: 828,
+            seed: Some(111_567),
+        };
+        assert_eq!(store_start(META, Some("c18")), Ok(Some(want)));
+        assert_eq!(want.ticks(), 46, "828 ms in whole 18 ms ticks");
+        // The store's one clock when the trace names none.
+        assert_eq!(store_start(META, None), Ok(Some(want)));
+        // The clock's own table first, then the top level.
+        let two = "rng_at_t0 = 5\nteleport = \"1,2\"\n[c18]\nt0_ms = 828\nt0_rule = \"teleport\"\n\
+                   [c60]\nt0_ms = 817\nt0_rule = \"teleport\"\nrng_at_t0 = 6\n";
+        assert_eq!(
+            store_start(two, Some("c60")),
+            Ok(Some(StoreStart {
+                start: Some((1, 2)),
+                t0_ms: 817,
+                seed: Some(6),
+            }))
+        );
+        assert_eq!(
+            store_start(two, Some("c18")).unwrap().unwrap().seed,
+            Some(5)
+        );
+        // A store whose runs start at the level's start changes nothing.
+        let level_start = "level = 1\nrng_at_t0 = 7\n[c18]\nt0_ms = 0\nt0_rule = \"level_start\"\n";
+        assert_eq!(store_start(level_start, Some("c18")), Ok(None));
+        assert_eq!(store_start("level = 1\n", Some("c18")), Ok(None));
+        assert!(store_start("[c18]\nt0_rule = \"teleport\"\nt0_ms = soon\n", Some("c18")).is_err());
+        assert!(
+            store_start(
+                "[c18]\nt0_rule = \"teleport\"\nt0_ms = 1\nteleport = \"1\"\n",
+                Some("c18")
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_reference_trace_names_its_clock() {
+        let clock = |p: &str| trace_clock(std::path::Path::new(p));
+        assert_eq!(
+            clock("/r/level10/boss/trace-c18-r1.csv").as_deref(),
+            Some("c18")
+        );
+        assert_eq!(clock("trace-c60-r2.csv").as_deref(), Some("c60"));
+        assert_eq!(clock("/r/run.csv"), None);
+    }
+
+    #[test]
+    fn a_trace_beside_a_meta_starts_from_the_stores_time_zero() {
+        let dir = std::env::temp_dir().join(format!("claw-replay-store-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let trace = dir.join("trace-c18-r1.csv");
+        assert_eq!(store_start_of(&trace), Ok(None), "no meta");
+        std::fs::write(dir.join("meta.toml"), META).unwrap();
+        let got = store_start_of(&trace).unwrap().expect("the store's start");
+        assert_eq!((got.t0_ms, got.seed), (828, Some(111_567)));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_stores_time_zero_places_claw_on_the_first_tick_without_settling() {
+        use claw_sim::{SimConfig, TileMap};
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (300, 880));
+        let cfg = SimConfig {
+            seed: 111_567,
+            ..SimConfig::default()
+        };
+        let t0 = StoreStart {
+            start: Some((700, 700)),
+            t0_ms: 828,
+            seed: Some(111_567),
+        };
+        let mut sim = Sim::new(level.clone(), cfg.clone());
+        start_at_time_zero(&mut sim, (700, 700), t0);
+        // 46 ticks of the level, whatever Claw did in them, and the seed
+        // there.
+        assert_eq!(sim.tick(), 46);
+        assert_eq!(sim.player().unwrap().x, 700);
+        assert_eq!(sim.rng_state(), 111_567);
+        // The settled start waits for him to stand instead.
+        let mut settled = Sim::new(level, cfg);
+        settle_at(&mut settled, 700, 700);
+        assert_ne!(settled.tick(), sim.tick());
     }
 
     #[test]

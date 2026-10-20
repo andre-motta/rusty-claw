@@ -188,7 +188,15 @@ fn a_crab_is_built_on_its_floor_with_its_boxes() {
     assert!(!f.bomber);
     assert_eq!(f.strike_sound, crab::SNIP_SOUND);
     assert_eq!(f.leftovers, Leftovers::default());
-    assert_eq!(o.special_flags & claw_sim::object::special::LIFTABLE, 0);
+    // Liftable only while it hides (see crab_lift.rs).
+    let hiding = matches!(
+        EnemyState::from_id(o.state),
+        Some(EnemyState::Hide | EnemyState::Nudge)
+    );
+    assert_eq!(
+        o.special_flags & claw_sim::object::special::LIFTABLE != 0,
+        hiding
+    );
 }
 
 #[test]

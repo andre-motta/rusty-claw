@@ -81,8 +81,9 @@ pub const WIND_UP_SHIFT: (i32, i32) = (4, 5);
 
 /// `carrier` (Claw) picked up `id`, alive or dead. A body is taken only
 /// while it is still an enemy; nothing being removed is taken. Draws: the
-/// class's line choice (the officer's), then one of 0..100 (below 33 it
-/// speaks, when on screen).
+/// class's line choice (the officer's), then, unless the class says its
+/// own line without one ([`super::Class::lift_roll`]), one of 0..100
+/// (below 33 it speaks, when on screen).
 pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
     let Some(class) = class_of(w, id) else { return };
     let Some(carry) = class.carry else { return };
@@ -103,7 +104,7 @@ pub fn lifted(w: &mut World, id: ObjectId, carrier: ObjectId) {
         o.flags |= flags::RESORT;
     }
     (class.pick_lift_voice)(w, id);
-    if rand(w, 100) < 33 && on_screen(w, id) {
+    if class.lift_roll && rand(w, 100) < 33 && on_screen(w, id) {
         let line = data(w, id).map_or("", |d| d.lifted_voice);
         say(w, id, line);
     }
@@ -402,8 +403,8 @@ fn recover(w: &mut World, id: ObjectId) {
 /// The movement box saved at the lift, keeping the feet where they are.
 /// The move to the new height keeps the fraction of a pixel the enemy
 /// carries across (it walks on from there), and drops the one up and
-/// down.
-fn restore_move_rect(w: &mut World, id: ObjectId) {
+/// down. The crab's landing after a throw puts its box back the same way.
+pub(super) fn restore_move_rect(w: &mut World, id: ObjectId) {
     let Some(saved) = data(w, id).map(|d| d.saved_move_rect) else {
         return;
     };

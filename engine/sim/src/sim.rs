@@ -12,6 +12,7 @@ use crate::activation::{Activation, ActivationConfig, ActivationMode, Centres};
 use crate::camera::{Camera, Followed};
 use crate::container::{CollisionEvent, Container};
 use crate::level::{ObjectSpec, SimLevel};
+use crate::logic::projectile::scream;
 use crate::logic::{self, BossState, Outbox, World};
 use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags};
 use crate::physics::Platform;
@@ -51,6 +52,13 @@ pub struct SimConfig {
     /// respawn, as a pickup gives it (see [`player::powerup_aid`]). None
     /// by default, and the game then plays exactly as without it.
     pub start_powerup: Option<AidPowerup>,
+    /// A set-up for measuring a boss fight, not play: the health the
+    /// level's boss is given on the first arena step, at the boundary
+    /// after the first tick that has him as the current boss (his health
+    /// on that tick is still his own). A route asks for it with its
+    /// `# boss_health N` line ([`crate::input::script_boss_health`]).
+    /// None by default, and the game then plays exactly as without it.
+    pub boss_health: Option<i32>,
 }
 
 impl Default for SimConfig {
@@ -99,6 +107,7 @@ impl SimConfig {
             fuse_clock: FuseClock::Original,
             aids: PlayAids::NONE,
             start_powerup: None,
+            boss_health: None,
         }
     }
 }
@@ -132,6 +141,9 @@ pub struct Sim {
     camera: Camera,
     camera_point: (i32, i32),
     camera_override: Option<(i32, i32)>,
+    /// Where the level's load left Claw: the first tick's enter pass wakes
+    /// the objects around it (see [`Sim::enter_centres`]).
+    load_point: (i32, i32),
     rng: Rng,
     sound_rng: Rng,
     tick: u64,
@@ -171,6 +183,8 @@ pub struct Sim {
     /// Claw respawned since the last tick: the death's circles end with
     /// the next tick.
     respawned: bool,
+    /// [`SimConfig::boss_health`] has been given to the boss.
+    boss_health_given: bool,
     /// The frame time the logic calls run with, ms: one tick, or 0 in the
     /// respawn's two update passes (see [`Sim::respawn_between_ticks`])
     /// and in the warp's (see [`Sim::settle_after_warp`]).
@@ -526,6 +540,7 @@ impl Sim {
             camera: Camera::default(),
             camera_point: level.start,
             camera_override: None,
+            load_point: level.start,
             tick: 0,
             input: TickInput::default(),
             latched: Buttons(u32::MAX),
@@ -543,6 +558,7 @@ impl Sim {
             end_life: false,
             give_powerup: None,
             respawned: false,
+            boss_health_given: false,
             ended: false,
             frame_ms: TICK_MS,
             held_clock_ms: None,
@@ -581,6 +597,9 @@ impl Sim {
         // in list order, so their set-up draws come before time zero and
         // their first update in the first tick.
         sim.set_up_pass();
+        if let Some(c) = sim.player.and_then(|id| sim.objects.get(id)) {
+            sim.load_point = (c.x, c.y);
+        }
         sim.set_up_rng = sim.rng.state();
         sim.rng = Rng::new(sim.cfg.seed);
         // The level's clock starts: Claw's first idle wait is the long one.
@@ -686,6 +705,20 @@ impl Sim {
         Centres::new(&self.cfg.activation, self.level.plane(), self.camera_point)
     }
 
+    /// The centres of a tick's enter pass. The level's load wakes the
+    /// objects around its start point; by the level's first tick the view
+    /// already stands on Claw where the load dropped him, so that tick's
+    /// enter pass wakes the objects around that point: below a start point
+    /// above the floor, a few more than the load did. From then on (the
+    /// camera's first call) the camera's own point counts.
+    fn enter_centres(&self) -> Centres {
+        if self.camera.state == crate::camera::state::INIT {
+            Centres::new(&self.cfg.activation, self.level.plane(), self.load_point)
+        } else {
+            self.centres()
+        }
+    }
+
     fn parts(&mut self) -> (Runner<'_>, &mut Container, &mut Activation) {
         let now_ms = self.held_clock_ms.unwrap_or(self.tick * u64::from(TICK_MS));
         (
@@ -754,6 +787,7 @@ impl Sim {
         if let Some(target) = self.claw.special.warp_to.take() {
             self.warp_between_ticks(target);
         }
+        self.give_boss_health();
         self.input = input;
         // A latched key stays latched until a tick finds it up.
         self.latched = Buttons(self.latched.0 & input.held.0);
@@ -771,6 +805,12 @@ impl Sim {
             let dirs = self.claw_input.held.0 & (Buttons::LEFT.0 | Buttons::RIGHT.0);
             self.claw_input.pressed = Buttons(self.claw_input.pressed.0 | dirs);
         }
+        // A scream's lockout takes the keys from Claw while it runs, and a
+        // locked tick empties the latch: keys held when it runs out count
+        // as pressed then.
+        if scream::lock_input(&mut self.out.scream_lock_ms, TICK_MS, &mut self.claw_input) {
+            self.latched = Buttons::NONE;
+        }
         self.pulse_left = match self.pulse_left {
             0 => PULSE_MS,
             left if left <= TICK_MS => 0,
@@ -782,7 +822,7 @@ impl Sim {
         if std::mem::take(&mut self.end_life) {
             self.apply_end_life();
         }
-        let c = self.centres();
+        let c = self.enter_centres();
         self.activation.enter(&mut self.objects, c);
         self.update_pass();
         self.collision_pass();
@@ -803,6 +843,9 @@ impl Sim {
             runner.apply_shake();
         }
         self.tick += 1;
+        if let Some(o) = self.player.and_then(|id| self.objects.get_mut(id)) {
+            scream::after_tick(self.out.scream_lock_ms, o);
+        }
         let (audio, events) = self.out.take_tick();
         self.ended = events
             .iter()
@@ -1207,6 +1250,7 @@ impl Sim {
                     r.draw_mode = self.claw.look.mode;
                     r.draw_color = self.claw.look.color;
                 }
+                logic::enemy::chameleon::apply_phase_look(self.out.chameleon_frame(), o, &mut r);
                 renderables.push(r);
             }
         }
@@ -1307,6 +1351,54 @@ impl Sim {
     /// starts cleared when the level loads.
     pub fn boss(&self) -> &BossState {
         self.out.boss()
+    }
+
+    /// The Marrow link of the tenth level's boss room, while Marrow's
+    /// object exists (see [`crate::logic::enemy::marrow::MarrowLink`]).
+    pub fn marrow_link(&self) -> Option<&crate::logic::enemy::marrow::MarrowLink> {
+        self.out.marrow()
+    }
+
+    /// The scream lockout, ms: 0 while Claw's controls are free (see
+    /// [`crate::logic::projectile::scream`]).
+    pub fn scream_lock_ms(&self) -> u32 {
+        self.out.scream_lock_ms()
+    }
+
+    /// The Aquatis link (see [`crate::logic::enemy::aquatis::AquatisLink`]).
+    pub fn aquatis_link(&self) -> &crate::logic::enemy::aquatis::AquatisLink {
+        self.out.aquatis()
+    }
+
+    /// Gives the current boss the health [`SimConfig::boss_health`] asks
+    /// for, once: at the first tick boundary that finds a current boss.
+    fn give_boss_health(&mut self) {
+        let Some(health) = self.cfg.boss_health else {
+            return;
+        };
+        if self.boss_health_given {
+            return;
+        }
+        if let Some(o) = self
+            .out
+            .boss
+            .current
+            .and_then(|id| self.objects.get_mut(id))
+        {
+            o.health = health;
+            self.boss_health_given = true;
+        }
+    }
+
+    /// The RedTail link (see [`crate::logic::enemy::redtail::RedTailLink`]).
+    pub fn redtail_link(&self) -> &crate::logic::enemy::redtail::RedTailLink {
+        self.out.redtail()
+    }
+
+    /// How the Chameleons' shared phase frame is drawn now (see
+    /// [`crate::logic::enemy::chameleon::PhaseFrame`]).
+    pub fn chameleon_frame(&self) -> crate::logic::enemy::chameleon::PhaseFrame {
+        self.out.chameleon_frame()
     }
 
     /// The camera's scripted point, when one is set (by Claw's code, a
@@ -1507,6 +1599,13 @@ impl Sim {
         self.claw.checkpoint = point;
     }
 
+    /// Sets Claw's health (tools and tests: a route's set-up at its time
+    /// zero, see [`crate::input::script_health`]); a respawn refills it as
+    /// any respawn does.
+    pub fn set_health(&mut self, health: i32) {
+        self.claw.stats.health = health;
+    }
+
     /// Puts Claw back at the checkpoint (or the spawn point) at once, as
     /// the death and restart paths do.
     pub fn respawn(&mut self) {
@@ -1556,14 +1655,16 @@ impl Sim {
     /// screen (with [`SimConfig::fuse_clock`] at its original default).
     ///
     /// The game time then counts as the game time of the last tick run
-    /// plus `ms`, for the fuse only: every lit stick of dynamite whose fuse
+    /// plus `ms`, for the fuse: every lit stick of dynamite whose fuse
     /// has burnt by then goes off at once, as if it had gone off in the
     /// last tick before the screen (its blast hurts in the 8th tick after
     /// the screen, against the 9th after a stick that goes off in a tick).
-    /// Nothing else sees that time and the game time stays as it was; no
-    /// other object runs and nothing is drawn from the random stream. With
-    /// [`FuseClock::Frozen`] it does nothing, and the pause and the
-    /// in-game menu never call it: their time never reaches play.
+    /// The same time reaches Aquatis's fight
+    /// ([`logic::enemy::aquatis::pass_help_time`]), for what of it runs on
+    /// game time. Nothing else sees that time and the game time stays as it
+    /// was; no other object runs and nothing is drawn from the random
+    /// stream. With [`FuseClock::Frozen`] it does nothing, and the pause
+    /// and the in-game menu never call it: their time never reaches play.
     pub fn pass_menu_time(&mut self, ms: u32) {
         if self.cfg.fuse_clock == FuseClock::Frozen || ms == 0 {
             return;
@@ -1573,6 +1674,7 @@ impl Sim {
         {
             let mut w = runner.world(objects);
             logic::projectile::pass_fuse_time(&mut w, at);
+            logic::enemy::aquatis::pass_help_time(&mut w, at);
         }
         runner.list_spawned(objects);
     }
@@ -1691,6 +1793,43 @@ mod tests {
         let r = runner.with_claw(objects, id, f).unwrap();
         runner.list_spawned(objects);
         r
+    }
+
+    #[test]
+    fn the_boss_health_set_up_reaches_the_boss_after_his_first_tick() {
+        let mut level = flat();
+        level
+            .objects
+            .push(crate::level::ObjectSpec::at("NoSuchLogic", 1200, 900, 4000));
+        for asked in [None, Some(5)] {
+            let cfg = SimConfig {
+                boss_health: asked,
+                ..SimConfig::default()
+            };
+            let mut sim = Sim::new(level.clone(), cfg);
+            sim.step(TickInput::default());
+            let boss = sim
+                .objects()
+                .all()
+                .find(|(_, o)| &*o.logic == "NoSuchLogic")
+                .map(|(id, _)| id)
+                .unwrap();
+            let own = sim.objects().get(boss).unwrap().health;
+            // No boss yet: nothing is given.
+            sim.step(TickInput::default());
+            assert_eq!(sim.objects().get(boss).unwrap().health, own);
+            // He becomes the current boss in a tick: that tick shows his
+            // own health, the next one the asked health.
+            sim.with_world(|w| w.set_current_boss(Some(boss)));
+            assert_eq!(sim.objects().get(boss).unwrap().health, own);
+            sim.step(TickInput::default());
+            let want = asked.unwrap_or(own);
+            assert_eq!(sim.objects().get(boss).unwrap().health, want);
+            // Once only.
+            sim.with_world(|w| w.objects.get_mut(boss).unwrap().health = 77);
+            sim.step(TickInput::default());
+            assert_eq!(sim.objects().get(boss).unwrap().health, 77);
+        }
     }
 
     #[test]

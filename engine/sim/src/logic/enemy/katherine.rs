@@ -298,6 +298,7 @@ pub static CLASS: Class = Class {
         move_rect: CARRIED_MOVE_RECT,
     }),
     pick_lift_voice: super::nothing,
+    lift_roll: true,
     anims: ClassAnims {
         advance: WALK_ANIM,
         fast_advance: WALK_ANIM,

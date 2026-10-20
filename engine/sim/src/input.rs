@@ -18,6 +18,93 @@ use crate::tuning::{PlayAids, TICK_MS};
 /// Length of a tick in microseconds.
 pub const TICK_US: u64 = TICK_MS as u64 * 1000;
 
+/// The comment key of a route's boss health set-up (see
+/// [`script_boss_health`]).
+pub const BOSS_HEALTH_KEY: &str = "boss_health";
+
+/// The boss health set-up a script's `# boss_health N` comment line asks
+/// for (the last such line counts; an `=` between the key and the value
+/// is accepted): the health the level's boss is given on the first arena
+/// step ([`crate::SimConfig::boss_health`]). `None` without one. A route
+/// with it measures a stretch of a boss fight; it is not plain play.
+pub fn script_boss_health(text: &str) -> Result<Option<i32>, String> {
+    for l in text.lines().rev() {
+        let Some(rest) = l.trim().strip_prefix('#') else {
+            continue;
+        };
+        let rest = rest.trim();
+        let Some(v) = rest.strip_prefix(BOSS_HEALTH_KEY) else {
+            continue;
+        };
+        if !v.starts_with([' ', '=', '\t']) {
+            continue;
+        }
+        let v = v.trim().trim_start_matches('=').trim();
+        return v
+            .parse()
+            .map(Some)
+            .map_err(|_| format!("bad boss health line {l:?}, expected # boss_health N"));
+    }
+    Ok(None)
+}
+
+/// The comment key of a route's set-up of Claw's health (see
+/// [`script_health`]).
+pub const HEALTH_KEY: &str = "health";
+
+/// The comment key of a route's respawn point set at time zero (see
+/// [`script_checkpoint`]).
+pub const CHECKPOINT_KEY: &str = "checkpoint";
+
+/// The value of the last `# KEY VALUE` comment line of a route (an `=`
+/// between the key and the value is accepted); `None` without one. A line
+/// whose key only starts with `key` is not it.
+fn script_value<'a>(text: &'a str, key: &str) -> Option<(&'a str, &'a str)> {
+    for l in text.lines().rev() {
+        let Some(rest) = l.trim().strip_prefix('#') else {
+            continue;
+        };
+        let Some(v) = rest.trim().strip_prefix(key) else {
+            continue;
+        };
+        if !v.starts_with([' ', '=', '\t']) {
+            continue;
+        }
+        return Some((l, v.trim().trim_start_matches('=').trim()));
+    }
+    None
+}
+
+/// The health a route's `# health N` comment line gives Claw at its time
+/// zero (the last such line counts; an `=` between the key and the value
+/// is accepted); `None` without one. A route with it measures something
+/// from a set-up plain play does not reach (the original's runs of the
+/// route set Claw's health there the same way); it is not plain play.
+pub fn script_health(text: &str) -> Result<Option<i32>, String> {
+    let Some((line, v)) = script_value(text, HEALTH_KEY) else {
+        return Ok(None);
+    };
+    v.parse()
+        .map(Some)
+        .map_err(|_| format!("bad health line {line:?}, expected # health N"))
+}
+
+/// The respawn point a route's `# checkpoint X,Y` comment line sets at
+/// its time zero (the last such line counts; an `=` between the key and
+/// the point is accepted); `None` without one. Like [`script_health`],
+/// it is a set-up the original's runs of the route made the same way.
+pub fn script_checkpoint(text: &str) -> Result<Option<(i32, i32)>, String> {
+    let Some((line, v)) = script_value(text, CHECKPOINT_KEY) else {
+        return Ok(None);
+    };
+    let point = v
+        .split_once(',')
+        .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)));
+    point
+        .map(Some)
+        .ok_or_else(|| format!("bad checkpoint line {line:?}, expected # checkpoint X,Y"))
+}
+
 /// Collects timestamped button events and hands out tick inputs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InputLatch {
@@ -844,6 +931,60 @@ impl InputScript {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_route_asks_for_a_boss_health_with_its_comment_line() {
+        let route = "# level 13\n# boss_health 5\ntick,held_mask,pressed_mask\n0,0x0,0x0\n";
+        assert_eq!(script_boss_health(route), Ok(Some(5)));
+        assert_eq!(script_boss_health("# boss_health = 40\n"), Ok(Some(40)));
+        // The last line counts; other comments are not the key.
+        assert_eq!(
+            script_boss_health("# boss_health 5\n# boss_health 7\n"),
+            Ok(Some(7))
+        );
+        assert_eq!(script_boss_health("# boss_healthy 5\n# note\n"), Ok(None));
+        assert_eq!(
+            script_boss_health("tick,held_mask,pressed_mask\n"),
+            Ok(None)
+        );
+        assert!(script_boss_health("# boss_health five\n").is_err());
+        // The line is a comment for the script itself.
+        let s = InputScript::parse(route).unwrap();
+        assert_eq!(s.ticks.len(), 1);
+    }
+
+    #[test]
+    fn a_route_sets_claws_health_at_time_zero_with_its_comment_line() {
+        let route = "# level 14\n# health 90\ntick,held_mask,pressed_mask\n0,0x0,0x0\n";
+        assert_eq!(script_health(route), Ok(Some(90)));
+        assert_eq!(script_health("# health = 300\n"), Ok(Some(300)));
+        // The last line counts; other keys are not this one.
+        assert_eq!(script_health("# health 90\n# health 300\n"), Ok(Some(300)));
+        assert_eq!(script_health("# boss_health 50\n# healthy\n"), Ok(None));
+        assert_eq!(script_health("# health_at 3\n"), Ok(None));
+        assert_eq!(script_health("tick,held_mask,pressed_mask\n"), Ok(None));
+        assert!(script_health("# health full\n").is_err());
+        // The line is a comment for the script itself.
+        let s = InputScript::parse(route).unwrap();
+        assert_eq!(s.ticks.len(), 1);
+    }
+
+    #[test]
+    fn a_route_sets_the_respawn_point_with_its_comment_line() {
+        let route = "# level 14\n# checkpoint 22783,2330\ntick,a,b\n0,0,0\n";
+        assert_eq!(script_checkpoint(route), Ok(Some((22783, 2330))));
+        assert_eq!(
+            script_checkpoint("# checkpoint = 1, 2\n# checkpoint 3,4\n"),
+            Ok(Some((3, 4)))
+        );
+        assert_eq!(script_checkpoint("# checkpoints are flags\n"), Ok(None));
+        assert_eq!(script_checkpoint("tick,a,b\n0,0,0\n"), Ok(None));
+        assert!(script_checkpoint("# checkpoint at the door\n").is_err());
+        assert!(script_checkpoint("# checkpoint 40600\n").is_err());
+        // Neither key is the other's.
+        assert_eq!(script_health(route), Ok(None));
+        assert_eq!(script_boss_health(route), Ok(None));
+    }
 
     #[test]
     fn parses_comments_hex_and_decimal() {

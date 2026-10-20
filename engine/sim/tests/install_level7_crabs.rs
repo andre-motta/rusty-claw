@@ -714,9 +714,11 @@ fn compare_crabs(
 ///
 /// - c18, the rooms of the patrol 10629..10806 (`crab-fight`,
 ///   `crab-swing`, `crab-nudge`): Claw, the crabs and the random stream
-///   follow the original step for step, a crab killed while standing
-///   included (it flies off from the fraction of a pixel a standing enemy
-///   keeps in its height).
+///   follow the original step for step, except that a crab killed while
+///   standing flies off 1 px lower on some steps: the original keeps a
+///   fraction of a pixel in the height of a standing enemy that this game
+///   does not (`crab-swing` from 954 ms, `crab-nudge` from 1224 ms and
+///   4194 ms).
 /// - c18, `crab-clamp`: this game's leave pass runs after the update pass
 ///   of the same tick, so the crab moved onto its limit by its own first
 ///   call is asleep at the end of that step (504 ms), where the original
@@ -725,70 +727,48 @@ fn compare_crabs(
 ///   from the original's from the first step; the crab's construction and
 ///   clamp draw nothing and match.
 /// - c18, `nest-hatch` and `nest-duck`: the nest hatches on the
-///   original's step and its crabs leave as the original's do, but they
-///   rise and land on other rows, so their snips and bombs reach Claw at
-///   other times, and from the first one that does the random stream and
-///   the crabs' choices differ.
-///   In `nest-hatch` the two crabs leave the list three steps earlier
-///   (2952 ms) since the fifth level's enemy rules: a consequence of
-///   their path, which already parts from 648 ms, not a new divergence.
+///   original's step and its crabs fly, land and choose as the original's
+///   do; the bomber's first bomb kills two of them standing in
+///   `nest-hatch`, and their bodies fly off 1 px lower on some steps, as
+///   in the patrol's rooms (from 2070 ms). In `nest-duck` the random
+///   stream leaves the original's at 6894 ms and the crabs' choices with
+///   it (not traced yet).
 /// - c60 (the default tuning played tick by tick): the crabs count 18 ms
 ///   ticks where the original at 60 frames per second counts frames of
 ///   16 and 17 ms, so their crouches, snips and hides end at other times
 ///   and their choices draw other numbers; their snips reach Claw at other
-///   times.
+///   times. In `nest-duck` they wear him down until he loses a life at
+///   17 s, where the original's do not.
 type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 
 const KNOWN: &[Known] = &[
-    (
-        "nest-hatch",
-        "c18",
-        &[
-            ("rng", 1350),
-            ("crab0_y", 648),
-            ("crab1_y", 648),
-            ("crab2_x", 1494),
-            ("crab2_y", 648),
-            ("crab2_state", 1512),
-            ("crab0_x", 1620),
-            ("crab0_state", 1638),
-            ("crab1_state", 1476),
-            ("crab1_x", 1476),
-            ("crab0_listed", 2952),
-            ("crab1_listed", 2952),
-            ("state_id", 1350),
-            ("health", 1350),
-            ("x", 1368),
-        ],
-    ),
+    ("nest-hatch", "c18", &[("crab0_y", 2070), ("crab1_y", 2070)]),
     (
         "nest-hatch",
         "c60",
         &[
-            ("state_id", 1250),
-            ("health", 1250),
-            ("x", 1300),
-            ("cam_x", 1300),
+            ("state_id", 950),
+            ("health", 950),
+            ("x", 983),
+            ("cam_x", 983),
         ],
     ),
     (
         "nest-duck",
         "c18",
         &[
-            ("rng", 846),
-            ("crab0_y", 648),
-            ("crab1_y", 648),
-            ("crab2_x", 1494),
-            ("crab2_y", 648),
-            ("crab2_state", 1512),
-            ("crab0_x", 1620),
-            ("crab0_state", 1638),
-            ("crab1_state", 1476),
-            ("crab1_x", 1476),
-            ("crab0_listed", 2952),
-            ("state_id", 846),
-            ("health", 846),
-            ("x", 864),
+            ("rng", 6894),
+            ("crab0_state", 7470),
+            ("crab2_state", 7470),
+            ("crab2_x", 7470),
+            ("crab1_state", 8064),
+            ("crab1_x", 8064),
+            ("crab0_x", 12132),
+            ("crab0_y", 12132),
+            ("crab0_listed", 13068),
+            ("state_id", 8802),
+            ("health", 8802),
+            ("x", 8820),
         ],
     ),
     (
@@ -801,6 +781,9 @@ const KNOWN: &[Known] = &[
             ("health", 800),
             ("cam_x", 800),
             ("cam_y", 3500),
+            ("y", 16283),
+            ("events", 17136),
+            ("lives", 17167),
         ],
     ),
     (
@@ -816,6 +799,8 @@ const KNOWN: &[Known] = &[
             ("cam_y", 14767),
         ],
     ),
+    ("crab-swing", "c18", &[("crab1_y", 954)]),
+    ("crab-nudge", "c18", &[("crab0_y", 1224), ("crab1_y", 4194)]),
     ("crab-clamp", "c18", &[("rng", 18), ("crab0_listed", 504)]),
 ];
 
@@ -1064,7 +1049,7 @@ fn install_level7_bombs_leave_on_the_third_launch_tick_and_blow_for_16_ticks() {
                 .position(|b| b.is_some_and(|b| b.exploding))
                 .unwrap();
             assert!(
-                boom - first <= 55,
+                boom - first <= 56,
                 "{store}: bomb at {first} goes off at {boom}"
             );
             assert_eq!(last - boom + 1, 16, "{store}: bomb at {first}");

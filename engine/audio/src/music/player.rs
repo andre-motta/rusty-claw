@@ -75,8 +75,9 @@ impl Track {
         }
     }
 
-    /// The music file names that can supply the track, most preferred first
-    /// (none for the credits track, whose file is not settled yet). With a
+    /// The music file names that can supply the track, most preferred first,
+    /// in the folder of the track's registered file (the credits' own
+    /// folder holds the credits track as PLAY). With a
     /// General MIDI bank the General MIDI arrangement (the name ending in 0)
     /// comes first and the other one is the fallback; with the game's own
     /// instrument bank it is the other way round.
@@ -91,9 +92,8 @@ impl Track {
             Track::Boss => &["BOSS", "BOSS0"],
             Track::Monolith => &["MONOLITH"],
             Track::Chord => &["CHORD"],
-            // No file is known for the credits screen yet, so selection
-            // finds nothing rather than the level's music.
-            Track::Credits => &[],
+            Track::Credits if gm => &["PLAY0", "PLAY"],
+            Track::Credits => &["PLAY", "PLAY0"],
         }
     }
 }

@@ -138,6 +138,7 @@ hazards, Claw's rope swing and the two thieves.
 8. A knife or an arrow that reaches Claw costs 10 health and is gone; one that reaches a wall stops there.
 9. Knock a thief out and lift it with Z: Claw carries it and throws it as he does an officer, and a thrown thief hurts the enemies it lands on. A beaten thief drops the loot it carries and stops attacking once it starts to fall.
 10. Watch a route or a recording in the window (`--replay FILE.csv`): the level music and the game's sounds play from the level's start as in play, the boss and powerup tunes come in where play would start them, and sound carries on after the recording ends and the keyboard takes over. Where the recording paused or opened a menu, the sounds stop and the music holds, then both carry on as in play. The Pause key and switching to another window pause the sound as in play; `--no-audio` (or `audio = off`) keeps the replay silent.
+11. Rope swing, smooth: on a 60 Hz display, swing on a rope: Claw, the rope's end and the level around him move smoothly on every frame, with Claw always on the rope's end. Start with `--smooth-rope off` (or `smooth_rope = off`): the swing goes back to the original's stepped look, the view standing still on some frames (about one in three on a rope of the usual speed).
 
 ## Milestone 3, LEVEL4 early
 
@@ -226,6 +227,7 @@ the bear sailors and the bear hug, and the crabs, their nests and their bombs.
 10. Crabs, snipping: stand next to a crab: it crouches, then charges or snips; a snip costs 5 health. Hitting a crab while it is out of its shell (charging, snipping or throwing) kills it at once.
 11. Crabs, knocking shells: swing at a crab that is hiding or crouched: it slides about 37 px away per standing swing, with one small boink, and does not die; only the magic claw kills a crab fully withdrawn into its shell.
 12. Crab bombs: a dark bomber crab lobs a bomb at Claw at most every 4 s; it bounces and explodes 1 s after the throw, or at once if it touches him (5 health). The blast also kills crabs caught out of their shells, the thrower included.
+13. Crabs, lifting: walk up to a crab hiding in its shell and press Lift (or Up with Attack): Claw picks it up without a sound from it and carries it over his head, withdrawn in its shell; throw it at a pirate: it hurts the pirate (and breaks a crate it flies into) but passes through other crabs, lands, and carries on as a crab. A crab out of its shell (crouching, charging, snipping) cannot be lifted.
 
 ## Milestone 3, LEVEL8
 
@@ -247,3 +249,228 @@ pirates he calls in, his cannon with its lever and the button on the mast.
 10. Gabriel, after a throw he survives: on the dock he gets up, pauses a few times, and then stays in his strike pose for good: he never bombs, calls a pirate or pulls the lever again, and his strike hurts you only if you stand right on him.
 11. Gabriel, the cannon after a lost life: strike the button, then lose a life before he fires: after the respawn the cannon shows its barrel down and the button blinks, but every later lever pull still fires straight up into him, and the cannon never turns down again.
 12. Red-tail pirates on this level: stand next to one and keep swinging the sword: about one swing in four is parried (the pirate raises its sword with a clang and takes no damage, then fights on); the other swings hurt it as on the seventh level, and two hits kill it. In Gabriel's fight his bomb blasts also hurt the pirates he calls in: they flinch.
+
+## Milestone 3, LEVEL9 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the ninth level with `make run-game ARGS="--install PATH --level 9"`,
+or play on from the eighth level. This section covers the hook-handed
+pirates and PegLeg, the rolling gunner; the level's traps, belts, saws and
+skull cannons have their own lines below.
+
+1. Hook-handed pirate, the hold: walk up to a hook-handed pirate: from 100 to 300 px away he sometimes raises his hook in his parry pose and holds it for about two seconds without moving; walk into him while he holds it and his whole body hurts (10 health), again a little under a second later if you stay against him.
+2. Hook-handed pirate, the swing: from the same range he sometimes swings his hook at the air instead; it reaches only about 67 px, so it hurts you only if you walk into it, and after a swing or a hold he waits about two seconds before the next.
+3. Hook-handed pirate, the stab: he runs at you from afar, walks the last stretch and stops about 100 px from a standing Claw; closer than 100 px he stabs with his dagger about once a second (the stab lands about a tenth of a second in, 10 health).
+4. Hook-handed pirate, parries: stand and swing the sword at him: every standing swing is parried with a clang, he takes nothing and fights on about a fifth of a second later. Crouch and stab, or jump and stab, or punch: those land (a crouching stab costs him 2 of his 10), and he swings his hook back at once instead of flinching; five crouching stabs kill him.
+5. Hook-handed pirate, the pistol: shoot him while he walks or stands: he flinches and loses 8, and the second shot kills him. Shoot him while he holds the hook: he parries, the hold ends, and the bullet flies on past him.
+6. PegLeg, the shot: stand 150 to 200 px from PegLeg (the first is on the deck right of the start, past a saw blade): he aims his pistol, the bullet leaves about a third of a second later from in front of him, high at a standing Claw and low at a crouching one, flies at about 500 px/s and costs 10; he cannot fire again for a second after a bullet.
+7. PegLeg, the rolls: come closer than 150 px and he rolls about 150 px away from you in about 0.6 s, then shoots; from further off he walks or rolls towards you, stopping about 35 px short of you, or on the end of his patrol, and shoots. While he rolls nothing hurts him.
+8. PegLeg, hits: shoot him with the pistol: it does him no harm and he rolls at you. Stand and swing: about half the swings make him flinch (5 of his 7); a crouching stab always lands (2), and for two seconds after it every blow lands.
+9. PegLeg, lifting: lift him in the middle of a roll towards you (stand right of him, facing him, and press Lift as he arrives): he is carried like any pirate; throw him: he bounces, pauses half a second, loses no health, then taunts and fires six shots in a row about half a second apart, alternating high and low.
+
+10. Belts: standing on a belt, Claw drifts with it from about a quarter second after landing; walking with a belt is faster, against it slower; a jump keeps the belt's push on the way up but not on the way down. Carried to the end of a belt over a drop, he teeters at the edge instead of falling. A warp touched on the fast belt leaves him standing still at its target. The pieces animate; only the ambient hum is heard.
+11. Saws: sunk saws rise, spin and sink on a steady rhythm and hurt only once fully up; one hit costs 10, and at most two hits fit in one up period; neighbouring saws are offset so there is always a gap; no rise or sink sound, only the hum.
+12. Skull cannons: they fire every 3 seconds whether Claw is near or not; the left-facing ones fire from behind themselves, so the ball passes through the cannon; the ball does not spin; it hits for 10 even when Claw ducks, and jumping over it works.
+13. Dart traps: invisible until Claw stands in a trap's area; then a puff, a blow sound, and an arrow about half a second later from the hole; it hits for 5 and knocks Claw back, and repeats while he stays (about every 1.6 s).
+
+## Milestone 3, LEVEL10
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the tenth level with `make run-game ARGS="--install PATH --level 10"`,
+or play on from the ninth level. This section covers the level: the
+hook-handed pirates and PegLegs with their tenth-level ways, the dart traps, the pegs, the big trap elevators, the
+seagulls and the vertical warp, and Marrow's room past the door: Marrow,
+his parrot and the two slabs that can bridge the spike pit between the
+ledges.
+
+To start in front of the door with the tools, `--start 32340,7740` puts
+Claw on the floor of the niche left of it, 92 px from the door (the bot
+and `make replay ARGS="--install PATH --level 10 --start 32340,7740
+--script ROUTE.csv"` take it; the game starts the level at its start).
+
+1. Hook-handed pirate: he never raises his hook to hold it and never parries. Stand about 100 px from him and he stabs with his dagger about once a second, missing a standing Claw facing him; step in and swing the sword standing: the swing lands (5 of his 10) and he strikes back at once (10 health, Claw is knocked back), and a second swing that lands kills him.
+2. PegLeg, the pairs: stand 150 to 200 px from a PegLeg: each time he aims he fires two shots about half a second apart, the first high and the second low, both leaving about 55 px in front of him; every pair is high then low, and each shot costs 10.
+3. PegLeg, the rolls: come closer than 150 px and he rolls about 150 px away from you in about 0.6 s, then fires a pair. Shoot him with the pistol: it does him no harm and he rolls at you the full 150 px, through where you stand (his touch costs 10), and fires his pair from there, often past you.
+4. Dart traps: the level's traps shoot left, right and down (none up): a puff, a blow sound, and an arrow half a second later that costs 5 and knocks Claw back, again while he stays in the trap's area.
+5. Crumbling pegs: a crumbling peg gives way a moment after Claw lands on it and stays gone until he loses a life; toggle pegs appear and vanish on their own rhythm, four of them with their own longer on and off times.
+6. Big trap elevators: the wide trap elevators carry Claw across their whole surface (about 180 px), the narrow elevators only their own; the one vertical trap elevator rides between its two stops at a steady pace once Claw steps on it.
+7. Seagulls: the nine seagulls patrol and dive at Claw as on the ninth level.
+8. The vertical warp: the disc at the top of the shaft near the level's start (x 4252, y 8348) takes Claw to the middle of the level, just above a checkpoint flag (x 20250, y 7097).
+9. The door into Marrow's room (x 32432, y 7769): walking in takes Claw to the left ledge of the room; the introduction plays and Claw stands again after it.
+
+10. Marrow, the room: past the door the two slabs between the ledges slide apart under the ledges in about 0.6 s, uncovering the spike pit; they do so whether or not the introduction runs. The parrot climbs from its perch above Marrow to a line near the top of the room and patrols it, end to end in about 2.1 s.
+11. Marrow, the introduction: stand still after the door: the camera pans right to Marrow on the far ledge, his line, Claw's line, the name banner, then the fight, about 13.5 s after you arrive. Marrow paces on his ledge out of view and does not come for you; the parrot dives at no one before the fight is on.
+12. The parrot's swoops: in the fight, at the end of its line on the side away from you, the parrot often turns down to your height and swoops straight across at you (10 health), flies on to the other end of its line and climbs back. A sword hit on a swoop makes it flinch for about 0.3 s and fly on; it never loses health; the third hit sends it home to its perch.
+13. The bridge: as the parrot settles on its perch the slabs slide together into a bridge below the ledges (about 0.6 s, the right one first). Walk across and jump up onto Marrow's ledge.
+14. Marrow's pistol: whenever you are on his height and on screen he fires every 1 to 4 s: the bullet leaves about 65 px in front of him, crosses the room at about 600 px/s and costs 20. Touching him costs 10. He blocks every pistol shot, stick of dynamite, magic shot and thrown object, which are used up.
+15. Marrow, 25 damage: sword hits cost him 5 of his 100 on the health bar, and some blows are blocked (a clang). After five hits he blocks every blow, then whistles: no hit lands on him, the parrot flies to him, lifts him and carries him in an arc to the ledge away from you while the slabs slide apart under the bridge. Stand on the right slab then: it carries Claw into the ledge wall and slides out from under him, into the spikes. Every 25 damage the loop repeats: three parrot hits close the bridge again.
+16. Marrow, the intro skip: jump with Right on the first tick in the room: there is no introduction and no health bar, Claw lands on the left ledge, and Marrow only stands and paces on his ledge: he never shoots and never comes at you. The parrot patrols high over the open pit and never dives. Walking back into the box by the door plays the whole introduction late.
+17. The dynamite crossing after the skip: throw a stick of dynamite in the air toward the pit, jump off the left ledge's edge into its blast, and press Jump with Right on the tick after the hit's one stand (pausing and stepping helps): Claw jumps out of the blast onto Marrow's ledge. Twenty sword hits of 5 kill the skipped Marrow; between hits he flinches and strikes back, then holds his last pose. Pausing through the crossing changes nothing.
+18. The gem: Marrow's body flies off and the gem rises out of him to a point over the middle of the pit in about 2.7 s while Claw stands frozen; then Claw can move, and a jump from the ledge's edge into the gem ends the level.
+19. A lost life in the room after the skip: Claw comes back with Marrow at full health, the slabs snapped shut and sliding open again. From then on, every 25 damage Marrow blocks every blow and whistles, stays out of reach of every hit for 5 s waiting for a parrot that never comes, then takes blows again.
+20. The bridge trick, a quicker kill: with Marrow 25 below where his last whistle left him (five hits, or a sixth blow he blocks), run left and jump off his ledge as he whistles, so that you are in the air over his half of the bridge when the parrot starts to carry him; land on the left slab as it slides apart, ride it and jump from it onto the left ledge before it slides under the rock. The parrot drops Marrow on the left ledge beside Claw and does not come back to its perch: the slabs stay open, his later whistles go unanswered (each time he waits 5 s out of reach of every hit, then fights on), and you kill him there; the gem rises over the pit and a jump from the left ledge's edge into it ends the level. Three hits on the parrot there send it home and bring the normal loop back. Standing still on the bridge instead does not work: standing on his half, Claw rides the right slab into the wall.
+
+## Milestone 3, LEVEL11 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the eleventh level with `make run-game ARGS="--install PATH --level 11"`,
+or play on from the tenth level. This section covers what the level
+reuses, its lasers, Mercat, the Fish and the Siren.
+
+To try the end of the level with the tools, `--start 3424,1467` puts
+Claw on the ledge under the start room, left of its pillar (`make replay
+ARGS="--install PATH --level 11 --start 3424,1467 --script ROUTE.csv"`
+takes it; the game starts the level at its start).
+
+1. Lasers: in the six low corridors the two crystal clusters wait about 1.5 s, then arc lightning for about 1.35 s with crackling zaps, heard even off screen. The beam hurts from the moment the crystals light up until a moment after the arc is gone (1 health, Claw knocked back); standing in it costs 1 and again just under a second later, and that knock carries him out. Neither ducking nor jumping gets under or over a firing laser: cross while it waits. The laser at x 12516 draws over Claw, the others behind him.
+2. Break planks: walking onto a plank row, a piece gives way only when Claw's middle is over it (a 30 px window per piece, nothing in the 34 px between pieces); it shakes, crumbles and drops him about a quarter to three quarters of a second later, and the next piece starts as the previous one crumbles, with the crumbling bridge sound.
+3. Toggle pegs: the wall pegs slide in and out on a steady three-second rhythm in five pictures (about a quarter second each way), solid only while out; a few stay out for good and three keep their own offset.
+4. Water: in the wading pools Claw walks on the pool floor with the water drawn over his legs (he looks waist-deep), with a splashing step sound along the floors and in the puddles; nothing slows him.
+5. Deep pools: falling into a deep pool (the wide one at x 6912 to 8959 below the first checkpoint) kills Claw at once, as spikes do, with the spike death sound.
+6. The ledge under the start room: dropping through the opening in the start room's floor, Claw falls past the ledge and cannot reach it, even holding Left; he lands on the ground below.
+7. The way to the map piece: the ladder at x 3100 leads up to the left part of that ledge; walk right to below the pocket (x 3424) and jump: Claw takes the map piece and the level ends.
+
+8. Mercat's bolts: whenever a Mercat can see Claw on his floor, he waits one to two seconds, raises his trident and throws a bolt of lightning straight at Claw at waist height with a crackle, at any distance he can see him from, without walking at him. The bolt costs 20 and bursts into a short explosion where it hits; a jump clears it, a crouch does not. A wall stops it without a burst, and Claw's respawn clears every bolt in flight.
+9. Fighting a Mercat close in: swinging at him from in front within about 150 px makes him hop about 96 px back, calling out one of his hop lines, almost always the first time and less often after each hop (never after the third); a crouching sword stab is always parried with a clang and does nothing; standing stabs, punches and kicks land (two kill him), and about one pistol shot in four is parried. When he cannot see Claw (a wall between them, or Claw invisible), he walks or runs at him instead and, within about 150 px, stabs (10, reaching about 110 px).
+10. Standing right in front of a Mercat (about 60 px) facing him: his bolt bursts on Claw at once and its explosion kills the Mercat himself; Claw loses only the bolt's 20. A Mercat that threw instead of stabbing at a close Claw stops hopping back from swings.
+11. The Fish's leap: standing in a wading pool above a fish's swimming line, a fish swimming towards Claw leaps out with a splash, bites at the top of an arc about 150 px high and 250 px long, and drops back in with a splash on the far side.
+12. The Fish's dash: with Claw level with a fish's line, it dashes along the pool floor to where he stood and swims on. Every touch of a fish costs 10, whatever it is doing; any single hit (sword, punch, pistol, magic, an explosion) kills it.
+13. Pit walls: from the bank right of the pool at x 13854 to 14498, a fish leaping at Claw bounces off the pit's wall and falls back into its pool; none lands on the bank.
+
+14. The Siren: come within about 500 px of a Siren on her floor (and within about 40 px up or down) and she faces you and sings (farther than about 200 px she sometimes walks at you instead), through walls too: a call, and four rings of sound a third of a second apart that drift towards you slowly and fade after about 300 px. She sings again about 5 s after her last call (never sooner than 4 s). Touching her costs 10; two sword hits kill her, and she can be picked up and thrown.
+15. Her scream: a ring that reaches Claw, standing or crouching, costs no health (only his hit sound) and freezes his controls for about two seconds, each ring starting the two seconds again: a walk stops, a crouch stands up, a jump on its way up loses the rest of its height, and he shows a dazed pose. He can still be hurt and killed while frozen.
+16. Keys held through the freeze act the moment it ends: holding Jump jumps at once, holding Right walks on at once, holding Down crouches again.
+17. The pause key, the help screen (F1) and the in-game menu still open while Claw is frozen, and the freeze waits while they are up; losing a life while frozen does not end it: it runs on after the respawn.
+
+18. The floor clip at the first fish pool (x 4067 to 4450): walk left to the pool's left wall, crouch there and stay down while the fish knock Claw back and forth. A touch from his right slides him, still crouched, under the ledge left of the wall; when the hit ends he stands up inside the floor and falls straight through it to the hall below the pool, landing near x 4000. A stick of dynamite blowing up between Claw and the wall pushes him away from it instead, and there is no fall.
+
+## Milestone 3, LEVEL12 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the twelfth level with `make run-game ARGS="--install PATH --level 12"`,
+or play on from the eleventh level. This section covers what the level
+reuses (the Mercats, Sirens and Fish of the eleventh level, the pegs, the
+rocks and the floor spikes), its stalactites, its earthquakes and the
+tentacles, and the boss fight with Aquatis, his crack, his stalactites
+and the dynamite that waits in his room.
+
+To try the water's edge with the tools, `--start 3110,3567` puts Claw on
+the ledge at the water's edge, right of the first stalactites (`make
+replay ARGS="--install PATH --level 12 --start 3110,3567 --script
+ROUTE.csv"` takes it; the game starts the level at its start).
+
+1. Stalactites: walk under a hanging stalactite (walk left along the ledge at the water's edge, x 3110, to about x 3070): a moment later it snaps loose with a crack, falls (about 200 px in under half a second), lands with a crash, crumbles in about a third of a second and is gone. The two beside it fall with it. Standing under one as it lands costs 5 and a flinch; walking or jumping into a hanging one costs 5 too, and it stays where it hangs.
+2. Fallen stalactites stay gone until Claw loses a life; then every one hangs again where it was.
+3. A pistol shot fired at a hanging stalactite flies through it and on; nothing Claw has can break or bring one down.
+4. Earthquakes: dropping down the first shaft (from its lip at x 2925) Claw passes an invisible earthquake trigger: the ground rumbles (one of five rumbles, sometimes none) and the screen shakes for 5 s. The trigger does nothing more for 7 s; a Claw still in its area then gets the rumble and the shake again. Pausing during a shake does not shorten it.
+5. Tall shafts: falling down the tall shaft at x 25540, the earthquake at its foot starts only when Claw is near the bottom, not as he enters the shaft at the top; its hanging stalactites hit him on the way down (5 each, a flinch each).
+6. The water: falling into the deep water (left of the ledge at the water's edge, x 2600 to 2880, and all along the level's bottom) kills Claw at once, with the splash sound, as his feet reach the surface.
+7. The ledge's end: standing at the very end of the ledge at the water's edge (x 2884), Claw teeters, and the dynamite key does nothing there; a step back from the edge, it throws as usual.
+8. The Mercat over the first shaft: as Claw drops into the shaft from its lip, the Mercat on the far lip throws a bolt that hits him on the way down (20 and a flinch), as on the eleventh level.
+9. The toggle peg beside Aquatis's rock (x 37781) stays out for good: it is solid to stand on at any time.
+
+10. The tentacles: come within about 200 px left of a tentacle (on the ledge, or in the passage under the water): after a second or so it either whips sideways at Claw with the swipe sound (5, reaching about 136 px to its left at its own height; under the water it misses) or grabs him. Grabbed, Claw freezes where he is; about a third of a second later he is lifted out beside the tentacle (50 px right of it, 70 px up), facing right, crushed in its grip, and squeezed: one health point about every 0.2 s, 14 in all, until it lets go after 3 s and he drops.
+11. Mashing frees Claw: pressing a key on ten ticks while squeezed (any game key) lets him go on the tenth press.
+12. A second tentacle can grab Claw while the first still squeezes him: it lifts him beside itself and both squeeze him; a strike from a third tentacle hits him out of both holds.
+13. Any hit (sword, pistol, magic, a blast) cuts a tentacle down: it sinks into the water with its death sound and grows back after 20 s (at once when Aquatis starts a frenzy). Nothing hurts it while it grabs or squeezes.
+14. Aquatis's frenzy: every tentacle thrashes, swiping left and right in turn, and cannot be hurt; facing right, its swipe reaches about 136 px to its right, so near the ledge's right end it can knock Claw into the water.
+
+15. Aquatis, the introduction: walk through the door at the end of the passage: Claw freezes in the room, the camera pans right to Aquatis, his line, back to Claw, Claw's line, then the name banner drops with a thud and slides off; about 13.8 s after arriving the fight is on. Aquatis then does nothing at all until Claw walks right along the ledge (to about x 37250); from then on he idles, says a line now and then, and punches high or low when Claw is within about 200 px left of him at his height.
+16. The intro skip: jump on the very first moment in the room: no freeze, no banner, no health bar; Aquatis keeps his first pose for good at full health and never punches, but touching him still costs 10. The jump takes the stick of dynamite floating above the ledge. Jumping a moment later is too late: the introduction runs.
+17. The crack: hold Dynamite about 2 s at the ledge's right end and let go: the stick lands on the rock right of the water, its blast reaches the glowing crack behind Aquatis, an earthquake rumbles and the screen shakes for 4 s; an idling Aquatis cowers through it. As it ends a stalactite over him snaps, falls and hits him (the health bar drops a fifth); he reels for about a second, then thrashes for 4 s, punching high and low in turn, with every tentacle. The crack takes no blast for 6 s after a quake, nor while he thrashes or a stalactite falls.
+18. Five stalactites kill him, falling in a fixed order (the middle one, second from the left, fourth, leftmost, rightmost): on the fifth he collapses (about 2 s), the gem rises out of him and flies for about 2.5 s to a point above the ledge's right end with the camera following it; Claw stands still until it lands, then takes it and the level ends.
+19. Claw's own blows, shots and blasts never take Aquatis's health: they only make him flinch (he cowers after three flinches in a row). A stalactite that falls while he flinches, reels or thrashes, or just after a blow, is wasted; the five then hang again only after Claw loses a life.
+20. The dynamite in his room: one stick floats above the ledge (x 37250); once Claw has taken it, a blast anywhere in the room puts a new one there, as long as Claw carries no more sticks than when the last one appeared.
+21. Losing a life during the fight: Aquatis is back at full health, every stalactite hangs again, and the fight goes on.
+22. The lift: walk right along the hidden floor past the third tentacle and jump so that Claw meets Aquatis's body at the top of the jump (10 and a flinch, held in mid air); on the step after he stands in mid air, press Lift: Claw picks Aquatis up and drops him at once, and he dies in the water; the gem rises out of him with Claw frozen in mid air. Open the help screen (F1) right then, wait about 8 s and close it: the gem is on Claw and the level ends. Without the help screen the gem flies away and Claw falls into the water.
+23. The passage under the water (the water skip): from the ledge at the water's edge, throw a stick of dynamite a step before the end, jump left off the end and, while the stick falls, open the help screen (F1) for about 3 s: on the return the stick goes off under Claw and its blast hits him in the air (15 and a flinch), holding him in place. Jump on the step after he stands in mid air and he jumps again, on to the left; a second stick thrown in the air and set off the same way (about 4 s of help) hits him again and gives a second jump. Let go of Left over the water's left end (x 2546 to 2559) and he drops straight through the water onto a hidden floor beneath it, unharmed, and walks under the pool all the way to the boss room; let go further right and the water kills him, further left and he falls past the floor's end. A jump from the hidden floor that comes back down into the water kills him.
+
+## Milestone 3, LEVEL13 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the thirteenth level with `make run-game ARGS="--install PATH --level 13"`,
+or play on from the twelfth level. This section covers what the level
+reuses (the red-tail pirates and bear sailors, the dart traps, the ropes,
+ferns, pegs and stepping stones), its Chameleons, its water rocks and the
+two dynamite throws of the speedrun, and the boss fight with RedTail, his
+stakes and his wind.
+
+To try a spot with the tools, `make replay ARGS="--install PATH --level 13
+--start X,Y --script ROUTE.csv"` puts Claw at (X, Y) first (the game starts
+the level at its start).
+
+1. Chameleons: come within about 500 px of a green lizard on its floor: it runs at Claw, lashes its long tongue from up to about 127 px away (10 and a flinch), or fades out where it stands over about half a second, its picture dissolving into the background.
+2. A faded Chameleon is gone for up to 1.5 s, then fades back in somewhere else on its floor (never right where Claw stands) over about half a second. While it fades out, is gone or fades in, nothing hits it and it hurts nothing; it does not fade again for a second after it is back.
+3. One hit of anything (sword, pistol, magic, a blast, a thrown object) kills a Chameleon at once, and it cannot be picked up.
+4. The lizards near the level's start with no floor limits: the one on the ledge right of the start (x about 1780) is carried off its ledge by a fade and falls to the floor below, where it stays unseen and untouchable; the one on the floor right of it (x about 2430) keeps fading out and back in at the same spot.
+5. Water rocks: step onto the flat stone at the water's surface (from the platform at x 3600, walk right onto the rock at x 3744): about a third of a second later a spout throws Claw straight up, 600 px on this rock (250 to 600 px on the others, by rock), whatever the jump key does; landing on it again throws him again. Stepping off before the spout cancels the throw.
+6. Dynamite from the bear's block: from the step right of the bear sailor on the first ledges (x 4250), facing right, hold Dynamite about 0.6 s and let go: the stick drops onto the floor below and its blast kills the Chameleon and the red-tail pirate waiting there.
+7. Dynamite down the waterfall: from the lip of the waterfall shaft (x 26000), facing right, hold Dynamite about 1.2 s and let go: the stick falls down the shaft and its blast at the foot kills the Chameleon and the red-tail pirate standing there before Claw drops down.
+8. A stick thrown straight into a red-tail pirate on this level is usually blocked and destroyed (he parries sword blows half the time); a blast beside him is never blocked.
+9. The water: falling into the water anywhere on the level kills Claw at once; he starts again at the last checkpoint passed (at the level's start before the first).
+10. The waterfalls: the falling sheets of water and their current move steadily; nothing in them hurts or carries Claw.
+11. The toggle pegs in the boss room slide out and in every 1.5 s, in step with each other.
+
+12. RedTail, the introduction: walk right into the warp near the level's end (left of x 33002): Claw arrives on the sand next to the stakes at the left wall and freezes; the camera pans to RedTail on the log ledge, his line, back to Claw, Claw's line, then the name banner drops with a thud and slides off; about 11 s after arriving the fight is on, with his health bar. Half a second later he makes his first move (usually a jump down to the sand and his flare gun).
+13. The intro skip: jump at the very first moment on the sand: no freeze, no banner, no health bar; RedTail keeps his idle pose on the ledge at full health and never attacks, jumps or raises the wind for as long as nothing touches him, even with Claw standing right beside him on the ledge; touching him still costs 10. Jumping a moment later is too late: the introduction runs. Walking back onto the warp's spot on the sand later runs the introduction then.
+14. His flare gun: on Claw's level he aims and fires a glowing flare that flies straight ahead at about 500 px a second; it costs 15 and bursts where it hits Claw; one that misses is gone at the wall.
+15. His slide and kick: on the sand he runs at Claw and slides along the ground into him (10; the slide ends once he is past Claw, or at the wall); close by he kicks instead (10). Touching his body costs 10.
+16. His knives: when Claw stands on the other level he throws three knives in a fan up or down at him, straight through the ledge (5 each).
+17. The wind: from the ledge, at a Claw on the sand, he raises his arm and a whistling wind blows across the beach for 5 s, grass, leaves and sand flying left: a standing Claw drifts left into the stakes at about 280 px a second, a Claw walking right still loses ground slowly, a jump is carried left; a falling or reeling Claw is not pushed. Held against the stakes Claw loses 20 each time his protection after a hit ends (about every 0.85 s).
+18. His jumps: he leaps down to the sand or up onto the ledge to reach Claw's level, and does nothing else in the air.
+19. Every third blow he leaps away: each sword blow costs him 5 and makes him flinch, but the third blow that finds him free costs nothing and he leaps to the other level (after an intro skip already the second). Pistol shots and magic he blocks; a blast next to him makes him hop back.
+20. His death: twenty sword blows kill him (on the ledge he first jumps down to the sand); he falls, says his last line, and about 2.4 s after he fell the gem rises out of him and flies to a point above the ledge, with Claw frozen where he is (in mid air, if he was jumping) until it arrives; taking it ends the level.
+21. Losing a life during the fight: RedTail is back on the ledge at full health, the wind stops, and the fight goes on.
+
+## Milestone 3, LEVEL14 early
+
+Failures only, as above: note the line, what happened instead, and where.
+Start the fourteenth level with `make run-game ARGS="--install PATH --level 14"`,
+or play on from the thirteenth level. This section covers what the level
+reuses (the Chameleons, the fire shooters, the jump switches, the ropes,
+pegs, elevators and floor spikes), its tiger guards and its lava: the
+fountains, the dripping mouths and the hands that throw lava balls. Omar's
+fight and the end of the game come with their own lines below.
+
+To try a spot with the tools, `make replay ARGS="--install PATH --level 14
+--start X,Y --script ROUTE.csv"` puts Claw at (X, Y) first (the game starts
+the level at its start).
+
+1. Tiger guards: come within about 500 px of an orange or white tiger on its floor: it runs at Claw, and from a few steps away it strikes: a knife combo of two to four slashes (15 each, with a flinch), a lunge (it crouches still for half a second, then dashes about 100 px toward where Claw stood when it crouched, claws out: 20), or a somersault toward Claw that lands about 100 px nearer and ends in one slash. Stepping back during the crouch avoids the lunge.
+2. Close in, a tiger nearly always somersaults back once (about 100 px) while it rests between strikes, and when Claw attacks it from in front it sometimes hops back out of reach.
+3. The tiger's guard: pistol shots and thrown sticks of dynamite that reach a tiger are gone and it holds its guard for a quarter of a second with a clang, unhurt; a blast next to it, or an object Claw throws at it, only makes it block too. Sword blows, punches and kicks hurt it (three sword blows kill it), and so does magic; but a blow while it lunges, somersaults toward Claw or slashes after that somersault does nothing, and nothing at all touches it during either somersault.
+4. A tiger can be picked up and thrown like the pirates; after landing it growls a taunt and strikes back at once. Killed, it drops its loot (every tiger carries some).
+5. The lava fountains: columns of lava rise from the lava pools, hold at their full height and fall back, again and again, about every 1.6 s; touching a column costs 10. In the lake with eight fountains they rise in a staggered wave.
+6. The lava mouths: stone mouths in the ceilings drip lava without end, a drop swelling under the mouth, then falling to the floor and splashing, about every 1.2 s; the drop costs 10 from when it forms until it splashes.
+7. After losing a life, every fountain and mouth near Claw starts its cycle again after its own delay; while it waits, a fountain caught mid-column keeps that column (and its harm) standing, and a mouth caught mid-drip shows an empty mouth but its drop still hurts where it was.
+8. The lava hands: walking into the area around a hand (the one at x about 20800, right of the fire shooter, for example) makes it rise out of the lava and throw a lava ball at Claw's side, up to three in a row about 1.2 s apart; then it rests (half a second for that hand, up to 2.5 s for others) before Claw in its area sets it off again.
+9. A lava ball flies in an arc trailing sparks and lies where it lands; touching it costs 10 and makes it burst at once; otherwise it bursts a second after the throw, wherever it is, and its small blast hurts Claw (10) and makes a tiger beside it block.
+10. The fire shooters: launchers in the walls shoot animated fireballs (5 and a knockback) while Claw stands in front of them.
+11. The jump-switch room (the warp down at x about 15380 takes Claw there): the tigers and the two Chameleons pace their ledges, and one that paces onto a hidden switch leaps across the room to another ledge.
+12. The lava: falling into the lava anywhere on the level kills Claw (he sinks into it); he starts again at the last checkpoint passed (at the level's start before the first).
+
+13. Omar, the arrival: walk right into the warp near the level's end (left of x 31171): Claw appears falling a little above the ladder top in the corridor over Omar's chamber, drops onto it a moment later and freezes; the camera pans down to Omar standing over the chamber's right ledge inside his turning ring of fire, his line, back to Claw, Claw's line, then the name banner drops with a thud and slides off; about 11 s after arriving the fight is on, with his health bar full. Omar does nothing through it but turn to face Claw and taunt now and then.
+14. No skip by a jump: jumping at once on arriving (or a moment later) changes nothing: Claw still lands on the ladder top and the introduction runs in full.
+15. The end of a life during the introduction (Escape, END LIFE, confirm, right after the freeze starts): Claw falls dead at once, and about 2 s later he is back on the ladder top with 100 health and one life fewer, free to move while the lines and the banner play on over him; the banner still drops at its usual moment and nothing freezes him again. Omar is back over the right ledge at full health with his ring of fire.
+16. The ring: nine balls of fire circle Omar about 80 px out with a wide gap (about a quarter of the circle) that comes round about every 1.4 s. A pistol shot or a magic shot that meets a ball is gone; touching a ball costs Claw 1; Omar's own body costs 30, even while he flashes.
+17. Fire and ice: with the ice sword (east of the arena) a sword shot through the gap of the fire ring costs him a quarter of his health; he flashes in place with a thunderclap for 2 s and appears over the other ledge, and the ring turns to ice and turns the other way. Then only the fire sword's shots (west of the arena) hurt him, and so on. A shot of the ring's own element, the plain magic claw or the lightning sword heals him a quarter (never above full) and he says a short line; for half a second after any magic hit, more magic does nothing. Sword blows, pistol shots and dynamite never hurt him behind the ring (pistol shots and dynamite are gone with a block).
+18. The second phase: the fourth good shot ends the ring: his health bar fills again, he flashes for 2 s and appears in the hall above (by the elevator up the shaft), over its right floor. There only Claw's sword hurts him, a quarter of his health a blow; each blow sends him flashing to the hall's other end, where he appears 2 s later. Magic there only makes him block.
+19. His energy ball: from time to time in the hall he raises his hands and, about half a second later, sends a slow glowing ball along the hall at standing height (about 300 px a second) toward the side he faced when he began; it costs 15 and is gone when it hits Claw or a wall.
+20. His death: the fourth blow in the hall kills him where it finds him: he falls with his last line and, about 3.2 s after the blow, the gem rises out of him and flies to a point over the shaft, with Claw frozen where he is until it arrives; taking it ends the level.
+21. Losing a life during the fight starts it over: Omar is back over the chamber's right ledge at full health inside a new ring of fire. If Claw is dead when Omar's death fall ends, no gem comes at all: Omar is back in his ring after the respawn but nothing can hurt him any more, so the level cannot be won on that play.
+
+## Milestone 3, the end of the game
+
+Failures only, as above: note the line, what happened instead, and where.
+Win the fourteenth level (Omar's gem), or, until his fight is in, choose
+Credits on the main menu for lines 3 to 6. The original plays its ending
+movie after the gem; this game has no movie player yet, so a short black
+stands in for it (line 1).
+
+1. Taking the last gem: the level ends as other levels do, the screen stays black for about a second (Escape, Space or Enter end it sooner), then the map screen shows the amulet: the last gem plays into its socket, the amulet is made whole with its sound and Claw says his line; the treasure tally follows as after every level.
+2. When the tally is done (or skipped), it fades out, the screen stays black for half a second, and the parchment with the skull and crossed swords unrolls from a narrow strip at the centre to the full screen with its sound.
+3. The credits text rises from the bottom over the parchment, white, in a column from near the left edge, at a slow even pace (25 px a second), and the credits music plays and loops; once the last line has left the top, the text starts again from the bottom.
+4. Escape, Space, Enter, a game key such as attack or jump, a pad button, or a click anywhere but the top-left corner returns to the main menu at once (no unroll) with the menu music; the arrow keys do nothing. Keys pressed while the parchment unrolls do nothing.
+5. A click in the top-left corner (about 100 px square) switches to another tune, shows a line from the developers in white at the centre for 3 s and changes the text's colour every 0.3 s; a second click there, or the tune's end, brings the white text and the credits music back.
+6. From the main menu, Credits rolls the menu up and unrolls the parchment, then the same credits run.
+7. After the credits the main menu offers every level in New Game and Load Game as before; finishing the game saves nothing new.

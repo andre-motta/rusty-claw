@@ -47,8 +47,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use claw_assets::{Install, Palette};
+use claw_assets::{Frame, Install, Palette};
 use claw_audio::AudioSettings;
+use claw_audio::music::Track;
 use claw_frame::{
     AudioCue, DrawMode, FrameClock, FramePacer, GameEvent, PaletteFade, ScreenTransition, TICK_MS,
 };
@@ -56,13 +57,13 @@ use claw_render::gpu::COLOR_FORMAT;
 use claw_render::palette::{self, FULL_BRIGHTNESS};
 use claw_render::screen::transition_at;
 use claw_render::{
-    Anchor, FrameInput, Gpu, ImageId, LevelGraphics, Offscreen, Renderer, Scene, SceneBuilder,
-    ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
+    Anchor, FrameInput, Gpu, ImageId, ImageSource, LevelGraphics, Offscreen, Renderer, Scene,
+    SceneBuilder, ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
 };
 use claw_sim::input::MenuScreen;
 use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::{Sim, SimConfig};
-use claw_ui::hud::{Hud, HudArt, marker_layout, marker_lines};
+use claw_ui::hud::{FONT, Hud, HudArt, marker_layout, marker_lines};
 use claw_ui::menu::command::{MenuKind, Page, VideoSetting};
 use claw_ui::menu::decor::{SPARKLE, Sparkles};
 use claw_ui::menu::draw::{self, FontArt, MenuSprite};
@@ -73,10 +74,14 @@ use claw_ui::screens::assets::{
     TITLE_PICTURE, TITLE_SCREENS, picture_frame,
 };
 use claw_ui::screens::booty::{self, BootyArt, BootyScreen, BootyStats};
+use claw_ui::screens::credits::{
+    CREDITS_PICTURE, CREDITS_SCREENS, CreditsArt, CreditsEntry, CreditsScreen, FontMetrics,
+    MESSAGE_FONT, STRIPS, TEXT_FONT, prepare_parchment, recolour,
+};
 use claw_ui::screens::title::{self, TitleScreen};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowId};
@@ -350,6 +355,8 @@ struct Screens {
     title: Option<(ImageId, Palette)>,
     pictures: BTreeMap<String, (ImageId, Palette)>,
     sparkles: Sparkles,
+    /// The credits' art, prepared the first time they show.
+    credits: Option<CreditsArt>,
 }
 
 impl Screens {
@@ -382,6 +389,7 @@ impl Screens {
             title,
             pictures: BTreeMap::new(),
             sparkles,
+            credits: None,
         })
     }
 
@@ -449,6 +457,63 @@ impl Screens {
         }
         BootyScreen::new(stats, art).with_gem_frames(gem)
     }
+
+    /// The credits opened from `entry`; `tune_ms` is the length of the
+    /// developer's tune when it can play.
+    fn credits(&mut self, entry: CreditsEntry, tune_ms: Option<f64>) -> CreditsScreen {
+        let mut art = match self.credits.clone() {
+            Some(art) => art,
+            None => {
+                let art = self.credits_art();
+                self.credits = Some(art.clone());
+                art
+            }
+        };
+        art.tune_ms = tune_ms;
+        let text = self.assets.credits_text().unwrap_or_else(|| {
+            eprintln!("rusty-claw: the credits text was not found");
+            String::new()
+        });
+        CreditsScreen::new(entry, &text, art)
+    }
+
+    /// The parchment, its strips and the text's fonts, added to the
+    /// screens' graphics.
+    fn credits_art(&mut self) -> CreditsArt {
+        let metrics = FontMetrics::from_art(&mut self.graphics);
+        let art = match self.assets.picture(CREDITS_SCREENS, CREDITS_PICTURE) {
+            Some((img, pal)) => {
+                let p = prepare_parchment(&img, &pal);
+                let id = self.graphics.add_image(&p.picture);
+                self.graphics.insert_set(STRIPS, &p.strips);
+                CreditsArt {
+                    picture: Some(id),
+                    strips: p.strips.len() as i32,
+                    palette: p.palette,
+                    text_index: p.text_index,
+                    message_index: p.message_index,
+                    metrics,
+                    tune_ms: None,
+                }
+            }
+            None => {
+                eprintln!("rusty-claw: picture {CREDITS_SCREENS}/{CREDITS_PICTURE} not found");
+                CreditsArt::plain(metrics)
+            }
+        };
+        let font = self.assets.images().image_set(FONT).unwrap_or_default();
+        for (key, index) in [
+            (TEXT_FONT, art.text_index),
+            (MESSAGE_FONT, art.message_index),
+        ] {
+            let frames: Vec<(i32, Frame)> = font
+                .iter()
+                .map(|f| (f.number, recolour(&f.frame, index)))
+                .collect();
+            self.graphics.insert_set(key, &frames);
+        }
+        art
+    }
 }
 
 /// The tiles behind the controls list: the dialog stone, 4 by 3 tiles of
@@ -496,6 +561,16 @@ pub fn shade_sprites(presentation: (u32, u32)) -> Vec<ScreenSprite> {
 fn notice_sprites(art: &mut dyn draw::Art, text: &str) -> Vec<ScreenSprite> {
     let (w, _) = draw::text_size(art, text);
     draw::text_sprites(art, text, Anchor::TopLeft, 320 - w / 2, 8)
+}
+
+/// The point of the 640x480 screen under the window pixel `at`, for the
+/// screens' composition `c` (outside the picture it lies off the screen).
+pub fn canvas_point(c: &claw_render::Composition, at: (f64, f64)) -> (i32, i32) {
+    let w = f64::from(c.width.max(1));
+    let h = f64::from(c.height.max(1));
+    let x = (at.0 - f64::from(c.x)) * f64::from(c.presentation.0) / w;
+    let y = (at.1 - f64::from(c.y)) * f64::from(c.presentation.1) / h;
+    (x.floor() as i32, y.floor() as i32)
 }
 
 /// A palette fade holding `brightness` (0 to 1).
@@ -634,6 +709,8 @@ struct App {
     interp: bool,
     pauses: Pauses,
     focused: bool,
+    /// Where the mouse pointer is in the window, in pixels.
+    cursor: Option<(f64, f64)>,
     /// Shift, Ctrl and Alt as last reported.
     modifiers: ModifiersState,
     size_index: usize,
@@ -845,6 +922,7 @@ impl App {
             let mut session = Session::new(sim)
                 .with_pause_input(self.settings.pause_input)
                 .with_death_circles();
+            session.set_smooth_rope(self.settings.smooth_rope);
             self.router
                 .set_keep_held(self.settings.pause_input == PauseInput::Original);
             if let Some(path) = &self.settings.record
@@ -988,6 +1066,7 @@ impl App {
         let mut session = Session::new(sim)
             .with_pause_input(self.settings.pause_input)
             .with_death_circles();
+        session.set_smooth_rope(self.settings.smooth_rope);
         self.router
             .set_keep_held(self.settings.pause_input == PauseInput::Original);
         // Every level is recorded, each into its own file.
@@ -1211,6 +1290,20 @@ impl App {
                     f.set_booty(s.booty(stats));
                 }
             }
+            Effect::ShowCredits(entry) => {
+                let tune_ms = self
+                    .audio
+                    .as_ref()
+                    .and_then(|a| a.track_ms(Track::Monolith));
+                if let (Some(f), Some(s)) = (self.flow.as_mut(), self.screens.as_mut()) {
+                    f.set_credits(s.credits(entry, tune_ms));
+                }
+            }
+            Effect::Music { track, looped } => {
+                if let Some(a) = self.audio.as_mut() {
+                    a.play_track(track, looped);
+                }
+            }
             Effect::Quit => event_loop.exit(),
         }
     }
@@ -1259,6 +1352,12 @@ impl App {
                 }
             }
             VideoSetting::Interpolation => self.interp = s.interpolation,
+            VideoSetting::SmoothRope => {
+                self.settings.smooth_rope = s.smooth_rope;
+                if let Some(l) = &mut self.level {
+                    l.session.set_smooth_rope(s.smooth_rope);
+                }
+            }
             VideoSetting::StatusBar => {
                 if let Some(l) = &mut self.level {
                     l.status.set_centred(centred);
@@ -1541,10 +1640,34 @@ impl App {
         }
     }
 
+    /// A left click: handed to the flow at its place on the 640x480
+    /// screen, when a standalone screen shows.
+    fn click(&mut self, event_loop: &ActiveEventLoop) {
+        let (Some((px, py)), Some(live)) = (self.cursor, &self.live) else {
+            return;
+        };
+        let Some(f) = self.flow.as_mut() else { return };
+        if !flow::is_standalone(f.screen()) {
+            return;
+        }
+        let c = live.screen_builder.composition();
+        let (x, y) = canvas_point(c, (px, py));
+        f.click(x, y);
+        self.run_effects(event_loop);
+    }
+
     /// Polls the input devices other than the keyboard.
     fn poll_inputs(&mut self, event_loop: &ActiveEventLoop) {
         for r in self.router.poll(Instant::now()) {
             self.route(event_loop, r, true);
+        }
+        // A newly pressed game input other than a direction (the credits
+        // leave on it).
+        if self.router.take_press()
+            && let Some(f) = self.flow.as_mut()
+        {
+            f.credits_press();
+            self.run_effects(event_loop);
         }
         if let Some(outcome) = self.router.take_capture()
             && let Some(f) = self.flow.as_mut()
@@ -1676,6 +1799,7 @@ impl App {
             Screen::Title => flow.title()?.scene(),
             Screen::Booty => flow.booty()?.scene(),
             Screen::Help => flow.help()?.scene(),
+            Screen::Credits => flow.credits()?.scene(),
             Screen::MainMenu => {
                 let (bg, pal) = match &screens.menu {
                     Some((id, pal)) => (Some(*id), pal.clone()),
@@ -2031,6 +2155,15 @@ impl ApplicationHandler for App {
                 }
                 self.key(event_loop, code, event.state == ElementState::Pressed);
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = Some((position.x, position.y));
+            }
+            WindowEvent::CursorLeft { .. } => self.cursor = None,
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => self.click(event_loop),
             WindowEvent::RedrawRequested => self.frame(event_loop),
             _ => {}
         }
@@ -2164,6 +2297,7 @@ fn run_app(
         last_frame: Instant::now(),
         pauses: Pauses::default(),
         focused: true,
+        cursor: None,
         modifiers: ModifiersState::empty(),
         size_index,
         started,
@@ -2244,6 +2378,28 @@ mod tests {
             duration_ms: 100,
             center: Point::default(),
         }
+    }
+
+    #[test]
+    fn clicks_land_on_the_screen_under_the_pointer() {
+        // A 640x480 screen scaled to 1280x960 inside a 1600x960 window.
+        let c = claw_render::Composition {
+            presentation: (640, 480),
+            scale: 2,
+            target: (1280, 960),
+            output: (1600, 960),
+            x: 160,
+            y: 0,
+            width: 1280,
+            height: 960,
+            ratio: 1.0,
+        };
+        assert_eq!(canvas_point(&c, (160.0, 0.0)), (0, 0));
+        assert_eq!(canvas_point(&c, (359.0, 199.0)), (99, 99));
+        assert_eq!(canvas_point(&c, (361.0, 100.0)), (100, 50));
+        assert_eq!(canvas_point(&c, (1439.9, 959.9)), (639, 479));
+        // On the bar at the left, off the screen.
+        assert!(canvas_point(&c, (10.0, 10.0)).0 < 0);
     }
 
     #[test]

@@ -173,6 +173,7 @@ pub static CLASS: Class = Class {
     go_idle,
     carry: None,
     pick_lift_voice: super::nothing,
+    lift_roll: true,
     anims: ClassAnims {
         advance: "LEVEL_RAUX_ADVANCE",
         fast_advance: "LEVEL_RAUX_FASTADVANCE",
