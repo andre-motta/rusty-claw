@@ -179,6 +179,7 @@ const FLOOR_TIGER_IN_STEP: [InStep; 2] = [
         state: EnemyState::BackFlip,
         x: 2634,
         frac: 0.1,
+        frac_y: 0.324,
         frame: 850,
         vx: tiger_guard::FLIP_SPEED,
         rest: (36, 1632),
@@ -191,6 +192,7 @@ const FLOOR_TIGER_IN_STEP: [InStep; 2] = [
         state: EnemyState::BackFlip,
         x: 2630,
         frac: 0.06,
+        frac_y: 0.0,
         frame: 850,
         vx: tiger_guard::FLIP_SPEED,
         rest: (34, 1632),
@@ -210,6 +212,7 @@ const SHAFT_TIGER_IN_STEP: [InStep; 1] = [InStep {
     state: EnemyState::FastAdvance,
     x: 13071,
     frac: 0.08,
+    frac_y: 0.0,
     frame: 2,
     vx: -(tiger_guard::SPEED as f64),
     rest: (108, 1586),
@@ -547,9 +550,19 @@ fn at_time_zero(level: &SimLevel, clock: &str, r: &Route, t0_ms: u64, seed: u32)
 /// state at time zero instead: the one placed at `at`, in `state` (a back
 /// flip whose aim `target` it has passed, ending on the route's first
 /// step, or a run at Claw), at `x` and the fraction `frac` (and its
-/// height), showing `frame`, moving at `vx` px/s, facing left, alerted,
-/// its strike rest started at `rest.0` ms for `rest.1` ms and its last
-/// combo's slashes `slashes`.
+/// height, its exact height `frac_y` px below it), showing `frame`, moving
+/// at `vx` px/s, facing left, alerted, its strike rest started at `rest.0`
+/// ms for `rest.1` ms and its last combo's slashes `slashes`.
+///
+/// A standing enemy's exact height sinks by each step's gravity (0.324 px
+/// in the first 18 ms step) and goes back onto its floor pixel once it has
+/// left it, so it runs through a cycle of a few steps the runs do not
+/// show; where in that cycle the tiger is at time zero shows only in how
+/// high a jump off the floor takes it. On tiger-dyn the floor tiger jumps
+/// back from the stick on row 31, and only one step into the cycle at
+/// time zero (0.324 px below its pixel) rises as the run's does.
+/// tiger-stand, which shares the set-up, and the shaft's tiger follow
+/// their runs at any point of the cycle.
 #[derive(Debug, Clone, Copy)]
 struct InStep {
     clock: &'static str,
@@ -557,6 +570,7 @@ struct InStep {
     state: EnemyState,
     x: i32,
     frac: f64,
+    frac_y: f64,
     frame: i32,
     vx: f64,
     rest: (u64, u64),
@@ -590,7 +604,7 @@ fn put_in_step(sim: &mut Sim, s: &InStep) {
         if let Some(d) = enemy::data_mut(w, id) {
             d.alerted = true;
             d.busy = false;
-            d.carry = (s.frac, 0.0);
+            d.carry = (s.frac, s.frac_y);
             d.moved_to = Some((s.x, y));
             d.vx = s.vx;
         }

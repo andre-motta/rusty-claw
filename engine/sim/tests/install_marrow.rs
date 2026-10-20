@@ -390,7 +390,12 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   checkpoint event), the camera's follow differs by a few pixels, the
 ///   introduction's delays count 18 ms ticks against frames of 16 and
 ///   17 ms (the fight starts about a quarter of a second apart), and the
-///   parrot's swoops then reach Claw at other times. The crossing's blast
+///   parrot's swoops then reach Claw at other times. A door's warp runs
+///   the awake objects once more with no game time, and in the normal
+///   fight and the bridge trick the draws of that pass move the swoops
+///   the replay's 18 ms ticks play: the first one reaches Claw at 23033
+///   ms (at 18 ms with the original's speeds the same routes follow the
+///   runs exactly, the warp's pass included). The crossing's blast
 ///   hits Claw 35 px lower than at 60 frames per second: his jump out of it
 ///   meets the right ledge's wall and he falls onto the spikes, so that
 ///   route does not reach Marrow at this clock. The bridge trick at this
@@ -439,8 +444,8 @@ const KNOWN: &[Known] = &[
             ("cam_x", 833),
             ("boss_fight", 13683),
             ("state_id", 13700),
-            ("health", 27317),
-            ("x", 27367),
+            ("health", 23033),
+            ("x", 23083),
             ("physics_type", 29117),
             ("y", 29200),
             ("cam_y", 29200),
@@ -456,8 +461,8 @@ const KNOWN: &[Known] = &[
             ("cam_x", 833),
             ("boss_fight", 13683),
             ("state_id", 13700),
-            ("health", 27317),
-            ("x", 27367),
+            ("health", 23033),
+            ("x", 23083),
             ("physics_type", 29117),
             ("y", 29200),
             ("cam_y", 29200),
