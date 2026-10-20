@@ -148,9 +148,10 @@ fn a_stalactite_lets_go_on_the_tick_after_claw_enters_and_falls_a_third_of_n_squ
     assert_eq!(o.damage, stalactite::DAMAGE);
     assert_eq!(o.frame, 1);
     assert_eq!(o.flags & flags::NO_COLLIDE, 0, "a hanging one collides");
-    // Claw put on the rectangle's left edge between two ticks: it lets go
-    // in the next tick (T), and falls from T + 1 with the snap.
-    sim.with_world(|w| w.claw.special.warp_to = Some((1200, STAND_Y)));
+    // Claw moved onto the rectangle's left edge between two ticks (moved
+    // only, with no warp's update pass): it lets go in the next tick (T),
+    // and falls from T + 1 with the snap.
+    sim.teleport_player(1200, STAND_Y);
     sim.step(TickInput::default());
     assert_eq!(state(&sim, id), stalactite::state::DELAY);
     let mut ys = Vec::new();
@@ -184,6 +185,29 @@ fn a_stalactite_lets_go_on_the_tick_after_claw_enters_and_falls_a_third_of_n_squ
     );
     // Claw, 28 px left of its box, is never hurt.
     assert_eq!(sim.claw().stats.health, 100);
+}
+
+#[test]
+fn a_warp_onto_its_rectangle_lets_it_go_in_the_warps_own_update_pass() {
+    let trigger = [1200, 800, 1272, 960];
+    let level = level_with(1000, vec![stalactite_at(1300, HANG_Y, trigger)]);
+    let mut sim = Sim::new(level, original());
+    let id = find(&sim, stalactite::NAMES[0]);
+    put_claw(&mut sim, 1199);
+    sim.step(TickInput::default());
+    assert_eq!(state(&sim, id), stalactite::state::IDLE);
+    // A warp runs every awake object once more before the first tick at
+    // its target: the stalactite already sees Claw there and lets go in
+    // that pass, so the first tick at the target is the one after T and
+    // it falls in it, with the snap.
+    sim.with_world(|w| w.claw.special.warp_to = Some((1200, STAND_Y)));
+    sim.step(TickInput::default());
+    assert_eq!(state(&sim, id), stalactite::state::FALLING);
+    assert!(played(&sim, stalactite::SNAP_SOUND));
+    assert_eq!(
+        sim.objects().get(id).unwrap().y,
+        HANG_Y + stalactite::fall_after(1)
+    );
 }
 
 #[test]

@@ -1128,8 +1128,14 @@ fn install_level7_a_lifted_crab_goes_beside_claw_then_over_his_head_and_flies_in
             if clock == "c18" {
                 assert_eq!((lift, throw), (LIFT_ROW, THROW_ROW), "{who}");
                 assert_eq!(thrown, key_up(r, THROW_ROW), "{who}");
+                // The movement step's clock counts the step in seconds as
+                // a double, so the speed after it is equal to within a
+                // rounding.
                 let dv = THROWN_GRAVITY * TICK as f64 / 1000.0;
-                assert_eq!((c.vx, c.vy), (-THROW_SPEED.0, -THROW_SPEED.1 + dv), "{who}");
+                assert!(
+                    (c.vx + THROW_SPEED.0).abs() < 1e-9 && (c.vy + THROW_SPEED.1 - dv).abs() < 1e-9,
+                    "{who}: {c:?}"
+                );
                 let next = v.crab[thrown + 1].unwrap();
                 assert!((next.vy - c.vy - dv).abs() < 1e-9, "{who}: {next:?}");
             }

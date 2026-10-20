@@ -294,12 +294,12 @@ const ROUTES: [Route; 10] = [
     ),
 ];
 
-/// The draws the original's runs' teleports make. The teleports are the
-/// runs' own way of moving Claw between two steps (a part of the
-/// measuring set-up, not of the game): unlike a warp door, they run the
-/// objects in the update pass twice more with no game time. Of the room's
-/// objects, two draw there, on each of the two passes and in the pass's
-/// order:
+/// The draws the original's runs' teleports make in `passes` of their
+/// update passes. The teleports are the runs' own way of moving Claw
+/// between two steps (a part of the measuring set-up, not of the game):
+/// they run the objects in the update pass twice more with no game time.
+/// Of the room's objects, two draw there, on each of the two passes and in
+/// the pass's order:
 ///
 /// - Omar, once built: his frame pulse roll (one of 0..=1000) when the
 ///   step before the teleport was a frame pulse tick, as his pre-tick
@@ -310,10 +310,13 @@ const ROUTES: [Route; 10] = [
 ///
 /// The other objects of the room (the lava hands, the geysers and their
 /// sparks, Claw's shots) make no draw on those passes. The replay moves
-/// Claw between the ticks as a warp does, then makes these draws, so the
-/// stream goes on from the same state as the run's and is compared on the
-/// rows that follow too.
-fn teleport_draws(sim: &mut Sim) {
+/// Claw between the ticks as a warp does, and a warp already runs every
+/// awake object once more with no game time, so the first pass's draws
+/// are the warp's own and only the second pass's are made here; Claw held
+/// for the gem is only moved, so both passes' draws are made here. The
+/// stream so goes on from the same state as the run's and is compared on
+/// the rows that follow too.
+fn teleport_draws(sim: &mut Sim, passes: usize) {
     let pulse = sim.pulse();
     let drawing: Vec<ObjectId> = sim
         .objects()
@@ -326,7 +329,7 @@ fn teleport_draws(sim: &mut Sim) {
         .map(|(id, _)| id)
         .collect();
     sim.with_world(|w| {
-        for _ in 0..2 {
+        for _ in 0..passes {
             for &id in &drawing {
                 let Some(o) = w.objects.get(id) else { continue };
                 if &*o.logic == omar::NAMES[0] {
@@ -762,10 +765,11 @@ fn set_up_after(sim: &mut Sim, r: &Route, k: usize) {
         // keeps.
         if sim.player().is_some_and(|c| c.state == BOSS_END) {
             sim.teleport_player(to.0, to.1);
+            teleport_draws(sim, 2);
         } else {
             sim.with_world(|w| w.claw.special.warp_to = Some(to));
+            teleport_draws(sim, 1);
         }
-        teleport_draws(sim);
     }
 }
 
