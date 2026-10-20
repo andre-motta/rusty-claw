@@ -16,11 +16,10 @@
 //! blow deals ([`BLOW_DAMAGE`] for the plain sword). Claw's blows are
 //! counted: every third counted blow that finds him free makes him leap
 //! to the other level instead, unhurt. The count starts at
-//! [`HIT_COUNTER_START`] on the first arena step, the value the original
-//! game shows there (its set-up never writes the count, which so reads
-//! what the memory held); a count of 1 at the start means the second
-//! counted blow after an intro skip already sends him away. Matching the
-//! original here is a stand-in decision.
+//! [`HIT_COUNTER_START`] on the first arena step, as in the original game;
+//! a count of 1 at the start means the second counted blow after an intro
+//! skip already sends him away. Matching the original here is a stand-in
+//! decision.
 //!
 //! What his helpers share with him lives in the RedTail link
 //! ([`RedTailLink`], reached through [`World::redtail_link`] and
