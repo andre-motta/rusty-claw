@@ -372,6 +372,9 @@ pub struct Fields {
     pub strike_sound: &'static str,
     /// What it started with.
     pub leftovers: Leftovers,
+    /// The nest that hatched it (the nest's record) and its place in that
+    /// hatch (from 1); `None` for a crab placed in the level.
+    pub hatched_from: Option<(u32, u32)>,
 }
 
 /// A hermit crab's data.
@@ -443,8 +446,8 @@ pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
 /// outside them starts on the nearer one), dropped onto the floor below;
 /// a bomber when its record's first user value is above 0 (and then it
 /// never walks off its spot); its boxes, 5 damage unless its record says
-/// otherwise, its health as its record sets it; then it regroups by its
-/// leftover side ([`Leftovers`]). Draws nothing.
+/// otherwise, its health as its record sets it; then it regroups facing
+/// by the side it starts with (see [`Leftovers`]). Draws nothing.
 pub fn construct(w: &mut World, id: ObjectId) {
     let bounds = record_bounds(w, id);
     let user_0 = record(w, id, field::USER_0);
@@ -741,20 +744,13 @@ impl CrabValues {
         }
         // A crab still at the plain default may not have had its values
         // yet; one that has other values was given them.
-        let mut fresh: Vec<(ObjectId, u32)> = Vec::new();
-        let mut nests: Vec<(u32, &[ObjectId])> = Vec::new();
-        for (id, o) in sim.objects().all() {
-            if fields_of(o).is_some_and(|f| f.leftovers == Leftovers::default()) {
-                fresh.push((id, o.serial));
-            } else if let Some(d) = nest::data_of(o)
-                && !d.hatchlings.is_empty()
-            {
-                nests.push((o.serial, &d.hatchlings));
-            }
-        }
-        let given: Vec<(ObjectId, Leftovers)> = fresh
-            .into_iter()
-            .map(|(id, record)| (id, self.values_for(which_of(&nests, id, record))))
+        let given: Vec<(ObjectId, Leftovers)> = sim
+            .objects()
+            .all()
+            .filter_map(|(id, o)| {
+                let f = fields_of(o).filter(|f| f.leftovers == Leftovers::default())?;
+                Some((id, self.values_for(key_of(o.serial, f))))
+            })
             .filter(|&(_, l)| l != Leftovers::default())
             .collect();
         for (id, l) in given {
@@ -763,29 +759,22 @@ impl CrabValues {
     }
 }
 
-/// Which crab `id` (built as number `record`) is, in `nests` (each
-/// nest's record and the crabs it hatched, in order): the crab in its
-/// place of a nest's hatch, or else the crab placed with that record.
-fn which_of(nests: &[(u32, &[ObjectId])], id: ObjectId, record: u32) -> CrabKey {
-    nests
-        .iter()
-        .find_map(|&(nest, hatched)| {
-            let k = hatched.iter().position(|&h| h == id)?;
-            Some(CrabKey::Hatched(Some(nest), Some(k as u32 + 1)))
-        })
-        .unwrap_or(CrabKey::Placed(Some(record)))
+/// Which crab one built as number `record` with fields `f` is: the crab
+/// in its place of the hatch of the nest that hatched it (kept when it
+/// hatched), or else the crab placed with that record.
+fn key_of(record: u32, f: &Fields) -> CrabKey {
+    match f.hatched_from {
+        Some((nest, k)) => CrabKey::Hatched(Some(nest), Some(k)),
+        None => CrabKey::Placed(Some(record)),
+    }
 }
 
 /// Which crab `id` of `objects` is (see [`CrabValues`]): the crab in its
-/// place of a nest's hatch, or else the crab placed with its record;
-/// `None` when it is no crab.
+/// place of the hatch of the nest that hatched it, or else the crab
+/// placed with its record; `None` when it is no crab.
 pub fn which_crab(objects: &crate::container::Container, id: ObjectId) -> Option<CrabKey> {
-    let record = objects.get(id).filter(|o| fields_of(o).is_some())?.serial;
-    let nests: Vec<(u32, &[ObjectId])> = objects
-        .all()
-        .filter_map(|(_, o)| nest::data_of(o).map(|d| (o.serial, d.hatchlings.as_slice())))
-        .collect();
-    Some(which_of(&nests, id, record))
+    let o = objects.get(id)?;
+    Some(key_of(o.serial, fields_of(o)?))
 }
 
 /// Reads one entry: `crab R = S, W, H` or `nest_crab N K = S, W, H`.
@@ -865,7 +854,8 @@ pub fn go_home(w: &mut World, id: ObjectId) {
     enter_regroup(w, id);
 }
 
-/// The first regroup, which faces by the leftover side.
+/// The first regroup, which faces by the side the crab starts with (see
+/// [`Leftovers`]).
 fn regroup_by_side(w: &mut World, id: ObjectId) {
     let side = fields(w, id).map_or(0, |f| f.leftovers.side);
     set_facing(w, id, side == SIDE_RIGHT);
@@ -1664,6 +1654,10 @@ pub mod nest {
                     n -= 1;
                 }
                 d.hatchlings.push(crab);
+                let from = (obj(w, id).serial, d.hatchlings.len() as u32);
+                if let Some(f) = super::fields_mut(w, crab) {
+                    f.hatched_from = Some(from);
+                }
                 remaining -= 1;
             } else if n > 0 && i < 9 {
                 if let Some(g) = pickup::spawn_drop(w, x, y, list[i])

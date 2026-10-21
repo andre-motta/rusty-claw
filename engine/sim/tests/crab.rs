@@ -806,6 +806,90 @@ fn crab_values_reach_placed_and_hatched_crabs_before_their_first_tick() {
 }
 
 #[test]
+fn a_nest_crab_in_a_slot_another_nest_freed_takes_its_own_nest_values() {
+    // The slot part of an object id: a removed object's slot takes the
+    // next new object.
+    const SLOT: u32 = (1 << 20) - 1;
+    let first = Rect::new(1700, 800, 1800, 1000);
+    let second = Rect::new(4700, 800, 4800, 1000);
+    let mut level = beach((1600, 900));
+    level
+        .objects
+        .extend([nest_at(2000, first), nest_at(5000, second)]);
+    let mut sim = Sim::new(level, SimConfig::default());
+    let nests: Vec<(ObjectId, u32)> = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| &*o.logic == "CrabNest")
+        .map(|(id, o)| (id, o.serial))
+        .collect();
+    let [(a, a_record), (b, b_record)] = nests[..] else {
+        panic!("two nests: {nests:?}");
+    };
+    let values = crab::CrabValues::parse(&format!(
+        "nest_crab {a_record} * = 2, 300, 40\nnest_crab {b_record} 1 = 7, 382, 382\n"
+    ))
+    .unwrap();
+    let hatch = |sim: &mut Sim, n: ObjectId, x: i32| {
+        sim.teleport_player(x, obj(sim, claw_id(sim)).y);
+        for _ in 0..20 {
+            sim.step(TickInput::default());
+            values.apply(sim);
+            // A nest away from Claw is set up when it first runs.
+            let h = nest::data_of(obj(sim, n)).map_or(Vec::new(), |d| d.hatchlings.clone());
+            if !h.is_empty() {
+                return h;
+            }
+        }
+        panic!("no hatch");
+    };
+    let from_a = hatch(&mut sim, a, 1750);
+    assert_eq!(from_a.len(), 3);
+    // The first nest's first crab goes; it stays in that nest's list.
+    let gone = from_a[0];
+    sim.with_world(|w| w.objects.remove(gone));
+    assert!(sim.objects().get(gone).is_none());
+    let from_b = hatch(&mut sim, b, 4750);
+    assert_eq!(from_b.len(), 3);
+    let reused = from_b[0];
+    assert_eq!(
+        reused & SLOT,
+        gone & SLOT,
+        "the second nest's crab took the slot"
+    );
+    assert!(
+        nest::data_of(obj(&sim, a))
+            .unwrap()
+            .hatchlings
+            .contains(&gone)
+    );
+    assert_eq!(
+        crab::which_crab(sim.objects(), reused),
+        Some(crab::CrabKey::Hatched(Some(b_record), Some(1)))
+    );
+    assert_eq!(
+        crab::fields_of(obj(&sim, reused)).unwrap().leftovers,
+        Leftovers {
+            side: 7,
+            box1: (382, 382)
+        }
+    );
+    for (k, &c) in from_a.iter().enumerate().skip(1) {
+        assert_eq!(
+            crab::which_crab(sim.objects(), c),
+            Some(crab::CrabKey::Hatched(Some(a_record), Some(k as u32 + 1)))
+        );
+        assert_eq!(
+            crab::fields_of(obj(&sim, c)).unwrap().leftovers,
+            Leftovers {
+                side: 2,
+                box1: (300, 40)
+            }
+        );
+    }
+}
+
+#[test]
 fn without_crab_values_every_crab_keeps_the_plain_default() {
     let (mut sim, ids) = game(beach((1500, 800)), &[hermit(1000, 900, (0, 0))]);
     let before = format!("{:?}", obj(&sim, ids[0]));

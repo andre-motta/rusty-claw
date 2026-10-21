@@ -510,8 +510,10 @@ kind, and the entry that names a crab most exactly counts. `claw-replay`
 and `make compare` give each crab its values as it is built, before its
 first tick; `claw-replay --crabs FILE` takes them from a file of the same
 lines instead, and `--crab-variant N` takes the route's further set N.
-Without values every crab starts with an empty box, facing left; the game
-itself plays a route that way. `claw-bot --crabs FILE` searches under such
+Without values every crab starts with an empty box, facing left.
+`rusty-claw --replay` gives the crabs the values the route's own header
+lines name, as `claw-replay` does, both when the route is watched in the
+window and with `--trace`. `claw-bot --crabs FILE` searches under such
 values, and `--crab-variants FILE,FILE` makes the route win under further
 sets too, which its header names in `# crab_variant N: ...` lines and the
 route tests play it under. `level7-original.csv` and

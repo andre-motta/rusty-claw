@@ -30,7 +30,10 @@
 //! replay also plays with the movement tuning and the random seed its
 //! script's header names (`# tuning default|original`, `# seed N`), and
 //! plays its pauses, menus and commands (`@` lines) where they were
-//! recorded.
+//! recorded. Its hermit crabs start with the side and second range box
+//! its header gives each (`# crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT`
+//! and `# nest_crab NEST_RECORD HATCH = ...` lines), as `claw-replay`
+//! gives them; a crab no line names starts with the plain default.
 //!
 //! The play-test aids `--invincible` (Claw takes no damage; death tiles and
 //! pits still end his life) and `--infinite-lives` (a death never costs a
@@ -72,7 +75,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use clap::{Arg, ArgAction, ArgMatches, CommandFactory, FromArgMatches};
 use claw_game::bench::{Report, RouteFile, RouteReport, run_headless, run_headless_route};
-use claw_game::session::{LevelRecording, replay_trace, start_sim};
+use claw_game::session::{LevelRecording, replay_trace_with_crabs, start_sim_with_crabs};
 use claw_game::settings::{Args, Aspect, Mode, Settings};
 use claw_game::window::{self, WindowMode};
 use claw_game::{load_graphics, load_level};
@@ -274,13 +277,20 @@ fn run(args: Args, matches: &ArgMatches) -> Result<Outcome> {
         } => {
             let rec = read_recording(&mut settings, &script)?;
             let bundle = load_level(&settings.install, &settings.level)?;
-            let sim = start_sim(
+            let sim = start_sim_with_crabs(
                 bundle.sim_level.clone(),
                 settings.sim_config(settings.res),
                 rec.start,
                 settings.start,
+                &rec.crabs,
             );
-            let rows = replay_trace(sim, rec.script, settings.pause_input, render_hz);
+            let rows = replay_trace_with_crabs(
+                sim,
+                rec.script,
+                settings.pause_input,
+                render_hz,
+                rec.crabs,
+            );
             std::fs::write(&out, claw_sim::trace::to_csv(&rows))
                 .with_context(|| format!("writing {}", out.display()))?;
             eprintln!(

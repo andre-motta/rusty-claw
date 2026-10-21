@@ -93,8 +93,13 @@
 //! margin. The header names them (`# crab_variant N: ...` lines). The
 //! search keeps the games together: each px Claw in one of them is from
 //! the route's own Claw costs `--drift-cost` (1 by default). With
-//! `--from-route` and neither option, the route continued gives both;
-//! the prefix is played under each set and must lose no life in any.
+//! `--from-route`, each option left out comes from the route continued
+//! on its own: without `--crabs` the run's values are its `# crab` and
+//! `# nest_crab` lines, and without `--crab-variants` the further sets
+//! are its `# crab_variant N: ...` lines, whichever of the two options is
+//! given. The prefix is played under the run's values and under each
+//! further set, and the search stops with an error when Claw loses a
+//! life, or is dying, in any of those games before the search starts.
 //!
 //! No route is written whose held mask changes twice less than two ticks
 //! apart.

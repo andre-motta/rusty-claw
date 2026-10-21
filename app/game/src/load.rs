@@ -210,11 +210,17 @@ pub fn start_override(
 /// Moves Claw to (x, y) and runs idle ticks until he and the camera have
 /// stood still for ten ticks, at most [`SETTLE_LIMIT`].
 pub fn settle_at(sim: &mut Sim, x: i32, y: i32) {
+    settle_at_with(sim, x, y, |_| {});
+}
+
+/// [`settle_at`], calling `after_tick` after each idle tick.
+pub fn settle_at_with(sim: &mut Sim, x: i32, y: i32, mut after_tick: impl FnMut(&mut Sim)) {
     sim.teleport_player(x, y);
     let mut still = 0;
     let mut last = None;
     for _ in 0..SETTLE_LIMIT {
         sim.step(TickInput::default());
+        after_tick(sim);
         let now = sim
             .player()
             .map(|o| (o.x, o.y, o.state, sim.camera().current));
