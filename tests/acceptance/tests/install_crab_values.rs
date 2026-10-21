@@ -17,7 +17,7 @@
 //! rising in a jump above it, rolls to hide and hides, drawing its hide
 //! time: two draws more than with the default, where it crouches. From
 //! there the game goes otherwise, and Claw loses his first life at 79362
-//! ms.
+//! ms, long before he loses one at the default.
 
 use std::path::Path;
 
@@ -147,16 +147,20 @@ fn install_a_covering_box_makes_a_crab_hide_where_the_default_crouches() {
     assert_eq!(after_draws(RNG_HOME, 5), RNG_CROUCHES);
 
     // From there the games part: with the values Claw loses his first
-    // life at 79362 ms; with the default the route wins with none lost.
+    // life at 79362 ms; with the default he keeps every life far beyond.
+    // (The route was searched before a human enemy went idle at its
+    // patrol limit only exactly on it: from tick 6808, where the bear
+    // sailor of record 1348 walks a tick more, it no longer wins at the
+    // default either, and loses its first life at tick 7519.)
     let at_ms = |k: usize| (k as u64 + 1) * u64::from(TICK_MS);
     let death = given.first_death.expect("a life lost");
     assert_eq!(at_ms(death), 79_362);
-    assert_eq!(plain.first_death, None);
-    assert!(plain.won.is_some(), "the earlier route wins at the default");
+    let plain_death = plain.first_death.expect("a life lost at the default");
+    assert_eq!(plain_death, 7519);
+    assert!(plain.won.is_none());
     println!(
-        "earlier level7-original.csv: with the direct start's crab values the first life is lost at tick {death} ({} ms); at the default the level is won at tick {}",
-        at_ms(death),
-        plain.won.unwrap()
+        "earlier level7-original.csv: with the direct start's crab values the first life is lost at tick {death} ({} ms); at the default at tick {plain_death}",
+        at_ms(death)
     );
 }
 
