@@ -3,7 +3,11 @@
 //! Each node is the game after a chain of [`Action`]s from the start. The
 //! search expands the node with the lowest priority: the path distance from
 //! Claw to the current target on the coarse graph ([`crate::field`]), plus
-//! a small cost per tick and a larger one per point of health lost. A child
+//! a small cost per tick and a larger one per point of health lost (in the
+//! flight of a throw, less his height over the springboard or blower that
+//! threw him: the throw rises away from the target before it carries him
+//! on; on an elevator or a path elevator, the least of the distances from
+//! the places its way takes him, each with the ride there). A child
 //! in which Claw dies is dropped. Children whose coarse state (Claw's cell,
 //! state, facing and health, and the platforms and enemies around him) was
 //! seen before are dropped too.
@@ -64,7 +68,10 @@ use std::time::{Duration, Instant};
 
 use claw_sim::claw_frame::GameEvent;
 use claw_sim::logic::world_boss::fight;
-use claw_sim::logic::{ObjectData, boss_stage, enemy, floor_spike, goo_vent, pickup, platform};
+use claw_sim::logic::{
+    ObjectData, boss_stage, enemy, floor_spike, goo_vent, path_elevator, pickup, platform,
+    springboard,
+};
 use claw_sim::player::special::BOSS_END;
 use claw_sim::player::state;
 use claw_sim::{Buttons, InputScript, Sim, TickInput};
@@ -478,6 +485,7 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
         goal,
         boss,
         arena,
+        grid,
         targets,
         target: 0,
         nodes: Vec::new(),
@@ -500,6 +508,29 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
         began: Instant::now(),
     };
     s.run(start)
+}
+
+/// True in the flight of a throw: Claw is in the air, and his last jump
+/// was planned higher than a jump of his own rises (a springboard's or a
+/// blower's throw).
+pub fn thrown(sim: &Sim) -> bool {
+    let Some(c) = sim.player() else {
+        return false;
+    };
+    let claw = sim.claw();
+    actions::phase(sim) == actions::Phase::Air
+        && c.state != state::BEARHUG
+        && claw.jump_start_y - claw.jump_peak_y > Reach::default().jump_height
+}
+
+/// The position of the elevator or path elevator Claw stands on, if he
+/// stands on one.
+pub fn ridden(sim: &Sim) -> Option<(i32, i32)> {
+    let c = sim.player()?;
+    let e = sim.objects().get(c.object_below?)?;
+    let lift = path_elevator::NAMES.contains(&&*e.logic)
+        || (platform::NAMES.contains(&&*e.logic) && !e.logic.contains("Peg"));
+    (lift && on_foot(sim)).then_some((e.x, e.y))
 }
 
 /// The bosses whose defeat ends a level, by logic name.
@@ -692,6 +723,8 @@ struct Search<'a> {
     /// The boss end the goal follows, on a level that ends with a boss.
     boss: Option<BossGoal>,
     arena: Arena,
+    /// The coarse graph the targets' fields were walked on.
+    grid: Grid,
     targets: Vec<Target>,
     target: usize,
     nodes: Vec<Node>,
@@ -903,11 +936,34 @@ impl Search<'_> {
         };
         let feet = o.y + o.move_rect.bottom - 2;
         let target = &self.targets[self.target];
+        let mut here = target.field.at(o.x, feet);
+        // In the flight of a throw, the height Claw has over the
+        // springboard or blower that threw him is a way on he did not have
+        // to climb: it takes off from the distance, so the rise does not
+        // count against the throw, and steering toward the target does.
+        if thrown(sim)
+            && here != UNREACHABLE
+            && let Some((_, base)) = self.grid.throw_base(o.x, feet)
+        {
+            here = here.saturating_sub(base.saturating_sub(feet).max(0) as u32);
+        }
+        // Riding an elevator or a path elevator, Claw is as near as a
+        // place of its way and the ride there take him: waiting on it is
+        // the way on, though it carries him away from the target for a
+        // while.
+        if let Some((ex, ey)) = ridden(sim)
+            && let Some((ride, at)) = self.grid.ride_of(ex, ey)
+        {
+            for (k, &(px, py)) in ride.points.iter().enumerate() {
+                let there = target.field.at(px + o.x - ex, py + feet - ey);
+                here = here.min(there.saturating_add(ride.travel(at, k)));
+            }
+        }
         let Some(boss) = self.boss.as_ref().filter(|_| target.point.is_none()) else {
-            return target.field.at(o.x, feet);
+            return here;
         };
         match boss_stage(sim) {
-            BossStage::Door => DOOR_BASE.saturating_add(target.field.at(o.x, feet)),
+            BossStage::Door => DOOR_BASE.saturating_add(here),
             BossStage::Fight => {
                 let (health, bx, by) = boss_in_play(sim).unwrap_or((
                     BOSS_HEALTH_CAP as i32,
@@ -1302,8 +1358,9 @@ fn shifted(action: Action, last: u32) -> Vec<Vec<u32>> {
 
 /// True when `masks` played from `parent` (whose last mask was `last`)
 /// leave Claw alive, with no less health, and near where `nominal` has
-/// him: in the same phase, within [`FRAGILE_DY`] up or down and
-/// [`FRAGILE_PX`] across.
+/// him: in the same phase, within [`FRAGILE_DY`] up or down (at any
+/// height when both are in the flight of a throw) and [`FRAGILE_PX`]
+/// across.
 fn holds_up(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> bool {
     played_on(parent, last, masks, nominal).is_some()
 }
@@ -1324,10 +1381,14 @@ fn played_on(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> Option<Si
     if sim.stats().health < nominal.stats().health {
         return None;
     }
+    // Both in the flight of a throw, a tick early or late leaves Claw
+    // at another height on the same throw (he rises and falls fast in
+    // it): only the distance across counts.
+    let in_throw = thrown(&sim) && thrown(nominal);
     let near = match (sim.player(), nominal.player()) {
         (Some(a), Some(b)) => {
             actions::phase(&sim) == actions::phase(nominal)
-                && (a.y - b.y).abs() <= FRAGILE_DY
+                && (in_throw || (a.y - b.y).abs() <= FRAGILE_DY)
                 && (a.x - b.x).abs() <= FRAGILE_PX
         }
         _ => false,
@@ -1340,10 +1401,14 @@ fn played_on(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> Option<Si
 /// points, and the platforms (position to 16 px and state) and enemies
 /// (alive or not) within about a screen of him, and whether each piece of
 /// a breaking plank row near him is whole, waiting or crumbling. Springboards and stepping
-/// stones count with where they are in their cycles (state and frame, and
+/// stones count with where they are in their cycles (state and frame, the
+/// time while a springboard runs the spring Claw set off, and
 /// a stone that keeps to the clock its time in its cycle to a tenth of a
 /// second), so a wait on a springboard for its throw, or beside a stone
 /// for it to come up, is progress.
+///
+/// The flight of a throw counts apart from an ordinary jump or fall
+/// through the same place.
 ///
 /// The key is a fixed hash of those values (64-bit FNV-1a), so it is the
 /// same with every toolchain and on every machine, and so are the routes
@@ -1364,6 +1429,12 @@ pub fn state_key(sim: &Sim) -> u64 {
         i64::from(sim.stats().health / 10),
         i64::from(sim.stats().lives),
     ]);
+    // In the flight of a throw (a springboard's or a blower's), Claw is
+    // in another state than an ordinary jump or fall through the same
+    // place: he goes far higher, or comes down far faster.
+    if thrown(sim) {
+        k.add(&[12]);
+    }
     // Struck, or in another state that takes no steering, Claw waits for
     // it to end: a wait through it is progress, so the time tells the
     // states apart (they end soon, so this never grows far).
@@ -1383,13 +1454,20 @@ pub fn state_key(sim: &Sim) -> u64 {
         }
         if let ObjectData::SpringBoard(d) = &o.data {
             // A wait on a springboard for its throw is progress: where it
-            // is in its cycle.
+            // is in its cycle and, while a spring Claw set off runs (a
+            // picture of it may last longer than a wait), the time.
+            let into = if o.state == springboard::state::CLAW_SPRING {
+                (sim.tick() / actions::STEP as u64) as i64
+            } else {
+                0
+            };
             k.add(&[
                 7,
                 i64::from(id),
                 i64::from(o.state),
                 i64::from(o.frame),
                 i64::from(d.armed),
+                into,
             ]);
         } else if let ObjectData::SteppingStone(d) = &o.data {
             // A wait for a stone to come up is progress: where it is in

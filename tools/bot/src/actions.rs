@@ -21,6 +21,10 @@
 //!   into instead: jump held for a few ticks, let go for a few, then a
 //!   fresh jump toward the boss, so that one of them presses jump on the
 //!   first tick in the room.
+//!
+//! Held in a bear's hug, Claw cannot move, but each new press of a key
+//! counts towards his escape: the mash ([`Action::Mash`]) presses Up and
+//! Down in turn, a new key every [`MIN_SPACING`] ticks.
 
 use claw_sim::player::state;
 use claw_sim::{Buttons, Sim};
@@ -65,6 +69,10 @@ pub fn jump_holds(sim: &Sim) -> [usize; 4] {
     holds[3] = full.clamp(JUMP_HOLDS[2] + 1, usize::from(u8::MAX));
     holds
 }
+
+/// Presses of one mash: Up and Down in turn, each held [`MIN_SPACING`]
+/// ticks.
+pub const MASH_PRESSES: usize = 6;
 
 /// Length of the fight's short wait, ticks.
 pub const SHORT: usize = 3;
@@ -131,6 +139,10 @@ pub enum Action {
     },
     /// Hold nothing for a moment ([`SHORT`] ticks), to time a blow.
     Short,
+    /// Held in a bear's hug: press Up and Down in turn,
+    /// [`MASH_PRESSES`] presses each held [`MIN_SPACING`] ticks, so that
+    /// every change of the held mask is a new press towards the escape.
+    Mash,
     /// Turn to `dir` (-1 left, 1 right) and strike once with the sword.
     Strike {
         /// The side to strike: -1 left, 1 right.
@@ -191,6 +203,11 @@ impl Action {
             Action::Down => seg(DOWN, STEP),
             Action::Catch { dir } => seg(UP | dir_mask(dir), STEP),
             Action::Short => seg(0, SHORT),
+            Action::Mash => {
+                for i in 0..MASH_PRESSES {
+                    seg(if i % 2 == 0 { UP } else { DOWN }, MIN_SPACING);
+                }
+            }
             Action::Strike { dir } => {
                 seg(dir_mask(dir), MIN_SPACING);
                 seg(ATTACK, MIN_SPACING);
@@ -418,9 +435,18 @@ pub fn choices(sim: &Sim) -> Vec<Action> {
                 }
             }
         }
-        Phase::Busy => {}
+        Phase::Busy => {
+            if held(sim) {
+                out.push(Action::Mash);
+            }
+        }
     }
     out
+}
+
+/// True while a bear holds Claw in its hug.
+pub fn held(sim: &Sim) -> bool {
+    sim.player().is_some_and(|o| o.state == state::BEARHUG)
 }
 
 #[cfg(test)]
@@ -440,6 +466,7 @@ mod tests {
             Action::Up,
             Action::Down,
             Action::Short,
+            Action::Mash,
             Action::Strike { dir: -1 },
             Action::Strike { dir: 1 },
             Action::Catch { dir: -1 },
@@ -484,6 +511,20 @@ mod tests {
             // the next jump is a fresh press.
             assert_eq!(m.last().unwrap() & JUMP, 0, "{a:?}");
         }
+    }
+
+    #[test]
+    fn a_mash_presses_up_and_down_in_turn_every_spacing() {
+        let m = Action::Mash.masks();
+        assert_eq!(m.len(), MASH_PRESSES * MIN_SPACING);
+        assert_eq!(&m[..2 * MIN_SPACING], &[UP, UP, DOWN, DOWN]);
+        // Every change of the held mask is a new press of a key.
+        let presses = m
+            .windows(2)
+            .filter(|w| w[0] != w[1] && w[1] & !w[0] != 0)
+            .count();
+        assert_eq!(presses, MASH_PRESSES - 1);
+        assert_eq!(Action::Mash.name(), "mash");
     }
 
     #[test]

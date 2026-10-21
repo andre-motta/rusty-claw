@@ -415,9 +415,9 @@ made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
 life. Replays, `claw-replay` and the benchmark all follow them.
 
-The routes in `tests/acceptance/routes/` finish the first six levels:
-`level1.csv` to `level6.csv` with the default tuning,
-`level1-original.csv` to `level6-original.csv` with the original game's
+The routes in `tests/acceptance/routes/` finish the first seven levels:
+`level1.csv` to `level7.csv` with the default tuning,
+`level1-original.csv` to `level7-original.csv` with the original game's
 speeds, `level2-introskip.csv`, `level4-introskip.csv` and
 `level6-introskip.csv` with the jump-in that skips Raux's, Katherine's and
 Wolvington's introductions, `level3-boost.csv` with
@@ -425,8 +425,8 @@ the dynamite boost on to the rock pillar past the third level's first save
 point (`level5-original.csv` and `level4-original.level5.csv` use one too,
 on to the block past the fifth level's last stack of pegs), and
 `level1-original.level2.csv`, `level2-original.level3.csv`,
-`level3-original.level4.csv`, `level4-original.level5.csv` and
-`level5-original.level6.csv`, the next
+`level3-original.level4.csv`, `level4-original.level5.csv`,
+`level5-original.level6.csv` and `level6-original.level7.csv`, the next
 level of the game the route before starts, which begin with the progress
 that game carries in (their
 `# start_score = ...` lines, which replays, `claw-replay` and the
@@ -434,7 +434,10 @@ comparison apply). `claw-bot --seed level` uses the
 random state the level's set-up leaves, as the routes do, and
 `--hints-on-foot` counts a hint point as reached only with Claw on his
 feet, on a ladder or on a rope (a point written `x,y foot` in the hints
-file counts that way on its own). They are written by the search bot, `claw-bot`,
+file counts that way on its own). Held in a bear's hug, the bot presses Up
+and Down in turn to break free; thrown by a springboard or riding an
+elevator, it counts Claw as near as the throw or the ride takes him. They
+are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and
 keeps the ones that bring Claw closer to the level's end. Its budget counts
 the positions it tries, not time, so the same arguments always give the

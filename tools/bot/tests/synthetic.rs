@@ -469,6 +469,103 @@ fn a_wait_for_a_stepping_stone_is_progress() {
     }
 }
 
+/// A seventh level of 64 px tiles with a rock spring whose surface is at
+/// `top`, its middle at `x`: its pictures each last longer than a wait,
+/// and the throw comes on the third.
+fn rock_level(rows: &[String], start: (i32, i32), x: i32, top: i32) -> SimLevel {
+    use claw_sim::logic::springboard;
+    let rect = springboard::surface(7);
+    let table = springboard::level_table(7).expect("the seventh level has springs");
+    let mut l = level(rows, start);
+    l.number = 7;
+    l.animations.insert(
+        table.idle_anim.into(),
+        Arc::new(Animation::looping(table.idle_anim, &[(1, 2000)])),
+    );
+    let mut spring = Animation::once(table.spring_anim, &[(1, 300), (2, 300), (3, 300), (1, 0)]);
+    spring.frames[2].event = springboard::LAUNCH_EVENT;
+    l.animations
+        .insert(table.spring_anim.into(), Arc::new(spring));
+    l.images.insert("ROCK".into(), ImageFrames::range(1, 3));
+    let mut rock = ObjectSpec::at("SpringBoard", x, top - rect.top, 0);
+    rock.image_set = "ROCK".into();
+    rock.frame = 1;
+    l.objects = vec![rock];
+    l
+}
+
+#[test]
+fn rides_a_springboards_throw_over_water_too_wide_to_jump() {
+    // A floor at row 9 broken by water five tiles wide (death at its
+    // bottom), with a rock spring standing in the water by the left
+    // floor's edge, its top 40 px below the floor's: only the throw
+    // carries Claw over, though from above it the gap looks narrow enough
+    // to jump. The route rises far higher than a jump.
+    let mut rows = room(30, 12);
+    for r in rows.iter_mut().take(11).skip(9) {
+        *r = "#".repeat(30);
+    }
+    for r in rows.iter_mut().skip(9) {
+        r.replace_range(10..15, ".....");
+    }
+    rows[11].replace_range(10..15, "xxxxx");
+    let start = sim(rock_level(
+        &rows,
+        (5 * 64, 8 * 64),
+        10 * 64 + 30,
+        9 * 64 + 40,
+    ));
+    let script = solve(
+        &start,
+        Goal::Stand {
+            x: 20 * 64,
+            y: 9 * 64 - 61,
+            radius: 40,
+        },
+    );
+    let mut s = start.clone();
+    let mut top = i32::MAX;
+    for t in &script.ticks {
+        s.step(*t);
+        top = top.min(s.player().unwrap().y);
+    }
+    assert!(9 * 64 - 61 - top > 300, "thrown: the route rose to {top}");
+}
+
+#[test]
+fn a_wait_on_a_springboard_for_its_throw_is_progress() {
+    // Claw lands on a seventh level rock spring (its surface at y 260,
+    // 60 px over the floor, under his start) and waits: while the spring
+    // he set off runs, each wait brings the throw nearer, even while the
+    // rock's picture stays the same, so none is the same state as the one
+    // before, up to the throw.
+    use claw_sim::logic::springboard;
+    let l = rock_level(&room(12, 6), (200, 150), 200, 260);
+    let mut s = sim(l);
+    s.step(Default::default());
+    s.teleport_player(200, 260 - 61 - 10);
+    let mut keys = Vec::new();
+    for _ in 0..12 {
+        for _ in actions::Action::Wait.masks() {
+            s.step(Default::default());
+        }
+        if actions::phase(&s) != actions::Phase::Ground {
+            break;
+        }
+        let spring = s
+            .objects()
+            .all()
+            .find_map(|(_, o)| springboard::data_of(o).map(|_| o.state));
+        if spring == Some(springboard::state::CLAW_SPRING) {
+            keys.push(claw_bot::search::state_key(&s));
+        }
+    }
+    assert!(keys.len() >= 2, "Claw waits on the running spring");
+    for w in keys.windows(2) {
+        assert_ne!(w[0], w[1]);
+    }
+}
+
 #[test]
 fn a_wait_over_a_blower_or_beside_a_goo_vent_is_progress_and_far_from_them_is_not() {
     // Claw stands at x 200 on a floor whose top is at y 320. Over a
