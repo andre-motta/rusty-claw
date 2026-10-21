@@ -1,0 +1,69 @@
+# Waypoints for the seventh level with the default tuning, from the
+# level's geometry (the same stretches as at the original speeds). The
+# route is searched a stretch at a time: each stretch below runs with its
+# waypoints as --hints (with --hints-on-foot) and ends at its goal
+# (--goal X,Y), and the next carries on from it (--from-route,
+# --from-tick at its last tick); the last stretch has no goal and ends at
+# the gem. Every stretch uses --seed level and --fragile-cost 100.
+#
+# 1. To the first checkpoint: no waypoints, goal 2914,7387.
+# 2. To the checkpoint by the first bear: no waypoints, goal 3777,7387.
+# 3. To the checkpoint: no waypoints, goal 6157,7387.
+# 4. Over the rock springs and the bears' ledges between them to the
+#    first super checkpoint: goal 9360,7387.
+7740,7209
+8313,7209
+8900,7139
+# 5. Down on to the rock spring at the end of the pier: no waypoints,
+#    goal 10301,7471 with --goal-on-foot.
+# 6. Thrown by the rock spring over the water to the floor under the
+#    crabs' pier, and up on to it to the checkpoint: goal 10735,7387.
+10583,7503
+# 7. To the checkpoint: no waypoints, goal 11837,7387.
+# 8. To the checkpoint: no waypoints, goal 13649,6875.
+# 9. To the checkpoint: no waypoints, goal 14734,6811.
+# 10. To the checkpoint: no waypoints, goal 16431,6811.
+# 11. To the checkpoint: no waypoints, goal 18797,6811.
+# 12. To the checkpoint: no waypoints, goal 19854,6747.
+# 13. Down the crumbling pegs into the first pit between the bears'
+#     pillars, and from each pit's rock spring over the next pillar into
+#     the next pit, the last throw on to the checkpoint's ledge: goal
+#     22192,7003.
+21152,7348
+21537,7348
+21919,7348
+# 14. To the second super checkpoint: no waypoints, goal 25210,7195.
+# 15. Thrown by the rock spring on the pier up to the ladder over it, up
+#     to the ledge, on to the air cart and from its right end to the
+#     ladder hanging there: goal 26588,6640. The stretch first stands
+#     still for 140 ticks where it starts (not searched: held buttons 0x0,
+#     route ticks 7128 to 7267): the cart comes by the ledge only every
+#     few seconds and a pirate on the ledge beats Claw down while he waits
+#     there, so he waits by the second super checkpoint instead, long
+#     enough to reach the ledge as the cart comes, as at the original
+#     speeds. The stretch is searched from the tick after the wait.
+25692,7100
+25800,6875
+# 16. Across the ledge and the ladders to its left up to the high floor:
+#     goal 25800,6235 with --goal-on-foot.
+26300,6555
+26012,6480
+25756,6450
+# 17. On to the high air cart: no waypoints, goal 26150,6182 with
+#     --goal-on-foot.
+# 18. On the cart over to the right and on to the floor beyond: no
+#     waypoints, goal 26800,6235 with --goal-on-foot.
+# 19. Down the steps of ledges to the checkpoint: goal 28217,6683.
+27225,6299
+27575,6427
+27900,6555
+# 20. On the air carts of the first ring to its right end: no
+#     waypoints, goal 29080,6629.
+# 21. Across the second ring to its right end: no waypoints, goal
+#     29680,6929.
+# 22. Over the bear's floor to the ladder by the third ring: no
+#     waypoints, goal 30060,6950 with --goal-on-foot.
+# 23. Across the third and fourth rings and on to the ledge beyond: no
+#     waypoints, goal 31720,6559 with --goal-on-foot.
+# 24. Down the long ladder through the ledge, past the pirates on the
+#     floor below and to the gem: no goal.

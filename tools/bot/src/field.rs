@@ -14,7 +14,8 @@
 //! the hop). Above every springboard and every ground blower is its throw:
 //! the cells up to the throw's height over its top (a blower's floor), and
 //! a jump's width to either side, where Claw rises and steers after it
-//! throws him. Moves between neighbouring
+//! throws him; each cell of a throw remembers the springboard or blower
+//! that throws him there ([`Grid::throw_base`]). Moves between neighbouring
 //! open cells follow what Claw can do, generously:
 //!
 //! - down: always (falling), except through a one-way floor (a ground
@@ -37,7 +38,7 @@
 //! still plays every move in the simulation.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 
 use claw_sim::SimLevel;
 use claw_sim::logic::{
@@ -134,6 +135,12 @@ pub struct Grid {
     /// column, through open cells: at the top of a throw his body reaches
     /// it, so he catches a ladder there.
     lifted: Vec<bool>,
+    /// The cells of every throw, each with where Claw's feet are on the
+    /// springboard or over the blower that throws him (the first throw
+    /// marked, where two overlap).
+    throw_bases: HashMap<usize, (i32, i32)>,
+    /// Each elevator's and path elevator's way.
+    rides: Vec<Ride>,
     reach_cells: u16,
     body_cells: u16,
 }
@@ -215,6 +222,8 @@ impl Grid {
             to_ladder: Vec::new(),
             thrown: vec![false; n],
             lifted: Vec::new(),
+            throw_bases: HashMap::new(),
+            rides: Vec::new(),
             reach_cells: (reach.jump_height / CELL).max(1) as u16,
             body_cells: (BODY / CELL) as u16,
         };
@@ -291,7 +300,7 @@ impl Grid {
     }
 
     /// Marks the surface along every elevator's and peg's track as support.
-    fn mark_platforms(&self, level: &SimLevel, support: &mut [bool]) {
+    fn mark_platforms(&mut self, level: &SimLevel, support: &mut [bool]) {
         for spec in &level.objects {
             if !platform::NAMES.contains(&spec.logic.as_str()) {
                 continue;
@@ -310,9 +319,29 @@ impl Grid {
                 y_max = y + r[TRACK_HEIGHT] / 2;
             }
             let (x_min, x_max) = (x_min.min(x_max), x_min.max(x_max));
-            let (y_min, y_max) = (y_min.min(y_max), y_min.max(y_max));
-            // The surface is near the top of the platform's picture; take
-            // a band of cells around it, the width of a peg either side.
+            // The surface is near the top of the platform's picture, or,
+            // where the level's riding surface lies below the platform's
+            // position (the seventh level's air carts), that far below;
+            // take a band of cells around it, the width of a peg either
+            // side.
+            let peg = spec.logic.contains("Peg");
+            let drop = if peg { 0 } else { elevator_drop(level) };
+            if !peg {
+                let (ty_min, ty_max) = (y_min.min(y_max), y_min.max(y_max));
+                let steps = ((x_max - x_min).max(ty_max - ty_min) / CELL).max(1);
+                self.rides.push(Ride {
+                    points: (0..=steps)
+                        .map(|k| {
+                            (
+                                x_min + (x_max - x_min) * k / steps,
+                                ty_min + (ty_max - ty_min) * k / steps,
+                            )
+                        })
+                        .collect(),
+                    looped: false,
+                });
+            }
+            let (y_min, y_max) = (y_min.min(y_max) + drop, y_min.max(y_max) + drop);
             let mut yy = y_min - 3 * CELL;
             while yy <= y_max {
                 let mut xx = x_min - 2 * CELL;
@@ -330,7 +359,7 @@ impl Grid {
     }
 
     /// Marks the cells around every path elevator's route as support.
-    fn mark_path_elevators(&self, level: &SimLevel, support: &mut [bool]) {
+    fn mark_path_elevators(&mut self, level: &SimLevel, support: &mut [bool]) {
         for spec in &level.objects {
             if !path_elevator::NAMES.contains(&spec.logic.as_str()) {
                 continue;
@@ -352,9 +381,15 @@ impl Grid {
                     points.push((x, y));
                 }
             }
-            for (px, py) in points {
+            let drop = elevator_drop(level);
+            for &(px, py) in &points {
+                let py = py + drop;
                 self.mark_band(px - 2 * CELL, px + 2 * CELL, py - 3 * CELL, py, support);
             }
+            self.rides.push(Ride {
+                points,
+                looped: true,
+            });
         }
     }
 
@@ -437,6 +472,7 @@ impl Grid {
     /// `right` up to `height` above it, a jump's width either side, as
     /// [`Grid::thrown`].
     fn mark_throw(&mut self, left: i32, right: i32, top: i32, height: i32, reach: Reach) {
+        let base = ((left + right) / 2, top - 2);
         let (left, right) = (left - reach.jump_width, right + reach.jump_width);
         let mut yy = top - height;
         while yy <= top {
@@ -446,6 +482,7 @@ impl Grid {
                     && self.open[i]
                 {
                     self.thrown[i] = true;
+                    self.throw_bases.entry(i).or_insert(base);
                 }
                 xx += CELL;
             }
@@ -515,6 +552,33 @@ impl Grid {
     /// True when the cell holding pixel (x, y) is open.
     pub fn is_open(&self, x: i32, y: i32) -> bool {
         self.cell_index(x, y).is_some_and(|i| self.open[i])
+    }
+
+    /// Where Claw's feet are on the springboard or over the blower whose
+    /// throw (x, y) is in, when it is in one.
+    pub fn throw_base(&self, x: i32, y: i32) -> Option<(i32, i32)> {
+        self.cell_index(x, y)
+            .and_then(|i| self.throw_bases.get(&i))
+            .copied()
+    }
+
+    /// The way of the elevator or path elevator whose position is
+    /// (`x`, `y`) (the way that passes nearest, within a cell), and the
+    /// index of its place nearest there; `None` when none passes there.
+    pub fn ride_of(&self, x: i32, y: i32) -> Option<(&Ride, usize)> {
+        self.rides
+            .iter()
+            .filter_map(|r| {
+                let (i, d) = r
+                    .points
+                    .iter()
+                    .map(|&(px, py)| (px - x).abs().max((py - y).abs()))
+                    .enumerate()
+                    .min_by_key(|&(_, d)| d)?;
+                (d <= CELL).then_some((d, r, i))
+            })
+            .min_by_key(|&(d, _, _)| d)
+            .map(|(_, r, i)| (r, i))
     }
 
     /// The distance field to the open cells within `radius` px of
@@ -643,6 +707,41 @@ impl Grid {
             dist,
         }
     }
+}
+
+/// The way an elevator or a path elevator takes: the places its position
+/// passes, about a cell apart, in the order a path elevator passes them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ride {
+    /// The places, about a cell apart.
+    pub points: Vec<(i32, i32)>,
+    /// A path elevator's route, which it goes round in this order; else
+    /// an elevator's track, which it goes along both ways.
+    pub looped: bool,
+}
+
+impl Ride {
+    /// How far the ride takes Claw, px, from place `from` to place `to`:
+    /// on round a route, along it; along a track, either way.
+    pub fn travel(&self, from: usize, to: usize) -> u32 {
+        let n = self.points.len().max(1);
+        let places = if self.looped {
+            (to + n - from % n) % n
+        } else {
+            from.abs_diff(to)
+        };
+        places as u32 * CELL as u32
+    }
+}
+
+/// How far below an elevator's position its riding surface lies in
+/// `level`, px: the top of the level's elevator rectangle when it is below
+/// the position (the seventh level's air carts ride 70 px below it), else
+/// 0 (the surface is near the top of the picture).
+pub fn elevator_drop(level: &SimLevel) -> i32 {
+    platform::surface(level.number, platform::SurfaceKind::Elevator)
+        .top
+        .max(0)
 }
 
 /// Path cost from every cell of a [`Grid`] to one target, px.
@@ -893,6 +992,32 @@ mod tests {
         assert_ne!(field(&pit_level(vec![lift])), UNREACHABLE);
     }
 
+    #[test]
+    fn the_seventh_levels_air_carts_carry_claw_70_px_below_their_position() {
+        // A path elevator going across and back with its position 70 px
+        // above the floor's feet: the seventh level's air carts ride 70 px
+        // below their position, so the pit is crossed at the floor's
+        // height, with no climb on to the cart and down from it.
+        let feet = 28 * 16 + 8;
+        let field = |number: u32| {
+            let mut lift = ObjectSpec::at("PathElevator", 10 * 16, feet + 8 - 70, 0);
+            lift.record[PATH_LEGS..PATH_LEGS + 4].copy_from_slice(&[6, 480, 4, 480]);
+            let mut level = pit_level(vec![lift]);
+            level.number = number;
+            Grid::build(&level, Reach::default())
+                .field_to(45 * 16, feet, 16)
+                .at(5 * 16, feet)
+        };
+        assert_eq!(elevator_drop(&pit_level(Vec::new())), 0);
+        let mut seventh = pit_level(Vec::new());
+        seventh.number = 7;
+        assert_eq!(elevator_drop(&seventh), 70);
+        let low = field(7);
+        assert_ne!(low, UNREACHABLE);
+        // Along the cart's route at the floor's height, no climb.
+        assert!(low < 45 * 16 - 5 * 16 + 4 * CELL as u32, "{low}");
+    }
+
     /// 16 px tiles on the fourth level (whose springboards are ferns): a
     /// floor (feet in row 28) and, from column 24 on, a cliff whose top is
     /// row 5 (feet in row 4), 384 px above the floor, with `objects`.
@@ -938,6 +1063,28 @@ mod tests {
         assert!(!thrown(21 * 16, 29 * 16 - 220));
         assert!(thrown(21 * 16 - 32 - 180, 20 * 16));
         assert!(!thrown(21 * 16 - 32 - 210, 20 * 16));
+    }
+
+    #[test]
+    fn a_throws_cells_lead_back_to_its_springboard() {
+        // The fern by the cliff: its top on the floor's top (y 464), its
+        // middle at x 336.
+        let rect = springboard::surface(4);
+        let fern = ObjectSpec::at("SpringBoard", 21 * 16, 29 * 16 - rect.top, 0);
+        let g = Grid::build(&cliff_level(vec![fern]), Reach::default());
+        let top = 29 * 16;
+        let base = (21 * 16 + (rect.left + rect.right) / 2, top - 2);
+        // Over the fern up to the throw's height, and beside it within a
+        // jump's width.
+        assert_eq!(g.throw_base(21 * 16, top - 100), Some(base));
+        assert_eq!(g.throw_base(21 * 16, top - 300), Some(base));
+        assert_eq!(g.throw_base(21 * 16 - 150, top - 400), Some(base));
+        // Above the throw's height, or beyond its width: no base.
+        assert_eq!(g.throw_base(21 * 16, top - 600), None);
+        assert_eq!(g.throw_base(21 * 16 - 300, top - 300), None);
+        // A level without springboards has no throw.
+        let bare = Grid::build(&cliff_level(Vec::new()), Reach::default());
+        assert_eq!(bare.throw_base(21 * 16, top - 300), None);
     }
 
     #[test]
