@@ -147,7 +147,7 @@ use super::states::{self, enter_strike, start_pacing};
 use super::{
     Body, Class, ClassAnims, ClassSounds, Deferred, EnemyData, EnemyFields, EnemyState,
     HUMAN_HIT_BY, Handler, Timer, attacker, build, class_of, data, data_mut, face_claw,
-    human_fields, obj, obj_mut, play, rand, say, sees_claw, set_anim, set_state,
+    human_fields, obj_mut, play, rand, say, sees_claw, set_anim, set_state,
 };
 use crate::logic::{ObjectData, World};
 use crate::object::{ObjectId, Rect, flags};
@@ -713,12 +713,14 @@ pub fn enter_advance_at(w: &mut World, id: ObjectId, s: Speeds) {
 }
 
 /// Advance at `s` (the shared rule at the enemy's own speeds): at either
-/// limit it goes idle (and carries on); it faces Claw and walks at him;
-/// then by mode it runs (0), keeps walking (1, 2) or goes Home (3 to 6).
+/// limit (its exact position equal to the limit, as pacing tests it, so a
+/// fraction of a pixel short keeps it walking) it goes idle (and carries
+/// on); it faces Claw and walks at him; then by mode it runs (0), keeps
+/// walking (1, 2) or goes Home (3 to 6).
 pub fn advance_tick_at(w: &mut World, id: ObjectId, s: Speeds) {
     let (min, max) = data(w, id).map_or(super::UNBOUNDED, |d| d.bounds);
-    let x = obj(w, id).x;
-    if x == min || x == max {
+    let x = super::exact_x(w, id);
+    if x == f64::from(min) || x == f64::from(max) {
         class_call(w, id, |c| c.go_idle);
     }
     face_claw(w, id);
@@ -743,14 +745,14 @@ pub fn enter_fast_advance_at(w: &mut World, id: ObjectId, s: Speeds) {
 }
 
 /// FastAdvance at `s` (the shared rule at the enemy's own speeds): at the
-/// limit on Claw's side it goes idle (and carries on); it faces Claw; then
+/// limit on Claw's side (its exact position equal to it) it goes idle (and carries on); it faces Claw; then
 /// by mode it keeps running at him (0, 1, 5), walks (2), goes Home (3, 4)
 /// or paces (6). Draws: one, discarded.
 pub fn fast_advance_tick_at(w: &mut World, id: ObjectId, s: Speeds) {
     let (min, max) = data(w, id).map_or(super::UNBOUNDED, |d| d.bounds);
-    let x = obj(w, id).x;
+    let x = super::exact_x(w, id);
     let right = data(w, id).is_some_and(|d| d.claw_right);
-    if (x == min && !right) || (x == max && right) {
+    if (x == f64::from(min) && !right) || (x == f64::from(max) && right) {
         class_call(w, id, |c| c.go_idle);
     }
     face_claw(w, id);

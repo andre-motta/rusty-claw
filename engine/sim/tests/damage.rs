@@ -733,6 +733,66 @@ fn death_on_a_death_tile_respawns_at_the_last_checkpoint() {
     assert_eq!(sim.stats().health, 100);
 }
 
+/// Walks Claw into the death tiles of [`level`] numbered `number`; Claw
+/// and the splashes in the tick he dies.
+fn death_tile_death(number: u32) -> (Sim, Object, Vec<Object>) {
+    let mut l = level(&[]);
+    l.number = number;
+    let mut sim = pressing_sim(l, SimConfig::default());
+    run_until(&mut sim, hold(RIGHT), 300, |s| {
+        s.player().unwrap().state == state::DEATH
+    });
+    let claw = sim.player().unwrap().clone();
+    let splashes = sim
+        .objects()
+        .all()
+        .filter(|(_, o)| &*o.logic == "Splash")
+        .map(|(_, o)| o.clone())
+        .collect();
+    (sim, claw, splashes)
+}
+
+#[test]
+fn on_a_liquid_level_claw_disappears_into_a_splash_on_a_death_tile() {
+    // The seventh level's death tiles are goo: Claw is not drawn and a
+    // splash shows 60 px above him (the level's splash height), just in
+    // front of him; the death animation still runs and times the lives
+    // step.
+    let (mut sim, claw, splashes) = death_tile_death(7);
+    assert!(claw.draw_flags & draw_flags::HIDDEN != 0, "Claw is hidden");
+    assert_eq!(splashes.len(), 1, "one splash");
+    let s = &splashes[0];
+    assert_eq!((s.x, s.y, s.z), (claw.x, claw.y - 60, claw.z + 2));
+    let events = run_until(&mut sim, TickInput::default(), 200, |s| {
+        s.stats().lives == 6
+    });
+    assert_eq!(events, vec![GameEvent::ClawDied { lives_left: 6 }]);
+    // Back on his feet, he is drawn again.
+    step(&mut sim);
+    let o = sim.player().unwrap();
+    assert_eq!(o.state, state::STAND);
+    assert_eq!(
+        o.draw_flags & draw_flags::HIDDEN,
+        0,
+        "drawn after the respawn"
+    );
+    // The splash height is the level's own: 10 px on the sixth level.
+    let (_, claw, splashes) = death_tile_death(6);
+    assert_eq!(
+        splashes.iter().map(|s| (s.x, s.y)).collect::<Vec<_>>(),
+        vec![(claw.x, claw.y - 10)]
+    );
+}
+
+#[test]
+fn on_a_spike_level_claw_dies_in_view_without_a_splash() {
+    for number in [1, 3, 5, 10, 11] {
+        let (_, claw, splashes) = death_tile_death(number);
+        assert_eq!(claw.draw_flags & draw_flags::HIDDEN, 0, "level {number}");
+        assert!(splashes.is_empty(), "level {number}");
+    }
+}
+
 #[test]
 fn without_level_logics_a_death_tile_is_only_counted() {
     let cfg = SimConfig {

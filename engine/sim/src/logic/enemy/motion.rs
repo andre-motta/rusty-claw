@@ -253,7 +253,7 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
             o.flags &= !flags::ON_ELEVATOR;
         }
     }
-    let r = collide(w, id, tx, ty);
+    let r = collide(w, id, tx, ty, d.tiles_only);
     d.last_result = r;
     if standing {
         d.vy = 0.0;
@@ -312,17 +312,21 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     death
 }
 
-/// Moves the enemy toward (tx, ty) through the tiles and platforms.
+/// Moves the enemy toward (tx, ty) through the tiles and platforms; an
+/// enemy that lands only on the tiles (`tiles_only`, a hermit crab) moves
+/// through the tiles alone, falling through every platform object.
 ///
 /// Only a falling or flying enemy, or one riding a platform, needs the
 /// platforms: one standing on the tiles or moving without tile tests
 /// moves exactly as with them, so it skips gathering them.
-fn collide(w: &mut World, id: ObjectId, tx: i32, ty: i32) -> u32 {
+fn collide(w: &mut World, id: ObjectId, tx: i32, ty: i32, tiles_only: bool) -> u32 {
+    let mask = if tiles_only { 0 } else { opt::PLATFORMS };
     let o = obj(w, id);
-    let tiles_only =
-        o.flags & flags::ON_ELEVATOR == 0 && matches!(o.physics_type, ptype::STAND | ptype::DIRECT);
-    if !tiles_only {
-        return w.physics(id, tx, ty, opt::PLATFORMS);
+    let no_platforms = tiles_only
+        || (o.flags & flags::ON_ELEVATOR == 0
+            && matches!(o.physics_type, ptype::STAND | ptype::DIRECT));
+    if !no_platforms {
+        return w.physics(id, tx, ty, mask);
     }
     let c = Collider {
         map: &w.level.map,
@@ -330,7 +334,7 @@ fn collide(w: &mut World, id: ObjectId, tx: i32, ty: i32) -> u32 {
         step: w.tuning.physics.step,
     };
     match w.objects.get_mut(id) {
-        Some(o) => physics::physics(&c, o, tx, ty, opt::PLATFORMS),
+        Some(o) => physics::physics(&c, o, tx, ty, mask),
         None => 0,
     }
 }

@@ -550,3 +550,48 @@ fn going_idle_in_range_may_say_a_line() {
     assert_eq!(sim.with_world(|w| w.rng.clone()), expect);
     assert_eq!(state_of(&sim, id), Some(EnemyState::Idle));
 }
+
+/// The bear walking (`fast` false) or running at Claw, 500 px to its left,
+/// standing on its left limit's whole pixel with `fraction` of a pixel
+/// past it; its state after one tick of the advance rule.
+fn advance_at_the_limit(fast: bool, fraction: f64) -> Option<EnemyState> {
+    let (mut sim, id) = with_claw(4, -500, 10_000);
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(id).unwrap();
+        o.x = LIMITS.0;
+        let (x, y) = (o.x, o.y);
+        o.state = if fast {
+            EnemyState::FastAdvance
+        } else {
+            EnemyState::Advance
+        } as i32;
+        let d = o.data.enemy_mut().unwrap();
+        d.carry.0 = fraction;
+        d.moved_to = Some((x, y));
+        d.claw_right = false;
+        d.mode = 1;
+        assert_eq!(enemy::exact_x(w, id), f64::from(LIMITS.0) + fraction);
+        if fast {
+            enemy::redtail_pirate::fast_advance_tick_at(w, id, bear_sailor::SPEEDS);
+        } else {
+            enemy::redtail_pirate::advance_tick_at(w, id, bear_sailor::SPEEDS);
+        }
+    });
+    state_of(&sim, id)
+}
+
+#[test]
+fn walking_or_running_at_claw_it_goes_idle_only_exactly_on_its_limit() {
+    for fast in [false, true] {
+        // Its whole pixel on the limit with 0.76 px left over: it carries
+        // on towards Claw.
+        let going = advance_at_the_limit(fast, 0.76);
+        assert!(
+            matches!(going, Some(EnemyState::Advance | EnemyState::FastAdvance)),
+            "fast {fast}: {going:?}"
+        );
+        // Exactly on it: it goes idle.
+        let idle = advance_at_the_limit(fast, 0.0);
+        assert_eq!(idle, Some(EnemyState::Idle), "fast {fast}");
+    }
+}

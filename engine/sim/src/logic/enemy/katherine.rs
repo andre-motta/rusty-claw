@@ -913,14 +913,15 @@ pub fn enter_fast_advance(w: &mut World, id: ObjectId) {
 }
 
 /// FastAdvance: the shared rule at her speed: at the limit on Claw's side
-/// she goes idle (and carries on); she faces Claw; then by mode she keeps
-/// running at him (0, 1, 5), walks (2), goes Home (3, 4) or paces (6).
+/// (her exact position equal to it) she goes idle (and carries on); she
+/// faces Claw; then by mode she keeps running at him (0, 1, 5), walks (2),
+/// goes Home (3, 4) or paces (6).
 /// Draws: one, discarded.
 pub fn fast_advance_tick(w: &mut World, id: ObjectId) {
     let (min, max) = data(w, id).map_or(super::UNBOUNDED, |d| d.bounds);
-    let x = obj(w, id).x;
+    let x = super::exact_x(w, id);
     let right = data(w, id).is_some_and(|d| d.claw_right);
-    if (x == min && !right) || (x == max && right) {
+    if (x == f64::from(min) && !right) || (x == f64::from(max) && right) {
         go_idle(w, id);
     }
     face_claw(w, id);
@@ -947,13 +948,14 @@ pub fn enter_advance(w: &mut World, id: ObjectId) {
     set_anim(w, id, WALK_ANIM);
 }
 
-/// Advance: the shared rule at her speed: at either limit she goes idle
-/// (and carries on); she faces Claw and walks at him; then by mode she
-/// runs (0), keeps walking (1, 2) or goes Home (3 to 6).
+/// Advance: the shared rule at her speed: at either limit (her exact
+/// position equal to it) she goes idle (and carries on); she faces Claw
+/// and walks at him; then by mode she runs (0), keeps walking (1, 2) or
+/// goes Home (3 to 6).
 pub fn advance_tick(w: &mut World, id: ObjectId) {
     let (min, max) = data(w, id).map_or(super::UNBOUNDED, |d| d.bounds);
-    let x = obj(w, id).x;
-    if x == min || x == max {
+    let x = super::exact_x(w, id);
+    if x == f64::from(min) || x == f64::from(max) {
         go_idle(w, id);
     }
     face_claw(w, id);

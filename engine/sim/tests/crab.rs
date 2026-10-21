@@ -900,3 +900,56 @@ fn without_crab_values_every_crab_keeps_the_plain_default() {
         .apply(&mut sim);
     assert_eq!(format!("{:?}", obj(&sim, ids[0])), before);
 }
+
+/// The crab of a beach with a still elevator over the floor at x 2000,
+/// lifted 300 px above the elevator's surface and let fall; with
+/// `tiles_only` as given. Where it comes to stand, and whether it ever
+/// rode the elevator.
+fn drop_over_a_platform(tiles_only: bool) -> ((i32, i32), bool) {
+    let mut lift = ObjectSpec::at("Elevator", 2000, 800, 0);
+    lift.record[0] = 2000;
+    let mut level = beach((1200, 800));
+    level.objects.push(lift);
+    let (mut sim, ids) = game(level, &[hermit(2000, 900, (1700, 2300))]);
+    let id = ids[0];
+    let surface = {
+        let p = sim
+            .objects()
+            .all()
+            .find(|(_, o)| &*o.logic == "Elevator")
+            .map(|(_, o)| o)
+            .expect("the elevator");
+        assert!(p.hit_rect.is_set(), "the elevator is a platform");
+        p.y + p.hit_rect.top
+    };
+    assert!(surface < FLOOR - 50, "the surface is above the floor");
+    sim.with_world(|w| {
+        let d = w.objects.get_mut(id).unwrap().data.enemy_mut().unwrap();
+        assert!(d.tiles_only, "a crab lands only on the tiles");
+        d.tiles_only = tiles_only;
+        let o = w.objects.get_mut(id).unwrap();
+        o.x = 2000;
+        o.y = surface - 300 - o.move_rect.bottom;
+        o.physics_type = ptype::FALL;
+    });
+    let mut rode = false;
+    for _ in 0..200 {
+        sim.step(TickInput::default());
+        let o = obj(&sim, id);
+        rode |= o.flags & flags::ON_ELEVATOR != 0;
+    }
+    let o = obj(&sim, id);
+    ((o.x, o.y + o.move_rect.bottom), rode)
+}
+
+#[test]
+fn a_crab_falls_through_platforms_and_lands_only_on_the_tiles() {
+    // A crab falls through the elevator to the floor, never riding it.
+    let ((_, feet), rode) = drop_over_a_platform(true);
+    assert!(!rode, "it never rides the platform");
+    assert_eq!(feet, FLOOR - 1, "it stands on the floor");
+    // The same fall for an enemy that lands on platforms stops on it.
+    let ((_, feet), rode) = drop_over_a_platform(false);
+    assert!(rode, "the other enemy rides it");
+    assert!(feet < FLOOR - 50, "and stands on its surface: {feet}");
+}
