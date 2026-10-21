@@ -1,16 +1,17 @@
 //! The search on small levels built in code: a gap, a ladder and a
-//! stand-in hazard, a boss room, breaking planks, and the same seed giving
-//! the same route.
+//! stand-in hazard, a boss room, breaking planks, further games every move
+//! is played in, and the same seed giving the same route.
 
 use claw_bot::actions;
 use claw_bot::route::{self, spacing_violations};
 use claw_bot::search::{BossStage, Intro, boss_end, boss_stage};
-use claw_bot::{Goal, SearchConfig, search, search_report};
+use claw_bot::{Goal, SearchConfig, search, search_report, search_report_with};
 use claw_sim::activation::ActivationConfig;
 use claw_sim::anim::Animation;
 use claw_sim::level::{ImageFrames, ObjectSpec};
 use claw_sim::logic::break_plank::{self, FALLBACK_MOVE_RECT};
 use claw_sim::logic::enemy;
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::logic::world_boss::fight;
 use claw_sim::tiles::{CLEAR, Descriptor, GROUND};
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel, TickInput, TileMap};
@@ -662,4 +663,34 @@ fn claw_back_where_he_stood_with_the_planks_broken_is_another_state() {
         whole,
         "the broken row tells the states apart"
     );
+}
+
+#[test]
+fn a_move_that_dies_in_a_further_game_is_dropped() {
+    // The route's game has a plain floor; a further game has death tiles
+    // set into it between Claw and the goal, as a game whose crabs start
+    // otherwise can hold a danger the route's own does not.
+    let rows = room(30, 10);
+    let mut hazard = rows.clone();
+    hazard[9].replace_range(13..15, "xx");
+    let start = sim(level(&rows, (5 * 64, 7 * 64)));
+    let other = sim(level(&hazard, (5 * 64, 7 * 64)));
+    let goal = Goal::Reach {
+        x: 22 * 64,
+        y: 9 * 64 - 61,
+        radius: 40,
+    };
+    let plain = search_report(&start, goal.clone(), &cfg()).expect("a route");
+    assert!(
+        !route::play(&other, &plain.script, &goal).won(),
+        "the plain route walks into the hazard of the other game"
+    );
+    let variants = [(other.clone(), CrabValues::default())];
+    let found = search_report_with(&start, &variants, goal.clone(), &cfg()).expect("a route");
+    assert!(found.stats.variants_pruned > 0);
+    assert!(route::play(&start, &found.script, &goal).won());
+    assert!(route::play(&other, &found.script, &goal).won());
+    // With no further game, the search is the plain one.
+    let again = search_report_with(&start, &[], goal, &cfg()).expect("a route");
+    assert_eq!(again.script.ticks, plain.script.ticks);
 }

@@ -645,3 +645,174 @@ fn a_nest_counts_its_crabs() {
         assert_eq!(nest::data_of(obj(&sim, ids[0])).unwrap().crabs, want);
     }
 }
+
+/// A seed whose first draw of 0..100 is below 40: a far crab hides.
+fn hiding_seed() -> u32 {
+    (1..)
+        .find(|&s| claw_sim::rng::Rng::new(s).below(100) < 40)
+        .unwrap()
+}
+
+/// The crab's tick handler `f` with its range mode `mode` and the random
+/// stream at `seed`: its state after, and the random state.
+fn decide(
+    sim: &Sim,
+    id: ObjectId,
+    mode: u8,
+    seed: u32,
+    f: fn(&mut claw_sim::World, ObjectId),
+) -> (Option<EnemyState>, u32) {
+    let mut sim = sim.clone();
+    sim.with_world(|w| {
+        enemy::data_mut(w, id).unwrap().mode = mode;
+        *w.rng = claw_sim::rng::Rng::new(seed);
+        f(w, id);
+    });
+    (state(&sim, id), sim.rng_state())
+}
+
+#[test]
+fn a_covering_second_box_makes_a_crab_decide_as_if_claw_were_far() {
+    let (sim, id) = crab_and_claw(150);
+    let (ex, ey) = (obj(&sim, id).x, obj(&sim, id).y);
+    // Claw jumping 136 px above the crab, beside it: outside its near
+    // boxes. A covering second box puts him in range mode 1; with the
+    // plain empty box the crab keeps its last mode (2 here) for 500 ms.
+    let claw = (ex + 150, ey - 136);
+    let mut d = enemy::data_of(obj(&sim, id)).unwrap().0.as_ref().clone();
+    d.mode = 2;
+    assert_eq!(enemy::range_mode(&mut d, (ex, ey), claw, true, 0), 2);
+    d.ranges[1] = (1_000_000, 1_000_000);
+    assert_eq!(enemy::range_mode(&mut d, (ex, ey), claw, true, 0), 1);
+
+    // Regroup in mode 1: a draw of 0..100, and below 40 it hides with a
+    // draw of its hide time; in mode 2 it crouches with no draw.
+    let seed = hiding_seed();
+    let mut r = claw_sim::rng::Rng::new(seed);
+    r.below(100);
+    r.below(2001);
+    assert_eq!(
+        decide(&sim, id, 1, seed, crab::regroup_tick),
+        (Some(EnemyState::Hide), r.state())
+    );
+    assert_eq!(
+        decide(&sim, id, 2, seed, crab::regroup_tick),
+        (Some(EnemyState::Defense), seed)
+    );
+
+    // Attack in mode 1 goes home with no charge draw; in mode 2 it draws
+    // its charge.
+    let mut attacking = sim.clone();
+    attacking.with_world(|w| crab::enter_attack(w, id));
+    assert_eq!(
+        decide(&attacking, id, 1, seed, crab::attack_tick),
+        (Some(EnemyState::Regroup), seed)
+    );
+    let (s, after) = decide(&attacking, id, 2, seed, crab::attack_tick);
+    assert_eq!(s, Some(EnemyState::MovingAttack));
+    assert_ne!(after, seed);
+}
+
+#[test]
+fn crab_values_reach_placed_and_hatched_crabs_before_their_first_tick() {
+    let trigger = Rect::new(1700, 800, 1800, 1000);
+    let mut level = beach((1600, 900));
+    level
+        .objects
+        .extend([hermit(1300, 900, (1200, 1400)), nest_at(2000, trigger)]);
+    let mut sim = Sim::new(level, SimConfig::default());
+    let find = |sim: &Sim, logic: &str| {
+        sim.objects()
+            .all()
+            .find(|(_, o)| &*o.logic == logic && o.record.is_some())
+            .map(|(id, o)| (id, o.serial))
+            .unwrap()
+    };
+    let (placed, record) = find(&sim, "HermitCrab");
+    let (n, nest_record) = find(&sim, "CrabNest");
+    let values = crab::CrabValues::parse(&format!(
+        "crab {record} = 2, 578, 432\nnest_crab {nest_record} 2 = 7, 382, 382\nnest_crab * * = 1, 1000000, 1000000\n"
+    ))
+    .unwrap();
+    // The placed crab was built while the level loaded.
+    assert_eq!(
+        crab::fields_of(obj(&sim, placed)).unwrap().leftovers,
+        Leftovers::default()
+    );
+    let rng = sim.rng_state();
+    values.apply(&mut sim);
+    assert_eq!(sim.rng_state(), rng, "no draw");
+    let o = obj(&sim, placed);
+    assert_eq!(
+        crab::fields_of(o).unwrap().leftovers,
+        Leftovers {
+            side: crab::SIDE_RIGHT,
+            box1: (578, 432)
+        }
+    );
+    assert!(enemy::faces_right(o));
+    assert_eq!(enemy::data_of(o).unwrap().ranges[1], (578, 432));
+    assert_eq!(
+        crab::which_crab(sim.objects(), placed),
+        Some(crab::CrabKey::Placed(Some(record)))
+    );
+    // Given once: a second call changes nothing.
+    let again = sim.clone();
+    values.apply(&mut sim);
+    assert_eq!(
+        format!("{:?}", obj(&sim, placed)),
+        format!("{:?}", obj(&again, placed))
+    );
+
+    // The nest's crabs get theirs in the tick they hatch.
+    sim.teleport_player(1750, obj(&sim, claw_id(&sim)).y);
+    let mut hatched = Vec::new();
+    for _ in 0..20 {
+        sim.step(TickInput::default());
+        values.apply(&mut sim);
+        hatched = nest::data_of(obj(&sim, n)).unwrap().hatchlings.clone();
+        if !hatched.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(hatched.len(), 3);
+    for (k, &c) in hatched.iter().enumerate() {
+        assert_eq!(state(&sim, c), Some(EnemyState::Tumble));
+        let want = if k == 1 {
+            Leftovers {
+                side: 7,
+                box1: (382, 382),
+            }
+        } else {
+            Leftovers {
+                side: 1,
+                box1: (1_000_000, 1_000_000),
+            }
+        };
+        assert_eq!(
+            crab::fields_of(obj(&sim, c)).unwrap().leftovers,
+            want,
+            "crab {k}"
+        );
+        assert_eq!(
+            crab::which_crab(sim.objects(), c),
+            Some(crab::CrabKey::Hatched(
+                Some(nest_record),
+                Some(k as u32 + 1)
+            ))
+        );
+    }
+    assert_eq!(crab::which_crab(sim.objects(), n), None, "no crab");
+}
+
+#[test]
+fn without_crab_values_every_crab_keeps_the_plain_default() {
+    let (mut sim, ids) = game(beach((1500, 800)), &[hermit(1000, 900, (0, 0))]);
+    let before = format!("{:?}", obj(&sim, ids[0]));
+    crab::CrabValues::default().apply(&mut sim);
+    // An entry that names no crab of the level changes nothing either.
+    crab::CrabValues::parse("crab 999999 = 2, 5, 5\n")
+        .unwrap()
+        .apply(&mut sim);
+    assert_eq!(format!("{:?}", obj(&sim, ids[0])), before);
+}

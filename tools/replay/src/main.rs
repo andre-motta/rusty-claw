@@ -8,7 +8,7 @@
 //!             [--res WxH] [--aspect pillarbox|frozen|widened]
 //!             [--start X,Y] [--checkpoint X,Y] [--logics on|off] [--mid-air-hit-fix on|off]
 //!             [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]]
-//!             [--expect-complete]
+//!             [--crabs FILE | --crab-variant N] [--expect-complete]
 //!             [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
 //! ```
 //!
@@ -81,6 +81,34 @@
 //! store's runs of such a route set it. Like `--checkpoint`, it is a
 //! diagnostic set-up; the run can still be compared with those runs.
 //!
+//! Each hermit crab starts with a side its first regroup faces by and a
+//! second range box (half width, half height) that the original game
+//! does not fix: they differ from crab to crab and from run to run, and a
+//! box that covers Claw makes the crab decide as if he were far whenever
+//! he is outside its nearer boxes. A run's values are given per crab,
+//! one entry per line:
+//!
+//! ```text
+//! crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT
+//! nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT
+//! ```
+//!
+//! A placed crab is named by its record (its place in the level's list of
+//! objects, from 0), a crab a nest hatched by the nest's record and its
+//! place in the hatch (1 for the nest's first crab); a `*` names every
+//! crab of that kind, and the entry that names a crab most exactly
+//! counts. The script's header gives them as comment lines
+//! (`# crab 101 = 2, 300, 40`); `--crabs FILE` gives them from a file
+//! instead (the same lines, with or without the `#`; blank lines and
+//! other `#` lines are skipped) and replaces the header's, and
+//! `--crab-variant N` takes instead the header's further set N (its
+//! `# crab_variant N: ...` lines, the sets a route was made to win under
+//! too). Each crab
+//! takes its values when it is built, before its first tick; a crab no
+//! entry names starts with an empty box facing left, the plain default.
+//! The values change nothing but the crabs' decisions, so a run with them
+//! can be compared.
+//!
 //! `--expect-complete` checks that the level ends (a level-complete event)
 //! within the script.
 //!
@@ -113,6 +141,7 @@ use claw_sim::claw_frame::{AspectPolicy, GameEvent, ViewConfig};
 use claw_sim::input::{
     DirectiveKind, ScriptCommand, ScriptTuning, script_checkpoint, script_health,
 };
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
@@ -124,7 +153,7 @@ const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FIL
 --script ROUTE.csv [--trace OUT.csv] [--tuning default|original] [--seed N] [--res WxH] \
 [--aspect pillarbox|frozen|widened] [--start X,Y] [--checkpoint X,Y] [--logics on|off] \
 [--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]] \
-[--expect-complete] \
+[--crabs FILE | --crab-variant N] [--expect-complete] \
 [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]";
 
 /// The key of the mid-air hit jump fix in a script's comment line.
@@ -242,6 +271,8 @@ struct Args {
     aids: PlayAids,
     powerup: Option<AidPowerup>,
     tuning: Option<ScriptTuning>,
+    crabs: Option<PathBuf>,
+    crab_variant: Option<usize>,
     expect_complete: bool,
     compare: Option<PathBuf>,
     tolerance: Option<String>,
@@ -279,6 +310,16 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                 a.powerup = Some(AidPowerup::parse(&v).map_err(|e| format!("--powerup: {e}"))?);
             }
             "--script" => a.script = Some(PathBuf::from(value()?)),
+            "--crabs" => a.crabs = Some(PathBuf::from(value()?)),
+            "--crab-variant" => {
+                let v = value()?;
+                a.crab_variant = Some(
+                    v.parse()
+                        .ok()
+                        .filter(|&n| n >= 1)
+                        .ok_or_else(|| format!("bad crab value set {v:?}, expected 1 or more"))?,
+                );
+            }
             "--trace" => a.trace = Some(PathBuf::from(value()?)),
             "--res" => {
                 let v = value()?;
@@ -345,6 +386,11 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
     }
     if a.report.is_some() && a.compare.is_none() {
         return Err(format!("--report needs --compare\n{USAGE}"));
+    }
+    if a.crabs.is_some() && a.crab_variant.is_some() {
+        return Err(format!(
+            "--crabs and --crab-variant do not go together\n{USAGE}"
+        ));
     }
     Ok(a)
 }
@@ -432,6 +478,8 @@ fn run(args: Args) -> Result<Outcome, String> {
     };
     let start_health =
         script_health(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
+    let crabs = crab_values(&text, args.crabs.as_deref(), args.crab_variant)
+        .map_err(|e| format!("{}: {e}", script_path.display()))?;
     let fix = args
         .mid_air_hit_fix
         .or(script_behaviour(&text))
@@ -514,10 +562,23 @@ fn run(args: Args) -> Result<Outcome, String> {
         )
     });
     let mut sim = Sim::with_start(sim_level, cfg, StartState { carry, save: None });
+    crabs.apply(&mut sim);
+    if !crabs.is_empty() {
+        eprintln!(
+            "claw-replay: crab values given for {} entr{} ({})",
+            crabs.entries.len(),
+            if crabs.entries.len() == 1 { "y" } else { "ies" },
+            match (&args.crabs, args.crab_variant) {
+                (Some(p), _) => p.display().to_string(),
+                (None, Some(n)) => format!("the script's further set {n}"),
+                (None, None) => "the script's header".to_string(),
+            }
+        );
+    }
     let start = args.start.or(store_t0.and_then(|t| t.start));
     match (start, store_t0) {
         (Some((x, y)), Some(t0)) => {
-            start_at_time_zero(&mut sim, (x, y), t0);
+            start_at_time_zero(&mut sim, (x, y), t0, &crabs);
             eprintln!(
                 "claw-replay: as the store's runs: Claw placed at {x},{y} on the level's first \
                  tick, the route's time zero at {} ms ({} ticks), the random stream set to {} there",
@@ -526,7 +587,7 @@ fn run(args: Args) -> Result<Outcome, String> {
                 sim.config().seed
             );
         }
-        (Some((x, y)), None) => settle_at(&mut sim, x, y),
+        (Some((x, y)), None) => settle_at(&mut sim, x, y, &crabs),
         (None, _) => {}
     }
     if let Some(p) = checkpoint {
@@ -551,6 +612,7 @@ fn run(args: Args) -> Result<Outcome, String> {
             }
         }
         sim.step(input);
+        crabs.apply(&mut sim);
         completed |= sim
             .last_events()
             .iter()
@@ -653,10 +715,11 @@ fn run(args: Args) -> Result<Outcome, String> {
 /// [`StoreStart`]): Claw placed at `at` on the level's first tick and left
 /// there, with no button held, for the whole ticks up to the route's time
 /// zero, then the shared random stream set to the configured seed, once.
-fn start_at_time_zero(sim: &mut Sim, at: (i32, i32), t0: StoreStart) {
+fn start_at_time_zero(sim: &mut Sim, at: (i32, i32), t0: StoreStart, crabs: &CrabValues) {
     sim.teleport_player(at.0, at.1);
     for _ in 0..t0.ticks() {
         sim.step(Default::default());
+        crabs.apply(sim);
     }
     let seed = sim.config().seed;
     sim.with_world(|w| *w.rng = Rng::new(seed));
@@ -665,20 +728,21 @@ fn start_at_time_zero(sim: &mut Sim, at: (i32, i32), t0: StoreStart) {
 /// Moves Claw and waits until he and the camera have stood still for ten
 /// ticks (at most four seconds), then sets the shared random stream to the
 /// configured seed: the script starts from it.
-fn settle_at(sim: &mut Sim, x: i32, y: i32) {
-    settle(sim, x, y);
+fn settle_at(sim: &mut Sim, x: i32, y: i32, crabs: &CrabValues) {
+    settle(sim, x, y, crabs);
     let seed = sim.config().seed;
     sim.with_world(|w| *w.rng = Rng::new(seed));
 }
 
 /// Moves Claw and waits until he and the camera have stood still for ten
 /// ticks (at most four seconds).
-fn settle(sim: &mut Sim, x: i32, y: i32) {
+fn settle(sim: &mut Sim, x: i32, y: i32, crabs: &CrabValues) {
     sim.teleport_player(x, y);
     let mut still = 0;
     let mut last = None;
     for _ in 0..222 {
         sim.step(Default::default());
+        crabs.apply(sim);
         let now = sim
             .player()
             .map(|o| (o.x, o.y, o.state, sim.camera().current));
@@ -687,6 +751,33 @@ fn settle(sim: &mut Sim, x: i32, y: i32) {
         if still >= 10 {
             break;
         }
+    }
+}
+
+/// The crab values of a run (see the module documentation): the file
+/// `file` names, else the header's further set `variant`, else the
+/// script's own header lines.
+fn crab_values(
+    script_text: &str,
+    file: Option<&std::path::Path>,
+    variant: Option<usize>,
+) -> Result<CrabValues, String> {
+    if let Some(n) = variant {
+        let sets = CrabValues::variants_from_header(script_text)
+            .map_err(|e| format!("the further crab values: {e}"))?;
+        let count = sets.len();
+        return sets
+            .into_iter()
+            .nth(n - 1)
+            .ok_or_else(|| format!("--crab-variant {n}: the script names {count} further set(s)"));
+    }
+    match file {
+        Some(p) => {
+            let text =
+                std::fs::read_to_string(p).map_err(|e| format!("reading {}: {e}", p.display()))?;
+            CrabValues::parse(&text).map_err(|e| format!("--crabs {}: {e}", p.display()))
+        }
+        None => CrabValues::from_header(script_text).map_err(|e| format!("the crab values: {e}")),
     }
 }
 
@@ -1004,7 +1095,7 @@ mod tests {
             ..SimConfig::default()
         };
         let mut sim = Sim::new(level, cfg);
-        settle_at(&mut sim, 700, 700);
+        settle_at(&mut sim, 700, 700, &CrabValues::default());
         assert!(sim.tick() > 10, "Claw fell and stood");
         let claw = sim.player().unwrap();
         assert_eq!(claw.x, 700);
@@ -1099,7 +1190,7 @@ mod tests {
             seed: Some(111_567),
         };
         let mut sim = Sim::new(level.clone(), cfg.clone());
-        start_at_time_zero(&mut sim, (700, 700), t0);
+        start_at_time_zero(&mut sim, (700, 700), t0, &CrabValues::default());
         // 46 ticks of the level, whatever Claw did in them, and the seed
         // there.
         assert_eq!(sim.tick(), 46);
@@ -1107,7 +1198,7 @@ mod tests {
         assert_eq!(sim.rng_state(), 111_567);
         // The settled start waits for him to stand instead.
         let mut settled = Sim::new(level, cfg);
-        settle_at(&mut settled, 700, 700);
+        settle_at(&mut settled, 700, 700, &CrabValues::default());
         assert_ne!(settled.tick(), sim.tick());
     }
 
@@ -1131,5 +1222,41 @@ mod tests {
         let e = run(a).unwrap_err();
         assert!(e.contains("opening install"), "{e}");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn crab_values_come_from_the_header_or_from_a_file() {
+        assert_eq!(
+            args("--crabs c.txt").unwrap().crabs,
+            Some(PathBuf::from("c.txt"))
+        );
+        assert!(args("--crabs").is_err());
+        let script = "# level 7\n# crab 101 = 2, 300, 40\ntick,held_mask,pressed_mask\n0,0x0,0x0\n";
+        let v = crab_values(script, None, None).unwrap();
+        assert_eq!(v.header_lines(), "# crab 101 = 2, 300, 40\n");
+        assert!(crab_values("0,0x0,0x0\n", None, None).unwrap().is_empty());
+        // A further set of the header.
+        let with_sets = format!("{script}# crab_variant 1: crab 101 = 2, 382, 382\n");
+        let v = crab_values(&with_sets, None, Some(1)).unwrap();
+        assert_eq!(v.file_lines(), "crab 101 = 2, 382, 382\n");
+        let e = crab_values(&with_sets, None, Some(2)).unwrap_err();
+        assert!(e.contains("names 1 further set"), "{e}");
+        assert_eq!(args("--crab-variant 2").unwrap().crab_variant, Some(2));
+        assert!(args("--crab-variant 0").is_err());
+        assert!(args("--crabs c.txt --crab-variant 1").is_err());
+        // A file replaces the header's values.
+        let dir = std::env::temp_dir().join(format!("claw-replay-crabs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("crabs.txt");
+        std::fs::write(&file, "# a run\nnest_crab 1304 1 = 0, 0, 636097\n").unwrap();
+        let v = crab_values(script, Some(&file), None).unwrap();
+        assert_eq!(v.file_lines(), "nest_crab 1304 1 = 0, 0, 636097\n");
+        std::fs::write(&file, "crab 101 = 2, 300\n").unwrap();
+        let e = crab_values(script, Some(&file), None).unwrap_err();
+        assert!(e.contains("--crabs") && e.contains("line 1"), "{e}");
+        assert!(crab_values(script, Some(&dir.join("missing.txt")), None).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+        let e = crab_values("# crab 101 = x, 1, 1\n", None, None).unwrap_err();
+        assert!(e.contains("bad side"), "{e}");
     }
 }

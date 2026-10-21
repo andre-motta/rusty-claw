@@ -20,6 +20,7 @@ use claw_frame::{AudioCue, Buttons, GameEvent, SimulatedRefresh, TickInput};
 use claw_game::Session;
 use claw_sim::container::CollisionEvent;
 use claw_sim::input::{MenuScreen, ScriptCommand};
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::logic::enemy::{self, DeathKind, EnemyState};
 use claw_sim::logic::pickup;
 use claw_sim::object::{LogicKind, Object, ObjectId, special as sflags, types};
@@ -111,11 +112,21 @@ pub struct Player {
     /// Enemies alive after the last tick.
     alive: BTreeMap<ObjectId, (Arc<str>, Placed)>,
     prev: u32,
+    /// The values the hermit crabs start with, each crab given its own as
+    /// it is built (none: the plain default).
+    pub crabs: CrabValues,
 }
 
 impl Player {
     /// Starts playing `sim`.
     pub fn new(sim: Sim) -> Player {
+        Player::with_crabs(sim, CrabValues::default())
+    }
+
+    /// Starts playing `sim` with the hermit crabs starting with `crabs`
+    /// (the crabs built so far get theirs at once).
+    pub fn with_crabs(mut sim: Sim, crabs: CrabValues) -> Player {
+        crabs.apply(&mut sim);
         let mut p = Player {
             sim,
             held: Vec::new(),
@@ -129,6 +140,7 @@ impl Player {
             names: BTreeMap::new(),
             alive: BTreeMap::new(),
             prev: 0,
+            crabs,
         };
         p.look();
         p
@@ -177,6 +189,7 @@ impl Player {
             held: Buttons(held),
             pressed: Buttons(pressed),
         });
+        self.crabs.apply(&mut self.sim);
         for e in snap.events {
             self.events.push((tick, e));
         }
@@ -546,7 +559,8 @@ pub struct Replay {
 /// the first recorded tick) through the game's frame loop at a simulated
 /// `hz` display, with optional jitter, feeding the input as `feed`. The
 /// recorded moves of Claw happen before their ticks, and the recorded
-/// pauses, menus and commands at their tick boundaries.
+/// pauses, menus and commands at their tick boundaries; the hermit crabs
+/// get the player's values ([`Player::crabs`]) as they are built.
 pub fn replay(start: &Sim, player: &Player, hz: f64, jitter: Option<u64>, feed: Feed) -> Replay {
     let script = player.script();
     let n = script.ticks.len();
@@ -560,8 +574,10 @@ pub fn replay(start: &Sim, player: &Player, hz: f64, jitter: Option<u64>, feed: 
     let digests = Rc::new(RefCell::new(Vec::with_capacity(n + 1)));
     let seen = digests.clone();
     let teleports = player.teleports.clone();
+    let crabs = player.crabs.clone();
     let mut next = 0;
     session.set_before_tick(Box::new(move |tick, sim: &mut Sim| {
+        crabs.apply(sim);
         while let Some(&(at, x, y)) = teleports.get(next) {
             if at != tick {
                 break;

@@ -122,10 +122,11 @@
 //! - The block of state numbers: the crabs take 2190 to 2198 of the
 //!   seventh level's 2180 to 2199, in registration order.
 //! - A crab's second range box and the side its first regroup reads are
-//!   left over from memory in the original game; each crab keeps the
-//!   value it starts with ([`Leftovers`], set with [`set_leftovers`] as
-//!   the reference runs show it), with an empty box and an unmirrored
-//!   start as the plain default.
+//!   not fixed by the original game; they differ from crab to crab and
+//!   from run to run. Each crab keeps the value it starts with
+//!   ([`Leftovers`], set with [`set_leftovers`], or given for a whole run
+//!   with [`CrabValues`]), with an empty box and an unmirrored start as
+//!   the plain default.
 //! - A nest hands its record's loot to its crabs in the original order,
 //!   with its skipping of empty entries kept (no retail nest carries
 //!   loot).
@@ -336,11 +337,14 @@ pub static CLASS: Class = Class {
     sounds: ClassSounds::NONE,
 };
 
-/// What a crab starts with that the game leaves over from memory: the
+/// What a crab starts with that the original game does not fix: the
 /// side its first regroup faces by ([`SIDE_RIGHT`] faces right, anything
 /// else left) and its second range box (half width, half height). The
 /// values differ from crab to crab and from run to run of the original;
-/// the plain default is an unmirrored start and an empty box.
+/// the plain default is an unmirrored start and an empty box. A box with
+/// both half extents larger than the crab's reach covers Claw anywhere
+/// along its stretch, so the crab decides as if he were far (range mode
+/// 1) whenever he is outside its nearer boxes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Leftovers {
     /// The side read by the first regroup.
@@ -509,6 +513,326 @@ pub fn set_leftovers(w: &mut World, id: ObjectId, l: Leftovers) {
         d.ranges[1] = l.box1;
     }
     set_facing(w, id, l.side == SIDE_RIGHT);
+}
+
+/// Which crabs an entry of [`CrabValues`] names; `None` in a part names
+/// every crab (written `*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CrabKey {
+    /// A crab placed in the level, by its record: its place in the
+    /// level's list of objects, from 0, which is the creation number the
+    /// game builds it under.
+    Placed(Option<u32>),
+    /// A crab a nest hatched: the nest's record, and the crab's place in
+    /// the order the nest hatched its crabs, from 1.
+    Hatched(Option<u32>, Option<u32>),
+}
+
+impl CrabKey {
+    /// How many parts name one value (an entry that names a crab more
+    /// exactly counts over a wider one).
+    fn exactness(self) -> u32 {
+        match self {
+            CrabKey::Placed(r) => u32::from(r.is_some()),
+            CrabKey::Hatched(n, k) => u32::from(n.is_some()) + u32::from(k.is_some()),
+        }
+    }
+
+    /// True when this entry key names the crab `which` (a key with no
+    /// `*`).
+    fn names(self, which: CrabKey) -> bool {
+        fn part<T: PartialEq>(want: Option<T>, is: Option<T>) -> bool {
+            want.is_none() || want == is
+        }
+        match (self, which) {
+            (CrabKey::Placed(a), CrabKey::Placed(b)) => part(a, b),
+            (CrabKey::Hatched(n, k), CrabKey::Hatched(m, j)) => part(n, m) && part(k, j),
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Display for CrabKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn part<T: std::fmt::Display>(v: Option<T>) -> String {
+            v.map_or_else(|| "*".to_string(), |v| v.to_string())
+        }
+        match *self {
+            CrabKey::Placed(r) => write!(f, "{CRAB_WORD} {}", part(r)),
+            CrabKey::Hatched(n, k) => write!(f, "{NEST_CRAB_WORD} {} {}", part(n), part(k)),
+        }
+    }
+}
+
+/// The first word of an entry for a placed crab.
+pub const CRAB_WORD: &str = "crab";
+
+/// The first word of an entry for a crab a nest hatched.
+pub const NEST_CRAB_WORD: &str = "nest_crab";
+
+/// The first word of a route's header line that gives an entry of a
+/// further value set the route also wins under.
+pub const VARIANT_WORD: &str = "crab_variant";
+
+/// What the crabs of one run start with ([`Leftovers`]), given per crab:
+/// the values of a run of the original game a replay is compared with,
+/// or values a route must also win under.
+///
+/// The text form has one entry per line,
+///
+/// ```text
+/// crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT
+/// nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT
+/// ```
+///
+/// for a crab placed in the level, by its record, and for the crab a
+/// nest hatched in place HATCH (1 for its first crab), by the nest's
+/// record. A `*` for a record or a place names every crab of that kind;
+/// the entry that names a crab most exactly counts, and between two
+/// equally exact ones the first. A crab no entry names starts with the
+/// plain default. In a file, blank lines and other `#` lines are
+/// skipped, and an entry may follow a `#` (as in a route's header, where
+/// each entry is a comment line: `# crab 101 = 2, 300, 40`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CrabValues {
+    /// The entries, in the order given.
+    pub entries: Vec<(CrabKey, Leftovers)>,
+}
+
+impl CrabValues {
+    /// No entry: every crab starts with the plain default.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Reads a file of entries (see [`CrabValues`]); any other line that
+    /// is not blank and not a `#` comment is an error.
+    pub fn parse(text: &str) -> Result<CrabValues, String> {
+        Self::read(text, true)
+    }
+
+    /// Reads the entries of a route's header comment lines
+    /// (`# crab ...`, `# nest_crab ...`); every other line is skipped.
+    pub fn from_header(text: &str) -> Result<CrabValues, String> {
+        Self::read(text, false)
+    }
+
+    fn read(text: &str, strict: bool) -> Result<CrabValues, String> {
+        let mut out = CrabValues::default();
+        for (i, raw) in text.lines().enumerate() {
+            let line = raw.trim();
+            let (commented, body) = match line.strip_prefix('#') {
+                Some(rest) => (true, rest.trim()),
+                None => (false, line),
+            };
+            let word = body.split_whitespace().next().unwrap_or("");
+            let entry = word == CRAB_WORD || word == NEST_CRAB_WORD;
+            if !entry && strict && !commented && !body.is_empty() {
+                return Err(format!(
+                    "line {}: expected `{CRAB_WORD} RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT` or `{NEST_CRAB_WORD} NEST_RECORD HATCH = ...`, found {raw:?}",
+                    i + 1
+                ));
+            }
+            // A route's header gives its entries as comment lines only.
+            if !entry || (!strict && !commented) {
+                continue;
+            }
+            let (key, values) = parse_entry(body).map_err(|e| format!("line {}: {e}", i + 1))?;
+            if out.entries.iter().any(|(k, _)| *k == key) {
+                return Err(format!("line {}: {key} is given twice", i + 1));
+            }
+            out.entries.push((key, values));
+        }
+        Ok(out)
+    }
+
+    /// The entries as lines of a file, each ending in a newline.
+    pub fn file_lines(&self) -> String {
+        self.entries
+            .iter()
+            .map(|(k, l)| format!("{k} = {}, {}, {}\n", l.side, l.box1.0, l.box1.1))
+            .collect()
+    }
+
+    /// The entries as a route's header comment lines, each ending in a
+    /// newline.
+    pub fn header_lines(&self) -> String {
+        self.file_lines()
+            .lines()
+            .map(|l| format!("# {l}\n"))
+            .collect()
+    }
+
+    /// The value sets a route's header names besides its own (see
+    /// [`CrabValues::variant_lines`]), in order: the sets the route was
+    /// made to win under too.
+    pub fn variants_from_header(text: &str) -> Result<Vec<CrabValues>, String> {
+        let mut out: Vec<CrabValues> = Vec::new();
+        for (i, raw) in text.lines().enumerate() {
+            let Some(rest) = raw.trim().strip_prefix('#') else {
+                continue;
+            };
+            let Some(rest) = rest.trim().strip_prefix(VARIANT_WORD) else {
+                continue;
+            };
+            let at = |e: String| format!("line {}: {e}", i + 1);
+            let (n, entry) = rest
+                .split_once(':')
+                .ok_or_else(|| at(format!("expected `{VARIANT_WORD} N: ENTRY`, found {raw:?}")))?;
+            let n: usize = n
+                .trim()
+                .parse()
+                .ok()
+                .filter(|&n| n >= 1)
+                .ok_or_else(|| at(format!("bad set number {:?}", n.trim())))?;
+            if n > out.len() + 1 {
+                return Err(at(format!("set {n} comes before set {}", out.len() + 1)));
+            }
+            if n > out.len() {
+                out.push(CrabValues::default());
+            }
+            let (key, values) = parse_entry(entry.trim()).map_err(at)?;
+            let set = &mut out[n - 1];
+            if set.entries.iter().any(|(k, _)| *k == key) {
+                return Err(at(format!("{key} is given twice in set {n}")));
+            }
+            set.entries.push((key, values));
+        }
+        Ok(out)
+    }
+
+    /// The entries as a route's header lines of its `n`-th further value
+    /// set (from 1): `# crab_variant N: ENTRY`, each ending in a newline.
+    /// A set with no entry (every crab at the plain default) is written as
+    /// an entry that names no crab, so that it still counts as a set.
+    pub fn variant_lines(&self, n: usize) -> String {
+        let lines = if self.is_empty() {
+            format!("{} = 0, 0, 0\n", CrabKey::Placed(Some(u32::MAX)))
+        } else {
+            self.file_lines()
+        };
+        lines
+            .lines()
+            .map(|l| format!("# {VARIANT_WORD} {n}: {l}\n"))
+            .collect()
+    }
+
+    /// What the crab `which` (a key with no `*`) starts with: the most
+    /// exact entry that names it, else the plain default.
+    pub fn values_for(&self, which: CrabKey) -> Leftovers {
+        let mut best: Option<(u32, Leftovers)> = None;
+        for &(k, l) in &self.entries {
+            if k.names(which) && best.is_none_or(|(e, _)| k.exactness() > e) {
+                best = Some((k.exactness(), l));
+            }
+        }
+        best.map(|(_, l)| l).unwrap_or_default()
+    }
+
+    /// Gives every crab of `sim` built since the last call the values its
+    /// entry names, as [`set_leftovers`] gives them. Called after the
+    /// level is loaded and after every tick, it gives each crab its
+    /// values before its first tick: a crab is built in a call of its own,
+    /// and one a nest hatches first runs in the next tick. Draws nothing,
+    /// and does nothing without entries.
+    pub fn apply(&self, sim: &mut crate::sim::Sim) {
+        if self.is_empty() {
+            return;
+        }
+        // A crab still at the plain default may not have had its values
+        // yet; one that has other values was given them.
+        let mut fresh: Vec<(ObjectId, u32)> = Vec::new();
+        let mut nests: Vec<(u32, &[ObjectId])> = Vec::new();
+        for (id, o) in sim.objects().all() {
+            if fields_of(o).is_some_and(|f| f.leftovers == Leftovers::default()) {
+                fresh.push((id, o.serial));
+            } else if let Some(d) = nest::data_of(o)
+                && !d.hatchlings.is_empty()
+            {
+                nests.push((o.serial, &d.hatchlings));
+            }
+        }
+        let given: Vec<(ObjectId, Leftovers)> = fresh
+            .into_iter()
+            .map(|(id, record)| (id, self.values_for(which_of(&nests, id, record))))
+            .filter(|&(_, l)| l != Leftovers::default())
+            .collect();
+        for (id, l) in given {
+            sim.with_world(|w| set_leftovers(w, id, l));
+        }
+    }
+}
+
+/// Which crab `id` (built as number `record`) is, in `nests` (each
+/// nest's record and the crabs it hatched, in order): the crab in its
+/// place of a nest's hatch, or else the crab placed with that record.
+fn which_of(nests: &[(u32, &[ObjectId])], id: ObjectId, record: u32) -> CrabKey {
+    nests
+        .iter()
+        .find_map(|&(nest, hatched)| {
+            let k = hatched.iter().position(|&h| h == id)?;
+            Some(CrabKey::Hatched(Some(nest), Some(k as u32 + 1)))
+        })
+        .unwrap_or(CrabKey::Placed(Some(record)))
+}
+
+/// Which crab `id` of `objects` is (see [`CrabValues`]): the crab in its
+/// place of a nest's hatch, or else the crab placed with its record;
+/// `None` when it is no crab.
+pub fn which_crab(objects: &crate::container::Container, id: ObjectId) -> Option<CrabKey> {
+    let record = objects.get(id).filter(|o| fields_of(o).is_some())?.serial;
+    let nests: Vec<(u32, &[ObjectId])> = objects
+        .all()
+        .filter_map(|(_, o)| nest::data_of(o).map(|d| (o.serial, d.hatchlings.as_slice())))
+        .collect();
+    Some(which_of(&nests, id, record))
+}
+
+/// Reads one entry: `crab R = S, W, H` or `nest_crab N K = S, W, H`.
+fn parse_entry(body: &str) -> Result<(CrabKey, Leftovers), String> {
+    let (lhs, rhs) = body
+        .split_once('=')
+        .ok_or_else(|| format!("{body:?} has no `=`"))?;
+    let words: Vec<&str> = lhs.split_whitespace().collect();
+    fn part<T: std::str::FromStr>(w: &str, what: &str) -> Result<Option<T>, String> {
+        if w == "*" {
+            return Ok(None);
+        }
+        w.parse().map(Some).map_err(|_| format!("bad {what} {w:?}"))
+    }
+    let key = match words.as_slice() {
+        [CRAB_WORD, r] => CrabKey::Placed(part(r, "record")?),
+        [NEST_CRAB_WORD, n, k] => {
+            let k: Option<u32> = part(k, "hatch place")?;
+            if k == Some(0) {
+                return Err("a nest's crabs are counted from 1".to_string());
+            }
+            CrabKey::Hatched(part(n, "nest record")?, k)
+        }
+        _ => {
+            return Err(format!(
+                "expected `{CRAB_WORD} RECORD` or `{NEST_CRAB_WORD} NEST_RECORD HATCH` before `=`, found {:?}",
+                lhs.trim()
+            ));
+        }
+    };
+    let v: Vec<&str> = rhs.split(',').map(str::trim).collect();
+    let [side, w, h] = v.as_slice() else {
+        return Err(format!(
+            "expected SIDE, HALF_WIDTH, HALF_HEIGHT after `=`, found {:?}",
+            rhs.trim()
+        ));
+    };
+    let num = |s: &str, what: &str| -> Result<i32, String> {
+        s.parse().map_err(|_| format!("bad {what} {s:?}"))
+    };
+    Ok((
+        key,
+        Leftovers {
+            side: num(side, "side")?,
+            box1: (num(w, "half width")?, num(h, "half height")?),
+        },
+    ))
 }
 
 /// Makes the crab a bomber or a plain crab, as a nest does with the
@@ -1752,5 +2076,136 @@ mod tests {
         // Mode 1 decides as mode 0 does.
         assert_eq!(hermit[0], hermit[1]);
         assert_eq!(bomber[0], bomber[1]);
+    }
+
+    #[test]
+    fn crab_values_read_from_a_file_and_from_a_route_header() {
+        let file = "\
+# the first run's crabs
+crab 1647 = 3, 300, 40
+crab 101 = 1294344774, 857312352, 784380376
+
+nest_crab 1304 1 = -546326565, 1746340737, 832086994
+nest_crab * * = 1, 1000000, 1000000
+";
+        let v = CrabValues::parse(file).unwrap();
+        let l = |side, w, h| Leftovers { side, box1: (w, h) };
+        assert_eq!(
+            v.entries,
+            vec![
+                (CrabKey::Placed(Some(1647)), l(3, 300, 40)),
+                (
+                    CrabKey::Placed(Some(101)),
+                    l(1_294_344_774, 857_312_352, 784_380_376)
+                ),
+                (
+                    CrabKey::Hatched(Some(1304), Some(1)),
+                    l(-546_326_565, 1_746_340_737, 832_086_994)
+                ),
+                (CrabKey::Hatched(None, None), l(1, 1_000_000, 1_000_000)),
+            ]
+        );
+        // The header lines read back the same, and a route's rows and
+        // other comment lines are skipped.
+        let route = format!(
+            "# level 7\n{}tick,held_mask,pressed_mask\n0,0x0,0x0\n",
+            v.header_lines()
+        );
+        assert!(route.contains("# crab 1647 = 3, 300, 40\n# crab 101 = "));
+        assert!(route.contains("# nest_crab * * = 1, 1000000, 1000000\n"));
+        assert_eq!(CrabValues::from_header(&route).unwrap(), v);
+        assert_eq!(CrabValues::parse(&v.file_lines()).unwrap(), v);
+        // A file may hold its entries as comment lines too.
+        assert_eq!(CrabValues::parse(&v.header_lines()).unwrap(), v);
+        assert!(
+            CrabValues::from_header("# level 7\n0,0x0,0x0\n")
+                .unwrap()
+                .is_empty()
+        );
+        // An uncommented line in a route is a row, never an entry.
+        assert!(
+            CrabValues::from_header("crab 1 = 2, 3, 4\n")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_most_exact_entry_names_a_crab() {
+        let v = CrabValues::parse(
+            "nest_crab * * = 1, 10, 10\nnest_crab 7 * = 2, 20, 20\nnest_crab 7 2 = 3, 30, 30\ncrab * = 4, 40, 40\ncrab 5 = 5, 50, 50\n",
+        )
+        .unwrap();
+        let side = |k| v.values_for(k).side;
+        assert_eq!(side(CrabKey::Hatched(Some(7), Some(2))), 3);
+        assert_eq!(side(CrabKey::Hatched(Some(7), Some(1))), 2);
+        assert_eq!(side(CrabKey::Hatched(Some(8), Some(2))), 1);
+        assert_eq!(side(CrabKey::Placed(Some(5))), 5);
+        assert_eq!(side(CrabKey::Placed(Some(6))), 4);
+        // A crab no entry names keeps the plain default.
+        let v = CrabValues::parse("crab 5 = 5, 50, 50\n").unwrap();
+        assert_eq!(v.values_for(CrabKey::Placed(Some(6))), Leftovers::default());
+        assert_eq!(
+            v.values_for(CrabKey::Hatched(Some(5), Some(1))),
+            Leftovers::default()
+        );
+    }
+
+    #[test]
+    fn a_route_header_names_further_value_sets() {
+        let a = CrabValues::parse("crab 1647 = 3, 382, 382\ncrab 86 = 3, 300, 40\n").unwrap();
+        let b = CrabValues::parse("nest_crab * * = 1, 1000000, 1000000\n").unwrap();
+        let text = format!(
+            "# level 7\n# crab 1647 = 3, 300, 40\n{}{}{}0,0x0,0x0\n",
+            a.variant_lines(1),
+            b.variant_lines(2),
+            CrabValues::default().variant_lines(3)
+        );
+        assert!(text.contains("# crab_variant 1: crab 1647 = 3, 382, 382\n"));
+        assert!(text.contains("# crab_variant 2: nest_crab * * = 1, 1000000, 1000000\n"));
+        let sets = CrabValues::variants_from_header(&text).unwrap();
+        assert_eq!(sets.len(), 3);
+        assert_eq!((&sets[0], &sets[1]), (&a, &b));
+        // The empty set names no crab: every crab starts at the default.
+        assert_eq!(
+            sets[2].values_for(CrabKey::Placed(Some(1647))),
+            Leftovers::default()
+        );
+        // The route's own values leave the sets out, and the sets the
+        // route's own.
+        assert_eq!(CrabValues::from_header(&text).unwrap().entries.len(), 1);
+        assert!(
+            CrabValues::variants_from_header("# crab 1 = 2, 3, 4\n")
+                .unwrap()
+                .is_empty()
+        );
+        let e =
+            CrabValues::variants_from_header("# crab_variant 2: crab 1 = 2, 3, 4\n").unwrap_err();
+        assert!(e.contains("set 2 comes before set 1"), "{e}");
+        let e =
+            CrabValues::variants_from_header("# crab_variant 0: crab 1 = 2, 3, 4\n").unwrap_err();
+        assert!(e.contains("bad set number"), "{e}");
+        let e =
+            CrabValues::variants_from_header("# crab_variant 1 crab 1 = 2, 3, 4\n").unwrap_err();
+        assert!(e.contains("expected"), "{e}");
+    }
+
+    #[test]
+    fn bad_crab_values_are_errors() {
+        let e = |t: &str| CrabValues::parse(t).unwrap_err();
+        assert!(e("crab 1 = 2, 3\n").contains("SIDE, HALF_WIDTH, HALF_HEIGHT"));
+        assert!(e("crab x = 2, 3, 4\n").contains("bad record"));
+        assert!(e("crab 1 = 2, 3, y\n").contains("bad half height"));
+        assert!(e("crab 1 2 = 2, 3, 4\n").contains("before `=`"));
+        assert!(e("nest_crab 1 = 2, 3, 4\n").contains("before `=`"));
+        assert!(e("nest_crab 1 0 = 2, 3, 4\n").contains("from 1"));
+        assert!(e("crab 1 2, 3, 4\n").contains("no `=`"));
+        assert!(
+            e("crab 1 = 2, 3, 4\ncrab 1 = 5, 6, 7\n").contains("line 2: crab 1 is given twice")
+        );
+        assert!(e("hello\n").contains("line 1: expected"));
+        assert!(e("# fine\n\nhello\n").contains("line 3"));
+        // The same mistakes in a route's header are errors too.
+        assert!(CrabValues::from_header("# crab 1 = 2\n").is_err());
     }
 }

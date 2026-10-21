@@ -2,6 +2,7 @@
 //! report, playing a route back and its timing margin.
 
 use claw_sim::claw_frame::GameEvent;
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::{Carry, InputScript, Sim, SimConfig};
 
 use crate::actions::MIN_SPACING;
@@ -66,11 +67,18 @@ pub const SETTLE_TICKS: usize = 222;
 /// reference runs of a segment start (they place Claw, wait until he
 /// stands, and set the random state at the segment's time zero).
 pub fn settle_at(sim: &mut Sim, x: i32, y: i32, seed: u32) {
+    settle_at_with(sim, x, y, seed, &CrabValues::default());
+}
+
+/// [`settle_at`], the crabs built while Claw settles given their `crabs`
+/// values.
+pub fn settle_at_with(sim: &mut Sim, x: i32, y: i32, seed: u32, crabs: &CrabValues) {
     sim.teleport_player(x, y);
     let mut still = 0;
     let mut last = None;
     for _ in 0..SETTLE_TICKS {
         sim.step(Default::default());
+        crabs.apply(sim);
         let now = sim
             .player()
             .map(|o| (o.x, o.y, o.state, sim.camera().current));
@@ -102,6 +110,12 @@ pub struct Header {
     /// The progress the level starts with, when it is not a new game's:
     /// the level after another in one game (see [`carry_lines`]).
     pub carry: Option<Carry>,
+    /// The values the crabs start with in the route's game (`# crab ...`
+    /// lines; see [`CrabValues`]).
+    pub crabs: CrabValues,
+    /// The further sets of crab values the route was made to win under
+    /// too (`# crab_variant N: ...` lines).
+    pub crab_variants: Vec<CrabValues>,
 }
 
 pub use claw_sim::player::progress::{CARRY_KEYS, START_PREFIX};
@@ -138,13 +152,18 @@ impl Header {
         if let Some(c) = &self.carry {
             out.push_str(&carry_lines(c));
         }
+        out.push_str(&self.crabs.header_lines());
+        for (i, v) in self.crab_variants.iter().enumerate() {
+            out.push_str(&v.variant_lines(i + 1));
+        }
         out
     }
 
     /// Reads the header keys from a route's comment lines; a key that is
     /// missing takes its default (level 1, default tuning, seed 1, fix
     /// off, a new game's progress, also when the start lines are
-    /// unreadable).
+    /// unreadable, and no crab values, also when their lines are
+    /// unreadable: [`crab_values`] reads them with their errors).
     pub fn parse(text: &str) -> Header {
         let mut h = Header {
             level: 1,
@@ -154,6 +173,8 @@ impl Header {
             hints: None,
             start: None,
             carry: parse_carry(text).ok().flatten(),
+            crabs: CrabValues::from_header(text).unwrap_or_default(),
+            crab_variants: CrabValues::variants_from_header(text).unwrap_or_default(),
         };
         for line in text.lines() {
             let Some(rest) = line.trim().strip_prefix('#') else {
@@ -182,6 +203,16 @@ impl Header {
         }
         h
     }
+}
+
+/// The crab values of a route's header: its own and the further sets
+/// it was made to win under.
+pub fn crab_values(text: &str) -> Result<(CrabValues, Vec<CrabValues>), String> {
+    Ok((
+        CrabValues::from_header(text).map_err(|e| format!("the crab values: {e}"))?,
+        CrabValues::variants_from_header(text)
+            .map_err(|e| format!("the further crab values: {e}"))?,
+    ))
 }
 
 /// The route file: header lines, then the script.
@@ -234,6 +265,11 @@ impl Played {
 /// Plays `script` from `start` (stepping a copy) and reports when `goal`
 /// was met.
 pub fn play(start: &Sim, script: &InputScript, goal: &Goal) -> Played {
+    play_with(start, script, goal, &CrabValues::default())
+}
+
+/// [`play`], the crabs built along the way given their `crabs` values.
+pub fn play_with(start: &Sim, script: &InputScript, goal: &Goal, crabs: &CrabValues) -> Played {
     let mut sim = start.clone();
     let mut out = Played {
         done_at: None,
@@ -244,6 +280,7 @@ pub fn play(start: &Sim, script: &InputScript, goal: &Goal) -> Played {
     for (i, &t) in script.ticks.iter().enumerate() {
         let health = sim.stats().health;
         sim.step(t);
+        crabs.apply(&mut sim);
         out.health_lost += (health - sim.stats().health).max(0);
         for e in sim.last_events() {
             match e {
@@ -284,6 +321,17 @@ pub struct Margin {
 /// The [`Margin`] of `script` from `start`, sampling at most `samples`
 /// changes spread evenly over the route.
 pub fn margin(start: &Sim, script: &InputScript, goal: &Goal, samples: usize) -> Margin {
+    margin_with(start, script, goal, samples, &CrabValues::default())
+}
+
+/// [`margin`], the crabs built along the way given their `crabs` values.
+pub fn margin_with(
+    start: &Sim,
+    script: &InputScript,
+    goal: &Goal,
+    samples: usize,
+    crabs: &CrabValues,
+) -> Margin {
     let held: Vec<u32> = script.ticks.iter().map(|t| t.held.0).collect();
     let all: Vec<usize> = changes(script).into_iter().filter(|&c| c > 0).collect();
     let picked: Vec<usize> = if all.len() <= samples {
@@ -302,8 +350,8 @@ pub fn margin(start: &Sim, script: &InputScript, goal: &Goal, samples: usize) ->
         // A tick late: the old mask runs through c.
         let mut late = held.clone();
         late[c] = held[c - 1];
-        let early_won = play(start, &InputScript::from_held(&early), goal).won();
-        let late_won = play(start, &InputScript::from_held(&late), goal).won();
+        let early_won = play_with(start, &InputScript::from_held(&early), goal, crabs).won();
+        let late_won = play_with(start, &InputScript::from_held(&late), goal, crabs).won();
         m.early_wins += usize::from(early_won);
         m.late_wins += usize::from(late_won);
         if !early_won || !late_won {
@@ -319,9 +367,23 @@ pub fn report_json(
     stats: &SearchStats,
     done_at: u64,
     margin: &Margin,
+    variants: &[(Played, Margin)],
     seconds: f64,
 ) -> String {
     let fragile: Vec<String> = margin.fragile.iter().map(|t| t.to_string()).collect();
+    let variants: Vec<String> = variants
+        .iter()
+        .map(|(p, m)| {
+            format!(
+                "{{\"done_at_tick\": {}, \"health_lost\": {}, \"margin_sampled\": {}, \"early_wins\": {}, \"late_wins\": {}}}",
+                p.done_at.map_or("null".to_string(), |t| t.to_string()),
+                p.health_lost,
+                m.sampled,
+                m.early_wins,
+                m.late_wins
+            )
+        })
+        .collect();
     format!(
         concat!(
             "{{\n",
@@ -334,6 +396,7 @@ pub fn report_json(
             "  \"deaths_pruned\": {},\n",
             "  \"landings_pruned\": {},\n",
             "  \"entries_pruned\": {},\n",
+            "  \"crab_variants_pruned\": {},\n",
             "  \"fragile_children\": {},\n",
             "  \"fragile_on_route\": {},\n",
             "  \"duplicates\": {},\n",
@@ -352,6 +415,7 @@ pub fn report_json(
             "    \"late_wins\": {},\n",
             "    \"fragile_ticks\": [{}]\n",
             "  }},\n",
+            "  \"crab_variants\": [{}],\n",
             "  \"search_seconds\": {:.1}\n",
             "}}\n"
         ),
@@ -367,6 +431,7 @@ pub fn report_json(
         stats.deaths_pruned,
         stats.landings_pruned,
         stats.entries_pruned,
+        stats.variants_pruned,
         stats.fragile,
         stats.fragile_on_route,
         stats.duplicates,
@@ -382,6 +447,7 @@ pub fn report_json(
         margin.early_wins,
         margin.late_wins,
         fragile.join(", "),
+        variants.join(", "),
         seconds
     )
 }
@@ -402,6 +468,12 @@ mod tests {
             hints: Some("level3".into()),
             start: Some((10355, 2051)),
             carry: None,
+            crabs: CrabValues::parse("crab 101 = 2, 300, 40\nnest_crab 1304 1 = 0, 0, 636097\n")
+                .unwrap(),
+            crab_variants: vec![
+                CrabValues::parse("crab 101 = 2, 382, 382\n").unwrap(),
+                CrabValues::parse("nest_crab * * = 1, 1000000, 1000000\n").unwrap(),
+            ],
         };
         let s = InputScript::from_held(&[0, 0, 1, 1, 0, 0]);
         let text = route_csv(&h, &s);
@@ -413,6 +485,14 @@ mod tests {
         assert_eq!(parsed.header.tuning, Some(ScriptTuning::Original));
         assert_eq!(parsed.header.seed, Some(42));
         assert!(text.contains("# mid_air_hit_fix = off\n"));
+        assert!(text.contains("# crab 101 = 2, 300, 40\n# nest_crab 1304 1 = 0, 0, 636097\n"));
+        assert!(text.contains("# crab_variant 2: nest_crab * * = 1, 1000000, 1000000\n"));
+        assert_eq!(
+            crab_values(&text),
+            Ok((h.crabs.clone(), h.crab_variants.clone()))
+        );
+        let e = crab_values("# crab 1 = 2\n").unwrap_err();
+        assert!(e.contains("the crab values"), "{e}");
     }
 
     #[test]
@@ -439,6 +519,8 @@ mod tests {
             hints: None,
             start: None,
             carry: Some(carry),
+            crabs: CrabValues::default(),
+            crab_variants: Vec::new(),
         };
         let text = route_csv(&h, &InputScript::from_held(&[0, 0]));
         assert_eq!(Header::parse(&text), h);

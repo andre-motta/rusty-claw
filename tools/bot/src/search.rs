@@ -56,6 +56,23 @@
 //! search keeps to routes that play the introduction (the normal entry) or
 //! to routes that skip it (the jump-in entry).
 //!
+//! A route can be made to win under several sets of the values the
+//! hermit crabs start with ([`CrabValues`], which the original game does
+//! not fix): [`SearchConfig::crabs`] is the set the route plays under,
+//! and [`search_report_with`] takes further games, each started under
+//! another set, that play every move too. A child in which Claw dies in
+//! one of them is dropped, and so is one that meets the goal while one of
+//! them has not won the level by the end of the same move (or, for a goal
+//! point, has not come within twice the goal's distance of it, on his
+//! feet when the goal asks it). The
+//! health Claw loses in them counts in a node's priority as his own does
+//! (the most any of them loses in each move), the priority's distance is
+//! that of the game furthest from the target, so none is left behind, and
+//! how far each one's Claw is from the route's own (across plus up or
+//! down, times [`SearchConfig::drift_cost`]) adds to it, so they keep
+//! together; a node becomes a segment root only with each of them within
+//! [`TOGETHER_PX`] of it.
+//!
 //! The search is deterministic. Its budget counts expanded nodes, never
 //! time; ties go by a hash of the seed and the node's state; and the
 //! children of a node may be played on several threads, but they are
@@ -67,6 +84,7 @@ use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use claw_sim::claw_frame::GameEvent;
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::logic::world_boss::fight;
 use claw_sim::logic::{
     ObjectData, boss_stage, enemy, floor_spike, goo_vent, path_elevator, pickup, platform,
@@ -182,6 +200,13 @@ pub struct SearchConfig {
     pub shadows: bool,
     /// How a boss level's route enters the boss room (see [`Intro`]).
     pub intro: Intro,
+    /// The values the crabs start with in the route's game and its
+    /// shadows (none: the plain default).
+    pub crabs: CrabValues,
+    /// Priority cost of each px Claw in a game under further crab values
+    /// is from the route's own Claw (across plus up or down), px (see
+    /// [`search_report_with`]).
+    pub drift_cost: i64,
 }
 
 /// How a route enters a boss room.
@@ -248,6 +273,8 @@ impl Default for SearchConfig {
             fragile_cost: 0,
             shadows: true,
             intro: Intro::Any,
+            crabs: CrabValues::default(),
+            drift_cost: 1,
         }
     }
 }
@@ -278,11 +305,11 @@ pub const SHADOWS: [Shadow; 2] = [Shadow::Ahead, Shadow::Draw];
 
 impl Shadow {
     /// `main` started over as this shadow; `last` is the mask it held last.
-    fn start(self, main: &Sim, last: u32) -> Sim {
+    fn start(self, main: &Sim, last: u32, crabs: &CrabValues) -> Sim {
         let mut sim = main.clone();
         match self {
             Shadow::Ahead => {
-                sim.step(input(last, last));
+                step(&mut sim, input(last, last), crabs);
             }
             Shadow::Draw => {
                 let mut r = claw_sim::rng::Rng::new(sim.rng_state());
@@ -294,39 +321,69 @@ impl Shadow {
     }
 }
 
-/// The games of a node: the route as found and its shadows (none when the
-/// fragility check is off).
+/// One tick of `sim`, the crabs it builds given their `crabs` values.
+fn step(sim: &mut Sim, t: TickInput, crabs: &CrabValues) {
+    sim.step(t);
+    crabs.apply(sim);
+}
+
+/// The crab values the games of a node play under: the route's own (its
+/// game and the shadows), and each further game's.
+#[derive(Debug, Clone, Copy)]
+struct Values<'a> {
+    main: &'a CrabValues,
+    variants: &'a [CrabValues],
+}
+
+/// The games of a node: the route as found, its shadows (none when the
+/// fragility check is off) and the games under further crab values.
 #[derive(Debug, Clone)]
 struct Worlds {
     main: Sim,
     shadows: Vec<Sim>,
+    variants: Vec<Sim>,
 }
 
 impl Worlds {
-    /// `main` with fresh shadows when `shadows` is set.
-    fn new(main: Sim, last: u32, shadows: bool) -> Worlds {
+    /// `main` with fresh shadows when `shadows` is set, and `variants`.
+    fn new(main: Sim, last: u32, shadows: bool, variants: Vec<Sim>, crabs: &CrabValues) -> Worlds {
         let shadows = if shadows {
-            SHADOWS.iter().map(|s| s.start(&main, last)).collect()
+            SHADOWS
+                .iter()
+                .map(|s| s.start(&main, last, crabs))
+                .collect()
         } else {
             Vec::new()
         };
-        Worlds { main, shadows }
+        Worlds {
+            main,
+            shadows,
+            variants,
+        }
     }
 
-    fn step(&mut self, input: TickInput) {
-        self.main.step(input);
+    /// Games kept for this node.
+    fn games(&self) -> usize {
+        1 + self.shadows.len() + self.variants.len()
+    }
+
+    fn step(&mut self, t: TickInput, values: Values) {
+        step(&mut self.main, t, values.main);
         for s in &mut self.shadows {
-            s.step(input);
+            step(s, t, values.main);
+        }
+        for (s, crabs) in self.variants.iter_mut().zip(values.variants) {
+            step(s, t, crabs);
         }
     }
 
     /// Starts the shadows of the bits of `reseed` over from the main game.
-    fn reseed(&mut self, reseed: u8, last: u32) {
+    fn reseed(&mut self, reseed: u8, last: u32, crabs: &CrabValues) {
         for (i, kind) in SHADOWS.iter().enumerate() {
             if reseed & (1 << i) != 0
                 && let Some(s) = self.shadows.get_mut(i)
             {
-                *s = kind.start(&self.main, last);
+                *s = kind.start(&self.main, last, crabs);
             }
         }
     }
@@ -347,6 +404,10 @@ pub struct SearchStats {
     /// Children dropped because they entered a boss room the other way
     /// (see [`SearchConfig::intro`]).
     pub entries_pruned: u32,
+    /// Children dropped because Claw died in a game under further crab
+    /// values, or it did not meet the goal there (see
+    /// [`search_report_with`]).
+    pub variants_pruned: u64,
     /// Children found fragile (see [`SearchConfig::fragile_cost`]).
     pub fragile: u64,
     /// Fragile moves along the route found.
@@ -390,8 +451,9 @@ pub struct Found {
 pub struct SearchFailure {
     /// What ran out or went wrong.
     pub reason: String,
-    /// What the search did.
-    pub stats: SearchStats,
+    /// What the search did (boxed: the failure stays small to pass
+    /// back).
+    pub stats: Box<SearchStats>,
 }
 
 impl std::fmt::Display for SearchFailure {
@@ -413,9 +475,24 @@ pub fn search(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<InputScript
 
 /// [`search`], with what the search did.
 pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Found, SearchFailure> {
+    search_report_with(start, &[], goal, cfg)
+}
+
+/// [`search_report`], with further games that every move is also played
+/// in: each the game at the start under another set of crab values (with
+/// the crabs built so far given that set's), stepped with that set. A
+/// child in which Claw dies in one of them is dropped, and so is one that
+/// meets the goal while one of them does not come as far (see
+/// [`played_under`]), so the route found wins under every set.
+pub fn search_report_with(
+    start: &Sim,
+    variants: &[(Sim, CrabValues)],
+    goal: Goal,
+    cfg: &SearchConfig,
+) -> Result<Found, SearchFailure> {
     let fail = |reason: String| SearchFailure {
         reason,
-        stats: SearchStats::default(),
+        stats: Box::default(),
     };
     // Keep the start mask held until it has lasted the spacing, so the
     // first change the search makes is far enough from the last one
@@ -428,8 +505,13 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
     }
     let lead = vec![cfg.start_held; lead_len];
     let mut start = start.clone();
+    let mut variant_sims: Vec<Sim> = variants.iter().map(|(s, _)| s.clone()).collect();
+    let variant_crabs: Vec<CrabValues> = variants.iter().map(|(_, c)| c.clone()).collect();
     for &held in &lead {
-        start.step(input(held, cfg.start_held));
+        step(&mut start, input(held, cfg.start_held), &cfg.crabs);
+        for (s, crabs) in variant_sims.iter_mut().zip(&variant_crabs) {
+            step(s, input(held, cfg.start_held), crabs);
+        }
     }
     let start = &start;
     let grid = Grid::build(start.level(), cfg.reach);
@@ -498,7 +580,10 @@ pub fn search_report(start: &Sim, goal: Goal, cfg: &SearchConfig) -> Result<Foun
             start.clone(),
             cfg.start_held,
             cfg.fragile_cost > 0 && cfg.shadows,
+            variant_sims,
+            &cfg.crabs,
         ),
+        variant_crabs,
         lead,
         earlier: Vec::new(),
         stats: SearchStats {
@@ -671,6 +756,9 @@ struct Node {
     /// Route tick of Claw's last landing and of the last press of jump.
     timing: Timing,
     lost: i32,
+    /// Health lost along the path in the further game that lost the most
+    /// in each move (see [`search_report_with`]).
+    variant_lost: i32,
     /// Fragile children along the path from the start.
     fragile: u32,
     /// The shadows started over from this node's game, one bit each.
@@ -698,6 +786,9 @@ enum Outcome {
     TooClose,
     /// A boss room was entered the other way (see [`SearchConfig::intro`]).
     WrongEntry,
+    /// Claw died in a game under further crab values, or the goal was met
+    /// while it was not met there (see [`search_report_with`]).
+    VariantLost,
     /// The goal was met in the tick of this index within the action.
     Done(usize),
 }
@@ -708,6 +799,8 @@ struct Child {
     reseed: u8,
     outcome: Outcome,
     lost: i32,
+    /// The most health a further game lost in the move.
+    variant_lost: i32,
     last: u32,
     timing: Timing,
     fragile: bool,
@@ -719,6 +812,8 @@ type OpenEntry = Reverse<(i64, u64, u32)>;
 
 struct Search<'a> {
     cfg: &'a SearchConfig,
+    /// The crab values of each further game (see [`search_report_with`]).
+    variant_crabs: Vec<CrabValues>,
     goal: Goal,
     /// The boss end the goal follows, on a level that ends with a boss.
     boss: Option<BossGoal>,
@@ -761,6 +856,7 @@ impl Search<'_> {
             last: self.cfg.start_held,
             timing: Timing::default(),
             lost: 0,
+            variant_lost: 0,
             fragile: 0,
             reseed: 0,
             h,
@@ -815,6 +911,10 @@ impl Search<'_> {
                         self.stats.entries_pruned += 1;
                         continue;
                     }
+                    Outcome::VariantLost => {
+                        self.stats.variants_pruned += 1;
+                        continue;
+                    }
                     Outcome::Done(_) => return Ok(self.found(id, &child)),
                     Outcome::Alive => {}
                 }
@@ -828,12 +928,31 @@ impl Search<'_> {
                     continue;
                 }
                 let h = self.distance(&child.worlds.main);
+                // The search is guided by the game furthest from the target:
+                // a further game left behind is steered on too.
+                let guide = child
+                    .worlds
+                    .variants
+                    .iter()
+                    .map(|v| self.distance(v))
+                    .fold(h, u32::max);
+                // A further game whose Claw drifts away from the route's
+                // own will not play the route's later moves the same way.
+                let drift: i64 = child
+                    .worlds
+                    .variants
+                    .iter()
+                    .map(|v| apart(&child.worlds.main, v))
+                    .sum::<i64>()
+                    * self.cfg.drift_cost;
                 let lost = node.lost + child.lost;
+                let variant_lost = node.variant_lost + child.variant_lost;
                 let fragile = node.fragile + u32::from(child.fragile);
                 self.stats.fragile += u64::from(child.fragile);
-                let prio = i64::from(h.min(UNREACHABLE / 2))
+                let prio = i64::from(guide.min(UNREACHABLE / 2))
+                    + drift
                     + self.cfg.tick_cost * ticks as i64
-                    + self.cfg.health_cost * i64::from(lost)
+                    + self.cfg.health_cost * i64::from(lost + variant_lost)
                     + self.cfg.fragile_cost * i64::from(fragile);
                 let cid = self.nodes.len() as u32;
                 let tie = mix(self.cfg.seed ^ key);
@@ -844,6 +963,7 @@ impl Search<'_> {
                     last: child.last,
                     timing: child.timing,
                     lost,
+                    variant_lost,
                     fragile,
                     reseed: child.reseed,
                     h,
@@ -860,7 +980,19 @@ impl Search<'_> {
                 let hint = child.hint && self.targets[self.target].point.is_some();
                 // A boss level's next stage starts a fresh segment.
                 let staged = stage.is_some_and(|s| boss_stage(&child.worlds.main) > s);
-                if hint || staged || (child.checkpoint && ahead >= self.cfg.checkpoint_progress) {
+                // A segment starts only where the further games are with
+                // the route's own: a root they strayed from would leave them
+                // to follow moves made for another place.
+                let together = child
+                    .worlds
+                    .variants
+                    .iter()
+                    .all(|v| apart(&child.worlds.main, v) <= TOGETHER_PX);
+                if together
+                    && (hint
+                        || staged
+                        || (child.checkpoint && ahead >= self.cfg.checkpoint_progress))
+                {
                     self.commit(cid, child.worlds, hint);
                     break;
                 }
@@ -1007,15 +1139,24 @@ impl Search<'_> {
             self.cache[&cur].clone()
         };
         let mut prev = self.nodes[cur as usize].last;
+        let values = self.values();
         for n in path.into_iter().rev() {
             let node = self.nodes[n as usize];
             for held in node.action.expect("a non-root node has an action").masks() {
-                w.step(input(held, prev));
+                w.step(input(held, prev), values);
                 prev = held;
             }
-            w.reseed(node.reseed, prev);
+            w.reseed(node.reseed, prev, values.main);
         }
         w
+    }
+
+    /// The crab values the games play under.
+    fn values(&self) -> Values<'_> {
+        Values {
+            main: &self.cfg.crabs,
+            variants: &self.variant_crabs,
+        }
     }
 
     /// Keeps the game of an expanded node, as a base for rebuilding its
@@ -1028,8 +1169,9 @@ impl Search<'_> {
 
     fn cache_put(&mut self, id: u32, worlds: Worlds) {
         let n = self.nodes[id as usize];
-        // Each node keeps its shadows too: the budget counts games.
-        let games = 1 + worlds.shadows.len();
+        // Each node keeps its shadows and further games too: the budget
+        // counts games.
+        let games = worlds.games();
         self.cache.insert(id, worlds);
         self.cache_order.insert((n.prio, n.tie, id));
         while self.cache.len() > (self.cfg.cached_sims / games).max(1) {
@@ -1057,10 +1199,11 @@ impl Search<'_> {
         };
         let goal = &self.goal;
         let point = self.targets[self.target].point;
+        let values = self.values();
         if threads <= 1 {
             return choices
                 .iter()
-                .map(|&a| play(parent, from, a, goal, point))
+                .map(|&a| play(parent, from, a, goal, point, values))
                 .collect();
         }
         let mut slots: Vec<Option<Child>> = (0..choices.len()).map(|_| None).collect();
@@ -1073,7 +1216,7 @@ impl Search<'_> {
                             .enumerate()
                             .skip(t)
                             .step_by(threads)
-                            .map(|(i, &a)| (i, play(parent, from, a, goal, point)))
+                            .map(|(i, &a)| (i, play(parent, from, a, goal, point, values)))
                             .collect::<Vec<_>>()
                     })
                 })
@@ -1132,18 +1275,19 @@ impl Search<'_> {
     fn failure(&self, reason: &str) -> SearchFailure {
         SearchFailure {
             reason: reason.to_string(),
-            stats: self.stats.clone(),
+            stats: Box::new(self.stats.clone()),
         }
     }
 
     fn log(&self, id: u32) {
         let n = self.nodes[id as usize];
         eprintln!(
-            "claw-bot: {} nodes, {} open, {} kept, {} rebuilt, node at tick {} with {} px to go, closest {} px at {:?}, {:.0} s",
+            "claw-bot: {} nodes, {} open, {} kept, {} rebuilt, {} lost in further games, node at tick {} with {} px to go, closest {} px at {:?}, {:.0} s",
             self.stats.expanded,
             self.open.len(),
             self.cache.len(),
             self.stats.rebuilt,
+            self.stats.variants_pruned,
             n.ticks,
             n.h,
             self.stats.best_distance,
@@ -1211,6 +1355,7 @@ fn play(
     action: Action,
     goal: &Goal,
     hint: Option<(i32, i32, i32)>,
+    values: Values,
 ) -> Child {
     let parent = &parents.main;
     let mut sim = parent.clone();
@@ -1226,7 +1371,7 @@ fn play(
         let health = sim.stats().health;
         let airborne = actions::phase(&sim) == actions::Phase::Air;
         let jump = held & !prev & actions::JUMP != 0;
-        sim.step(input(held, prev));
+        step(&mut sim, input(held, prev), values.main);
         prev = held;
         if jump {
             if within(timing.landed, tick, from.land_gap) {
@@ -1289,15 +1434,31 @@ fn play(
             break;
         }
     }
+    let mut variants = Vec::with_capacity(parents.variants.len());
+    let mut variant_lost = 0;
+    if matches!(outcome, Outcome::Alive | Outcome::Done(_)) {
+        for (v, crabs) in parents.variants.iter().zip(values.variants) {
+            match played_under(v, from.last, &action.masks(), goal, crabs) {
+                Some((s, done, lost)) if done || outcome == Outcome::Alive => {
+                    variant_lost = variant_lost.max(lost);
+                    variants.push(s);
+                }
+                _ => {
+                    outcome = Outcome::VariantLost;
+                    break;
+                }
+            }
+        }
+    }
     let mut shadows = Vec::with_capacity(parents.shadows.len());
     let mut reseed = 0u8;
     if outcome == Outcome::Alive {
         for (i, (shadow, kind)) in parents.shadows.iter().zip(SHADOWS).enumerate() {
-            match played_on(shadow, from.last, &action.masks(), &sim) {
+            match played_on(shadow, from.last, &action.masks(), &sim, values.main) {
                 Some(s) => shadows.push(s),
                 None => {
                     reseed |= 1 << i;
-                    shadows.push(kind.start(&sim, prev));
+                    shadows.push(kind.start(&sim, prev, values.main));
                 }
             }
         }
@@ -1307,7 +1468,7 @@ fn play(
         && (reseed != 0
             || shifted(action, from.last)
                 .iter()
-                .any(|masks| !holds_up(parent, from.last, masks, &sim))
+                .any(|masks| !holds_up(parent, from.last, masks, &sim, values.main))
             || (1..=2).any(|draws| {
                 let mut other = parent.clone();
                 let mut r = claw_sim::rng::Rng::new(other.rng_state());
@@ -1315,14 +1476,19 @@ fn play(
                     r.next_u15();
                 }
                 other.set_rng_state(r.state());
-                !holds_up(&other, from.last, &action.masks(), &sim)
+                !holds_up(&other, from.last, &action.masks(), &sim, values.main)
             }));
     Child {
         action,
-        worlds: Worlds { main: sim, shadows },
+        worlds: Worlds {
+            main: sim,
+            shadows,
+            variants,
+        },
         reseed,
         outcome,
         lost,
+        variant_lost,
         last: prev,
         timing,
         fragile,
@@ -1361,18 +1527,92 @@ fn shifted(action: Action, last: u32) -> Vec<Vec<u32>> {
 /// him: in the same phase, within [`FRAGILE_DY`] up or down (at any
 /// height when both are in the flight of a throw) and [`FRAGILE_PX`]
 /// across.
-fn holds_up(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> bool {
-    played_on(parent, last, masks, nominal).is_some()
+fn holds_up(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim, crabs: &CrabValues) -> bool {
+    played_on(parent, last, masks, nominal, crabs).is_some()
+}
+
+/// `masks` played in the game `parent` under further crab values `crabs`
+/// (whose last mask was `last`): the game after them, whether it came as
+/// far as `goal` asks and the health Claw lost, or `None` when he died. A level complete goal
+/// is met when the level was won (in these masks or before them; play
+/// stops there); a goal point when Claw is within twice its distance of
+/// it at some tick (on his feet when the goal asks it), so a game that
+/// strays a little from the route's own still counts.
+fn played_under(
+    parent: &Sim,
+    last: u32,
+    masks: &[u32],
+    goal: &Goal,
+    crabs: &CrabValues,
+) -> Option<(Sim, bool, i32)> {
+    let mut sim = parent.clone();
+    let lives = sim.stats().lives;
+    let mut lost = 0;
+    let mut prev = last;
+    // A game whose level ended in an earlier move stays won.
+    let mut done = (*goal == Goal::LevelComplete && sim.level_ended()) || near_goal(&sim, goal);
+    for &held in masks {
+        if done {
+            break;
+        }
+        let health = sim.stats().health;
+        step(&mut sim, input(held, prev), crabs);
+        lost += (health - sim.stats().health).max(0);
+        prev = held;
+        for e in sim.last_events() {
+            match e {
+                GameEvent::LevelComplete { .. } => done |= *goal == Goal::LevelComplete,
+                GameEvent::ClawDied { .. } | GameEvent::GameOver => return None,
+                _ => {}
+            }
+        }
+        if dying(&sim) || sim.stats().lives < lives {
+            return None;
+        }
+        done |= near_goal(&sim, goal);
+    }
+    Some((sim, done, lost))
+}
+
+/// How far Claw in a game under further crab values may be from the
+/// route's own Claw (across plus up or down) for a node to become a
+/// segment root, px.
+pub const TOGETHER_PX: i64 = 2 * FRAGILE_PX as i64;
+
+/// How far apart Claw is in two games, across plus up or down, px (a
+/// large number when one has no Claw).
+fn apart(a: &Sim, b: &Sim) -> i64 {
+    match (a.player(), b.player()) {
+        (Some(p), Some(q)) => i64::from((p.x - q.x).abs() + (p.y - q.y).abs()),
+        _ => i64::from(UNREACHABLE / 2),
+    }
+}
+
+/// True when Claw is within twice a goal point's distance of it, and on
+/// his feet, a ladder or a rope there when the goal asks it (never for the
+/// level complete goal).
+fn near_goal(sim: &Sim, goal: &Goal) -> bool {
+    match *goal {
+        Goal::LevelComplete => false,
+        Goal::Reach { x, y, radius } => near(sim, x, y, 2 * radius),
+        Goal::Stand { x, y, radius } => near(sim, x, y, 2 * radius) && on_foot(sim),
+    }
 }
 
 /// `masks` played from `parent` as [`holds_up`] plays them: the game
 /// after them when it holds up, else `None`.
-fn played_on(parent: &Sim, last: u32, masks: &[u32], nominal: &Sim) -> Option<Sim> {
+fn played_on(
+    parent: &Sim,
+    last: u32,
+    masks: &[u32],
+    nominal: &Sim,
+    crabs: &CrabValues,
+) -> Option<Sim> {
     let mut sim = parent.clone();
     let lives = sim.stats().lives;
     let mut prev = last;
     for &held in masks {
-        sim.step(input(held, prev));
+        step(&mut sim, input(held, prev), crabs);
         prev = held;
         if dying(&sim) || sim.stats().lives < lives {
             return None;
