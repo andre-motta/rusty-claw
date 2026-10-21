@@ -26,9 +26,10 @@
 //!   lies 4249 px left of its patrol: it is built on its limit, 10629,
 //!   and goes to sleep at once.
 //!
-//! A crab starts with a second range box and a side the original leaves
-//! over from memory; each store's crabs get the values its runs show
-//! ([`leftovers`]) as soon as they are built.
+//! A crab starts with a second range box and a side the original game
+//! does not fix (they differ from crab to crab and from run to run); each
+//! store's crabs get the values its runs show ([`leftovers`]) as soon as
+//! they are built.
 //!
 //! When the reference runs also list the objects per step (`obj-log.csv`
 //! beside each run, in the folder named by `CLAW_REFERENCE_RUNS`, by

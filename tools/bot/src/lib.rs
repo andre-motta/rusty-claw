@@ -36,4 +36,7 @@ pub mod field;
 pub mod route;
 pub mod search;
 
-pub use search::{Found, Goal, SearchConfig, SearchFailure, SearchStats, search, search_report};
+pub use search::{
+    Found, Goal, SearchConfig, SearchFailure, SearchStats, search, search_report,
+    search_report_with,
+};

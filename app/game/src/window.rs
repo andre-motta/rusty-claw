@@ -61,6 +61,7 @@ use claw_render::{
     SceneBuilder, ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
 };
 use claw_sim::input::MenuScreen;
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::{Sim, SimConfig};
 use claw_ui::hud::{FONT, Hud, HudArt, marker_layout, marker_lines};
@@ -98,6 +99,7 @@ use crate::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, ReplayedHold
 use crate::saves::SaveStore;
 use crate::session::{
     Circles, GameRecording, HoldChange, LevelRecording, Session, Span, start_sim,
+    start_sim_with_crabs,
 };
 use crate::settings::{Aspect, Mode, Scale, Settings, UserDirs, WINDOW_SIZES, view_for};
 
@@ -894,15 +896,17 @@ impl App {
             };
             // A watched recording starts as it was recorded: with the
             // progress carried in, at its save point or its start point.
-            let start = match &self.mode {
-                WindowMode::Watch(rec) => rec.start.clone(),
-                _ => claw_sim::StartState::default(),
+            // Its hermit crabs start with the values its header names.
+            let (start, crabs) = match &self.mode {
+                WindowMode::Watch(rec) => (rec.start.clone(), rec.crabs.clone()),
+                _ => (claw_sim::StartState::default(), CrabValues::default()),
             };
-            let sim = start_sim(
+            let sim = start_sim_with_crabs(
                 bundle.sim_level.clone(),
                 self.settings.sim_config(first_output),
                 start.clone(),
                 self.settings.start,
+                &crabs,
             );
             // The benchmark plays the level's combat route, planned on a
             // copy of the game (from the given start point when there is
@@ -939,7 +943,11 @@ impl App {
             }
             match &self.mode {
                 WindowMode::Play => {}
-                WindowMode::Watch(rec) => session = session.with_replay(rec.script.clone()),
+                WindowMode::Watch(rec) => {
+                    session = session
+                        .with_replay(rec.script.clone())
+                        .with_crab_values(crabs);
+                }
                 WindowMode::Bench(seconds) => {
                     let r = bench_route.expect("made for the benchmark");
                     session = session.with_replay(r.script.clone());

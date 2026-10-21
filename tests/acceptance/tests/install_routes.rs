@@ -28,7 +28,12 @@
 //!   random state the level's set-up leaves, which is the state the
 //!   reference runs of that level start from ([`LEVEL_SEEDS`]);
 //! - the same route stepped in the bot's own configuration gives the same
-//!   digests, so what the bot found is what the game plays.
+//!   digests, so what the bot found is what the game plays;
+//! - the hermit crabs start with the values the route's header gives them
+//!   (`# crab ...` lines; the original game does not fix them), each crab
+//!   as it is built, and the route also wins, with no death, under each
+//!   further set of values its header names (`# crab_variant N: ...`),
+//!   played twice the same way.
 //!
 //! A route file `<stem>.level<N>.csv` is level N of the game whose first
 //! level is `<stem>.csv`, as a recorded game names its files. Each such
@@ -36,7 +41,8 @@
 //! the booty screen leads into the next level with the progress carried,
 //! which must be the progress the next file starts with, and that file,
 //! played as a replay of it plays (with the seed and tuning it names), wins
-//! that level too; twice, with the same traces.
+//! that level too; twice, with the same traces. Each level's crabs start
+//! with the values its file gives them.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -51,9 +57,11 @@ use claw_frame::GameEvent;
 use claw_game::flow::{self, Effect, Flow, Screen, Start};
 use claw_game::load::{LevelBundle, load_level};
 use claw_game::new_sim;
+use claw_game::pause::PauseInput;
 use claw_game::saves::SaveStore;
 use claw_game::session::{LevelRecording, Session, script_behaviour};
 use claw_game::settings::{LevelChoice, Settings, UserDirs};
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::logic::world_boss::fight;
 use claw_sim::player::state;
 use claw_sim::trace::TraceRow;
@@ -172,10 +180,11 @@ fn too_close(script: &InputScript) -> Vec<usize> {
     out
 }
 
-/// Steps `script` from `start`, returning the player and the digest
-/// before every tick and after the last.
-fn step_through(start: &Sim, script: &InputScript) -> (Player, Vec<u64>) {
-    let mut p = Player::new(start.clone());
+/// Steps `script` from `start` with the crabs starting with `crabs`,
+/// returning the player and the digest before every tick and after the
+/// last.
+fn step_through(start: &Sim, script: &InputScript, crabs: &CrabValues) -> (Player, Vec<u64>) {
+    let mut p = Player::with_crabs(start.clone(), crabs.clone());
     let mut digests = Vec::with_capacity(script.ticks.len() + 1);
     for t in &script.ticks {
         digests.push(digest(&p.sim));
@@ -240,6 +249,8 @@ fn install_routes_win_the_same_way_every_time() {
         let script = InputScript::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
         let h = header(&text);
         let rec = LevelRecording::parse(&text).expect("the route parses as a recording");
+        let (crabs, crab_variants) =
+            route::crab_values(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(!script.ticks.is_empty(), "{name}: empty route");
         assert_eq!(
             too_close(&script),
@@ -268,7 +279,7 @@ fn install_routes_win_the_same_way_every_time() {
         );
         let end = boss_end(&start);
 
-        let (p, stepped) = step_through(&start, &script);
+        let (p, stepped) = step_through(&start, &script, &crabs);
         assert!(p.teleports.is_empty(), "{name}: the route moved Claw");
         let won = p
             .events
@@ -284,7 +295,7 @@ fn install_routes_win_the_same_way_every_time() {
         );
         // No tick moves Claw further than input can, but the door into the
         // boss room; and what happens in the boss room.
-        let mut q = Player::new(start.clone());
+        let mut q = Player::with_crabs(start.clone(), crabs.clone());
         let mut at = q.at();
         let mut boss = BossRun {
             flags: vec![q.sim.boss().fight()],
@@ -381,17 +392,54 @@ fn install_routes_win_the_same_way_every_time() {
             }
             None => Sim::new(bundle.sim_level.clone(), bot_cfg),
         };
-        let (_, bot) = step_through(&bot_start, &script);
+        let (_, bot) = step_through(&bot_start, &script, &crabs);
         assert_eq!(bot, stepped, "{name}: the bot's configuration differs");
 
+        // Under each further set of crab values: won with no death, twice
+        // the same way.
+        let mut variant_note = String::new();
+        for (i, v) in crab_variants.iter().enumerate() {
+            let (vp, once) = step_through(&start, &script, v);
+            let (_, twice) = step_through(&start, &script, v);
+            assert_eq!(
+                once,
+                twice,
+                "{name}: crab values {} play differently",
+                i + 1
+            );
+            let won = vp
+                .events
+                .iter()
+                .find(|(_, e)| matches!(e, GameEvent::LevelComplete { .. }))
+                .map(|&(t, _)| t)
+                .unwrap_or_else(|| panic!("{name}: not won under crab values {}", i + 1));
+            assert!(
+                !vp.events
+                    .iter()
+                    .any(|(_, e)| matches!(e, GameEvent::ClawDied { .. } | GameEvent::GameOver)),
+                "{name}: Claw died under crab values {}",
+                i + 1
+            );
+            variant_note.push_str(&format!(
+                "; under crab values {}: won at tick {won}, health {}",
+                i + 1,
+                vp.health()
+            ));
+        }
+
         println!(
-            "{name}: level {} ({} tuning, seed {}) won at tick {} of {}, health {}{fight_note}",
+            "{name}: level {} ({} tuning, seed {}) won at tick {} of {}, health {}{fight_note}{}{variant_note}",
             h.level,
             if h.original { "original" } else { "default" },
             h.seed,
             won_at.unwrap(),
             script.ticks.len(),
-            p.health()
+            p.health(),
+            if crabs.is_empty() {
+                String::new()
+            } else {
+                format!(", {} crab value(s) given", crabs.entries.len())
+            }
         );
     }
 }
@@ -417,6 +465,8 @@ struct Game {
     settings: Settings,
     /// The route of each level, by number.
     files: BTreeMap<u32, LevelRecording>,
+    /// The values each level's crabs start with, by number.
+    crabs: BTreeMap<u32, CrabValues>,
     session: Option<Session>,
     /// Each level started: its number and the start the flow gave it.
     started: Vec<(u32, StartState)>,
@@ -425,7 +475,12 @@ struct Game {
 }
 
 impl Game {
-    fn new(install: &Path, tmp: &Path, files: BTreeMap<u32, LevelRecording>) -> Game {
+    fn new(
+        install: &Path,
+        tmp: &Path,
+        files: BTreeMap<u32, LevelRecording>,
+        crabs: BTreeMap<u32, CrabValues>,
+    ) -> Game {
         let d = dirs(tmp);
         let first = *files.keys().next().expect("a first level");
         let mut settings = Settings::new(install, LevelChoice::Retail(first));
@@ -448,6 +503,7 @@ impl Game {
             install: install.to_path_buf(),
             settings,
             files,
+            crabs,
             session: None,
             started: Vec::new(),
             won: Vec::new(),
@@ -478,6 +534,8 @@ impl Game {
                         let sim = start_level(&bundle, cfg, &start);
                         let mut session = Session::new(sim).with_replay(rec.script.clone());
                         session.record_trace();
+                        let crabs = self.crabs.get(&n).cloned().unwrap_or_default();
+                        session.set_before_tick(Box::new(move |_, sim| crabs.apply(sim)));
                         self.session = Some(session);
                         self.started.push((n, start));
                     }
@@ -558,6 +616,21 @@ impl Game {
     }
 }
 
+/// `rec` replayed from `sim` as [`LevelRecording::replay`] replays it, the
+/// crabs starting with `crabs`.
+fn replay_with_crabs(rec: &LevelRecording, sim: Sim, crabs: &CrabValues) -> Session {
+    let mut session = Session::new(sim)
+        .with_pause_input(rec.switches.pause_input.unwrap_or(PauseInput::Original))
+        .with_replay(rec.script.clone());
+    session.record_trace();
+    let crabs = crabs.clone();
+    session.set_before_tick(Box::new(move |_, sim| crabs.apply(sim)));
+    while session.replaying() {
+        session.frame(Duration::from_micros(claw_sim::input::TICK_US));
+    }
+    session
+}
+
 /// `rows` with the input source left out (a replay and the game name it
 /// differently).
 fn plain(rows: &[TraceRow]) -> Vec<TraceRow> {
@@ -585,10 +658,13 @@ fn install_routes_play_one_game_through_the_booty_screen() {
             (
                 LevelRecording::parse(&text).expect("the route parses"),
                 header(&text),
+                route::crab_values(&text)
+                    .unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+                    .0,
             )
         };
-        let (rec1, h1) = read(&first);
-        let (rec2, h2) = read(&later);
+        let (rec1, h1, crabs1) = read(&first);
+        let (rec2, h2, crabs2) = read(&later);
         let name = later.file_name().unwrap().to_string_lossy().into_owned();
         assert_eq!(h2.level, n, "{name}: the level its name says");
         assert_eq!(h1.level + 1, n, "{name}: the level after the first file's");
@@ -603,7 +679,8 @@ fn install_routes_play_one_game_through_the_booty_screen() {
         for _ in 0..2 {
             let tmp = TempDir::new().unwrap();
             let files = BTreeMap::from([(h1.level, rec1.clone()), (n, rec2.clone())]);
-            let mut g = Game::new(&root, tmp.path(), files);
+            let crabs = BTreeMap::from([(h1.level, crabs1.clone()), (n, crabs2.clone())]);
+            let mut g = Game::new(&root, tmp.path(), files, crabs);
             assert_eq!(g.flow.screen(), Screen::Play);
             g.win_level();
             g.next_level();
@@ -629,7 +706,11 @@ fn install_routes_play_one_game_through_the_booty_screen() {
         );
         // Each level as played in the game is its route played on its own.
         for (level, trace) in &traces[0] {
-            let rec = if *level == n { &rec2 } else { &rec1 };
+            let (rec, crabs) = if *level == n {
+                (&rec2, &crabs2)
+            } else {
+                (&rec1, &crabs1)
+            };
             let choice = LevelChoice::Retail(*level);
             let bundle = load_level(&root, &choice).unwrap();
             let base = Settings::new(&root, choice);
@@ -638,7 +719,7 @@ fn install_routes_play_one_game_through_the_booty_screen() {
                 rec.sim_config(base.sim_config(base.res)),
                 &rec.start,
             );
-            let s = rec.replay(sim);
+            let s = replay_with_crabs(rec, sim, crabs);
             let won = trace.len();
             assert!(
                 s.trace().len() >= won,

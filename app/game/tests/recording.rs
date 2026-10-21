@@ -8,17 +8,22 @@
 //! (read from `CLAW_INSTALL` at run time, skipped when it is unset).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use claw_frame::{Buttons, SimulatedRefresh};
 use claw_game::input::Recorder;
 use claw_game::session::{
     GameRecording, LevelRecording, Span, behaviour_comment, recording_csv, replay_trace,
-    save_recording, script_behaviour, start_sim,
+    replay_trace_with_crabs, save_recording, script_behaviour, start_sim, start_sim_with_crabs,
 };
 use claw_game::settings::{LevelChoice, Settings};
 use claw_game::{Session, load_level, replay_headless};
+use claw_sim::anim::Animation;
 use claw_sim::input::{MenuScreen, ScriptCommand};
+use claw_sim::level::ObjectSpec;
+use claw_sim::logic::enemy::crab::{self, CrabKey, Leftovers, nest};
+use claw_sim::logic::enemy::field;
 use claw_sim::trace::{self, TraceRow};
 use claw_sim::tuning::PlayAids;
 use claw_sim::{
@@ -712,4 +717,134 @@ fn a_level_played_without_aids_has_no_aid_line() {
     assert!(!text.contains("infinite_lives"), "{text}");
     let r = LevelRecording::parse(&text).unwrap();
     assert_eq!(r.sim_config(SimConfig::default()).aids, invincible);
+}
+
+/// A level with a hermit crab placed at x 1300 and a crab nest at x 2000
+/// whose box (x 1700 to 1800) hatches its three crabs.
+fn crab_level() -> SimLevel {
+    let mut level = level();
+    let mut c = ObjectSpec::at("HermitCrab", 1300, 900, 0);
+    c.image_set = crab::IMAGE_SET.into();
+    c.frame = 1;
+    c.record[field::X_MIN] = 1200;
+    c.record[field::X_MAX] = 1400;
+    let mut n = ObjectSpec::at("CrabNest", 2000, 896, 0);
+    n.image_set = nest::IMAGE_SET.into();
+    n.frame = 1;
+    n.record[field::USER_0] = 3;
+    n.record[field::X_MIN] = 1700;
+    n.record[field::Y_MIN] = 800;
+    n.record[field::X_MAX] = 1800;
+    n.record[field::Y_MAX] = 1000;
+    level.objects.extend([c, n]);
+    // The nest's hatch and the crabs' crouch, hide and fall, with the
+    // lengths of their level's.
+    let k = |s: &str| format!("LEVEL_HERMITCRAB_{s}");
+    for a in [
+        Animation::once(
+            nest::HATCH_ANIM,
+            &[(1, 50), (2, 50), (3, 50), (4, 50), (5, 50), (6, 0)],
+        ),
+        Animation::once(&k("CROUCH4"), &[(801, 50), (800, 200)]),
+        Animation::looping(
+            &k("HIDE"),
+            &[(802, 750), (801, 500), (802, 200), (801, 750)],
+        ),
+        Animation::looping(&k("FALL"), &[(200, 100)]),
+    ] {
+        level.animations.insert(a.key.clone(), Arc::new(a));
+    }
+    level
+}
+
+/// The record of the first object of `logic` in `sim`.
+fn record_of(sim: &Sim, logic: &str) -> u32 {
+    sim.objects()
+        .all()
+        .find(|(_, o)| &*o.logic == logic && o.record.is_some())
+        .map(|(_, o)| o.serial)
+        .unwrap()
+}
+
+/// What every hermit crab of `sim` started with, by which crab it is.
+fn crab_values(sim: &Sim) -> Vec<(CrabKey, Leftovers)> {
+    let mut out: Vec<(CrabKey, Leftovers)> = sim
+        .objects()
+        .all()
+        .filter_map(|(id, o)| {
+            Some((
+                crab::which_crab(sim.objects(), id)?,
+                crab::fields_of(o)?.leftovers,
+            ))
+        })
+        .collect();
+    out.sort_by_key(|(k, _)| format!("{k}"));
+    out
+}
+
+#[test]
+fn a_replay_gives_the_crabs_the_values_its_header_names() {
+    let fresh = Sim::new(crab_level(), SimConfig::default());
+    let (placed, nest) = (
+        record_of(&fresh, "HermitCrab"),
+        record_of(&fresh, "CrabNest"),
+    );
+    // Claw starts in the nest's box: its crabs hatch while he settles.
+    let mut text = format!(
+        "# level 2\n# start_at = 1750, 700\n# crab {placed} = 2, 578, 432\n\
+         # nest_crab {nest} 2 = 7, 382, 382\n# nest_crab * * = 1, 1000000, 1000000\n\
+         tick,held_mask,pressed_mask\n"
+    );
+    for t in 0..120 {
+        text.push_str(&format!("{t},0x0,0x0\n"));
+    }
+    let r = LevelRecording::parse(&text).unwrap();
+    assert_eq!(r.crabs.entries.len(), 3);
+    let cfg = r.sim_config(SimConfig::default());
+    let session = r.replay(r.start_sim(crab_level(), cfg.clone()));
+    let l = |side, w, h| Leftovers { side, box1: (w, h) };
+    let covering = l(1, 1_000_000, 1_000_000);
+    let want = vec![
+        (CrabKey::Placed(Some(placed)), l(2, 578, 432)),
+        (CrabKey::Hatched(Some(nest), Some(1)), covering),
+        (CrabKey::Hatched(Some(nest), Some(2)), l(7, 382, 382)),
+        (CrabKey::Hatched(Some(nest), Some(3)), covering),
+    ];
+    assert_eq!(crab_values(session.sim()), want);
+    let live = rows_of(session.trace());
+    // `--replay FILE --trace OUT` plays the same game at any display rate.
+    for hz in [60.0, 144.0] {
+        let sim = start_sim_with_crabs(
+            crab_level(),
+            cfg.clone(),
+            r.start.clone(),
+            r.start_at,
+            &r.crabs,
+        );
+        let rows = replay_trace_with_crabs(
+            sim,
+            r.script.clone(),
+            claw_game::pause::PauseInput::Original,
+            hz,
+            r.crabs.clone(),
+        );
+        assert_eq!(rows_of(&rows), live, "{hz} Hz");
+    }
+    // Without the values every crab keeps the plain default.
+    let plain = LevelRecording::parse(
+        &text
+            .lines()
+            .filter(|l| !l.contains("crab"))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    assert!(plain.crabs.is_empty());
+    let session = plain.replay(plain.start_sim(crab_level(), cfg));
+    assert!(
+        crab_values(session.sim())
+            .iter()
+            .all(|(_, v)| *v == Leftovers::default())
+    );
+    assert_eq!(crab_values(session.sim()).len(), 4);
 }

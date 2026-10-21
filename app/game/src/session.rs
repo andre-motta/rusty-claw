@@ -154,6 +154,7 @@ use claw_frame::{
     TickInput, ViewConfig,
 };
 use claw_sim::input::{MenuScreen, ScriptCommand, ScriptTuning};
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::player::death::{CLOSE_MS, HOLD_MS, OPEN_MS};
 use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::trace::TraceRow;
@@ -401,6 +402,9 @@ pub struct Session {
     swing: SwingTrack,
     /// Draw rope swings smoothly between the rope's frames.
     smooth_rope: bool,
+    /// What the hermit crabs start with, given to each crab after the
+    /// tick it was built in (see [`Session::with_crab_values`]).
+    crabs: CrabValues,
 }
 
 impl std::fmt::Debug for Session {
@@ -451,7 +455,20 @@ impl Session {
             presentation: None,
             swing: SwingTrack::default(),
             smooth_rope: true,
+            crabs: CrabValues::default(),
         }
+    }
+
+    /// Gives the hermit crabs the values `crabs` names (a replayed
+    /// script's `# crab` and `# nest_crab` header lines): each crab built
+    /// from now on gets its values after the tick it was built in, before
+    /// its first tick of its own, as a replay with `claw-replay` gives
+    /// them. Give the crabs built with the level theirs when the level
+    /// starts ([`start_sim_with_crabs`]). Without entries nothing changes.
+    pub fn with_crab_values(mut self, crabs: CrabValues) -> Session {
+        crabs.apply(&mut self.sim);
+        self.crabs = crabs;
+        self
     }
 
     /// Presents the frames in `view` from now on: a view wider than the
@@ -1034,6 +1051,7 @@ impl Session {
             resume_input,
             bodies,
             swing,
+            crabs,
             ..
         } = self;
         let report = driver.frame(Duration::from_micros(us), || {
@@ -1067,6 +1085,7 @@ impl Session {
             } else {
                 sim.step(input)
             };
+            crabs.apply(sim);
             outputs.add(&snapshot.audio, &snapshot.events);
             if let Some(rows) = trace {
                 let source = if scripted.is_some() {
@@ -1741,9 +1760,25 @@ pub fn start_sim(
     start: StartState,
     at: Option<(i32, i32)>,
 ) -> Sim {
+    start_sim_with_crabs(level, cfg, start, at, &CrabValues::default())
+}
+
+/// [`start_sim`], with the hermit crabs given the values `crabs` names:
+/// those built with the level at once, and those built while Claw
+/// settles at `at` after the tick they were built in, as a replay with
+/// `claw-replay` gives them. Play it on with
+/// [`Session::with_crab_values`].
+pub fn start_sim_with_crabs(
+    level: impl Into<std::sync::Arc<claw_sim::SimLevel>>,
+    cfg: SimConfig,
+    start: StartState,
+    at: Option<(i32, i32)>,
+    crabs: &CrabValues,
+) -> Sim {
     let mut sim = Sim::with_start(level, cfg, start);
+    crabs.apply(&mut sim);
     if let Some((x, y)) = at {
-        crate::load::settle_at(&mut sim, x, y);
+        crate::load::settle_at_with(&mut sim, x, y, |sim| crabs.apply(sim));
     }
     sim
 }
@@ -1759,10 +1794,24 @@ pub fn replay_trace(
     pause_input: PauseInput,
     hz: f64,
 ) -> Vec<TraceRow> {
+    replay_trace_with_crabs(sim, script, pause_input, hz, CrabValues::default())
+}
+
+/// [`replay_trace`], with the hermit crabs given the values `crabs` names
+/// (see [`Session::with_crab_values`]); start `sim` with
+/// [`start_sim_with_crabs`].
+pub fn replay_trace_with_crabs(
+    sim: Sim,
+    script: InputScript,
+    pause_input: PauseInput,
+    hz: f64,
+    crabs: CrabValues,
+) -> Vec<TraceRow> {
     let len = script.ticks.len();
     let mut session = Session::new(sim)
         .with_pause_input(pause_input)
-        .with_replay(script);
+        .with_replay(script)
+        .with_crab_values(crabs);
     session.record_trace();
     let mut refresh = claw_frame::SimulatedRefresh::new(hz);
     while session.replaying() {
@@ -1788,6 +1837,9 @@ pub struct LevelRecording {
     /// The start point Claw was put at and settled on before the first
     /// tick (`# start_at`), when it was.
     pub start_at: Option<(i32, i32)>,
+    /// What the hermit crabs start with (its `# crab` and `# nest_crab`
+    /// lines; none in a recording the game made).
+    pub crabs: CrabValues,
 }
 
 impl LevelRecording {
@@ -1799,6 +1851,9 @@ impl LevelRecording {
             switches: script_switches(text),
             start: script_start(text)?,
             start_at: script_start_at(text)?,
+            crabs: CrabValues::from_header(text)
+                .map_err(anyhow::Error::msg)
+                .context("the recording's crab values")?,
         })
     }
 
@@ -1850,7 +1905,7 @@ impl LevelRecording {
         level: impl Into<std::sync::Arc<claw_sim::SimLevel>>,
         cfg: SimConfig,
     ) -> Sim {
-        start_sim(level, cfg, self.start.clone(), self.start_at)
+        start_sim_with_crabs(level, cfg, self.start.clone(), self.start_at, &self.crabs)
     }
 
     /// Replays the recording on `sim` (the level made with
@@ -1862,7 +1917,8 @@ impl LevelRecording {
     pub fn replay(&self, sim: Sim) -> Session {
         let mut session = Session::new(sim)
             .with_pause_input(self.switches.pause_input.unwrap_or(PauseInput::Original))
-            .with_replay(self.script.clone());
+            .with_replay(self.script.clone())
+            .with_crab_values(self.crabs.clone());
         session.record_trace();
         while session.replaying() {
             session.frame(Duration::from_micros(TICK_US));

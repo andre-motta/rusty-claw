@@ -8,7 +8,7 @@
 //!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--threads N]
 //!          [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot]
 //!          [--intro any|play|skip] [--carry FILE] [--goal X,Y] [--goal-on-foot]
-//!          [--quiet]
+//!          [--crabs FILE] [--crab-variants FILE[,FILE...]] [--drift-cost PX] [--quiet]
 //! ```
 //!
 //! The route is an input script (`tick,held_mask,pressed_mask`, one row
@@ -78,6 +78,29 @@
 //! ladder or on a rope there, so the stretch never ends in the middle of
 //! a jump or a fall.
 //!
+//! `--crabs FILE` gives the hermit crabs the values they start with in
+//! the route's game (the side a crab's first regroup faces by and its
+//! second range box, which the original game does not fix; the file
+//! format is `claw-replay`'s, one `crab RECORD = SIDE, HALF_WIDTH,
+//! HALF_HEIGHT` or `nest_crab NEST_RECORD HATCH = ...` entry per line).
+//! The route's header repeats them (`# crab ...` lines), so a replay plays
+//! the same game. `--crab-variants FILE,FILE` names further sets the route
+//! must also win under: every move is played in a game under each set
+//! too, and a move in which Claw dies in one of them, or that wins while
+//! one of them does not (for a `--goal`, that does not come within twice
+//! its distance of it, on his feet with `--goal-on-foot`), is dropped; the found route is played from the
+//! start under each set, and its report gives each set's result and
+//! margin. The header names them (`# crab_variant N: ...` lines). The
+//! search keeps the games together: each px Claw in one of them is from
+//! the route's own Claw costs `--drift-cost` (1 by default). With
+//! `--from-route`, each option left out comes from the route continued
+//! on its own: without `--crabs` the run's values are its `# crab` and
+//! `# nest_crab` lines, and without `--crab-variants` the further sets
+//! are its `# crab_variant N: ...` lines, whichever of the two options is
+//! given. The prefix is played under the run's values and under each
+//! further set, and the search stops with an error when Claw loses a
+//! life, or is dying, in any of those games before the search starts.
+//!
 //! No route is written whose held mask changes twice less than two ticks
 //! apart.
 //!
@@ -92,14 +115,16 @@ use claw_assets::{Install, LevelData, LevelSource};
 use claw_bot::actions::MIN_SPACING;
 use claw_bot::route::{self, Header, TuningName};
 use claw_bot::search::Intro;
-use claw_bot::{Goal, SearchConfig, search_report};
+use claw_bot::{Goal, SearchConfig, search_report_with};
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::{Carry, InputScript, ScriptHeader, Sim, SimLevel, StartState};
 
 const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S|level] [--hints FILE] \
 [--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
 [--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot] \
-[--intro any|play|skip] [--carry FILE] [--goal X,Y] [--goal-on-foot] [--quiet]";
+[--intro any|play|skip] [--carry FILE] [--goal X,Y] [--goal-on-foot] [--crabs FILE] \
+[--crab-variants FILE[,FILE...]] [--drift-cost PX] [--quiet]";
 
 /// The random state a route starts from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +168,9 @@ struct Args {
     carry: Option<PathBuf>,
     goal: Option<(i32, i32)>,
     goal_on_foot: bool,
+    crabs: Option<PathBuf>,
+    crab_variants: Vec<PathBuf>,
+    drift_cost: i64,
     quiet: bool,
 }
 
@@ -171,6 +199,9 @@ impl Default for Args {
             carry: None,
             goal: None,
             goal_on_foot: false,
+            crabs: None,
+            crab_variants: Vec::new(),
+            drift_cost: SearchConfig::default().drift_cost,
             quiet: false,
         }
     }
@@ -245,6 +276,24 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                     .ok_or_else(|| format!("bad intro {v:?}, expected any, play or skip"))?
             }
             "--carry" => a.carry = Some(PathBuf::from(&v)),
+            "--crabs" => a.crabs = Some(PathBuf::from(&v)),
+            "--drift-cost" => {
+                a.drift_cost = v.parse().map_err(|_| num("drift cost"))?;
+                if a.drift_cost < 0 {
+                    return Err(num("drift cost"));
+                }
+            }
+            "--crab-variants" => {
+                a.crab_variants = v
+                    .split(',')
+                    .map(|p| {
+                        let p = p.trim();
+                        (!p.is_empty())
+                            .then(|| PathBuf::from(p))
+                            .ok_or_else(|| format!("bad file list {v:?}"))
+                    })
+                    .collect::<Result<_, _>>()?;
+            }
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
     }
@@ -270,13 +319,14 @@ fn point(v: &str) -> Option<(i32, i32)> {
 
 /// The game a route starts from: the level start (with `carry`, the
 /// progress carried in), or with `start` the segment start (see
-/// [`route::settle_at`]).
+/// [`route::settle_at`]), the crabs given their `crabs` values.
 fn start_sim(
     level: SimLevel,
     tuning: TuningName,
     seed: u32,
     start: Option<(i32, i32)>,
     carry: Option<&Carry>,
+    crabs: &CrabValues,
 ) -> Sim {
     let cfg = route::sim_config(tuning, seed);
     let mut sim = match carry {
@@ -290,10 +340,32 @@ fn start_sim(
         ),
         None => Sim::new(level, cfg),
     };
+    crabs.apply(&mut sim);
     if let Some((x, y)) = start {
-        route::settle_at(&mut sim, x, y, seed);
+        route::settle_at_with(&mut sim, x, y, seed, crabs);
     }
     sim
+}
+
+/// Reads a file of crab values.
+fn read_crabs(path: &Path) -> Result<CrabValues, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    CrabValues::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Plays the ticks of `prefix` on `sim`, the crabs given their `crabs`
+/// values; an error when Claw loses a life in them.
+fn play_prefix(sim: &mut Sim, prefix: &InputScript, crabs: &CrabValues) -> Result<(), String> {
+    let lives = sim.stats().lives;
+    for (i, &input) in prefix.ticks.iter().enumerate() {
+        sim.step(input);
+        crabs.apply(sim);
+        if sim.stats().lives < lives || claw_bot::search::dying(sim) {
+            return Err(format!("Claw dies at tick {i} of the route continued"));
+        }
+    }
+    Ok(())
 }
 
 /// A hints file's waypoints, and the indices of those marked `foot`.
@@ -415,16 +487,22 @@ fn run(a: Args) -> Result<bool, String> {
     let seed = match a.seed {
         Seed::Value(s) => s,
         Seed::Level => {
-            let s =
-                start_sim(sim_level.clone(), a.tuning, 1, None, carry.as_ref()).rng_after_set_up();
+            let s = start_sim(
+                sim_level.clone(),
+                a.tuning,
+                1,
+                None,
+                carry.as_ref(),
+                &CrabValues::default(),
+            )
+            .rng_after_set_up();
             eprintln!("claw-bot: the level's set-up leaves the random state at {s}");
             s
         }
     };
-    let mut start = start_sim(sim_level.clone(), a.tuning, seed, a.start, carry.as_ref());
-
     let mut prefix = InputScript::default();
     let mut prefix_hints = None;
+    let mut prefix_crabs = (CrabValues::default(), Vec::new());
     if let (Some(path), Some(t)) = (&a.from_route, a.from_tick) {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("reading {}: {e}", path.display()))?;
@@ -457,9 +535,37 @@ fn run(a: Args) -> Result<bool, String> {
             ));
         }
         prefix.ticks = script.ticks[..t].to_vec();
-        for &input in &prefix.ticks {
-            start.step(input);
-        }
+        prefix_crabs = route::crab_values(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    let crabs = match &a.crabs {
+        Some(p) => read_crabs(p)?,
+        None => prefix_crabs.0,
+    };
+    let crab_variants = if a.crab_variants.is_empty() {
+        prefix_crabs.1
+    } else {
+        a.crab_variants
+            .iter()
+            .map(|p| read_crabs(p))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let begin = |c: &CrabValues| -> Result<Sim, String> {
+        let mut sim = start_sim(
+            sim_level.clone(),
+            a.tuning,
+            seed,
+            a.start,
+            carry.as_ref(),
+            c,
+        );
+        play_prefix(&mut sim, &prefix, c)?;
+        Ok(sim)
+    };
+    let start = begin(&crabs)?;
+    let mut variant_starts = Vec::with_capacity(crab_variants.len());
+    for (i, v) in crab_variants.iter().enumerate() {
+        let sim = begin(v).map_err(|e| format!("under the further crab values {}: {e}", i + 1))?;
+        variant_starts.push((sim, v.clone()));
     }
 
     let hints = match &a.hints {
@@ -486,6 +592,8 @@ fn run(a: Args) -> Result<bool, String> {
         intro: a.intro,
         wall_limit: a.budget_min.map(|m| Duration::from_secs_f64(m * 60.0)),
         log_every: if a.quiet { 0 } else { 500 },
+        crabs: crabs.clone(),
+        drift_cost: a.drift_cost,
         ..SearchConfig::default()
     };
     let goal = match a.goal {
@@ -502,7 +610,7 @@ fn run(a: Args) -> Result<bool, String> {
         None => Goal::LevelComplete,
     };
     let began = Instant::now();
-    let found = match search_report(&start, goal.clone(), &scfg) {
+    let found = match search_report_with(&start, &variant_starts, goal.clone(), &scfg) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("claw-bot: no route: {e}");
@@ -529,6 +637,8 @@ fn run(a: Args) -> Result<bool, String> {
         hints: route_hints(a.hints.as_deref(), prefix_hints),
         start: a.start,
         carry: carry.clone(),
+        crabs: crabs.clone(),
+        crab_variants: crab_variants.clone(),
     };
     std::fs::write(&out, route::route_csv(&header, &script))
         .map_err(|e| format!("writing {}: {e}", out.display()))?;
@@ -536,12 +646,69 @@ fn run(a: Args) -> Result<bool, String> {
     // The level as loaded: the game after the prefix holds the level as
     // the prefix left it (a breaking plank's floor gone, say), not as a
     // route from the start finds it.
-    let fresh = start_sim(sim_level, a.tuning, seed, a.start, carry.as_ref());
-    let played = route::play(&fresh, &script, &goal);
+    let fresh = start_sim(
+        sim_level.clone(),
+        a.tuning,
+        seed,
+        a.start,
+        carry.as_ref(),
+        &crabs,
+    );
+    let played = route::play_with(&fresh, &script, &goal, &crabs);
     if !played.won() {
         return Err("the route found does not win when played from the start".into());
     }
-    let margin = route::margin(&fresh, &script, &goal, a.margin_samples);
+    let margin = route::margin_with(&fresh, &script, &goal, a.margin_samples, &crabs);
+    let mut variants = Vec::with_capacity(crab_variants.len());
+    // Under further values the route need only come within twice a goal
+    // point's distance of it, as the search asks.
+    let variant_goal = match goal {
+        Goal::LevelComplete => Goal::LevelComplete,
+        Goal::Reach { x, y, radius } => Goal::Reach {
+            x,
+            y,
+            radius: 2 * radius,
+        },
+        Goal::Stand { x, y, radius } => Goal::Stand {
+            x,
+            y,
+            radius: 2 * radius,
+        },
+    };
+    for (i, v) in crab_variants.iter().enumerate() {
+        let fresh = start_sim(
+            sim_level.clone(),
+            a.tuning,
+            seed,
+            a.start,
+            carry.as_ref(),
+            v,
+        );
+        let p = route::play_with(&fresh, &script, &variant_goal, v);
+        if !p.won() {
+            return Err(format!(
+                "the route found does not win under the further crab values {} when played from the start",
+                i + 1
+            ));
+        }
+        let m = route::margin_with(&fresh, &script, &variant_goal, a.margin_samples, v);
+        eprintln!(
+            "claw-bot: under the further crab values {}: {} at tick {}, {} health lost, margin {}/{} early and {}/{} late",
+            i + 1,
+            if a.goal.is_some() {
+                "goal reached"
+            } else {
+                "level complete"
+            },
+            p.done_at.unwrap_or_default(),
+            p.health_lost,
+            m.early_wins,
+            m.sampled,
+            m.late_wins,
+            m.sampled
+        );
+        variants.push((p, m));
+    }
     let mut stats = found.stats.clone();
     stats.ticks = script.ticks.len() as u64;
     stats.health_lost = played.health_lost;
@@ -549,7 +716,7 @@ fn run(a: Args) -> Result<bool, String> {
     let done_at = played.done_at.unwrap_or_default();
     std::fs::write(
         &json,
-        route::report_json(&header, &stats, done_at, &margin, seconds),
+        route::report_json(&header, &stats, done_at, &margin, &variants, seconds),
     )
     .map_err(|e| format!("writing {}: {e}", json.display()))?;
     eprintln!(
@@ -660,6 +827,20 @@ mod tests {
             args("--carry c.csv").map(|a| a.carry),
             Ok(Some(PathBuf::from("c.csv")))
         );
+        assert_eq!(
+            args("--crabs c.txt").map(|a| a.crabs),
+            Ok(Some(PathBuf::from("c.txt")))
+        );
+        assert_eq!(a.crabs, None);
+        assert!(a.crab_variants.is_empty());
+        assert_eq!(
+            args("--crab-variants a.txt,b.txt").map(|a| a.crab_variants),
+            Ok(vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")])
+        );
+        assert!(args("--crab-variants a.txt,").is_err());
+        assert_eq!(a.drift_cost, 1);
+        assert_eq!(args("--drift-cost 4").map(|a| a.drift_cost), Ok(4));
+        assert!(args("--drift-cost -1").is_err());
         assert_eq!(a.level, Some(1));
         assert_eq!(a.tuning, TuningName::Original);
         assert_eq!(a.nodes, 5000);

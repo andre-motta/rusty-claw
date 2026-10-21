@@ -49,6 +49,7 @@ use claw_game::load::{LevelBundle, settle_at};
 use claw_game::session::{script_behaviour, script_switches};
 use claw_game::settings::LevelChoice;
 use claw_sim::input::{DirectiveKind, MenuScreen, ScriptCommand, ScriptTuning};
+use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Comparison, Tolerances, TraceRow};
@@ -503,9 +504,11 @@ pub fn start_game(
 /// except that the time of a help screen reaches the dynamite fuse at the
 /// boundary after it (unless the fuse clock is frozen) and that Claw's
 /// idle wait restarts as play resumes ([`Sim::restart_idle_wait`]). Every
-/// row's source is `script`, the rows past the route's end included.
+/// row's source is `script`, the rows past the route's end included. The
+/// hermit crabs start with the values the route's header gives them
+/// (`# crab ...` lines, see [`CrabValues`]), each crab as it is built.
 pub fn replay_from(
-    sim: Sim,
+    mut sim: Sim,
     script: &InputScript,
     route_text: &str,
     until_ms: u64,
@@ -515,13 +518,20 @@ pub fn replay_from(
         .ticks
         .len()
         .max(until_ms.div_ceil(u64::from(TICK_MS)) as usize);
+    let crabs = CrabValues::from_header(route_text).map_err(|e| format!("the crab values: {e}"))?;
+    crabs.apply(&mut sim);
     match driver {
-        Driver::Ticks => Ok(replay_ticks(sim, script, ticks)),
-        Driver::Session { hz } => replay_session(sim, script, route_text, ticks, hz),
+        Driver::Ticks => Ok(replay_ticks(sim, script, ticks, &crabs)),
+        Driver::Session { hz } => replay_session(sim, script, route_text, ticks, hz, crabs),
     }
 }
 
-fn replay_ticks(mut sim: Sim, script: &InputScript, ticks: usize) -> Vec<TraceRow> {
+fn replay_ticks(
+    mut sim: Sim,
+    script: &InputScript,
+    ticks: usize,
+    crabs: &CrabValues,
+) -> Vec<TraceRow> {
     let mut directives = script.directives().iter().peekable();
     let mut rows = Vec::with_capacity(ticks);
     for tick in 0..ticks {
@@ -543,6 +553,7 @@ fn replay_ticks(mut sim: Sim, script: &InputScript, ticks: usize) -> Vec<TraceRo
             }
         }
         sim.step(script.ticks.get(tick).copied().unwrap_or_default());
+        crabs.apply(&mut sim);
         rows.push(TraceRow::capture(&sim, tick as u64, "script"));
     }
     rows
@@ -554,6 +565,7 @@ fn replay_session(
     route_text: &str,
     ticks: usize,
     hz: f64,
+    crabs: CrabValues,
 ) -> Result<Vec<TraceRow>, String> {
     if !(hz.is_finite() && hz >= 1.0) {
         return Err(format!("a display of {hz} Hz cannot drive the game"));
@@ -563,6 +575,9 @@ fn replay_session(
         .with_pause_input(pause_input)
         .with_replay(script.clone());
     session.record_trace();
+    if !crabs.is_empty() {
+        session.set_before_tick(Box::new(move |_, sim: &mut Sim| crabs.apply(sim)));
+    }
     let mut refresh = SimulatedRefresh::new(hz);
     // Every frame adds time, and pauses and menus hold play for their wall
     // time only, so the ticks always come; the limit guards against a
