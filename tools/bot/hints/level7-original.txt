@@ -9,46 +9,61 @@
 # naming its start lines, except where a stretch says otherwise for it.
 #
 # The hermit crabs' values. A crab starts with a side and a second range
-# box that the original game does not fix, and both routes give the
-# values of one of the original's runs in their headers (--crabs) and win
-# under further sets (--crab-variants). Both were searched again once
-# hermit crabs fell through platform objects, Claw disappeared into a
-# splash on the level's liquid death tiles, a goodie meeting a ceiling
-# kept its speed across, and an enemy walking at Claw went idle only
-# exactly on its patrol limit; the routes from before are kept in
-# tests/acceptance/routes/earlier/ as level7-original-2.csv and
-# level6-original-2.level7.csv.
+# box that the original game does not fix, and a crab a nest hatches may
+# start stationary (no ledge guard), which the original does not fix
+# either; both routes give the values of one of the original's runs in
+# their headers (--crabs) and win under further sets (--crab-variants).
+# Both were searched again once hermit crabs fell through platform
+# objects, Claw disappeared into a splash on the level's liquid death
+# tiles, a goodie meeting a ceiling kept its speed across, and an enemy
+# walking at Claw went idle only exactly on its patrol limit; the routes
+# from before are kept in tests/acceptance/routes/earlier/ as
+# level7-original-2.csv and level6-original-2.level7.csv. Both were
+# searched again once a crab a nest hatches could start stationary, a
+# body hit again kept its place in the list, and a new object took the
+# place among the level's objects that an object left last (a crab
+# telling its last attacker by that place); the routes from before are
+# kept there as level7-original-3.csv and level6-original-3.level7.csv.
 #
-# level7-original.csv carries on from tick 3314 of
-# earlier/level7-original-2.csv (the game is the same up to there under
-# every set) with the values of a run of a direct start in which the crab
-# of record 101 has a box that covers its beach (record 1647 side 2, box
-# 300 by 40; record 86 side 2, 300 by 40; record 85 side 1721092825,
-# 857312352 by -117703298; record 101 side 1294344774, 857312352 by
-# 784380376; the nests' crabs as the header lists them) and, as further
-# sets, a run in which that crab's box is empty (record 101 side
-# 2058048938, box -2006994985 by 1514611473, with that run's nest crabs),
-# and the first set's placed crabs with every crab a nest hatches given a
-# covering box (nest_crab * * = 1, 1000000, 1000000). From stretch 8 on:
-# stretch 8 ends at 13640,6830; stretches 13 and 19 run with
-# --fragile-cost 0, and stretch 19 with --drift-cost 4; stretch 15 starts
-# after 180 ticks with nothing held where stretch 14 ends (the air cart
-# comes by the ledge every 644 ticks); stretches 17 and 18 are searched as
-# one, as stretch 17 says; stretch 23 is not searched (see there).
+# level7-original.csv carries on from tick 3959 of
+# earlier/level7-original-3.csv (the first tick a set below plays
+# otherwise there) with the values of a run of a direct start in which
+# the crab of record 101 has a box that covers its beach (record 1647
+# side 2, box 300 by 40; record 86 side 2, 300 by 40; record 85 side
+# 1721092825, 857312352 by -117703298; record 101 side 1294344774,
+# 857312352 by 784380376; the nests' crabs as the header lists them)
+# and, as further sets, a run in which that crab's box is empty (record
+# 101 side 2058048938, box -2006994985 by 1514611473, with that run's
+# nest crabs), and that run's values with the third crab of nest 1306
+# stationary. The sets with the first crab of nest 165, the first of
+# nest 185, the second of nest 286 or the third of nest 1306 stationary
+# on top of either run's values (eight sets) were dropped, leaving three:
+# but for the third crab of nest 1306 on top of the run with the empty
+# box, none of them plays otherwise than its run's own values on the
+# earlier route or on this one. From stretch 9 on: stretches 13, 17, 18
+# and 19 run with --fragile-cost 0, and stretch 19 with --drift-cost 4;
+# stretch 15 starts after 312 ticks with nothing held where stretch 14
+# ends (the air cart comes by the ledge every 644 ticks); stretch 23 is
+# not searched (see there).
 #
 # level6-original.level7.csv carries on from tick 2863 of
-# earlier/level6-original-2.level7.csv with the values of a launch of
-# that game in which the crab of record 1647 has a box of 300 by 40
-# (record 1647 side 2; record 86 side 3, 300 by 40; record 85 as above;
-# record 101 side 2058048938, box -2006994985 by 1514611473; the nests'
-# crabs as the header lists them) and, as further sets, a launch in which
-# that crab's box covers Claw (side 270720, box 52951952 by 52951984, with
-# that launch's nest crabs), and the first set's placed crabs with every
-# crab a nest hatches given a covering box. Every stretch from 7 on runs
+# earlier/level6-original-3.level7.csv (the first tick a set below plays
+# otherwise there) with the values of a launch of that game in which the
+# crab of record 1647 has a box of 300 by 40 and the first crab of nest
+# 1304 a box that covers Claw (record 1647 side 2; record 86 side 3, 300
+# by 40; record 85 side 7481, box -60 by -41; record 101 side -874155348,
+# box 348526860 by -1465429207; the nests' crabs as the header lists
+# them) and, as further sets, a launch in which neither box covers Claw
+# (record 1647 side 2, 300 by 40; record 85 side 1721092825, 857312352
+# by -117703298; record 101 side 2058048938, box -2006994985 by
+# 1514611473; that launch's nest crabs), that launch's values with the
+# crab of record 1647 covering (side 270720, box 52951952 by 52951984),
+# and those with the first crab of nest 1304 covering too (side
+# 823673633, box 1254712540 by 178344085). Every stretch from 7 on runs
 # with --drift-cost 4 (2 for stretches 7 and 8); stretches 13, 17, 18 and
-# 19 run with --fragile-cost 0; stretch 15 starts after 167 ticks with
-# nothing held where stretch 14 ends; stretches 17 and 18 run as the
-# sixth level's game says there; stretch 23 is not searched (see there).
+# 19 run with --fragile-cost 0; stretch 15 starts after 362 ticks with
+# nothing held where stretch 14 ends; stretch 23 is not searched (see
+# there).
 #
 # 1. To the first checkpoint: no waypoints, goal 2914,7387.
 # 2. To the checkpoint by the first bear: no waypoints, goal 3777,7387.
@@ -81,8 +96,8 @@
 #     to the ledge, on to the air cart and from its right end to the
 #     ladder hanging there: goal 26588,6640.
 #     Both routes first stand still where the stretch starts (not
-#     searched: held buttons 0x0, route ticks 8405 to 8584 of
-#     level7-original.csv and 8418 to 8584 of level6-original.level7.csv).
+#     searched: held buttons 0x0, route ticks 8273 to 8584 of
+#     level7-original.csv and 8223 to 8584 of level6-original.level7.csv).
 #     The cart comes by the ledge every 644 ticks and a pirate on the
 #     ledge beats Claw down while he waits there, so he waits by the
 #     second super checkpoint instead, long enough to reach the ledge as
@@ -97,9 +112,6 @@
 25756,6450
 # 17. On to the high air cart: no waypoints, goal 26150,6182 with
 #     --goal-on-foot.
-#     level7-original.csv, where the cart comes as Claw reaches the
-#     floor's end: stretches 17 and 18 searched as one, no waypoints,
-#     goal 26800,6235 with --goal-on-foot.
 # 18. On the cart over to the right and on to the floor beyond: no
 #     waypoints, goal 26800,6235 with --goal-on-foot.
 # 19. Down the steps of ledges to the checkpoint: goal 28217,6683.
@@ -120,20 +132,21 @@
 #     written into the route as these held buttons, in ticks counted from
 #     the stretch's first tick, each range inclusive: up the ladder to its
 #     top, where every set stands at 30047,6805, a step right, a wait with
-#     nothing held up to route tick 11568, then from route tick 11569 the
-#     held buttons of route ticks 11568 to 12363 of
+#     nothing held, then the held buttons of route ticks 11568 to 12363 of
 #     earlier/level7-original-2.csv (on to the third ring's cart, across
-#     the rings and on to the ledge). The wait is the middle of the three
-#     that work (the held buttons starting at route tick 11568 to 11570).
-#     level7-original.csv: route ticks 11239 to 12364
+#     the rings and on to the ledge). The cart comes by every 666 ticks;
+#     the wait is the middle of the three that work in each route.
+#     level7-original.csv: route ticks 11584 to 13031 (the earlier
+#     route's buttons from route tick 12236; 12235 to 12237 work)
 #          0-49  0x4000000 up
 #         50-58  0x2000000 right
-#        59-329  0x0 nothing
-#      330-1125  the earlier route's ticks 11568 to 12363
-#     level6-original.level7.csv: route ticks 11381 to 12364
+#        59-651  0x0 nothing
+#      652-1447  the earlier route's ticks 11568 to 12363
+#     level6-original.level7.csv: route ticks 11244 to 12364 (the earlier
+#     route's buttons from route tick 11569; 11568 to 11570 work)
 #          0-49  0x4000000 up
 #         50-58  0x2000000 right
-#        59-187  0x0 nothing
-#       188-983  the earlier route's ticks 11568 to 12363
+#        59-324  0x0 nothing
+#      325-1120  the earlier route's ticks 11568 to 12363
 # 24. Down the long ladder through the ledge, past the pirates on the
 #     floor below and to the gem: no goal.

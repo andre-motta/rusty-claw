@@ -2084,7 +2084,9 @@ pub fn die(w: &mut World, id: ObjectId, kind: DeathKind, by: Option<ObjectId>) {
 ///
 /// - killed by a hit, the body is drawn in front of everything and thrown
 ///   up at 700 px/s and away from Claw at 150 px/s, under gravity and
-///   through the tiles; a quarter of the time Claw says a line (for kills
+///   through the tiles (a body hit again is already in front and keeps
+///   its place among the objects drawn there, so it also keeps its turn
+///   in the update order); a quarter of the time Claw says a line (for kills
 ///   by his blows or his pistol only), otherwise the death sound plays;
 /// - killed by a landing, on spikes or in goo, the body stays where it is:
 ///   spikes and goo play the death tile sound; goo removes it at once, the
@@ -2110,9 +2112,13 @@ pub fn die_of(w: &mut World, id: ObjectId, kind: DeathKind, by: Option<ObjectId>
     let now = w.now_ms;
     match kind {
         DeathKind::Hit => {
+            // A body hit again is already at the front depth and keeps
+            // its place in the list.
             let o = obj_mut(w, id);
-            o.z = DEATH_DEPTH;
-            o.flags |= flags::RESORT;
+            if o.z != DEATH_DEPTH {
+                o.z = DEATH_DEPTH;
+                o.flags |= flags::RESORT;
+            }
             if rand(w, 100) < 25 {
                 if by_type == attacker::CLAW || by_type == attacker::PISTOL_SHOT {
                     let line = CLAW_KILL_LINES[rand(w, 10) as usize];

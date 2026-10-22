@@ -7,8 +7,6 @@
 //! re-sort. Destruction and re-sorting requested during an update pass take
 //! effect at the end of the pass.
 
-use std::collections::VecDeque;
-
 use crate::object::{Object, ObjectId, Rect, engine_state, flags};
 
 /// One effect of the pair-collision pass.
@@ -57,20 +55,28 @@ struct Slot {
 /// All objects of a level.
 ///
 /// The slot of a removed object takes a later new one, the slot freed
-/// earliest first. An id carries its slot's generation, so the id of a
+/// last first, as the game hands a new object the place an object left
+/// most recently. An id carries its slot's generation, so the id of a
 /// removed object never names the object that took its slot: looking it
 /// up finds nothing, as before the slot was taken again.
 #[derive(Debug, Clone, Default)]
 pub struct Container {
     slots: Vec<Slot>,
-    /// Slots without an object, in the order they were freed.
-    free: VecDeque<u32>,
+    /// Slots without an object, in the order they were freed; the last
+    /// one is taken first.
+    free: Vec<u32>,
     /// Ids in the order the objects were made; ids of removed objects
     /// stay until the next compaction.
     order: Vec<ObjectId>,
     live: usize,
     head: Option<ObjectId>,
     next_serial: u32,
+}
+
+/// True when `a` and `b` name the same slot: the same object, or an
+/// object and one made later in the place it left.
+pub fn same_slot(a: ObjectId, b: ObjectId) -> bool {
+    a & SLOT_MASK == b & SLOT_MASK
 }
 
 impl Container {
@@ -86,7 +92,7 @@ impl Container {
         obj.prev = None;
         obj.next = None;
         obj.listed = false;
-        let index = match self.free.pop_front() {
+        let index = match self.free.pop() {
             Some(i) => i,
             None => {
                 let i = u32::try_from(self.slots.len())
@@ -259,7 +265,7 @@ impl Container {
         let obj = slot.object.take();
         if slot.generation < LAST_GENERATION {
             slot.generation += 1;
-            self.free.push_back(index);
+            self.free.push(index);
         }
         self.live -= 1;
         // Drop the ids of removed objects from the making order once they
@@ -448,15 +454,18 @@ mod tests {
         c.insert(b);
         c.remove(b);
         c.remove(a);
-        // The slot freed first is taken first.
+        // The slot freed last is taken first.
         let e = c.add(obj(0));
         let f = c.add(obj(0));
         assert_eq!(c.slots(), 3);
         assert_eq!(c.len(), 3);
         assert_eq!(
             (e & SLOT_MASK, f & SLOT_MASK),
-            (b & SLOT_MASK, a & SLOT_MASK)
+            (a & SLOT_MASK, b & SLOT_MASK)
         );
+        // A new object shares the slot of the removed one it replaced.
+        assert!(same_slot(e, a) && same_slot(f, b) && !same_slot(e, b));
+        assert_ne!(e, a);
         // The ids of the removed objects name nothing.
         assert!(c.get(a).is_none() && c.get(b).is_none());
         assert!(c.get_mut(b).is_none());

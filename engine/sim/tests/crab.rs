@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use claw_sim::anim::Animation;
 use claw_sim::claw_frame::AudioCue;
+use claw_sim::container::same_slot;
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::enemy::crab::{self, Leftovers, bomb, nest};
 use claw_sim::logic::enemy::{self, EnemyState, field};
@@ -233,6 +234,7 @@ fn leftovers_give_the_second_box_and_the_first_facing() {
             Leftovers {
                 side: crab::SIDE_RIGHT,
                 box1: (578, 432),
+                ..Leftovers::default()
             },
         )
     });
@@ -519,6 +521,118 @@ fn an_explosion_hits_once_and_a_pistol_shot_is_used_up() {
 }
 
 #[test]
+fn an_explosion_made_in_the_place_of_the_last_attacker_counts_as_it() {
+    let (mut sim, id) = crab_and_claw(600);
+    let blast = attacker(&mut sim, types::LEVEL_SHOT, (2050, 900));
+    sim.with_world(|w| {
+        w.objects.get_mut(id).unwrap().frame = 802;
+        crab::on_hit(w, id, blast);
+    });
+    assert_eq!(state(&sim, id), Some(EnemyState::Nudge));
+    // The blast goes; the next object made takes the place it left.
+    sim.with_world(|w| {
+        w.objects.remove(blast);
+    });
+    let again = attacker(&mut sim, types::LEVEL_SHOT, (2050, 900));
+    assert_ne!(again, blast);
+    assert!(
+        same_slot(again, blast),
+        "the place freed last is taken first"
+    );
+    sim.with_world(|w| {
+        w.objects.get_mut(id).unwrap().frame = 1;
+        crab::on_hit(w, id, again);
+    });
+    assert_eq!(
+        state(&sim, id),
+        Some(EnemyState::Nudge),
+        "the new blast counts as the last attacker"
+    );
+    // A blast in another place kills it.
+    let other = attacker(&mut sim, types::LEVEL_SHOT, (2050, 900));
+    assert!(!same_slot(other, blast));
+    sim.with_world(|w| {
+        w.objects.get_mut(id).unwrap().frame = 1;
+        crab::on_hit(w, id, other);
+    });
+    assert_eq!(state(&sim, id), Some(EnemyState::Dead));
+}
+
+#[test]
+fn a_stationary_crab_has_no_ledge_guard_and_strikes_with_the_throw_sound() {
+    let (mut sim, ids) = game(beach((1500, 800)), &[hermit(1000, 900, (0, 0))]);
+    let id = ids[0];
+    let d = enemy::data_of(obj(&sim, id)).unwrap();
+    assert!(!d.stationary && d.ledge_guard);
+    sim.with_world(|w| {
+        crab::set_leftovers(
+            w,
+            id,
+            Leftovers {
+                stationary: true,
+                ..Leftovers::default()
+            },
+        )
+    });
+    let o = obj(&sim, id);
+    assert!(enemy::data_of(o).unwrap().stationary);
+    assert_eq!(crab::fields_of(o).unwrap().strike_sound, crab::THROW_SOUND);
+    // A record bomber stays stationary under values that do not say so.
+    let mut s = hermit(1000, 900, (0, 0));
+    s.record[field::USER_0] = 1;
+    let (mut sim, ids) = game(beach((1500, 800)), &[s]);
+    sim.with_world(|w| crab::set_leftovers(w, ids[0], Leftovers::default()));
+    assert!(enemy::data_of(obj(&sim, ids[0])).unwrap().stationary);
+}
+
+/// A crab dropped moving left onto a step whose edge is at x 1024, so
+/// that its left edge reaches past the edge, stationary or not; where it
+/// is 40 ticks later.
+fn land_over_an_edge(stationary: bool) -> (i32, i32) {
+    let mut rows: Vec<String> = vec![".".repeat(40); 15];
+    rows.push(format!("{}{}", ".".repeat(16), "#".repeat(24)));
+    rows.push("#".repeat(40));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1500, 800));
+    for a in crab_anims() {
+        level.animations.insert(a.key.clone(), a);
+    }
+    let (mut sim, ids) = game(level, &[hermit(1040, 700, (0, 0))]);
+    let id = ids[0];
+    // Lifted above the edge again and dropped.
+    sim.with_world(|w| {
+        crab::set_leftovers(
+            w,
+            id,
+            Leftovers {
+                stationary,
+                ..Leftovers::default()
+            },
+        );
+        let o = w.objects.get_mut(id).unwrap();
+        o.x = 1060;
+        o.y = 700;
+        o.physics_type = ptype::FALL;
+        o.data.enemy_mut().unwrap().vx = -60.0;
+    });
+    for _ in 0..40 {
+        sim.step(TickInput::default());
+    }
+    (obj(&sim, id).x, obj(&sim, id).y)
+}
+
+#[test]
+fn a_stationary_crab_may_land_with_its_edge_over_a_drop() {
+    let (still_x, still_y) = land_over_an_edge(true);
+    let (guarded_x, guarded_y) = land_over_an_edge(false);
+    assert_eq!((still_y, guarded_y), (CRAB_Y, CRAB_Y), "both on the step");
+    assert!(
+        still_x < guarded_x,
+        "the ledge guard stops it short of the edge: {guarded_x}, without it {still_x}"
+    );
+}
+
+#[test]
 fn a_killed_crab_drops_its_item() {
     let mut s = hermit(2000, 900, (1700, 2300));
     s.record[field::POWERUP] = 33;
@@ -747,7 +861,8 @@ fn crab_values_reach_placed_and_hatched_crabs_before_their_first_tick() {
         crab::fields_of(o).unwrap().leftovers,
         Leftovers {
             side: crab::SIDE_RIGHT,
-            box1: (578, 432)
+            box1: (578, 432),
+            ..Leftovers::default()
         }
     );
     assert!(enemy::faces_right(o));
@@ -782,11 +897,13 @@ fn crab_values_reach_placed_and_hatched_crabs_before_their_first_tick() {
             Leftovers {
                 side: 7,
                 box1: (382, 382),
+                ..Leftovers::default()
             }
         } else {
             Leftovers {
                 side: 1,
                 box1: (1_000_000, 1_000_000),
+                ..Leftovers::default()
             }
         };
         assert_eq!(
@@ -871,7 +988,8 @@ fn a_nest_crab_in_a_slot_another_nest_freed_takes_its_own_nest_values() {
         crab::fields_of(obj(&sim, reused)).unwrap().leftovers,
         Leftovers {
             side: 7,
-            box1: (382, 382)
+            box1: (382, 382),
+            ..Leftovers::default()
         }
     );
     for (k, &c) in from_a.iter().enumerate().skip(1) {
@@ -883,7 +1001,8 @@ fn a_nest_crab_in_a_slot_another_nest_freed_takes_its_own_nest_values() {
             crab::fields_of(obj(&sim, c)).unwrap().leftovers,
             Leftovers {
                 side: 2,
-                box1: (300, 40)
+                box1: (300, 40),
+                ..Leftovers::default()
             }
         );
     }

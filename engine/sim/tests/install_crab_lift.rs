@@ -194,7 +194,11 @@ enum Which {
 /// `crab-lift-pirate` is the nest of the hatching routes, whose crabs
 /// start as they do there.
 fn leftovers(store: &str, clock: &str) -> Vec<(Which, crab::Leftovers)> {
-    let l = |side, box1| crab::Leftovers { side, box1 };
+    let l = |side, box1| crab::Leftovers {
+        side,
+        box1,
+        stationary: false,
+    };
     match (store, clock) {
         ("crab-lift-pirate", "c18") => vec![
             (Which::Hatched(0), l(382, (382, 382))),

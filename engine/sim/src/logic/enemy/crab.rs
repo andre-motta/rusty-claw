@@ -339,18 +339,26 @@ pub static CLASS: Class = Class {
 
 /// What a crab starts with that the original game does not fix: the
 /// side its first regroup faces by ([`SIDE_RIGHT`] faces right, anything
-/// else left) and its second range box (half width, half height). The
-/// values differ from crab to crab and from run to run of the original;
-/// the plain default is an unmirrored start and an empty box. A box with
-/// both half extents larger than the crab's reach covers Claw anywhere
-/// along its stretch, so the crab decides as if he were far (range mode
-/// 1) whenever he is outside its nearer boxes.
+/// else left), its second range box (half width, half height) and, for a
+/// crab a nest hatched, whether it starts stationary. The values differ
+/// from crab to crab and from run to run of the original; the plain
+/// default is an unmirrored start, an empty box and a crab that is not
+/// stationary. A box with both half extents larger than the crab's reach
+/// covers Claw anywhere along its stretch, so the crab decides as if he
+/// were far (range mode 1) whenever he is outside its nearer boxes.
+///
+/// A stationary crab has no ledge guard: it may stand with its leading
+/// edge over a drop where another crab steps back onto its floor. It also
+/// strikes with the bomb's throw sound instead of the snip. A crab placed
+/// with a first value above 0 in its record starts that way too.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Leftovers {
     /// The side read by the first regroup.
     pub side: i32,
     /// The second range box.
     pub box1: (i32, i32),
+    /// The crab starts stationary.
+    pub stationary: bool,
 }
 
 /// What a crab keeps beyond the shared enemy data.
@@ -366,7 +374,8 @@ pub struct Fields {
     pub sound: Timer,
     /// Time since the last throw.
     pub launch: Timer,
-    /// The last object that hit it.
+    /// The last object that hit it (compared by its place among the
+    /// level's objects, see [`on_hit`]).
     pub last_attacker: Option<ObjectId>,
     /// The sound of its snip (and of its throw).
     pub strike_sound: &'static str,
@@ -508,13 +517,19 @@ pub fn construct(w: &mut World, id: ObjectId) {
 }
 
 /// Sets what crab `id` starts with (see [`Leftovers`]): its second range
-/// box, and its facing as its first regroup leaves it. Meant for the
-/// moment right after the crab is built, before its first tick.
+/// box, its facing as its first regroup leaves it and, when the values
+/// say so, makes it stationary with the throw sound for its strike (a
+/// crab already stationary stays so). Meant for the moment right after
+/// the crab is built, before its first tick.
 pub fn set_leftovers(w: &mut World, id: ObjectId, l: Leftovers) {
     let Some(f) = fields_mut(w, id) else { return };
     f.leftovers = l;
+    if l.stationary {
+        f.strike_sound = THROW_SOUND;
+    }
     if let Some(d) = data_mut(w, id) {
         d.ranges[1] = l.box1;
+        d.stationary |= l.stationary;
     }
     set_facing(w, id, l.side == SIDE_RIGHT);
 }
@@ -585,13 +600,14 @@ pub const VARIANT_WORD: &str = "crab_variant";
 /// The text form has one entry per line,
 ///
 /// ```text
-/// crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT
-/// nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT
+/// crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]
+/// nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]
 /// ```
 ///
 /// for a crab placed in the level, by its record, and for the crab a
 /// nest hatched in place HATCH (1 for its first crab), by the nest's
-/// record. A `*` for a record or a place names every crab of that kind;
+/// record. STATIONARY is 1 for a crab that starts stationary and 0 (the
+/// default when it is left out) for one that does not. A `*` for a record or a place names every crab of that kind;
 /// the entry that names a crab most exactly counts, and between two
 /// equally exact ones the first. A crab no entry names starts with the
 /// plain default. In a file, blank lines and other `#` lines are
@@ -633,7 +649,7 @@ impl CrabValues {
             let entry = word == CRAB_WORD || word == NEST_CRAB_WORD;
             if !entry && strict && !commented && !body.is_empty() {
                 return Err(format!(
-                    "line {}: expected `{CRAB_WORD} RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT` or `{NEST_CRAB_WORD} NEST_RECORD HATCH = ...`, found {raw:?}",
+                    "line {}: expected `{CRAB_WORD} RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` or `{NEST_CRAB_WORD} NEST_RECORD HATCH = ...`, found {raw:?}",
                     i + 1
                 ));
             }
@@ -650,11 +666,15 @@ impl CrabValues {
         Ok(out)
     }
 
-    /// The entries as lines of a file, each ending in a newline.
+    /// The entries as lines of a file, each ending in a newline; the
+    /// stationary value is written only for a stationary crab.
     pub fn file_lines(&self) -> String {
         self.entries
             .iter()
-            .map(|(k, l)| format!("{k} = {}, {}, {}\n", l.side, l.box1.0, l.box1.1))
+            .map(|(k, l)| {
+                let still = if l.stationary { ", 1" } else { "" };
+                format!("{k} = {}, {}, {}{still}\n", l.side, l.box1.0, l.box1.1)
+            })
             .collect()
     }
 
@@ -778,7 +798,8 @@ pub fn which_crab(objects: &crate::container::Container, id: ObjectId) -> Option
     Some(key_of(o.serial, fields_of(o)?))
 }
 
-/// Reads one entry: `crab R = S, W, H` or `nest_crab N K = S, W, H`.
+/// Reads one entry: `crab R = S, W, H` or `nest_crab N K = S, W, H`,
+/// each with an optional stationary value after the box (`, 0` or `, 1`).
 fn parse_entry(body: &str) -> Result<(CrabKey, Leftovers), String> {
     let (lhs, rhs) = body
         .split_once('=')
@@ -807,20 +828,30 @@ fn parse_entry(body: &str) -> Result<(CrabKey, Leftovers), String> {
         }
     };
     let v: Vec<&str> = rhs.split(',').map(str::trim).collect();
-    let [side, w, h] = v.as_slice() else {
-        return Err(format!(
-            "expected SIDE, HALF_WIDTH, HALF_HEIGHT after `=`, found {:?}",
-            rhs.trim()
-        ));
+    let (side, w, h, still) = match v.as_slice() {
+        [side, w, h] => (side, w, h, None),
+        [side, w, h, still] => (side, w, h, Some(still)),
+        _ => {
+            return Err(format!(
+                "expected SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY] after `=`, found {:?}",
+                rhs.trim()
+            ));
+        }
     };
     let num = |s: &str, what: &str| -> Result<i32, String> {
         s.parse().map_err(|_| format!("bad {what} {s:?}"))
+    };
+    let stationary = match still.map(|s| &**s) {
+        None | Some("0") => false,
+        Some("1") => true,
+        Some(s) => return Err(format!("bad stationary value {s:?}, expected 0 or 1")),
     };
     Ok((
         key,
         Leftovers {
             side: num(side, "side")?,
             box1: (num(w, "half width")?, num(h, "half height")?),
+            stationary,
         },
     ))
 }
@@ -1301,7 +1332,9 @@ pub fn thrown_tick(w: &mut World, id: ObjectId) {
 // Hits
 
 /// `attacker` hit the crab. A dead crab and a second hit by the same
-/// explosion are ignored. On the crouched picture it hides, then is
+/// explosion are ignored; the crab knows its last attacker only by the
+/// place that object took among the level's objects, so an explosion
+/// made in the place its last attacker left counts as that attacker. On the crouched picture it hides, then is
 /// knocked aside; on the withdrawn pictures it is knocked aside, unless
 /// the magic claw hit it; on any other picture it dies and drops its
 /// item. A knock plays the shell sound when the shared timer allows. A
@@ -1315,7 +1348,10 @@ pub fn on_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
         return;
     };
     let Some(f) = fields_mut(w, id) else { return };
-    if f.last_attacker == Some(attacker) && kind == types::LEVEL_SHOT {
+    let again = f
+        .last_attacker
+        .is_some_and(|l| crate::container::same_slot(l, attacker));
+    if again && kind == types::LEVEL_SHOT {
         return;
     }
     f.last_attacker = Some(attacker);
@@ -2084,7 +2120,11 @@ nest_crab 1304 1 = -546326565, 1746340737, 832086994
 nest_crab * * = 1, 1000000, 1000000
 ";
         let v = CrabValues::parse(file).unwrap();
-        let l = |side, w, h| Leftovers { side, box1: (w, h) };
+        let l = |side, w, h| Leftovers {
+            side,
+            box1: (w, h),
+            stationary: false,
+        };
         assert_eq!(
             v.entries,
             vec![
@@ -2123,6 +2163,36 @@ nest_crab * * = 1, 1000000, 1000000
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_crab_can_be_given_as_stationary() {
+        let v = CrabValues::parse(
+            "nest_crab 1306 3 = 0, 0, 0, 1\nnest_crab 165 1 = 2, 300, 40, 0\ncrab 85 = 3, 1, 2\n",
+        )
+        .unwrap();
+        let still = |k| v.values_for(k).stationary;
+        assert!(still(CrabKey::Hatched(Some(1306), Some(3))));
+        assert!(!still(CrabKey::Hatched(Some(165), Some(1))));
+        assert!(!still(CrabKey::Placed(Some(85))));
+        assert_ne!(
+            v.values_for(CrabKey::Hatched(Some(1306), Some(3))),
+            Leftovers::default(),
+            "a stationary crab is given its values"
+        );
+        // The value is written only for a stationary crab, and reads back.
+        assert_eq!(
+            v.file_lines(),
+            "nest_crab 1306 3 = 0, 0, 0, 1\nnest_crab 165 1 = 2, 300, 40\ncrab 85 = 3, 1, 2\n"
+        );
+        assert_eq!(CrabValues::parse(&v.file_lines()).unwrap(), v);
+        assert_eq!(CrabValues::from_header(&v.header_lines()).unwrap(), v);
+        let sets = CrabValues::variants_from_header(&v.variant_lines(1)).unwrap();
+        assert_eq!(sets, vec![v.clone()]);
+        let e = CrabValues::parse("crab 1 = 2, 3, 4, 2\n").unwrap_err();
+        assert!(e.contains("bad stationary value"), "{e}");
+        let e = CrabValues::parse("crab 1 = 2, 3, 4, 1, 0\n").unwrap_err();
+        assert!(e.contains("STATIONARY"), "{e}");
     }
 
     #[test]

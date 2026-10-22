@@ -79,10 +79,11 @@
 //! a jump or a fall.
 //!
 //! `--crabs FILE` gives the hermit crabs the values they start with in
-//! the route's game (the side a crab's first regroup faces by and its
-//! second range box, which the original game does not fix; the file
-//! format is `claw-replay`'s, one `crab RECORD = SIDE, HALF_WIDTH,
-//! HALF_HEIGHT` or `nest_crab NEST_RECORD HATCH = ...` entry per line).
+//! the route's game (the side a crab's first regroup faces by, its
+//! second range box and whether it starts stationary, which the original
+//! game does not fix; the file format is `claw-replay`'s, one `crab
+//! RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` or `nest_crab
+//! NEST_RECORD HATCH = ...` entry per line).
 //! The route's header repeats them (`# crab ...` lines), so a replay plays
 //! the same game. `--crab-variants FILE,FILE` names further sets the route
 //! must also win under: every move is played in a game under each set

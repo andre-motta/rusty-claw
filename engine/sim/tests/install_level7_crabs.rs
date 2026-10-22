@@ -236,7 +236,11 @@ enum Which {
 /// The leftovers of each crab of a store at a clock, as its runs show
 /// them; a crab not listed starts with the plain default.
 fn leftovers(store: &str, clock: &str) -> Vec<(Which, crab::Leftovers)> {
-    let l = |side, box1| crab::Leftovers { side, box1 };
+    let l = |side, box1| crab::Leftovers {
+        side,
+        box1,
+        stationary: false,
+    };
     let nest = |second| {
         vec![
             (Which::Hatched(0), l(382, (382, 382))),

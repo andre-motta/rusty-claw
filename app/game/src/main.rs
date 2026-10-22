@@ -30,10 +30,11 @@
 //! replay also plays with the movement tuning and the random seed its
 //! script's header names (`# tuning default|original`, `# seed N`), and
 //! plays its pauses, menus and commands (`@` lines) where they were
-//! recorded. Its hermit crabs start with the side and second range box
-//! its header gives each (`# crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT`
-//! and `# nest_crab NEST_RECORD HATCH = ...` lines), as `claw-replay`
-//! gives them; a crab no line names starts with the plain default.
+//! recorded. Its hermit crabs start with the side, second range box and
+//! stationary value its header gives each (`# crab RECORD = SIDE,
+//! HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` and `# nest_crab NEST_RECORD
+//! HATCH = ...` lines), as `claw-replay` gives them; a crab no line names
+//! starts with the plain default.
 //!
 //! The play-test aids `--invincible` (Claw takes no damage; death tiles and
 //! pits still end his life) and `--infinite-lives` (a death never costs a

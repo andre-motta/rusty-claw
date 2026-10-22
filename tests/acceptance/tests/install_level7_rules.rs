@@ -1,14 +1,15 @@
-//! Four rules of the seventh level's play on your own install (skipped
-//! without `CLAW_INSTALL`), each pinned to a moment of an earlier route
-//! where the original game showed it.
+//! Six rules of the seventh level's play and one value of its crabs on
+//! your own install (skipped without `CLAW_INSTALL`), each pinned to a
+//! moment of an earlier route where the original game showed it.
 //!
 //! The routes are the seventh level's original-speeds routes as they were
 //! before these rules: `routes/earlier/level7-original-2.csv` (the level
 //! from its start) and `routes/earlier/level6-original-2.level7.csv` (the
-//! level as the second level of a game), and `routes/earlier/level7-original.csv`,
-//! the first route of the level. Each is played with the hermit crabs'
-//! values that a run of the original game gave them (see
-//! [`CrabValues`]):
+//! level as the second level of a game), `routes/earlier/level7-original.csv`,
+//! the first route of the level, and `routes/earlier/level7-original-3.csv`
+//! and `routes/earlier/level6-original-3.level7.csv`, the two routes after
+//! the first four rules. Each is played with the hermit crabs' values that
+//! a run of the original game gave them (see [`CrabValues`]):
 //!
 //! - a hermit crab never lands on a platform object: the third crab
 //!   thrown out of the nest of record 284 falls past the crumbling peg of
@@ -26,13 +27,29 @@
 //! - a human enemy walking at Claw goes idle at its patrol limit only when
 //!   its exact position is on the limit: the bear sailor of record 1348
 //!   reaches the whole pixel of its limit with 0.76 px left over and walks
-//!   one tick more.
+//!   one tick more;
+//! - a crab a nest hatched can start stationary, with no ledge guard: the
+//!   third crab of the nest of record 1306 lands at tick 3661 with its
+//!   left edge over a drop and stays there, 2 px left of where the guard
+//!   puts a crab that is not stationary, so it leaves the active area a
+//!   tick earlier and draws nothing at tick 3959;
+//! - a body hit again keeps its place in the list: at tick 4833 the blow
+//!   that kills the pirate of record 2399 also hits the body of the pirate
+//!   of record 2400, which stays ahead of it, so the two pirates take
+//!   their turns and their draws in that order;
+//! - a new object takes the place among the level's objects that an
+//!   object left last, and a crab knows its last attacker only by that
+//!   place: the bomb the crab hatched second by the nest of record 185
+//!   throws at tick 6047 takes the place of the bomb whose blast hit the
+//!   crab at tick 6026, so its blast, which goes off on Claw at once, does
+//!   not kill the crab.
 
 use std::path::Path;
 
 use claw_acceptance::install;
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_bot::route::{self, TuningName};
+use claw_frame::GameEvent;
 use claw_sim::logic::ObjectData;
 use claw_sim::logic::enemy::crab::{self, CrabKey, CrabValues};
 use claw_sim::logic::enemy::{self, EnemyState};
@@ -402,5 +419,190 @@ fn install_a_bear_walks_on_a_fraction_short_of_its_limit() {
     println!(
         "the bear of record 1348 reaches x {x} with {:.2} px left at tick 6807 and goes idle at tick 6809",
         exact - f64::from(x)
+    );
+}
+
+/// The crabs' values of a run of `earlier/level7-original-3.csv` in the
+/// original game in which the crab of record 101 has an empty box.
+const DIRECT_EMPTY_3: &str = "\
+crab 85 = 1721092825, 857312352, -117703298
+crab 86 = 2, 300, 40
+crab 101 = 2058048938, -2006994985, 1514611473
+crab 1647 = 2, 300, 40
+nest_crab 164 * = 0, 0, 0
+nest_crab 165 1 = 3, 200, 40
+nest_crab 165 2 = 0, 0, 0
+nest_crab 165 3 = 0, 0, 0
+nest_crab 175 1 = 3, 0, 0
+nest_crab 175 2 = 0, 0, 0
+nest_crab 175 3 = 0, 0, 0
+nest_crab 1304 * = 0, 0, 0
+nest_crab 1305 1 = 3, 0, 0
+nest_crab 1305 2 = 3, 0, 0
+nest_crab 1305 3 = 0, 0, 0
+nest_crab 1306 1 = 0, 0, 0
+nest_crab 1306 2 = 0, 0, 0
+";
+
+/// The crabs' values of a run of the level's part of
+/// `earlier/level6-original-3.level7.csv` in the original game.
+const PAIR_3: &str = "\
+crab 85 = 1721092825, 857312352, -117703298
+crab 86 = 3, 300, 40
+crab 101 = 2058048938, -2006994985, 1514611473
+crab 1647 = 2, 300, 40
+nest_crab 164 * = 0, 0, 0
+nest_crab 165 * = 3, 0, 0
+nest_crab 165 1 = 3, 200, 40
+nest_crab 175 * = 3, 0, 0
+nest_crab 175 1 = 3, 200, 40
+nest_crab 184 1 = 3, 0, 0
+nest_crab 184 2 = 2, 200, 40
+nest_crab 184 3 = 0, 0, 0
+nest_crab 185 1 = 2, 200, 40
+nest_crab 185 2 = 3, 0, 0
+nest_crab 185 3 = 3, 0, 0
+nest_crab 1304 1 = 302023104, 21955672, 0
+nest_crab 1304 2 = 0, 0, 0
+nest_crab 1304 3 = 0, 0, 0
+nest_crab 1305 1 = 3, 0, 0
+nest_crab 1305 2 = 0, 0, 0
+nest_crab 1305 3 = 0, 0, 0
+nest_crab 1306 * = 0, 0, 0
+";
+
+/// The third crab of the nest of record 1306.
+const NEST_1306_THIRD: CrabKey = CrabKey::Hatched(Some(1306), Some(3));
+
+#[test]
+fn install_a_stationary_nest_crab_lands_over_a_drop_and_stays() {
+    let Some(root) = install() else { return };
+    let level = level7(&root);
+    let text = earlier("level7-original-3.csv");
+    let still = format!("{DIRECT_EMPTY_3}nest_crab 1306 3 = 0, 0, 0, 1\n");
+    let plain = format!("{DIRECT_EMPTY_3}nest_crab 1306 3 = 0, 0, 0\n");
+    let mut run = Run::new(&level, &text, &still);
+    let mut other = Run::new(&level, &text, &plain);
+    run.to(3660);
+    other.to(3660);
+    assert_eq!(run.rng, other.rng);
+    let c = run.crab(NEST_1306_THIRD).expect("hatched by tick 3660");
+    let o = run.sim.objects().get(c).unwrap();
+    let d = enemy::data_of(o).unwrap();
+    assert!(d.stationary);
+    assert_eq!(crab::fields_of(o).unwrap().strike_sound, crab::THROW_SOUND);
+    assert_eq!(run.at(c), (13151, 7038), "falling");
+    let n = other.crab(NEST_1306_THIRD).unwrap();
+    assert!(
+        !enemy::data_of(other.sim.objects().get(n).unwrap())
+            .unwrap()
+            .stationary
+    );
+    run.to(3661);
+    other.to(3661);
+    // It lands with its left edge over the drop and stays; the ledge
+    // guard puts the other back 2 px.
+    assert_eq!(run.at(c), (13149, 7040));
+    assert_eq!(other.at(n), (13151, 7038));
+    assert_eq!(run.rng[3661], other.rng[3661]);
+    run.to(3959);
+    other.to(3959);
+    assert_eq!(run.rng[3958], other.rng[3958]);
+    assert_eq!(run.rng[3959], 1_632_497_895);
+    assert_eq!(other.rng[3959], 1_659_840_526);
+    println!(
+        "the stationary third crab of nest 1306 lands at (13149, 7040) at tick 3661 and stays; random state after tick 3959 {}",
+        run.rng[3959]
+    );
+}
+
+#[test]
+fn install_a_body_hit_again_keeps_its_place() {
+    let Some(root) = install() else { return };
+    let level = level7(&root);
+    let text = earlier("level6-original-3.level7.csv");
+    let mut run = Run::new(&level, &text, PAIR_3);
+    run.to(4832);
+    let a = run.find("RedTailPirate", 2399).expect("the pirate of 2399");
+    let b = run.find("RedTailPirate", 2400).expect("the pirate of 2400");
+    let dead = |run: &Run, id: ObjectId| {
+        enemy::data_of(run.sim.objects().get(id).unwrap()).is_some_and(|d| d.dead)
+    };
+    let z = |run: &Run, id: ObjectId| run.sim.objects().get(id).unwrap().z;
+    assert!(!dead(&run, a));
+    assert!(dead(&run, b), "a body since earlier");
+    assert_eq!(z(&run, b), enemy::DEATH_DEPTH);
+    run.to(4833);
+    assert!(dead(&run, a), "killed at tick 4833");
+    assert_eq!(z(&run, a), enemy::DEATH_DEPTH);
+    run.to(4834);
+    let listed = run.sim.objects().listed();
+    let place = |id| listed.iter().position(|&l| l == id).unwrap();
+    assert_eq!(place(b) + 1, place(a), "the body hit again stays ahead");
+    run.to(4839);
+    assert_eq!(run.rng[4839], 1_263_798_278);
+    println!(
+        "the body of the pirate of record 2400 stays ahead of the pirate of record 2399; random state after tick 4839 {}",
+        run.rng[4839]
+    );
+}
+
+#[test]
+fn install_a_bomb_in_the_place_of_the_last_attacker_spares_its_crab() {
+    let Some(root) = install() else { return };
+    let level = level7(&root);
+    let text = earlier("level6-original-3.level7.csv");
+    let mut run = Run::new(&level, &text, PAIR_3);
+    let key = CrabKey::Hatched(Some(185), Some(2));
+    let bombs = |run: &Run| -> Vec<ObjectId> {
+        run.sim
+            .objects()
+            .all()
+            .filter(|(_, o)| &*o.logic == "CrabBomb")
+            .map(|(id, _)| id)
+            .collect()
+    };
+    let last_attacker = |run: &Run| {
+        let c = run.crab(key).expect("the crab");
+        crab::fields_of(run.sim.objects().get(c).unwrap())
+            .unwrap()
+            .last_attacker
+    };
+    run.to(6046);
+    let hit_by = last_attacker(&run).expect("hit by a blast at tick 6026");
+    assert!(run.sim.objects().get(hit_by).is_none(), "that bomb is gone");
+    run.to(6047);
+    let thrown: Vec<ObjectId> = bombs(&run)
+        .into_iter()
+        .filter(|&b| claw_sim::container::same_slot(b, hit_by))
+        .collect();
+    assert_eq!(thrown.len(), 1, "the new bomb takes the old bomb's place");
+    assert_ne!(thrown[0], hit_by);
+    let c = run.crab(key).unwrap();
+    assert!(
+        !enemy::data_of(run.sim.objects().get(c).unwrap())
+            .unwrap()
+            .dead,
+        "the crab lives on"
+    );
+    assert_eq!(run.rng[6047], 2_927_231_927);
+    // On to the game over at tick 7751, as in the original's run.
+    let mut over = None;
+    while over.is_none() && run.tick < run.script.ticks.len() {
+        run.to(run.tick);
+        if run
+            .sim
+            .last_events()
+            .iter()
+            .any(|e| matches!(e, GameEvent::GameOver))
+        {
+            over = Some(run.tick - 1);
+        }
+    }
+    assert_eq!(over, Some(7751), "the game over");
+    assert_eq!(run.rng[7751], 1_775_566_211);
+    println!(
+        "the bomb thrown at tick 6047 takes the place of the crab's last attacker and spares it; random state after tick 6047 {}",
+        run.rng[6047]
     );
 }
