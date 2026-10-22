@@ -56,13 +56,12 @@
 //! stage becomes the root of a fresh segment, as a waypoint does. Through
 //! the boss's introduction and the gem's flight Claw is held, so the time
 //! is part of the coarse state there, and so it is while a boss Claw threw
-//! cannot be lifted again yet. A move in which a boss to be drowned
-//! bounces off a throw's landing next to a drop ([`bounces_by_a_drop`])
-//! is dropped: his landings keep to flat floor, and a throw that does not
-//! land him there takes him straight into the water. With
-//! [`SearchConfig::intro`] the
-//! search keeps to routes that play the introduction (the normal entry) or
-//! to routes that skip it (the jump-in entry).
+//! cannot be lifted again yet. A throw may land a boss to be drowned
+//! anywhere, a peg reaching past a drop's edge included: his bounces there
+//! play as in the original game, so the search keeps no landing out. With
+//! [`SearchConfig::intro`] the search keeps to routes that play the
+//! introduction (the normal entry) or to routes that skip it (the jump-in
+//! entry).
 //!
 //! A route can be made to win under several sets of the values the
 //! hermit crabs start with ([`CrabValues`], which the original game does
@@ -415,9 +414,6 @@ pub struct SearchStats {
     /// Children dropped because they entered a boss room the other way
     /// (see [`SearchConfig::intro`]).
     pub entries_pruned: u32,
-    /// Children dropped because a boss to be drowned bounced off a throw's
-    /// landing next to a drop (see [`bounces_by_a_drop`]).
-    pub ledges_pruned: u32,
     /// Children dropped because Claw died in a game under further crab
     /// values, or it did not meet the goal there (see
     /// [`search_report_with`]).
@@ -798,39 +794,6 @@ pub fn boss_carried(sim: &Sim) -> bool {
         })
 }
 
-/// How far either side of a boss bouncing off a throw's landing the floor
-/// under him is looked at, px.
-pub const DROP_REACH: i32 = 64;
-
-/// How far below a bouncing boss's feet the floor under him is looked
-/// for, px: below the top of his bounce.
-pub const DROP_DEPTH: i32 = 48;
-
-/// True while the boss in play, one the search drowns ([`drowns`]),
-/// bounces off a throw's landing ([`EnemyState::Bounce`]) with no floor
-/// tile under some point within [`DROP_REACH`] of him across (down to
-/// [`DROP_DEPTH`] below his feet): a landing at a drop's edge, or on a
-/// platform object over one. How such a bounce plays out at an edge is
-/// not settled, so the search keeps his landings to flat floor.
-pub fn bounces_by_a_drop(sim: &Sim) -> bool {
-    let Some(o) = sim.boss().current().and_then(|id| sim.objects().get(id)) else {
-        return false;
-    };
-    if !drowns(&o.logic) || EnemyState::from_id(o.state) != Some(EnemyState::Bounce) {
-        return false;
-    }
-    let map = &sim.level().map;
-    let feet = o.y + o.move_rect.bottom;
-    let floor_under = |x: i32| {
-        (feet..=feet + DROP_DEPTH)
-            .step_by(4)
-            .any(|y| matches!(map.attr(x, y), SOLID | GROUND))
-    };
-    (-DROP_REACH..=DROP_REACH)
-        .step_by(8)
-        .any(|dx| !floor_under(o.x + dx))
-}
-
 /// True while the boss in play gets up from a throw and cannot be lifted
 /// again yet: the time it has left counts in the coarse state, so a wait
 /// for it is progress.
@@ -911,9 +874,6 @@ enum Outcome {
     TooClose,
     /// A boss room was entered the other way (see [`SearchConfig::intro`]).
     WrongEntry,
-    /// A boss to be drowned bounced off a throw's landing next to a drop
-    /// (see [`bounces_by_a_drop`]).
-    ByADrop,
     /// Claw died in a game under further crab values, or the goal was met
     /// while it was not met there (see [`search_report_with`]).
     VariantLost,
@@ -1037,10 +997,6 @@ impl Search<'_> {
                     }
                     Outcome::WrongEntry => {
                         self.stats.entries_pruned += 1;
-                        continue;
-                    }
-                    Outcome::ByADrop => {
-                        self.stats.ledges_pruned += 1;
                         continue;
                     }
                     Outcome::VariantLost => {
@@ -1549,10 +1505,6 @@ fn play(
         }
         if died || dying(&sim) || sim.stats().lives < lives {
             outcome = Outcome::Dead;
-            break;
-        }
-        if bounces_by_a_drop(&sim) {
-            outcome = Outcome::ByADrop;
             break;
         }
         if from.intro != Intro::Any {

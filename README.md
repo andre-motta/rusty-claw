@@ -441,10 +441,12 @@ and Down in turn to break free; thrown by a springboard or riding an
 elevator, it counts Claw as near as the throw or the ride takes him; a
 warp counts as the way to where it puts him. Against Gabriel, whom no
 blow hurts, the bot lifts him and throws him, from a tap to the full
-charge, and is guided by how far he is from the water beside his dock; it
-never keeps a throw that lands him next to a drop (on a peg or at a
-floor's edge), so he lands on the flat of the dock or goes straight into
-the water.
+charge, and is guided by how far he is from the water beside his dock.
+A throw may land him anywhere: an enemy that lands on a platform object
+(a peg or an elevator) rides it, and while it rides, its movement moves it
+by the platform only, so a thrown Gabriel that lands on a peg reaching
+past the dock's edge bounces from where he landed and comes to rest on
+the peg at his second bounce.
 On the eighth level no jump of Claw's own reaches Gabriel's deck:
 `level8-introskip.csv` takes the Catnip near the last checkpoint and lands
 there with the jump-in while it lasts, and the routes that sit through
