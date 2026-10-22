@@ -30,7 +30,10 @@
 //!   a ladder (he catches it at the top of the throw);
 //! - sideways: only within a jump's reach above support somewhere within
 //!   a jump's width, or in a springboard's throw, so a gap can be crossed
-//!   but open sky cannot.
+//!   but open sky cannot;
+//! - through a warp: from every open cell where Claw's feet are when his
+//!   body touches the warp to the cells where they are once it has put
+//!   him at its destination, at no cost.
 //!
 //! A [`DistanceField`] holds the cost of the cheapest path from every cell
 //! to a target, in pixels. The graph never claims less than the level
@@ -102,6 +105,20 @@ pub const BLOWER_HALF_WIDTH: i32 = 48;
 /// of the level's blowers is 90 px below them).
 const BLOWER_FLOOR_SEARCH: i32 = 200;
 
+/// Image sets of the warps among the pickups.
+const WARP_SETS: [&str; 2] = ["GAME_WARP", "GAME_VERTWARP"];
+
+/// Record fields of a warp: where it puts Claw, x and y.
+const WARP_TO: [usize; 2] = [55, 56];
+
+/// How far from a warp's position, across and up, Claw's feet may be
+/// when his body touches it (his feet up to his height lower), px.
+const WARP_TOUCH: (i32, i32) = (40, 24);
+
+/// Where Claw's feet are below a warp's destination, from and to, px: he
+/// is put there with his position at it and falls to the floor.
+const WARP_FEET: (i32, i32) = (40, 80);
+
 /// Record fields of a path elevator: its built-in route, and the first of
 /// the sixteen that hold its legs.
 const PATH_BUILT_IN: usize = 15;
@@ -141,6 +158,9 @@ pub struct Grid {
     throw_bases: HashMap<usize, (i32, i32)>,
     /// Each elevator's and path elevator's way.
     rides: Vec<Ride>,
+    /// The warps: for each cell Claw's feet are in at a warp's
+    /// destination, the cells they are in when he touches it.
+    warps: HashMap<usize, Vec<usize>>,
     reach_cells: u16,
     body_cells: u16,
 }
@@ -224,6 +244,7 @@ impl Grid {
             lifted: Vec::new(),
             throw_bases: HashMap::new(),
             rides: Vec::new(),
+            warps: HashMap::new(),
             reach_cells: (reach.jump_height / CELL).max(1) as u16,
             body_cells: (BODY / CELL) as u16,
         };
@@ -234,6 +255,7 @@ impl Grid {
         grid.mark_springboards(level, &mut support, reach);
         grid.mark_blowers(level, &mut support, reach);
         grid.mark_planks(level);
+        grid.mark_warps(level);
         grid.lifted = vec![false; n];
         for c in 0..cols {
             let mut since = u16::MAX;
@@ -426,6 +448,43 @@ impl Grid {
             let (x, y) = (spec.record[5], spec.record[6]);
             let top = y + rect.top;
             self.mark_band(x + rect.left, x + rect.right, top - CELL, top, support);
+        }
+    }
+
+    /// Joins the cells where Claw touches each warp to the cells his feet
+    /// are in at its destination (see [`Grid::warps`]).
+    fn mark_warps(&mut self, level: &SimLevel) {
+        for spec in &level.objects {
+            if !WARP_SETS.contains(&spec.image_set.as_str()) {
+                continue;
+            }
+            let (x, y) = (spec.record[5], spec.record[6]);
+            let (tx, ty) = (spec.record[WARP_TO[0]], spec.record[WARP_TO[1]]);
+            if tx == 0 && ty == 0 {
+                continue;
+            }
+            let cells = |left: i32, top: i32, right: i32, bottom: i32| {
+                let mut out = Vec::new();
+                for r in top.div_euclid(CELL)..=bottom.div_euclid(CELL) {
+                    for c in left.div_euclid(CELL)..=right.div_euclid(CELL) {
+                        if let Some(i) = self.cell_index(c * CELL, r * CELL)
+                            && self.open[i]
+                        {
+                            out.push(i);
+                        }
+                    }
+                }
+                out
+            };
+            let (dx, dy) = WARP_TOUCH;
+            let entries = cells(x - dx, y - dy, x + dx, y + dy + BODY);
+            if entries.is_empty() {
+                continue;
+            }
+            let (above, below) = WARP_FEET;
+            for d in cells(tx, ty + above, tx, ty + below) {
+                self.warps.entry(d).or_default().extend(&entries);
+            }
         }
     }
 
@@ -698,6 +757,11 @@ impl Grid {
                 let above = self.index(c, r - 1);
                 if !self.floor[above] {
                     relax(above, step, &mut heap);
+                }
+            }
+            if let Some(entries) = self.warps.get(&b) {
+                for &e in entries {
+                    relax(e, 0, &mut heap);
                 }
             }
         }
@@ -990,6 +1054,44 @@ mod tests {
         let mut lift = ObjectSpec::at("PathElevator", 10 * 16, feet + 8, 0);
         lift.record[PATH_LEGS..PATH_LEGS + 4].copy_from_slice(&[6, 480, 4, 480]);
         assert_ne!(field(&pit_level(vec![lift])), UNREACHABLE);
+    }
+
+    #[test]
+    fn a_warp_joins_one_side_of_a_pit_to_the_other() {
+        let feet = 28 * 16 + 8;
+        let field = |level: &SimLevel| {
+            Grid::build(level, Reach::default())
+                .field_to(45 * 16, feet, 16)
+                .at(2 * 16, feet)
+        };
+        // A warp on the left floor, its destination standing on the right
+        // floor: the right floor is as near from where the warp is touched
+        // as from where it puts Claw.
+        let warp = |set: &str, to: (i32, i32)| {
+            let mut w = ObjectSpec::at("SpecialPowerup", 6 * 16, feet - 60, 0);
+            w.image_set = set.to_string();
+            w.record[WARP_TO[0]] = to.0;
+            w.record[WARP_TO[1]] = to.1;
+            w
+        };
+        let near = Grid::build(&pit_level(Vec::new()), Reach::default())
+            .field_to(45 * 16, feet, 16)
+            .at(43 * 16, feet);
+        let through = field(&pit_level(vec![warp("GAME_WARP", (43 * 16, feet - 60))]));
+        assert_ne!(through, UNREACHABLE);
+        assert!(through <= near + 5 * CELL as u32, "{through} {near}");
+        // Without a destination, or as another pickup, it joins nothing.
+        assert_eq!(
+            field(&pit_level(vec![warp("GAME_WARP", (0, 0))])),
+            UNREACHABLE
+        );
+        assert_eq!(
+            field(&pit_level(vec![warp(
+                "GAME_POWERUPS_GHOST",
+                (43 * 16, feet - 60)
+            )])),
+            UNREACHABLE
+        );
     }
 
     #[test]

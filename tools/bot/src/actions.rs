@@ -25,7 +25,16 @@
 //! Held in a bear's hug, Claw cannot move, but each new press of a key
 //! counts towards his escape: the mash ([`Action::Mash`]) presses Up and
 //! Down in turn, a new key every [`MIN_SPACING`] ticks.
+//!
+//! A boss the search drowns adds the lift to the fight's macros: on his
+//! feet near the boss, Claw presses Lift ([`Action::Lift`]); carrying
+//! him ([`Phase::Carry`]), he walks either way with him or throws him
+//! ([`Action::Throw`]), turned either way, the key held from a tap to the
+//! full charge ([`THROW_HOLDS`]).
 
+use claw_sim::object::special;
+use claw_sim::player::attack::LIFT_FEET;
+use claw_sim::player::special::THROW_CHARGE_MS;
 use claw_sim::player::state;
 use claw_sim::{Buttons, Sim};
 
@@ -49,6 +58,8 @@ pub const RIGHT: u32 = Buttons::RIGHT.0;
 pub const UP: u32 = Buttons::UP.0;
 /// Down.
 pub const DOWN: u32 = Buttons::DOWN.0;
+/// Lift, and throw what Claw carries.
+pub const LIFT: u32 = Buttons::LIFT.0;
 
 /// Ticks the jump button is held for, from a tap to a full jump, at the
 /// original speeds; see [`jump_holds`] for the game's own tuning.
@@ -76,6 +87,37 @@ pub const MASH_PRESSES: usize = 6;
 
 /// Length of the fight's short wait, ticks.
 pub const SHORT: usize = 3;
+
+/// Ticks the key of a throw is held, from a tap to the full charge (3 s
+/// at the original speeds, the most a throw charges): one throw each way.
+/// See [`throw_holds`] for the game's own tuning.
+pub const THROW_HOLDS: [u8; 4] = [2, 56, 112, 170];
+
+/// Ticks past the full charge the longest throw holds its key, so a tick
+/// lost never shortens it.
+pub const THROW_SPARE: usize = 3;
+
+/// Ticks the key of a throw is held in `sim`: [`THROW_HOLDS`], with the
+/// longest held for as many ticks as the tuning takes to charge a throw
+/// in full, and [`THROW_SPARE`] more (170 at the original speeds, 183
+/// with the default tuning, which counts 16.7 ms a tick).
+pub fn throw_holds(sim: &Sim) -> [u8; 4] {
+    let per_tick = sim.config().tuning.player.jump_hold_per_tick_ms;
+    let mut holds = THROW_HOLDS;
+    if per_tick > 0.0 {
+        let full = (f64::from(THROW_CHARGE_MS) / per_tick).ceil() as usize + THROW_SPARE;
+        holds[3] = full.clamp(usize::from(THROW_HOLDS[2]) + 1, usize::from(u8::MAX)) as u8;
+    }
+    holds
+}
+
+/// Ticks a throw waits after the key is let go: the throw's flight, so
+/// that where it ends (a landing, or the water) is the throw's outcome.
+pub const THROW_FOLLOW: usize = 48;
+
+/// How near the boss, across, Claw must stand for the lift to be offered,
+/// px (the lift itself reaches 64 px).
+pub const LIFT_REACH: i32 = 96;
 
 /// Ticks the jump of a door entry holds jump (with the direction).
 pub const ENTRY_JUMP: usize = 12;
@@ -159,6 +201,17 @@ pub enum Action {
         /// Direction of the jump: -1 left, 1 right.
         jump: i8,
     },
+    /// Press Lift: pick up what is in reach.
+    Lift,
+    /// Carrying, turn to `dir` (-1 left, 1 right) and throw, the key held
+    /// `hold` ticks to charge the throw, then wait [`THROW_FOLLOW`] ticks
+    /// while it flies.
+    Throw {
+        /// The side to throw to: -1 left, 1 right.
+        dir: i8,
+        /// Ticks the key is held.
+        hold: u8,
+    },
     /// Jump up holding the button for `hold` ticks, let go for `wait`,
     /// then jump toward `dir` (held [`ENTRY_JUMP`] ticks): into a door
     /// overhead, a fresh jump on the first tick beyond it.
@@ -226,6 +279,14 @@ impl Action {
                 seg(d | JUMP, ENTRY_JUMP);
                 seg(d, MIN_SPACING);
             }
+            Action::Lift => {
+                seg(LIFT, MIN_SPACING);
+                seg(0, STEP);
+            }
+            Action::Throw { dir, hold } => {
+                seg(dir_mask(dir) | LIFT, usize::from(hold).max(MIN_SPACING));
+                seg(0, THROW_FOLLOW);
+            }
         }
         out
     }
@@ -240,6 +301,7 @@ impl Action {
             Action::Catch { dir } => format!("catch{dir:+}"),
             Action::Entry { dir, walk, jump } => format!("entry{dir:+}x{walk}j{jump:+}"),
             Action::RiseEntry { dir, hold, wait } => format!("rise{dir:+}x{hold}w{wait}"),
+            Action::Throw { dir, hold } => format!("throw{dir:+}x{hold}"),
             other => format!("{other:?}").to_lowercase(),
         }
     }
@@ -265,6 +327,8 @@ pub enum Phase {
     Climb,
     /// Hanging from a swinging rope.
     Swing,
+    /// Carrying what he lifted: he walks with it or throws it.
+    Carry,
     /// Busy: struck, attacking, lifting or in another state that takes no
     /// steering.
     Busy,
@@ -275,10 +339,12 @@ pub fn phase(sim: &Sim) -> Phase {
     let Some(o) = sim.player() else {
         return Phase::Busy;
     };
-    if sim.claw().attacking {
+    let claw = sim.claw();
+    if claw.attacking {
         return Phase::Busy;
     }
     match o.state {
+        state::LIFT if claw.special.carrying && claw.special.lifted.is_some() => Phase::Carry,
         state::JUMP | state::FALL => Phase::Air,
         state::CLIMB => Phase::Climb,
         state::SWING => Phase::Swing,
@@ -348,6 +414,9 @@ fn fight_choices(sim: &Sim) -> Vec<Action> {
                 Action::Strike { dir: -1 },
                 Action::Strike { dir: 1 },
             ]);
+            if boss_in_reach(sim) {
+                out.push(Action::Lift);
+            }
             for dir in [1i8, -1] {
                 for hold in [holds[1], holds[3]] {
                     out.push(Action::Jump {
@@ -364,9 +433,32 @@ fn fight_choices(sim: &Sim) -> Vec<Action> {
             });
         }
         Phase::Air => out.push(Action::Attack),
+        Phase::Carry => {
+            for dir in [-1i8, 1] {
+                for hold in throw_holds(sim) {
+                    out.push(Action::Throw { dir, hold });
+                }
+            }
+        }
         Phase::Climb | Phase::Swing | Phase::Busy => {}
     }
     out
+}
+
+/// True when the boss in play is one the search drowns
+/// ([`crate::search::drowns`]), he can be lifted now and Claw stands within
+/// [`LIFT_REACH`] of him across and his lift's reach up or down.
+pub fn boss_in_reach(sim: &Sim) -> bool {
+    let (Some(c), Some(b)) = (
+        sim.player(),
+        sim.boss().current().and_then(|id| sim.objects().get(id)),
+    ) else {
+        return false;
+    };
+    crate::search::drowns(&b.logic)
+        && b.special_flags & special::LIFTABLE != 0
+        && (b.x - c.x).abs() <= LIFT_REACH
+        && ((b.y + b.move_rect.bottom) - (c.y + c.move_rect.bottom)).abs() <= 2 * LIFT_FEET
 }
 
 /// The actions worth trying in `sim`, in a fixed order.
@@ -435,6 +527,13 @@ pub fn choices(sim: &Sim) -> Vec<Action> {
                 }
             }
         }
+        Phase::Carry => {
+            for dir in [-1i8, 1] {
+                for hold in throw_holds(sim) {
+                    out.push(Action::Throw { dir, hold });
+                }
+            }
+        }
         Phase::Busy => {
             if held(sim) {
                 out.push(Action::Mash);
@@ -471,8 +570,12 @@ mod tests {
             Action::Strike { dir: 1 },
             Action::Catch { dir: -1 },
             Action::Catch { dir: 1 },
+            Action::Lift,
         ];
         for dir in [-1i8, 1] {
+            for hold in THROW_HOLDS {
+                all.push(Action::Throw { dir, hold });
+            }
             for walk in ENTRY_WALKS {
                 for jump in [-1i8, 1] {
                     all.push(Action::Entry { dir, walk, jump });
@@ -525,6 +628,21 @@ mod tests {
             .count();
         assert_eq!(presses, MASH_PRESSES - 1);
         assert_eq!(Action::Mash.name(), "mash");
+    }
+
+    #[test]
+    fn a_lift_presses_the_key_once_and_a_throw_turns_and_charges() {
+        let m = Action::Lift.masks();
+        assert_eq!(&m[..MIN_SPACING], &[LIFT; MIN_SPACING]);
+        assert!(m[MIN_SPACING..].iter().all(|&k| k == 0));
+        let m = Action::Throw { dir: -1, hold: 56 }.masks();
+        assert_eq!(m.len(), 56 + THROW_FOLLOW);
+        assert!(m[..56].iter().all(|&k| k == LEFT | LIFT));
+        assert!(m[56..].iter().all(|&k| k == 0));
+        assert_eq!(Action::Throw { dir: 1, hold: 170 }.name(), "throw+1x170");
+        // The longest hold charges the throw in full at the original speeds.
+        let full = THROW_HOLDS[THROW_HOLDS.len() - 1] as u32 * claw_sim::tuning::TICK_MS;
+        assert!(full >= THROW_CHARGE_MS as u32);
     }
 
     #[test]

@@ -1,0 +1,176 @@
+# Waypoints for the eighth level at the original speeds, from the level's
+# geometry. The route is searched a stretch at a time: each stretch below
+# runs with its waypoints as --hints (with --hints-on-foot) and ends at its
+# goal (--goal X,Y), and the next carries on from it (--from-route,
+# --from-tick at its last tick); the last stretch has no goal and ends at
+# the gem. Every stretch uses --seed level and --fragile-cost 100 unless
+# it says otherwise. The routes go up the ladders, across the ropes and
+# over the sinking buoys of the docks; the only way on to Gabriel's deck
+# without the dynamite is a jump with Catnip, so they take the Catnip by
+# the last checkpoint and race it to the boss room's door.
+#
+# 1. Along the start's dock, onto the rope over the water and down on
+#    the first sinking buoys: no waypoints, goal 2300,5600, fragile cost
+#    0.
+# 2. Over the buoys to the first checkpoint: no waypoints, goal
+#    3590,5516.
+# 3. Along the docks to the checkpoint: no waypoints, goal 5985,5515.
+# 4. Up the short ladder, left along the walk to the tall ladder, up
+#    it, over the top and down on to the deck, along it and down the
+#    ladder at its end to the checkpoint: goal 7599,5513.
+6360,5232
+6232,5232
+6232,4464
+6800,4464
+7000,5040
+7570,5040
+# 5. Across the two ropes over the water and the sinking buoy beyond to
+#    the checkpoint, in three parts.
+#    a. To Claw hanging from the first rope: no waypoints, goal
+#       7980,5524 with --goal-on-foot.
+#    b. Not searched: the two ropes swing at different speeds, so a
+#       release from the first catches the second only when they come
+#       round. Claw hangs on, lets go with a jump to the right, catches
+#       the second rope, swings, and lets go on to the sinking buoy. The
+#       stretch is written into the route as these held buttons (masks
+#       of the route file), in ticks counted from the stretch's first
+#       tick, each range inclusive; each wait lies in the waits that
+#       work (642 to 676, then 62 to 102).
+#       level8-original.csv: route ticks 3947 to 4778
+#           0-657 0x0 nothing
+#         658-671 0x2000001 right and jump
+#         672-711 0x2000000 right
+#         712-787 0x0 nothing
+#         788-801 0x2000001 right and jump
+#         802-831 0x2000000 right
+#    c. From the buoy over the cannon pegs to the checkpoint: goal
+#       10012,5511.
+8033,5530
+8482,5530
+9100,5550
+# 6. Up the ladder over the checkpoint and the short ladders above it,
+#    down on to the low walk on the left, along it to the tall ladder,
+#    up it, across on the rope to the long roof, along it and down the
+#    ladder on to the deck: goal 10804,5040.
+10130,5230
+9945,5000
+9755,4800
+9565,4700
+9300,4850
+9050,5039
+8930,4700
+8930,4350
+9206,4420
+9600,4440
+10400,4460
+10630,4900
+# 7. Over the sheds to the first super checkpoint: no waypoints, goal
+#    12121,5040.
+# 8. Across on the rope to the mid deck, over the crates, down to the
+#    long walk, up the ladders and across the upper shelves to the
+#    checkpoint: goal 14692,4798.
+12528,4934
+12939,5054
+13300,4926
+13500,5246
+14160,5100
+14000,4958
+13656,4800
+13700,4638
+14200,4638
+# 9. Up the ladders, across on the rope and down the last ladder to the
+#    checkpoint: goal 16202,4730.
+15000,5050
+15400,4870
+15208,4620
+15400,4360
+15664,4462
+15964,4500
+# 10. Down the ladder and along the sinking buoys to the checkpoint:
+#     goal 18988,5560.
+17056,5300
+17072,5654
+17227,5654
+17408,5654
+17598,5654
+17773,5654
+17878,5654
+18049,5654
+18235,5654
+18371,5654
+18525,5654
+18731,5654
+# 11. Over the cannon pegs, the sinking pots and the buoy and up the
+#     ladder to the checkpoint: goal 21593,5048.
+19170,5478
+19300,5478
+19560,5560
+19811,5478
+19934,5478
+20200,5560
+20705,5650
+20822,5654
+20940,5650
+21276,5500
+21276,5240
+# 12. To the second super checkpoint: goal 22557,5008.
+22000,5040
+# 13. Down over the pegs and the buoy, up the ladder to the walk, up
+#     the next ladder to its top, across on the rope to the checkpoint:
+#     goal 24844,4656.
+22800,5552
+23041,5548
+23174,5356
+23362,5356
+23518,5548
+23626,5654
+23708,5400
+23830,5040
+24344,4950
+24344,4291
+24675,4485
+# 14. Down along the walks to the dock below and up into the Catnip
+#     hanging over it (30 s): goal 26729,5450, met anywhere near it.
+25300,4848
+25600,5040
+26200,5232
+26700,5040
+26848,5400
+# 15. While the Catnip lasts: over the buoy, across the three ropes, up
+#     the ladder, over the buoys and the next rope, up the ladders and
+#     over the walks to the ladder below the boss room's door: goal
+#     31520,5300 with --goal-on-foot, fragile cost 0.
+27587,5654
+27937,5523
+28514,5522
+28959,5522
+29330,5420
+29840,5654
+30130,5527
+30550,5380
+30900,5540
+31280,5480
+# 16. The door, Gabriel and the gem, no waypoints; two endings.
+#     level8-introskip.csv: --intro skip. The jump-in, with the Catnip
+#     still running, lands Claw on Gabriel's deck; he lifts Gabriel, who
+#     sleeps in his start-up pose, and throws him into the water by his
+#     dock; the gem rises from the water.
+#     level8-original.csv: the first 24 ticks of the jump-in route's last
+#     stretch (route ticks 15546 to 15569), then not searched: Right
+#     held 30 ticks walks Claw through the door into the stager's box,
+#     so the introduction plays, and nothing is held until he stands
+#     again (route tick 16308). The Catnip has run out by then and no
+#     jump of his own reaches the deck, so he boosts up with his
+#     dynamite: from tick 16308, Right 8 ticks (0x2000000), Dynamite 2
+#     (0x100, a tap throws it at his feet by the hull), nothing 94,
+#     Right and Jump 14 (0x2000001), Right 14, Right and Jump 14 (the
+#     second jump, from the air once the blast struck him), Right 8 and
+#     nothing 20: he lands on the deck (route tick 16482). The jump
+#     works with 94 or 96 ticks of wait and the second jump 28 or 26
+#     ticks after the first (also 64 and 58). The search carries on from
+#     there with --intro play: he lifts Gabriel and throws him into the
+#     water.
+#     The eighth level of the seventh level's game
+#     (level7-original.level8.csv) plays level8-original.csv's inputs
+#     from the progress that game carries in; they win the level the
+#     same way.
