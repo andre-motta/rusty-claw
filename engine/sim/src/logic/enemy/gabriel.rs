@@ -1396,6 +1396,9 @@ pub fn dead_act4_tick(w: &mut World, id: ObjectId) {
 ///   left across, and below its pixel the part it stands sunk since it
 ///   was made, see the module's Standing), flies past that point and
 ///   lands on the dock, and from there fights as any pirate.
+/// - A pirate he called in keeps his fight's mode for good: his reset on
+///   Claw's respawn clears his list of pirates, but one leaping then goes
+///   on with its leap, without the shared steps and their roll.
 /// - Once he is defeated a pirate dies at once, at its next call
 ///   ([`mode_step`]).
 ///
@@ -1480,12 +1483,15 @@ pub mod pirates {
     }
 
     /// True while pirate `id` is in the leap Gabriel's attack ends in: one
-    /// he called in, jumping.
+    /// he called in, jumping, with him there. His list does not decide it:
+    /// his reset on Claw's respawn clears the list, and a pirate leaping
+    /// then keeps its leap (and makes no per-pulse roll) all the same.
     fn leaping(w: &World, id: ObjectId) -> bool {
         let Some(boss) = w.current_boss() else {
             return false;
         };
-        super::gabriel_data(w, boss).is_some_and(|d| d.summoned.contains(&id))
+        (redtail_pirate::called_in(w, id)
+            || super::gabriel_data(w, boss).is_some_and(|d| d.summoned.contains(&id)))
             && w.objects
                 .get(id)
                 .is_some_and(|o| o.state == EnemyState::Jump as i32)

@@ -18,6 +18,12 @@
 //!   yet;
 //! - a splash plays once where it was asked for.
 //!
+//! Once set up, a hit burst, a sparkle and a splash are in
+//! [`state::PLAYING`] and the glitter driver in [`state::SHEDDING`]: none
+//! of them is in the first-call state any more, so a pass that runs only
+//! the objects not set up yet (a warp's set-up) leaves them alone, and
+//! the glitter driver sheds only in the game's own passes.
+//!
 //! An explosion asked for through [`EffectKind::Explosion`] draws nothing:
 //! it hurts everything in its square that the level's own shots can hurt,
 //! once, in the first collision pass after its first logic call, never
@@ -72,6 +78,14 @@ pub const HIT_BURST_ANIMS: [&str; 3] = ["GAME_SMLHITBURST", "GAME_MEDHITBURST", 
 
 /// Image set of the splash.
 pub const SPLASH_IMAGE: &str = "LEVEL_SPLASH";
+
+/// The states an effect takes once its first call has set it up.
+pub mod state {
+    /// A hit burst, a sparkle or a splash, playing its animation.
+    pub const PLAYING: i32 = 5;
+    /// The glitter driver, shedding sparkles over its target.
+    pub const SHEDDING: i32 = 10;
+}
 
 /// Sparkles the glitter driver sheds per tick.
 pub const GLITTER_PER_TICK: u32 = 2;
@@ -329,10 +343,11 @@ fn effect_data(w: &World, id: ObjectId) -> Option<EffectData> {
 }
 
 /// Marks an animated effect as never colliding, removed when it leaves
-/// its window, and started.
+/// its window, and started ([`state::PLAYING`]).
 fn start_common(w: &mut World, id: ObjectId) {
     if let Some(o) = w.objects.get_mut(id) {
         o.flags |= flags::NO_COLLIDE | flags::DESTROY_OUTSIDE;
+        o.state = state::PLAYING;
         data_mut(o).started = true;
     }
 }
@@ -429,11 +444,12 @@ fn glitter_tick(w: &mut World, id: ObjectId) {
     let Some(target) = effect_data(w, id).and_then(|d| d.owner) else {
         return;
     };
-    // The first call with a target only sets the driver up: no sparkles
-    // and no draws until the next call.
+    // The first call with a target only sets the driver up
+    // ([`state::SHEDDING`]): no sparkles and no draws until the next call.
     if let Some(o) = w.objects.get_mut(id)
         && !data_mut(o).started
     {
+        o.state = state::SHEDDING;
         data_mut(o).started = true;
         return;
     }

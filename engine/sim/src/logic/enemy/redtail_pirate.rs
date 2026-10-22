@@ -378,6 +378,9 @@ pub struct RedTailPirateData {
     pub strike_rest: Timer,
     /// It landed after a throw and has not taunted Claw since.
     pub taunt: bool,
+    /// Built while Gabriel fights: one of the pirates he calls in, in his
+    /// fight's mode for good, even once his own list no longer holds it.
+    pub called_in: bool,
 }
 
 /// The pirate data of `id`.
@@ -492,6 +495,15 @@ pub fn in_gabriel_fight(w: &World) -> bool {
 /// [`super::gabriel::pirates`]).
 pub fn take_gabriel_mode(w: &mut World, id: ObjectId) {
     super::gabriel::pirates::take_mode(w, id);
+    if let Some(p) = pirate_mut(w, id) {
+        p.called_in = true;
+    }
+}
+
+/// True for a pirate built while Gabriel fights (see
+/// [`take_gabriel_mode`]).
+pub fn called_in(w: &World, id: ObjectId) -> bool {
+    pirate_data(w, id).is_some_and(|p| p.called_in)
 }
 
 /// The boss fight's step at the start of each call, before the shared

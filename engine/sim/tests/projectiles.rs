@@ -842,11 +842,14 @@ fn glitter_trails_its_target_until_removed() {
             effect::spawn_glitter(w, id)
         })
         .unwrap();
-    // Its first call only sets it up: no sparkle and no draw.
+    // Its first call only sets it up: no sparkle and no draw, and it is
+    // no longer in the first-call state.
     let rng = sim.rng().state();
+    assert_eq!(obj(&sim, mother).unwrap().state, 0);
     step(&mut sim);
     assert_eq!(count_logic(&sim, "GlitterBaby"), 0, "set up only");
     assert_eq!(sim.rng().state(), rng, "no draw");
+    assert_eq!(obj(&sim, mother).unwrap().state, effect::state::SHEDDING);
     let mut seen = std::collections::BTreeSet::new();
     for _ in 0..10 {
         let before = count_logic(&sim, "GlitterBaby");
@@ -854,6 +857,7 @@ fn glitter_trails_its_target_until_removed() {
         assert_eq!(count_logic(&sim, "GlitterBaby") - before, 2, "two a tick");
         for (id, o) in sim.objects().all() {
             if &*o.logic == "GlitterBaby" && seen.insert(id) {
+                assert_eq!(o.state, effect::state::PLAYING, "set up at once");
                 let r = claw.3.translate(claw.0, claw.1);
                 assert!(r.contains(o.x, o.y), "on Claw: {} {}", o.x, o.y);
                 assert_eq!(o.z, claw.2 + 1);
