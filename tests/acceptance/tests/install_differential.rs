@@ -26,8 +26,9 @@
 //! The same route played tick by tick, as `make compare` and
 //! `install_reference` play it, must give exactly the same trace: the
 //! frame loop adds nothing of its own to the game. Each reference trace
-//! is compared under its repeat's hermit crab values when the store
-//! carries them, with either driver.
+//! is compared with its repeat's own copy of the route and under its
+//! repeat's hermit crab values when the store carries them, with either
+//! driver.
 
 use std::collections::BTreeMap;
 use std::path::Path;

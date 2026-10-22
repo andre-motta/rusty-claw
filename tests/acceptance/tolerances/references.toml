@@ -1075,3 +1075,53 @@ known.cam_x = 3434
 known.events = 6084
 known.lives = 6317
 known.pistol = 32900
+
+# The bot's route of the eighth level (original speeds), one 18 ms step
+# per frame, Gabriel's fight with his introduction included. Every repeat
+# wins the level and is equal on every compared row, the random stream
+# included.
+[[compare]]
+reference = "level8/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The eighth level's jump-in route (original speeds): it takes the Catnip
+# near the last save point and jumps into Gabriel's room on its first
+# tick, which skips his introduction; every repeat wins the level and is
+# equal on every row.
+[[compare]]
+reference = "level8/introskip-original"
+clock = "c18"
+tolerance = "exact"
+
+# The eighth level of a game that started with the seventh level's route
+# (`level7-original.csv`), entered through the end-of-level screen with
+# the progress the seventh level carries. The seventh level plays
+# differently from launch to launch under its crabs' values, so each
+# repeat carries other progress in; each is compared with the route
+# played from its own progress: every repeat wins the level and is equal
+# on every row.
+[[compare]]
+reference = "level8/pair-original"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's route of the eighth level (default tuning) at 60 frames per
+# second. It leaves the feel tolerance at 2634 ms in Claw's height (the
+# default tuning's movement, as on the first seven levels), then the runs
+# go different ways: the original's run ends in a game over.
+[[compare]]
+reference = "level8/bot"
+clock = "c60"
+tolerance = "feel"
+known.y = 2634
+known.cam_y = 2634
+known.x = 6834
+known.cam_x = 6834
+known.score = 6850
+known.state_id = 8334
+known.pistol = 8534
+known.physics_type = 9267
+known.health = 9584
+known.events = 12618
+known.lives = 13350

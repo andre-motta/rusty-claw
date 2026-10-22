@@ -927,6 +927,15 @@ impl Sim {
     /// does not act on it in the first pass, as a run of the first level
     /// shows (a soldier there takes no new pose).
     ///
+    /// Inferred too: the clock of the boss's reset. It runs before the
+    /// passes' clock is held, so it reads the clock of the tick after the
+    /// one that took the life, one tick later than the passes read:
+    /// Gabriel's idle wait, which his start of fight starts, starts one
+    /// tick after the passes' clock. A run of the eighth level with a
+    /// respawn in Gabriel's fight follows this order (its random stream
+    /// stays equal after the respawn as far as the run goes); no run has
+    /// shown the reset's clock alone.
+    ///
     /// One run of the second level shows a keg the respawn wakes making
     /// its first roll a tick later than this order gives.
     fn respawn_between_ticks(&mut self) {
@@ -946,7 +955,8 @@ impl Sim {
             });
             runner.list_spawned(objects);
         }
-        // Then the current boss resets, before any object runs again.
+        // Then the current boss resets, before any object runs again, on
+        // the clock of the next tick (inferred, see above).
         self.with_world(|w| w.reset_boss_on_respawn());
         // The camera is not moved here: its own call in the first pass
         // snaps it to Claw where that pass leaves him, when he is beyond

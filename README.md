@@ -453,8 +453,9 @@ for the landing, and gets up a second later; the eighth level's routes
 that sit through the introduction walk off Gabriel's deck with him this
 way before they throw him into the water.
 On the eighth level no jump of Claw's own reaches Gabriel's deck:
-`level8-introskip.csv` takes the Catnip near the last checkpoint and lands
-there with the jump-in while it lasts, and the routes that sit through
+`level8-introskip.csv` takes the Catnip near the last checkpoint, and
+while it lasts its jump-in, a short hop, lands Claw on the dock and a
+jump from there lands him on the deck; the routes that sit through
 the introduction get up with a dynamite boost (written into them by hand,
 as the third level's is; `tools/bot/hints/level8-original.txt` lists the
 held buttons). They
@@ -545,7 +546,13 @@ file of such lines beside its trace, `crabs-<clock>-r<k>.replay.txt` or
 `crabs-<clock>-r<k>.txt` for the `k`-th trace its `meta.toml` lists:
 `make compare` and the reference tests then compare that trace with the
 route replayed under those values (the replay form first), so repeats
-whose crabs started otherwise can all be exact.
+whose crabs started otherwise can all be exact. A later level of such a
+game starts each repeat with the progress that repeat carried in, which
+can differ from launch to launch: the store then holds, beside the
+repeat's trace, `route-<clock>-r<k>.csv`, a copy of the route with that
+repeat's own `# start_...` lines, and `make compare` and the reference
+tests replay that copy for that trace (`route.csv` for a repeat without
+one).
 `rusty-claw --replay` gives the crabs the values the route's own header
 lines name, as `claw-replay` does, both when the route is watched in the
 window and with `--trace`. `claw-bot --crabs FILE` searches under such

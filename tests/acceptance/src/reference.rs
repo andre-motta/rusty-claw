@@ -6,9 +6,10 @@
 //! the `CLAW_REFERENCE` environment variable names, one folder per route:
 //!
 //! ```text
-//! $CLAW_REFERENCE/level<N>/<name>/route.csv           the route played
+//! $CLAW_REFERENCE/level<N>/<name>/route.csv              the route played
 //! $CLAW_REFERENCE/level<N>/<name>/trace-<clock>-r<k>.csv
-//! $CLAW_REFERENCE/level<N>/<name>/meta.toml           how it was played
+//! $CLAW_REFERENCE/level<N>/<name>/meta.toml              how it was played
+//! $CLAW_REFERENCE/level<N>/<name>/route-<clock>-r<k>.csv repeat k's route, if its own
 //! ```
 //!
 //! The clock is `c18`, one 18 ms logic step per frame (the game's own
@@ -33,6 +34,14 @@
 //! `crabs-<clock>-r<k>.txt` ([`repeat_crabs`]). That repeat's trace is
 //! compared with the route replayed under those values; a repeat with no
 //! such file is compared under the values of the route's header.
+//!
+//! A later level of one game whose earlier level plays differently from
+//! launch to launch (its crabs' values) starts each repeat with the
+//! progress that repeat carried in. The store then holds, for repeat `k`
+//! of a clock, `route-<clock>-r<k>.csv`, a copy of the route with that
+//! repeat's own `# start_...` lines ([`repeat_route`]), and that repeat's
+//! trace is compared with its copy replayed; a repeat with no copy replays
+//! `route.csv`.
 //!
 //! [`Store::compare_clock`] replays the route in the game with that clock's
 //! tuning and the random state at time zero (and, for a later level of one
@@ -411,6 +420,25 @@ impl Store {
     pub fn run(&self, clock: Clock) -> Option<&ClockRun> {
         self.runs.iter().find(|r| r.clock == clock)
     }
+
+    /// The route repeat `repeat` of `clock` replays: the repeat's own copy
+    /// of the route when the store has one ([`repeat_route`]), else the
+    /// store's route.
+    pub fn route_of(&self, clock: Clock, repeat: usize) -> PathBuf {
+        repeat_route(&self.dir, clock, repeat).unwrap_or_else(|| self.route.clone())
+    }
+}
+
+/// The route file of repeat `repeat` (1 for the first trace of the clock's
+/// `traces` list) of `clock` in the store folder `dir`:
+/// `route-<clock>-r<repeat>.csv` when the store has it, else `None`. A
+/// later level of one game whose earlier level plays differently from
+/// launch to launch starts each repeat with the progress that repeat
+/// carried in, so the store keeps, for each repeat, a copy of the route
+/// with that repeat's own `# start_...` lines.
+pub fn repeat_route(dir: &Path, clock: Clock, repeat: usize) -> Option<PathBuf> {
+    let path = dir.join(format!("route-{}-r{repeat}.csv", clock.name()));
+    path.is_file().then_some(path)
 }
 
 /// Reads the route at `path`: its text and its input. A route played with
@@ -682,12 +710,15 @@ pub fn repeat_crab_values(
 pub struct TraceResult {
     /// The reference trace.
     pub trace: PathBuf,
+    /// The route replayed for this trace: the repeat's own copy
+    /// ([`repeat_route`]) or the store's route.
+    pub route: PathBuf,
     /// The file of the crabs' values the route was replayed with for this
     /// trace ([`repeat_crabs`]), or `None` for the values of the route's
     /// header.
     pub crabs: Option<PathBuf>,
-    /// The rebuild trace this trace was compared with: the route replayed
-    /// with this repeat's crab values.
+    /// The rebuild trace this trace was compared with: this repeat's route
+    /// replayed with this repeat's crab values.
     pub rebuild: Vec<TraceRow>,
     /// The reference trace's rows.
     pub reference: Vec<TraceRow>,
@@ -708,8 +739,9 @@ pub struct ClockResult {
     /// How the game was driven through the route.
     pub driver: Driver,
     /// The rebuild trace of the first reference trace (each trace's own is
-    /// in [`TraceResult::rebuild`]; they differ only when the repeats'
-    /// crabs start with different values).
+    /// in [`TraceResult::rebuild`]; they differ only when the repeats
+    /// replay their own copies of the route or their crabs start with
+    /// different values).
     pub rebuild: Vec<TraceRow>,
     /// One result per reference trace.
     pub traces: Vec<TraceResult>,
@@ -718,9 +750,10 @@ pub struct ClockResult {
 impl Store {
     /// Replays the route tick by tick with `run`'s tuning, seed and start
     /// point in the level of `bundle` and compares it with each of the
-    /// run's traces within `tol`, each under its repeat's crab values (see
-    /// [`repeat_crab_values`]; repeats with the same values share one
-    /// replay).
+    /// run's traces within `tol`, each from its repeat's own copy of the
+    /// route when the store has one (see [`Store::route_of`]) and under its
+    /// repeat's crab values (see [`repeat_crab_values`]); repeats with the
+    /// same route text and the same values share one replay.
     pub fn compare_clock(
         &self,
         bundle: &LevelBundle,
@@ -749,18 +782,38 @@ impl Store {
         tol: &Tolerances,
         driver: Driver,
     ) -> Result<ClockResult, String> {
-        let (route_text, script) = read_route(&self.route)?;
-        if let Some(level) = script.header.level
-            && level != self.level
-        {
-            return Err(format!(
-                "{} names level {level}, the store level {}",
-                self.route.display(),
-                self.level
-            ));
-        }
+        // The routes the repeats replay, each read once; copies with the
+        // same text share one entry.
+        let mut routes: Vec<(String, InputScript)> = Vec::new();
+        let mut read: Vec<(PathBuf, usize)> = Vec::new();
         let mut references = Vec::new();
         for (i, path) in run.traces.iter().enumerate() {
+            let repeat = i + 1;
+            let route = self.route_of(run.clock, repeat);
+            let index = match read.iter().find(|(p, _)| *p == route) {
+                Some(&(_, index)) => index,
+                None => {
+                    let (text, script) = read_route(&route)?;
+                    if let Some(level) = script.header.level
+                        && level != self.level
+                    {
+                        return Err(format!(
+                            "{} names level {level}, the store level {}",
+                            route.display(),
+                            self.level
+                        ));
+                    }
+                    let index = match routes.iter().position(|(t, _)| *t == text) {
+                        Some(index) => index,
+                        None => {
+                            routes.push((text, script));
+                            routes.len() - 1
+                        }
+                    };
+                    read.push((route.clone(), index));
+                    index
+                }
+            };
             let text = std::fs::read_to_string(path)
                 .map_err(|e| format!("reading {}: {e}", path.display()))?;
             let rows = trace::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -770,46 +823,51 @@ impl Store {
                     path.display()
                 ));
             }
-            let (crabs, crabs_file) = repeat_crab_values(&self.dir, run.clock, i + 1, &route_text)?;
-            references.push((path.clone(), rows, crabs, crabs_file));
+            let (crabs, crabs_file) =
+                repeat_crab_values(&self.dir, run.clock, repeat, &routes[index].0)?;
+            references.push((path.clone(), route, index, rows, crabs, crabs_file));
         }
-        // One replay per distinct set of crab values, long enough for every
-        // trace compared with it.
-        let mut sets: Vec<(CrabValues, u64)> = Vec::new();
-        for (_, rows, crabs, _) in &references {
+        // One replay per distinct route and set of crab values, long enough
+        // for every trace compared with it.
+        let mut sets: Vec<(usize, CrabValues, u64)> = Vec::new();
+        for (_, _, index, rows, crabs, _) in &references {
             let end = rows.last().map_or(0, |r| r.t_ms);
-            match sets.iter_mut().find(|(c, _)| c == crabs) {
-                Some((_, until)) => *until = (*until).max(end),
-                None => sets.push((crabs.clone(), end)),
+            match sets.iter_mut().find(|(i, c, _)| i == index && c == crabs) {
+                Some((_, _, until)) => *until = (*until).max(end),
+                None => sets.push((*index, crabs.clone(), end)),
             }
         }
-        let cfg = replay_config(run, &route_text);
-        let seed = cfg.seed;
-        let carry =
-            parse_start_lines(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?;
-        let checkpoint =
-            script_checkpoint(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?;
-        let health =
-            script_health(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?;
+        // The seed is the run's, whatever the route's text says.
+        let seed = replay_config(run, "").seed;
         let mut rebuilds = Vec::with_capacity(sets.len());
-        for (crabs, until) in sets {
-            let mut sim = start_level(level, cfg.clone(), run.teleport, carry.clone())?;
+        for (index, crabs, until) in sets {
+            let (route_text, script) = &routes[index];
+            let route = read
+                .iter()
+                .find(|(_, i)| *i == index)
+                .map(|(p, _)| p.display().to_string())
+                .unwrap_or_default();
+            let cfg = replay_config(run, route_text);
+            let carry = parse_start_lines(route_text).map_err(|e| format!("{route}: {e}"))?;
+            let checkpoint = script_checkpoint(route_text).map_err(|e| format!("{route}: {e}"))?;
+            let health = script_health(route_text).map_err(|e| format!("{route}: {e}"))?;
+            let mut sim = start_level(level, cfg, run.teleport, carry)?;
             if let Some(p) = checkpoint {
                 sim.set_checkpoint(Some(p));
             }
             if let Some(h) = health {
                 sim.set_health(h);
             }
-            let rows = replay_with_crabs(sim, &script, &route_text, until, driver, crabs.clone())?;
-            rebuilds.push((crabs, rows));
+            let rows = replay_with_crabs(sim, script, route_text, until, driver, crabs.clone())?;
+            rebuilds.push((index, crabs, rows));
         }
         let traces: Vec<TraceResult> = references
             .into_iter()
-            .map(|(trace, reference, crabs, crabs_file)| {
+            .map(|(trace, route, index, reference, crabs, crabs_file)| {
                 let rebuild = rebuilds
                     .iter()
-                    .find(|(c, _)| *c == crabs)
-                    .map(|(_, rows)| rows.clone())
+                    .find(|(i, c, _)| *i == index && *c == crabs)
+                    .map(|(_, _, rows)| rows.clone())
                     .unwrap_or_default();
                 let comparison = trace::compare(&rebuild, &reference, tol);
                 let mut report = trace::report(&rebuild, &reference, &comparison, CONTEXT_ROWS);
@@ -818,6 +876,7 @@ impl Store {
                 }
                 TraceResult {
                     trace,
+                    route,
                     crabs: crabs_file,
                     rebuild,
                     reference,
@@ -1516,6 +1575,7 @@ traces = ["trace-c60-r1.csv"]
         let comparison = trace::compare(&rebuild, &reference, &tol);
         let result = TraceResult {
             trace: PathBuf::from("r.csv"),
+            route: PathBuf::from("route.csv"),
             crabs: None,
             rebuild: rebuild.clone(),
             reference,
@@ -1625,6 +1685,99 @@ traces = ["trace-c60-r1.csv"]
             assert!(t.comparison.passed(), "{}", t.report);
             assert_eq!(t.rebuild, result.rebuild);
         }
+    }
+
+    #[test]
+    fn each_repeat_replays_its_own_copy_of_the_route() {
+        // A later level of one game whose repeats carried other progress
+        // in: repeats 1 and 3 replay route.csv, repeat 2 its own copy with
+        // other start lines, which change the trace (the score and health
+        // on every row). A copy of the other clock names no repeat of this
+        // one.
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let ticks: String = (0..20).map(|t| format!("{t},0x0,0x0\n")).collect();
+        let route = |score: u32, health: i32| {
+            format!(
+                "# level 1\n# start_score = {score}\n# start_health = {health}\n\
+                 # start_lives = 7\n# start_pistol = 17\n# start_magic = 5\n\
+                 # start_dynamite = 3\n# start_weapon = pistol\n\
+                 # start_treasure_game = 1, 2, 3, 4, 5, 6, 7, 8, 9\n\
+                 tick,held_mask,pressed_mask\n{ticks}"
+            )
+        };
+        let (shared, own) = (route(285_700, 100), route(264_800, 95));
+        let write = |name: &str, text: &str| std::fs::write(d.join(name), text).unwrap();
+        write("route.csv", &shared);
+        write("route-c18-r2.csv", &own);
+        write("route-c60-r3.csv", &own);
+        let meta = "level = 1\n[c18]\n\
+                    traces = [\"trace-c18-r1.csv\", \"trace-c18-r2.csv\", \"trace-c18-r3.csv\"]\n";
+        let store = Store::from_meta("level1/x", d, meta).unwrap();
+        let run = store.run(Clock::C18).unwrap();
+        assert_eq!(repeat_route(d, Clock::C18, 1), None);
+        assert_eq!(
+            repeat_route(d, Clock::C18, 2),
+            Some(d.join("route-c18-r2.csv"))
+        );
+        assert_eq!(repeat_route(d, Clock::C18, 3), None);
+        assert_eq!(
+            repeat_route(d, Clock::C60, 3),
+            Some(d.join("route-c60-r3.csv"))
+        );
+        assert_eq!(store.route_of(Clock::C18, 3), d.join("route.csv"));
+        let level = Arc::new(idle_level());
+        let replay = |text: &str| {
+            let carry = parse_start_lines(text).unwrap();
+            let sim = start_level(&level, replay_config(run, text), None, carry).unwrap();
+            let script = InputScript::parse(text).unwrap();
+            let rows = replay_from(sim, &script, text, 0, Driver::Ticks).unwrap();
+            let reference: Vec<TraceRow> = rows
+                .iter()
+                .map(|r| TraceRow {
+                    source: "reference".into(),
+                    ..r.clone()
+                })
+                .collect();
+            (rows, trace::to_csv(&reference))
+        };
+        let (shared_rows, shared_trace) = replay(&shared);
+        let (own_rows, own_trace) = replay(&own);
+        assert_ne!(shared_rows, own_rows, "the start lines change the trace");
+        assert_eq!(shared_rows[0].score, 285_700);
+        assert_eq!(own_rows[0].score, 264_800);
+        write("trace-c18-r1.csv", &shared_trace);
+        write("trace-c18-r2.csv", &own_trace);
+        write("trace-c18-r3.csv", &shared_trace);
+        let compare = || {
+            store
+                .compare_in_level(&level, run, &Tolerances::exact(), Driver::Ticks)
+                .unwrap()
+        };
+        let result = compare();
+        let routes: Vec<_> = result.traces.iter().map(|t| t.route.clone()).collect();
+        assert_eq!(
+            routes,
+            vec![
+                d.join("route.csv"),
+                d.join("route-c18-r2.csv"),
+                d.join("route.csv")
+            ]
+        );
+        for t in &result.traces {
+            assert!(t.comparison.passed(), "{}", t.report);
+        }
+        assert_eq!(result.rebuild, shared_rows);
+        assert_eq!(result.traces[1].rebuild, own_rows);
+        assert_eq!(result.traces[2].rebuild, shared_rows);
+        // Repeat 1 given the other start lines no longer matches its
+        // trace: the score leaves the tolerance on the first row.
+        write("route-c18-r1.csv", &own);
+        let result = compare();
+        let first = result.traces[0].comparison.first_divergence.as_ref();
+        assert_eq!(first.map(|d| d.t_ms), Some(u64::from(TICK_MS)));
+        assert!(result.traces[1].comparison.passed());
+        assert!(result.traces[2].comparison.passed());
     }
 
     #[test]
