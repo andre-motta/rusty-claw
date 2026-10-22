@@ -398,19 +398,29 @@ pub fn enter_jump(w: &mut World, id: ObjectId) {
 // Jump back
 
 /// The hop back: 100 px away from Claw at the same height, when that spot
-/// is inside its patrol limits and has floor; otherwise nothing. Busy and
-/// safe, it flies there facing Claw with its hop-back animation and its
-/// jump sound.
+/// is inside its patrol limits and has floor; otherwise nothing. The spot
+/// is 100 px from the enemy's exact position, fraction included, and a
+/// spot past a limit by any fraction is refused; the floor test and the
+/// hop use the spot cut to its whole pixel. Busy and safe, it flies there
+/// facing Claw with its hop-back animation and its jump sound.
 pub fn enter_jump_back(w: &mut World, id: ObjectId) {
     let right = claw_right(w, id);
     let x = obj(w, id).x;
     let (min, max) = data(w, id).map_or(super::UNBOUNDED, |d| d.bounds);
-    let tx = if right {
-        x.saturating_sub(JUMP_BACK_DISTANCE)
+    let exact = super::exact_x(w, id);
+    let distance = f64::from(JUMP_BACK_DISTANCE);
+    let target = if right {
+        exact - distance
     } else {
-        x.saturating_add(JUMP_BACK_DISTANCE)
+        exact + distance
     };
-    let inside = if right { min <= tx } else { tx <= max };
+    let inside = if right {
+        f64::from(min) <= target
+    } else {
+        target <= f64::from(max)
+    };
+    // `as` cuts toward zero and saturates at the i32 range.
+    let tx = target as i32;
     if !inside || !floor_ok(w, id, tx) {
         return;
     }
