@@ -16,10 +16,12 @@
 //!   enemies it meets) for at most 2 s, after which it is gone with its
 //!   death sound, a splash and its loot. Its first two landings bounce it
 //!   (lifted 1 px with the fractions of its exact position kept, at a
-//!   third of the speed, the first with a thud); the third stops it for
-//!   500 ms, and then the fall costs it 4 health: at 0 or below it dies
-//!   where it lies, otherwise it gets up, goes Home and cannot be lifted
-//!   for 1.5 s.
+//!   third of the speed, the first with a thud; the lift raises only its
+//!   exact height, so one that landed on a platform object and still
+//!   rides it bounces from the pixel it landed on, see [`super::motion`]);
+//!   the third stops it for 500 ms, and then the fall costs it 4 health:
+//!   at 0 or below it dies where it lies, otherwise it gets up, goes Home
+//!   and cannot be lifted for 1.5 s.
 //! - Dropped: it falls, stops on landing, and after 1 s gets up and goes
 //!   Home.
 //!
@@ -362,6 +364,7 @@ fn landing(w: &mut World, id: ObjectId) {
                 d.vy = -v / 3.0;
                 // The lift keeps the fractions of its exact position.
                 d.moved_to = Some(at);
+                d.bounce_lift = true;
             }
         }
         3 => {

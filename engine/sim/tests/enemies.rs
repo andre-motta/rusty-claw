@@ -1404,6 +1404,75 @@ fn a_guarded_walker_rides_a_platform_up_and_down() {
     );
 }
 
+/// An enemy in the air still marked as riding an elevator (as the ledge
+/// guard leaves a thrown enemy that landed on a peg past a ledge) moves by
+/// the elevator only: from its pixel by the elevator's move, with nothing
+/// carried, its own move up of the step dropped. Its speed still takes
+/// the step's gravity, and the mark ends; the step after it flies again.
+#[test]
+fn an_enemy_marked_as_riding_moves_by_the_platform_only() {
+    let mut rows = vec![".".repeat(200); 15];
+    rows.push("#".repeat(200));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut lift = ObjectSpec::at("Elevator", 3000, 500, 0);
+    lift.record[52] = 440;
+    lift.record[54] = 560;
+    lift.record[56] = 150;
+    let mut sim = sim_with(
+        level(
+            &rows,
+            (1000, 600),
+            vec![lift, bounded("Rat", 3000, 900, 2900, 3100)],
+        ),
+        5,
+    );
+    send_claw_away(&mut sim);
+    let id = first(&sim, GameLogic::Rat);
+    let lift = sim
+        .objects()
+        .all()
+        .find(|(_, o)| &*o.logic == "Elevator")
+        .map(|(id, _)| id)
+        .expect("the elevator");
+    let mark = |sim: &mut Sim| {
+        sim.with_world(|w| {
+            let top = w.objects.get(lift).map(|p| p.y + p.hit_rect.top).unwrap();
+            let o = w.objects.get_mut(id).unwrap();
+            o.x = 3000;
+            o.y = top - 40 - o.move_rect.bottom;
+            o.physics_type = ptype::FLY;
+            o.flags |= flags::ON_ELEVATOR;
+            o.object_below = Some(lift);
+            if let ObjectData::Enemy(d) = &mut o.data {
+                d.vx = -100.0;
+                d.vy = -300.0;
+                d.carry = (0.0, 0.7);
+            }
+        });
+    };
+    let mut moved = 0;
+    for _ in 0..40 {
+        mark(&mut sim);
+        let (x, y) = (obj(&sim, id).x, obj(&sim, id).y);
+        sim.step(TickInput::default());
+        let o = obj(&sim, id);
+        let by = obj(&sim, lift).platform_move;
+        assert_eq!((o.x, o.y), (x + by.0, y + by.1), "by the elevator only");
+        assert_eq!(o.flags & flags::ON_ELEVATOR, 0, "the mark ends");
+        let d = data(&sim, id);
+        assert_eq!(d.carry, (0.0, 0.0), "nothing carried");
+        assert!((d.vy - (-300.0 + 2000.0 * 0.018)).abs() < 1e-6, "{}", d.vy);
+        assert_eq!(d.vx, -100.0);
+        moved += i32::from(by.1 != 0);
+        // Unmarked, the next step is its own flight up and across.
+        let (x, y) = (o.x, o.y);
+        sim.step(TickInput::default());
+        let o = obj(&sim, id);
+        assert!(o.y < y && o.x < x, "flies on its own");
+    }
+    assert!(moved > 30, "the elevator moved on {moved} of the steps");
+}
+
 // ----------------------------------------------------------------------
 // Narrow ledges
 

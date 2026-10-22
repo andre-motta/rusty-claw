@@ -845,6 +845,11 @@ pub struct EnemyFields {
     /// the tiles, and a wall or a ledge that stops the move makes it the
     /// patrol limit on that side (see [`motion`]). `None` otherwise.
     pub teleport_to: Option<i32>,
+    /// A thrown enemy's landing lifted it 1 px into a bounce in this tick.
+    /// The lift raises only its exact height: a movement step that drops
+    /// its own move (it is riding a platform, see [`motion`]) starts from
+    /// the pixel it landed on. The next movement step clears it.
+    pub bounce_lift: bool,
     /// Call scheduled for the post-tick.
     pub deferred: Option<Deferred>,
     /// Object holding the level's strike token.
@@ -932,6 +937,7 @@ impl Default for EnemyFields {
             last_move_ms: None,
             frozen: false,
             teleport_to: None,
+            bounce_lift: false,
             deferred: None,
             token_at: None,
             contact_rect: Rect::UNSET,
