@@ -1,4 +1,4 @@
-//! Two rules of the eighth level's play on your own install (skipped
+//! Three rules of the eighth level's play on your own install (skipped
 //! without `CLAW_INSTALL`), each pinned to a moment of a route where the
 //! original game showed it, by the state of the shared random stream after
 //! the ticks around it, which equals the original's.
@@ -22,7 +22,15 @@
 //!   leap's step in the respawn's passes, with no per-pulse roll. The
 //!   route then ends without the level's end, as it did in the original
 //!   game, and the stream stays the original's to the original run's last
-//!   tick, 112 ticks past the route's last row, with nothing held.
+//!   tick, 112 ticks past the route's last row, with nothing held;
+//! - an enemy marked as riding a platform object moves by the platform
+//!   only: Claw throws Gabriel onto a peg that reaches past the dock's
+//!   edge in the jump-in route. He lands on it in tick 15839 and the ledge
+//!   guard, which looks at the tiles only, puts him back 2 px above it,
+//!   still marked; his first bounce step (tick 15840) does not move him,
+//!   his second bounce (tick 15856) lands him on the peg at once, and the
+//!   landing costs him his 4 health in tick 15886, as in the original
+//!   game, which the route then follows to the level's end.
 
 use std::path::Path;
 
@@ -32,7 +40,8 @@ use claw_bot::route::{self, TuningName};
 use claw_frame::GameEvent;
 use claw_sim::logic::enemy::{EnemyState, redtail_pirate};
 use claw_sim::logic::{ObjectData, effect};
-use claw_sim::object::{ObjectId, draw_flags};
+use claw_sim::object::{Object, ObjectId, draw_flags, flags};
+use claw_sim::physics::ptype;
 use claw_sim::{InputScript, Sim, SimLevel, StartState, TickInput};
 
 /// The original game's random state after these ticks of the earlier
@@ -63,6 +72,23 @@ const INTRO_SKIP_RNG: [(usize, u32); 3] = [
     (15582, 18_660_521),
     (15583, 803_775_037),
 ];
+
+/// The original game's random state after these ticks of the jump-in
+/// route, around Gabriel's bounces on the peg and to the level's end.
+const BOUNCE_RNG: [(usize, u32); 8] = [
+    (15839, 270_162_372),
+    (15840, 270_162_372),
+    (15856, 2_642_138_242),
+    (15857, 2_309_728_573),
+    (15885, 928_688_468),
+    (15887, 2_132_864_889),
+    (16000, 695_898_116),
+    (16562, 958_507_125),
+];
+
+/// Where Gabriel lands on the peg past the dock's edge in the jump-in
+/// route, and stays through his first bounce step.
+const ON_THE_PEG: (i32, i32) = (42857, 5062);
 
 /// Ticks the original run of the earlier route lasted.
 const EARLIER_RUN_TICKS: usize = 17412;
@@ -170,6 +196,18 @@ impl Run {
     fn claw_at(&self) -> (i32, i32) {
         let c = self.sim.player().expect("Claw");
         (c.x, c.y)
+    }
+
+    /// Gabriel: his object and the speed up or down his movement keeps.
+    fn gabriel(&self) -> (&Object, f64) {
+        self.sim
+            .objects()
+            .all()
+            .find_map(|(_, o)| match &o.data {
+                ObjectData::Gabriel(d) => Some((o, d.enemy.vy)),
+                _ => None,
+            })
+            .expect("Gabriel")
     }
 
     /// Gabriel's list of the pirates he called in.
@@ -282,5 +320,58 @@ fn install_a_called_in_pirate_keeps_its_leap_across_the_respawn() {
     println!(
         "a called-in pirate keeps its leap across Gabriel's reset: the stream is the original's to tick {}",
         EARLIER_RUN_TICKS - 1
+    );
+}
+
+#[test]
+fn install_a_riding_enemy_moves_by_the_platform_only() {
+    let Some(root) = install() else { return };
+    let level = level8(&root);
+    let mut run = Run::new(&level, &routes_file("level8-introskip.csv"));
+    run.to(15839);
+    let (g, _) = run.gabriel();
+    assert_eq!((g.x, g.y), ON_THE_PEG, "put back above the peg");
+    assert!(g.flags & flags::ON_ELEVATOR != 0, "marked as riding");
+    let peg = g.object_below.expect("the peg under him");
+    assert!(
+        run.sim.objects().get(peg).unwrap().logic.contains("Peg"),
+        "riding a peg"
+    );
+    // The first bounce step drops his own move: he stays on the pixel he
+    // landed on, his speed takes its gravity step, and the mark ends.
+    run.to(15840);
+    let (g, vy) = run.gabriel();
+    assert_eq!((g.x, g.y), ON_THE_PEG, "the first bounce step");
+    assert!((vy + 259.11).abs() < 0.01, "speed up {vy}");
+    assert!(g.flags & flags::ON_ELEVATOR == 0, "the mark ends");
+    // He lands on the peg again 1 px above its top, and his second
+    // bounce, which starts from there, lands him on it at once.
+    run.to(15854);
+    assert_eq!(run.gabriel().0.physics_type, ptype::FLY);
+    run.to(15855);
+    let (g, _) = run.gabriel();
+    assert_eq!((g.x, g.y, g.object_below), (42857, 5064, Some(peg)));
+    run.to(15856);
+    let (g, vy) = run.gabriel();
+    assert_eq!(g.state, EnemyState::Bounce as i32, "the second bounce");
+    assert_eq!((g.x, g.y), (42857, 5064), "the second bounce");
+    assert_eq!(g.physics_type, ptype::STAND, "lands at once");
+    assert_eq!(g.object_below, Some(peg));
+    assert!((vy + 55.22).abs() < 0.01, "speed up {vy}");
+    run.to(15885);
+    assert_eq!(run.gabriel().0.health, 100);
+    run.to(15886);
+    assert_eq!(run.gabriel().0.health, 96, "the landing's cost");
+    run.to(16562);
+    run.check_rng(&BOUNCE_RNG);
+    assert!(
+        run.sim
+            .last_events()
+            .iter()
+            .any(|e| matches!(e, GameEvent::LevelComplete { .. })),
+        "the level's end"
+    );
+    println!(
+        "a riding enemy moves by the platform only: Gabriel stays at {ON_THE_PEG:?} in tick 15840 and pays the landing in tick 15886"
     );
 }

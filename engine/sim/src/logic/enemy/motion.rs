@@ -6,8 +6,21 @@
 //!
 //! 1. A frozen enemy (dead in place, or carried by Claw) does not move at
 //!    all.
-//! 2. One riding a platform moves with it first; one that is not standing
-//!    rides nothing.
+//! 2. One marked as riding a platform object (it landed or stands on a
+//!    peg or an elevator) moves by the platform only: from its pixel
+//!    position by the platform's last move, its exact position put on
+//!    that pixel, with no fraction carried. Its own move of the step is
+//!    dropped, though its speeds still take their step, and the mark ends
+//!    after the step unless it stands. The tiles then have their say as
+//!    below; when they move it off that pixel up or down, its vertical
+//!    speed is the one that move gives from the speed after the step, and
+//!    the ledge guard picks its edge by the dropped move across. The
+//!    ledge guard looks at the tiles only and leaves the mark alone, so a
+//!    thrown enemy landing on a peg that reaches past a ledge, put back in
+//!    the air by the guard, is still marked: its first bounce step does
+//!    not move it (it starts from the pixel it landed on, the bounce's
+//!    1 px lift being on its exact height only), and a later bounce that
+//!    starts with its feet a pixel above the peg lands on it again at once.
 //! 3. Each axis moves by `(v + a dt / 2) dt`, at most 24 px; the speed
 //!    then grows by `a dt` (after a capped step, it is what the energy of
 //!    the capped move gives). Across there is no acceleration; up and down
@@ -209,6 +222,17 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     let before_x = jump.unwrap_or(x0);
     let dt = step_seconds(d, w.now_ms);
     let standing = entry == ptype::STAND;
+    let lift = std::mem::take(&mut d.bounce_lift);
+    if riding_mark(w, id) {
+        let from = RideFrom {
+            x: x0,
+            y: y0 + i32::from(lift && !standing),
+            start_x,
+            before_x,
+            standing,
+        };
+        return ride_step(w, id, d, from, ride, dt);
+    }
     // Where the step starts from, exactly, and the speed up or down then.
     let p0 = (f64::from(x0) + d.carry.0, f64::from(y0) + d.carry.1);
     let v0y = d.vy;
@@ -281,18 +305,7 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     if !standing && y != ty {
         d.vy = speed_after(v0y, d.ay, f64::from(y) - p0.1);
     }
-    if r & res::CEILING != 0 {
-        d.vy = -d.vy;
-    } else if r & res::WALL != 0 && r & res::RIGHT != 0 {
-        d.bounds.1 = before_x;
-        d.vx *= -0.5;
-    } else if r & res::WALL != 0 && r & res::LEFT != 0 {
-        d.bounds.0 = before_x;
-        d.vx *= -0.5;
-    }
-    let state = super::EnemyState::from_id(obj(w, id).state);
-    let death = (r & res::DEATH_TILE != 0 && state != Some(EnemyState::Dead) && !d.dead)
-        .then_some(DeathKind::Spikes);
+    let death = after_tiles(w, id, d, r, before_x);
     if now == ptype::STAND && d.ledge_guard && !d.stationary {
         let moved = f64::from(x) + d.carry.0 - p0.0;
         let before = Before {
@@ -303,6 +316,124 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
             standing,
         };
         ledge_guard(w, id, d, before, moved);
+    }
+    let o = obj(w, id);
+    d.moved_to = Some((o.x, o.y));
+    if d.z_sort {
+        depth_sort(w, id, d);
+    }
+    death
+}
+
+/// What the tiles reported (`r`) does to a move that tests them: a
+/// ceiling turns the vertical speed around, a wall on either side makes
+/// `before_x` that patrol limit and turns the speed across around at half,
+/// and a death tile kills an enemy that is not dead yet.
+fn after_tiles(
+    w: &World,
+    id: ObjectId,
+    d: &mut EnemyData,
+    r: u32,
+    before_x: i32,
+) -> Option<DeathKind> {
+    if r & res::CEILING != 0 {
+        d.vy = -d.vy;
+    } else if r & res::WALL != 0 && r & res::RIGHT != 0 {
+        d.bounds.1 = before_x;
+        d.vx *= -0.5;
+    } else if r & res::WALL != 0 && r & res::LEFT != 0 {
+        d.bounds.0 = before_x;
+        d.vx *= -0.5;
+    }
+    let state = super::EnemyState::from_id(obj(w, id).state);
+    (r & res::DEATH_TILE != 0 && state != Some(EnemyState::Dead) && !d.dead)
+        .then_some(DeathKind::Spikes)
+}
+
+/// True while the enemy is marked as riding a platform object: the mark
+/// set, with an object below it.
+fn riding_mark(w: &World, id: ObjectId) -> bool {
+    let o = obj(w, id);
+    o.flags & flags::ON_ELEVATOR != 0 && o.object_below.is_some()
+}
+
+/// Where the step of an enemy marked as riding starts: its pixel position
+/// (`y` is the pixel it landed on when the landing lifted it into a
+/// bounce in this tick, since the lift raised only its exact height), the
+/// x its exact position starts from, where it stood before the step
+/// across, and whether it entered the step standing.
+#[derive(Debug, Clone, Copy)]
+struct RideFrom {
+    x: i32,
+    y: i32,
+    start_x: f64,
+    before_x: i32,
+    standing: bool,
+}
+
+/// The step of an enemy marked as riding a platform object (see the
+/// module documentation): its own move of the step is dropped, and it
+/// moves from its pixel position by the platform's last move (`ride`)
+/// only, its exact position on the pixel it moves to. Its speeds still
+/// take their step. The mark ends here unless it stands; the tiles then
+/// have their say as in any step, and when they move it off that pixel up
+/// or down its vertical speed is the one that move gives from the speed
+/// after the step. The ledge guard picks its edge by the dropped move
+/// across.
+fn ride_step(
+    w: &mut World,
+    id: ObjectId,
+    d: &mut EnemyData,
+    from: RideFrom,
+    ride: (i32, i32),
+    dt: f64,
+) -> Option<DeathKind> {
+    let standing = from.standing;
+    let own_dx =
+        clamp_to(from.start_x + axis_step_for(&mut d.vx, 0.0, dt), d.bounds) - from.start_x;
+    let tx = from.x + ride.0;
+    let ty = from.y + ride.1;
+    if standing {
+        d.vy = 0.0;
+    } else {
+        let ay = d.ay;
+        axis_step_for(&mut d.vy, ay, dt);
+    }
+    {
+        let o = obj_mut(w, id);
+        o.flags &= !flags::ON_DEATH_TILE;
+        if !standing {
+            o.flags &= !flags::ON_ELEVATOR;
+        }
+    }
+    let r = collide(w, id, tx, ty, d.tiles_only);
+    d.last_result = r;
+    d.carry = (0.0, 0.0);
+    let (x, y, now) = {
+        let o = obj(w, id);
+        (o.x, o.y, o.physics_type)
+    };
+    if now == ptype::DIRECT {
+        d.moved_to = Some((x, y));
+        if d.z_sort {
+            depth_sort(w, id, d);
+        }
+        return None;
+    }
+    let p = (f64::from(tx), f64::from(ty));
+    if !standing && y != ty {
+        d.vy = speed_after(d.vy, d.ay, f64::from(y) - p.1);
+    }
+    let death = after_tiles(w, id, d, r, from.before_x);
+    if now == ptype::STAND && d.ledge_guard && !d.stationary {
+        let before = Before {
+            x: from.before_x,
+            y: from.y,
+            p0: p,
+            v0y: d.vy,
+            standing,
+        };
+        ledge_guard(w, id, d, before, own_dx);
     }
     let o = obj(w, id);
     d.moved_to = Some((o.x, o.y));
