@@ -142,8 +142,14 @@
 #        or 96 ticks of wait and the second jump 28 or 26 ticks after the
 #        first (also 64 and 58).
 #     c. --intro play, no waypoints, from route tick 13684 (the boost's
-#        last 20 ticks of nothing): he lifts Gabriel, throws him off the
-#        deck on to the flat of the dock twice, and with the third throw
-#        into the water beyond the dock's end. The search never keeps a
-#        throw that lands Gabriel next to a drop (a peg, or a floor's
-#        edge).
+#        last 20 ticks of nothing): he lifts Gabriel and walks off the
+#        deck's edge with him (route tick 13758), which drops him on to
+#        the dock; on the dock Claw lifts him again, throws him on to the
+#        flat of the dock once, and with the second throw into the water
+#        beyond the dock's end. The route was found while a walk off a
+#        ledge threw what Claw carried; it drops an enemy now, so the
+#        route plays otherwise from route tick 13815 (Gabriel gets up
+#        where he landed) and still wins the level as it is. It was also
+#        found while the search kept no throw that landed Gabriel next to
+#        a drop; any landing is kept now, a peg past a drop's edge
+#        included.
