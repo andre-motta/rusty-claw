@@ -545,7 +545,13 @@ file of such lines beside its trace, `crabs-<clock>-r<k>.replay.txt` or
 `crabs-<clock>-r<k>.txt` for the `k`-th trace its `meta.toml` lists:
 `make compare` and the reference tests then compare that trace with the
 route replayed under those values (the replay form first), so repeats
-whose crabs started otherwise can all be exact.
+whose crabs started otherwise can all be exact. A later level of such a
+game starts each repeat with the progress that repeat carried in, which
+can differ from launch to launch: the store then holds, beside the
+repeat's trace, `route-<clock>-r<k>.csv`, a copy of the route with that
+repeat's own `# start_...` lines, and `make compare` and the reference
+tests replay that copy for that trace (`route.csv` for a repeat without
+one).
 `rusty-claw --replay` gives the crabs the values the route's own header
 lines name, as `claw-replay` does, both when the route is watched in the
 window and with `--trace`. `claw-bot --crabs FILE` searches under such
