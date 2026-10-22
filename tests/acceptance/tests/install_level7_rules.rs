@@ -598,7 +598,11 @@ fn install_a_bomb_in_the_place_of_the_last_attacker_spares_its_crab() {
         "the crab lives on"
     );
     assert_eq!(run.rng[6047], 2_927_231_927);
-    // On to the game over at tick 7751, as in the original's run.
+    // On through the original's run, to its game over at tick 7751.
+    for (t, rng) in [(6500, 3_387_032_359), (7200, 2_290_093_832)] {
+        run.to(t);
+        assert_eq!(run.rng[t], rng, "tick {t}");
+    }
     let mut over = None;
     while over.is_none() && run.tick < run.script.ticks.len() {
         run.to(run.tick);
@@ -840,13 +844,25 @@ fn install_a_pirate_with_one_row_in_view_runs_on_from_a_direct_start() {
         .find("RedTailPirate", 2423)
         .expect("the pirate of record 2423");
     assert_eq!(state_of(&run, pirate), Some(EnemyState::FastAdvance));
-    run.to(9471);
+    assert_eq!(run.at(pirate), (25761, 6234));
+    // With one row in view at tick 9470 it runs on one tick more.
+    run.to(9470);
     before.to(9470);
+    assert_eq!(state_of(&run, pirate), Some(EnemyState::FastAdvance));
+    assert_eq!(run.at(pirate), (25765, 6234));
+    // Counted off screen a tick early, it goes idle at once.
+    let other = before.find("RedTailPirate", 2423).unwrap();
+    assert_eq!(state_of(&before, other), Some(EnemyState::Idle));
+    assert_eq!(before.at(other), (25761, 6234));
+    // Idle on the next tick, where it stopped.
+    run.to(9471);
+    assert_eq!(state_of(&run, pirate), Some(EnemyState::Idle));
+    assert_eq!(run.at(pirate), (25765, 6234));
     assert_eq!(run.rng[9470], 2_133_050_505);
     assert_eq!(before.rng[9470], 1_351_267_624);
     assert_eq!(run.rng[9471], 2_058_887_197);
     println!(
-        "from a direct start the pirate of record 2423 runs on at tick 9470; random state after it {}",
+        "from a direct start the pirate of record 2423 runs on to (25765, 6234) at tick 9470; idle at tick 9471; random state after tick 9470 {}",
         run.rng[9470]
     );
 }

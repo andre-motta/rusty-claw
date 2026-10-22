@@ -66,8 +66,11 @@ test-install:
 
 # Replays $(CLAW_REFERENCE)/$(REF)/route.csv with the tuning, random state
 # and start point (teleport) its meta.toml names for each clock (or only
-# CLOCK) and compares the game with every reference trace of that clock. It
-# fails on a divergence that tests/acceptance/tolerances/references.toml
+# CLOCK) and compares the game with every reference trace of that clock,
+# each under the hermit crab values its repeat carries in the store
+# (crabs-<clock>-r<k>.replay.txt, else crabs-<clock>-r<k>.txt, for the k-th
+# trace the clock's traces list names; the route header's values without
+# either). It fails on a divergence that tests/acceptance/tolerances/references.toml
 # does not list for that route and clock (or that comes earlier than
 # listed), and with STRICT=1 on any divergence and on a game trace that ends
 # before the reference trace; see tests/acceptance/tests/install_reference.rs.

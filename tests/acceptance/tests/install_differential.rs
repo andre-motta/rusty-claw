@@ -25,7 +25,9 @@
 //!
 //! The same route played tick by tick, as `make compare` and
 //! `install_reference` play it, must give exactly the same trace: the
-//! frame loop adds nothing of its own to the game.
+//! frame loop adds nothing of its own to the game. Each reference trace
+//! is compared under its repeat's hermit crab values when the store
+//! carries them, with either driver.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -79,15 +81,17 @@ fn routes_follow_the_reference_traces_through_the_frame_loop() {
         let ticks = store
             .compare_clock(bundle, run, &tol)
             .unwrap_or_else(|e| panic!("{label}: {e}"));
-        if let Some(i) = (0..result.rebuild.len().max(ticks.rebuild.len()))
-            .find(|&i| result.rebuild.get(i) != ticks.rebuild.get(i))
-        {
-            failures.push(format!(
-                "{label}: the frame loop at 60 Hz and tick-by-tick play differ at tick {i}:\n    \
-                 frame loop {:?}\n    tick by tick {:?}",
-                result.rebuild.get(i),
-                ticks.rebuild.get(i)
-            ));
+        for (framed, ticked) in result.traces.iter().zip(&ticks.traces) {
+            let (a, b) = (&framed.rebuild, &ticked.rebuild);
+            if let Some(i) = (0..a.len().max(b.len())).find(|&i| a.get(i) != b.get(i)) {
+                failures.push(format!(
+                    "{label} ({}): the frame loop at 60 Hz and tick-by-tick play differ at tick {i}:\n    \
+                     frame loop {:?}\n    tick by tick {:?}",
+                    framed.trace.display(),
+                    a.get(i),
+                    b.get(i)
+                ));
+            }
         }
         for t in &result.traces {
             let name = t.trace.display();
@@ -99,7 +103,7 @@ fn routes_follow_the_reference_traces_through_the_frame_loop() {
                 continue;
             }
             let mut text = format!("{label} ({name}): {}", v.regressions.join("; "));
-            if let Some(report) = unlisted_report(entry, t, &tol, &result.rebuild) {
+            if let Some(report) = unlisted_report(entry, t, &tol, &t.rebuild) {
                 text.push_str("\n    the first divergence references.toml does not list:\n");
                 for line in report.lines() {
                     text.push_str("      ");

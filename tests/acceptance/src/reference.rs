@@ -25,6 +25,15 @@
 //! line ([`script_checkpoint`]), and one that gave Claw a health there in a
 //! `# health N` line ([`script_health`]); the replay sets the same there.
 //!
+//! The hermit crabs of a level start with values the original game does
+//! not fix (see [`CrabValues`]), so each repeat of a store may carry its
+//! crabs' values in a file of its own beside its trace: for repeat `k` of
+//! a clock (the `k`-th trace that clock's `traces` list names),
+//! `crabs-<clock>-r<k>.replay.txt` or, without it,
+//! `crabs-<clock>-r<k>.txt` ([`repeat_crabs`]). That repeat's trace is
+//! compared with the route replayed under those values; a repeat with no
+//! such file is compared under the values of the route's header.
+//!
 //! [`Store::compare_clock`] replays the route in the game with that clock's
 //! tuning and the random state at time zero (and, for a later level of one
 //! game, the progress its `# start_...` lines say the game carried in),
@@ -42,6 +51,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use claw_frame::{SimulatedRefresh, ViewConfig};
 use claw_game::Session;
@@ -54,7 +64,7 @@ use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Comparison, Tolerances, TraceRow};
 use claw_sim::tuning::{FuseClock, TICK_MS};
-use claw_sim::{Carry, InputScript, Sim, SimConfig, StartState};
+use claw_sim::{Carry, InputScript, Sim, SimConfig, SimLevel, StartState};
 
 /// Rows of each trace shown before a divergence.
 pub const CONTEXT_ROWS: usize = 5;
@@ -477,12 +487,18 @@ pub fn start_game(
     start: Option<(i32, i32)>,
     carry: Option<Carry>,
 ) -> Result<Sim, String> {
+    start_level(&bundle.sim_level, cfg, start, carry)
+}
+
+/// [`start_game`] in `level`.
+fn start_level(
+    level: &Arc<SimLevel>,
+    cfg: SimConfig,
+    start: Option<(i32, i32)>,
+    carry: Option<Carry>,
+) -> Result<Sim, String> {
     let seed = cfg.seed;
-    let mut sim = Sim::with_start(
-        bundle.sim_level.clone(),
-        cfg,
-        StartState { carry, save: None },
-    );
+    let mut sim = Sim::with_start(level.clone(), cfg, StartState { carry, save: None });
     if sim.rng_state() != seed {
         return Err(format!(
             "loading the level drew from the random stream ({} after the load, seed {seed}), \
@@ -508,17 +524,30 @@ pub fn start_game(
 /// hermit crabs start with the values the route's header gives them
 /// (`# crab ...` lines, see [`CrabValues`]), each crab as it is built.
 pub fn replay_from(
-    mut sim: Sim,
+    sim: Sim,
     script: &InputScript,
     route_text: &str,
     until_ms: u64,
     driver: Driver,
 ) -> Result<Vec<TraceRow>, String> {
+    let crabs = CrabValues::from_header(route_text).map_err(|e| format!("the crab values: {e}"))?;
+    replay_with_crabs(sim, script, route_text, until_ms, driver, crabs)
+}
+
+/// [`replay_from`] with the hermit crabs starting with `crabs` instead of
+/// the values of the route's header.
+pub fn replay_with_crabs(
+    mut sim: Sim,
+    script: &InputScript,
+    route_text: &str,
+    until_ms: u64,
+    driver: Driver,
+    crabs: CrabValues,
+) -> Result<Vec<TraceRow>, String> {
     let ticks = script
         .ticks
         .len()
         .max(until_ms.div_ceil(u64::from(TICK_MS)) as usize);
-    let crabs = CrabValues::from_header(route_text).map_err(|e| format!("the crab values: {e}"))?;
     crabs.apply(&mut sim);
     match driver {
         Driver::Ticks => Ok(replay_ticks(sim, script, ticks, &crabs)),
@@ -612,11 +641,54 @@ fn replay_session(
     Ok(rows)
 }
 
+/// The file of the hermit crabs' values of repeat `repeat` (1 for the
+/// first trace of the clock's `traces` list) of `clock` in the store
+/// folder `dir`: `crabs-<clock>-r<repeat>.replay.txt` when the store has
+/// it (the values a replay takes, a crab that starts stationary included),
+/// else `crabs-<clock>-r<repeat>.txt`, else `None`.
+pub fn repeat_crabs(dir: &Path, clock: Clock, repeat: usize) -> Option<PathBuf> {
+    let stem = format!("crabs-{}-r{repeat}", clock.name());
+    [format!("{stem}.replay.txt"), format!("{stem}.txt")]
+        .into_iter()
+        .map(|name| dir.join(name))
+        .find(|p| p.is_file())
+}
+
+/// The values the hermit crabs start with for repeat `repeat` of `clock`
+/// in the store folder `dir`, and the file they come from: the repeat's
+/// own file ([`repeat_crabs`]) when the store has one, else the values of
+/// the route's header (`route_text`) and `None`.
+pub fn repeat_crab_values(
+    dir: &Path,
+    clock: Clock,
+    repeat: usize,
+    route_text: &str,
+) -> Result<(CrabValues, Option<PathBuf>), String> {
+    match repeat_crabs(dir, clock, repeat) {
+        Some(path) => {
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| format!("reading {}: {e}", path.display()))?;
+            let crabs = CrabValues::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            Ok((crabs, Some(path)))
+        }
+        None => CrabValues::from_header(route_text)
+            .map(|crabs| (crabs, None))
+            .map_err(|e| format!("the crab values: {e}")),
+    }
+}
+
 /// One reference trace compared.
 #[derive(Debug, Clone)]
 pub struct TraceResult {
     /// The reference trace.
     pub trace: PathBuf,
+    /// The file of the crabs' values the route was replayed with for this
+    /// trace ([`repeat_crabs`]), or `None` for the values of the route's
+    /// header.
+    pub crabs: Option<PathBuf>,
+    /// The rebuild trace this trace was compared with: the route replayed
+    /// with this repeat's crab values.
+    pub rebuild: Vec<TraceRow>,
     /// The reference trace's rows.
     pub reference: Vec<TraceRow>,
     /// The comparison.
@@ -635,7 +707,9 @@ pub struct ClockResult {
     pub seed: u32,
     /// How the game was driven through the route.
     pub driver: Driver,
-    /// The rebuild trace.
+    /// The rebuild trace of the first reference trace (each trace's own is
+    /// in [`TraceResult::rebuild`]; they differ only when the repeats'
+    /// crabs start with different values).
     pub rebuild: Vec<TraceRow>,
     /// One result per reference trace.
     pub traces: Vec<TraceResult>,
@@ -644,7 +718,9 @@ pub struct ClockResult {
 impl Store {
     /// Replays the route tick by tick with `run`'s tuning, seed and start
     /// point in the level of `bundle` and compares it with each of the
-    /// run's traces within `tol`.
+    /// run's traces within `tol`, each under its repeat's crab values (see
+    /// [`repeat_crab_values`]; repeats with the same values share one
+    /// replay).
     pub fn compare_clock(
         &self,
         bundle: &LevelBundle,
@@ -662,6 +738,17 @@ impl Store {
         tol: &Tolerances,
         driver: Driver,
     ) -> Result<ClockResult, String> {
+        self.compare_in_level(&bundle.sim_level, run, tol, driver)
+    }
+
+    /// [`Store::compare_clock_with`] in `level`.
+    fn compare_in_level(
+        &self,
+        level: &Arc<SimLevel>,
+        run: &ClockRun,
+        tol: &Tolerances,
+        driver: Driver,
+    ) -> Result<ClockResult, String> {
         let (route_text, script) = read_route(&self.route)?;
         if let Some(level) = script.header.level
             && level != self.level
@@ -673,7 +760,7 @@ impl Store {
             ));
         }
         let mut references = Vec::new();
-        for path in &run.traces {
+        for (i, path) in run.traces.iter().enumerate() {
             let text = std::fs::read_to_string(path)
                 .map_err(|e| format!("reading {}: {e}", path.display()))?;
             let rows = trace::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -683,32 +770,47 @@ impl Store {
                     path.display()
                 ));
             }
-            references.push((path.clone(), rows));
+            let (crabs, crabs_file) = repeat_crab_values(&self.dir, run.clock, i + 1, &route_text)?;
+            references.push((path.clone(), rows, crabs, crabs_file));
         }
-        let until = references
-            .iter()
-            .filter_map(|(_, rows)| rows.last().map(|r| r.t_ms))
-            .max()
-            .unwrap_or(0);
+        // One replay per distinct set of crab values, long enough for every
+        // trace compared with it.
+        let mut sets: Vec<(CrabValues, u64)> = Vec::new();
+        for (_, rows, crabs, _) in &references {
+            let end = rows.last().map_or(0, |r| r.t_ms);
+            match sets.iter_mut().find(|(c, _)| c == crabs) {
+                Some((_, until)) => *until = (*until).max(end),
+                None => sets.push((crabs.clone(), end)),
+            }
+        }
         let cfg = replay_config(run, &route_text);
         let seed = cfg.seed;
         let carry =
             parse_start_lines(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?;
-        let mut sim = start_game(bundle, cfg, run.teleport, carry)?;
-        if let Some(p) =
-            script_checkpoint(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?
-        {
-            sim.set_checkpoint(Some(p));
+        let checkpoint =
+            script_checkpoint(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?;
+        let health =
+            script_health(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?;
+        let mut rebuilds = Vec::with_capacity(sets.len());
+        for (crabs, until) in sets {
+            let mut sim = start_level(level, cfg.clone(), run.teleport, carry.clone())?;
+            if let Some(p) = checkpoint {
+                sim.set_checkpoint(Some(p));
+            }
+            if let Some(h) = health {
+                sim.set_health(h);
+            }
+            let rows = replay_with_crabs(sim, &script, &route_text, until, driver, crabs.clone())?;
+            rebuilds.push((crabs, rows));
         }
-        if let Some(h) =
-            script_health(&route_text).map_err(|e| format!("{}: {e}", self.route.display()))?
-        {
-            sim.set_health(h);
-        }
-        let rebuild = replay_from(sim, &script, &route_text, until, driver)?;
-        let traces = references
+        let traces: Vec<TraceResult> = references
             .into_iter()
-            .map(|(trace, reference)| {
+            .map(|(trace, reference, crabs, crabs_file)| {
+                let rebuild = rebuilds
+                    .iter()
+                    .find(|(c, _)| *c == crabs)
+                    .map(|(_, rows)| rows.clone())
+                    .unwrap_or_default();
                 let comparison = trace::compare(&rebuild, &reference, tol);
                 let mut report = trace::report(&rebuild, &reference, &comparison, CONTEXT_ROWS);
                 if comparison.rows_compared == 0 {
@@ -716,12 +818,18 @@ impl Store {
                 }
                 TraceResult {
                     trace,
+                    crabs: crabs_file,
+                    rebuild,
                     reference,
                     comparison,
                     report,
                 }
             })
             .collect();
+        let rebuild = traces
+            .first()
+            .map(|t| t.rebuild.clone())
+            .unwrap_or_default();
         Ok(ClockResult {
             run: run.clone(),
             seed,
@@ -1408,6 +1516,8 @@ traces = ["trace-c60-r1.csv"]
         let comparison = trace::compare(&rebuild, &reference, &tol);
         let result = TraceResult {
             trace: PathBuf::from("r.csv"),
+            crabs: None,
+            rebuild: rebuild.clone(),
             reference,
             comparison,
             report: String::new(),
@@ -1428,6 +1538,93 @@ traces = ["trace-c60-r1.csv"]
         assert!(text.contains("at t_ms 126 in column state_id"), "{text}");
         entry.known.insert("state_id".into(), 126);
         assert_eq!(unlisted_report(&entry, &result, &tol, &rebuild), None);
+    }
+
+    #[test]
+    fn each_repeat_takes_its_own_crab_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let route = "# level 7\n# crab 101 = 2, 300, 40\ntick,held_mask,pressed_mask\n0,0,0\n";
+        let write = |name: &str, text: &str| std::fs::write(d.join(name), text).unwrap();
+        // Repeat 1 has both forms: the replay form counts. Repeat 2 has
+        // only the plain file, repeat 3 neither (the route's header), and
+        // a file of the other clock names no repeat of this one.
+        write("crabs-c18-r1.txt", "crab 101 = 3, 1, 2\n");
+        write("crabs-c18-r1.replay.txt", "crab 101 = 3, 1, 2, 1\n");
+        write("crabs-c18-r2.txt", "# a run's values\ncrab 101 = 1, 5, 6\n");
+        write("crabs-c60-r3.txt", "crab 101 = 1, 7, 8\n");
+        assert_eq!(
+            repeat_crabs(d, Clock::C18, 1),
+            Some(d.join("crabs-c18-r1.replay.txt"))
+        );
+        assert_eq!(
+            repeat_crabs(d, Clock::C18, 2),
+            Some(d.join("crabs-c18-r2.txt"))
+        );
+        assert_eq!(repeat_crabs(d, Clock::C18, 3), None);
+        assert_eq!(
+            repeat_crabs(d, Clock::C60, 3),
+            Some(d.join("crabs-c60-r3.txt"))
+        );
+        let values = |k| repeat_crab_values(d, Clock::C18, k, route).unwrap();
+        let (one, file) = values(1);
+        assert_eq!(file, Some(d.join("crabs-c18-r1.replay.txt")));
+        assert_eq!(
+            one,
+            CrabValues::parse("crab 101 = 3, 1, 2, 1\n").unwrap(),
+            "the replay form, a stationary crab included"
+        );
+        let (two, file) = values(2);
+        assert_eq!(file, Some(d.join("crabs-c18-r2.txt")));
+        assert_eq!(two, CrabValues::parse("crab 101 = 1, 5, 6\n").unwrap());
+        let (three, file) = values(3);
+        assert_eq!(file, None);
+        assert_eq!(three, CrabValues::from_header(route).unwrap());
+        // A file that does not read is an error naming it.
+        write("crabs-c18-r4.txt", "crab 101 = 1\n");
+        let e = repeat_crab_values(d, Clock::C18, 4, route).unwrap_err();
+        assert!(e.contains("crabs-c18-r4.txt"), "{e}");
+    }
+
+    #[test]
+    fn repeats_are_compared_under_their_own_crab_values() {
+        // A store whose two repeats differ only in their crab values: the
+        // route has no crab, so each repeat's values change nothing, and
+        // both traces are compared with a replay of their own.
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let mut route = String::from("# level 1\ntick,held_mask,pressed_mask\n");
+        for t in 0..20 {
+            route.push_str(&format!("{t},0x0,0x0\n"));
+        }
+        std::fs::write(d.join("route.csv"), &route).unwrap();
+        std::fs::write(d.join("crabs-c18-r1.txt"), "crab 5 = 3, 1, 2\n").unwrap();
+        let meta = "level = 1\n[c18]\ntraces = [\"trace-c18-r1.csv\", \"trace-c18-r2.csv\"]\n";
+        let store = Store::from_meta("level1/x", d, meta).unwrap();
+        let run = store.run(Clock::C18).unwrap();
+        let level = Arc::new(idle_level());
+        let sim = start_level(&level, replay_config(run, &route), None, None).unwrap();
+        let script = InputScript::parse(&route).unwrap();
+        let rows = replay_from(sim, &script, &route, 0, Driver::Ticks).unwrap();
+        let reference: Vec<TraceRow> = rows
+            .iter()
+            .map(|r| TraceRow {
+                source: "reference".into(),
+                ..r.clone()
+            })
+            .collect();
+        let trace_text = trace::to_csv(&reference);
+        std::fs::write(d.join("trace-c18-r1.csv"), &trace_text).unwrap();
+        std::fs::write(d.join("trace-c18-r2.csv"), &trace_text).unwrap();
+        let result = store
+            .compare_in_level(&level, run, &Tolerances::exact(), Driver::Ticks)
+            .unwrap();
+        let files: Vec<_> = result.traces.iter().map(|t| t.crabs.clone()).collect();
+        assert_eq!(files, vec![Some(d.join("crabs-c18-r1.txt")), None]);
+        for t in &result.traces {
+            assert!(t.comparison.passed(), "{}", t.report);
+            assert_eq!(t.rebuild, result.rebuild);
+        }
     }
 
     #[test]

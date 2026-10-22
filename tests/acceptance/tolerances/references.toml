@@ -1034,3 +1034,44 @@ known.cam_y = 5767
 known.health = 6684
 known.lives = 9684
 known.events = 9684
+
+# The bot's route of the seventh level (original speeds), one 18 ms step
+# per frame. Each repeat carries the values its hermit crabs started with
+# (a crab's side and second range box, and whether a crab a nest hatched
+# started stationary), which differ from run to run, and is compared with
+# the route played under those values: every repeat wins the level and is
+# equal on every compared row, the random stream included.
+[[compare]]
+reference = "level7/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The seventh level of a game that started with the sixth level's route
+# (`level6-original.csv`), entered through the end-of-level screen with
+# the progress the sixth level carries. Each repeat carries its crabs'
+# values and is compared under them: equal on every row, whether the
+# repeat wins the level or its crabs end the game.
+[[compare]]
+reference = "level7/pair-original"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's route of the seventh level (default tuning) at 60 frames per
+# second. It leaves the feel tolerance at 684 ms in Claw's height (the
+# default tuning's movement, as on the first six levels), then the runs go
+# different ways.
+[[compare]]
+reference = "level7/bot"
+clock = "c60"
+tolerance = "feel"
+known.y = 684
+known.cam_y = 684
+known.score = 1450
+known.state_id = 2867
+known.physics_type = 2867
+known.health = 3317
+known.x = 3434
+known.cam_x = 3434
+known.events = 6084
+known.lives = 6317
+known.pistol = 32900
