@@ -85,15 +85,20 @@
 //! second range box (half width, half height) that the original game
 //! does not fix: they differ from crab to crab and from run to run, and a
 //! box that covers Claw makes the crab decide as if he were far whenever
-//! he is outside its nearer boxes. A run's values are given per crab,
-//! one entry per line:
+//! he is outside its nearer boxes. A crab a nest hatched can also start
+//! stationary, which the original game does not fix either: such a crab
+//! has no ledge guard (it may stand with its leading edge over a drop)
+//! and strikes with the bomb's throw sound. A run's values are given per
+//! crab, one entry per line:
 //!
 //! ```text
-//! crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT
-//! nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT
+//! crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]
+//! nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]
 //! ```
 //!
-//! A placed crab is named by its record (its place in the level's list of
+//! STATIONARY is 1 for a crab that starts stationary and 0, the default
+//! when it is left out, for one that does not
+//! (`nest_crab 1306 3 = 0, 0, 0, 1`). A placed crab is named by its record (its place in the level's list of
 //! objects, from 0), a crab a nest hatched by the nest's record and its
 //! place in the hatch (1 for the nest's first crab); a `*` names every
 //! crab of that kind, and the entry that names a crab most exactly
@@ -105,7 +110,8 @@
 //! `# crab_variant N: ...` lines, the sets a route was made to win under
 //! too). Each crab
 //! takes its values when it is built, before its first tick; a crab no
-//! entry names starts with an empty box facing left, the plain default.
+//! entry names starts with an empty box facing left and not stationary,
+//! the plain default.
 //! The values change nothing but the crabs' decisions, so a run with them
 //! can be compared.
 //!
@@ -154,7 +160,8 @@ const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FIL
 [--aspect pillarbox|frozen|widened] [--start X,Y] [--checkpoint X,Y] [--logics on|off] \
 [--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]] \
 [--crabs FILE | --crab-variant N] [--expect-complete] \
-[--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]";
+[--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
+--crabs FILE: one entry per line, `crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` or `nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` (STATIONARY 1 or 0, 0 when left out)";
 
 /// The key of the mid-air hit jump fix in a script's comment line.
 const BEHAVIOUR_KEY: &str = "mid_air_hit_fix";

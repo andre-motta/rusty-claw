@@ -1048,6 +1048,50 @@ fn lone(logic: &str, health: Option<i32>) -> (Sim, ObjectId) {
 }
 
 #[test]
+fn a_body_hit_again_keeps_its_place_in_the_list() {
+    // Two officers side by side; the one listed first dies first.
+    let a = record("Officer", 3000, 900);
+    let b = record("Officer", 3040, 900);
+    let mut sim = sim_with(arena(vec![a, b]), 12);
+    sim.teleport_player(3250, 899);
+    idle(&mut sim, 2);
+    let officers: Vec<ObjectId> = sim
+        .objects()
+        .listed()
+        .into_iter()
+        .filter(|&id| &*obj(&sim, id).logic == "Officer")
+        .collect();
+    let [first, second] = officers[..] else {
+        panic!("two officers: {officers:?}")
+    };
+    let place = |sim: &Sim, id: ObjectId| sim.objects().listed().iter().position(|&l| l == id);
+    // A blow kills the first: its body goes to the front depth and waits
+    // for its re-sort.
+    sim.with_world(|w| enemy::die(w, first, DeathKind::Hit, None));
+    let o = obj(&sim, first);
+    assert_eq!(o.z, enemy::DEATH_DEPTH);
+    assert!(
+        o.flags & flags::RESORT != 0,
+        "re-sorted when its depth changes"
+    );
+    sim.step(TickInput::default());
+    // Then the second, and the same blow hits the first's body again: the
+    // body keeps its place, and the second goes in after it.
+    sim.with_world(|w| {
+        enemy::die(w, second, DeathKind::Hit, None);
+        enemy::die(w, first, DeathKind::Hit, None);
+    });
+    assert!(
+        obj(&sim, first).flags & flags::RESORT == 0,
+        "a body hit again keeps its place"
+    );
+    assert!(obj(&sim, second).flags & flags::RESORT != 0);
+    sim.step(TickInput::default());
+    let (p1, p2) = (place(&sim, first).unwrap(), place(&sim, second).unwrap());
+    assert!(p1 < p2, "the body hit again stays ahead: {p1} {p2}");
+}
+
+#[test]
 fn hit_reactions_follow_what_hit() {
     let claw_id = |sim: &Sim| {
         sim.objects()

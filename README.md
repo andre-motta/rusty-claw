@@ -501,16 +501,24 @@ regroup faces by and a second range box that the original game does not
 fix: they differ from crab to crab and from run to run (a launch after an
 earlier level can give other values than the launch before it), and a box
 that covers Claw makes a crab decide as if he were far whenever he is
-outside its nearer boxes. A route gives a run's values in header lines,
-`# crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT` for a crab placed in the
-level (its record: its place in the level's list of objects, from 0) and
-`# nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT` for the
-crab a nest hatched in that place (from 1); a `*` names every crab of that
-kind, and the entry that names a crab most exactly counts. `claw-replay`
+outside its nearer boxes. A crab a nest hatched can also start
+stationary, which the original game does not fix either: it then has no
+ledge guard (it may stand with its leading edge over a drop where another
+crab steps back) and strikes with the bomb's throw sound. A route gives a
+run's values in header lines,
+`# crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` for a crab
+placed in the level (its record: its place in the level's list of
+objects, from 0) and
+`# nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]`
+for the crab a nest hatched in that place (from 1), where STATIONARY is 1
+for a stationary crab and 0, the default when it is left out, for one
+that is not (`# nest_crab 1306 3 = 0, 0, 0, 1`); a `*` names every crab
+of that kind, and the entry that names a crab most exactly counts. `claw-replay`
 and `make compare` give each crab its values as it is built, before its
 first tick; `claw-replay --crabs FILE` takes them from a file of the same
 lines instead, and `--crab-variant N` takes the route's further set N.
-Without values every crab starts with an empty box, facing left.
+Without values every crab starts with an empty box, facing left, and not
+stationary.
 `rusty-claw --replay` gives the crabs the values the route's own header
 lines name, as `claw-replay` does, both when the route is watched in the
 window and with `--trace`. `claw-bot --crabs FILE` searches under such

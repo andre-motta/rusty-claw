@@ -802,7 +802,11 @@ fn a_replay_gives_the_crabs_the_values_its_header_names() {
     assert_eq!(r.crabs.entries.len(), 3);
     let cfg = r.sim_config(SimConfig::default());
     let session = r.replay(r.start_sim(crab_level(), cfg.clone()));
-    let l = |side, w, h| Leftovers { side, box1: (w, h) };
+    let l = |side, w, h| Leftovers {
+        side,
+        box1: (w, h),
+        stationary: false,
+    };
     let covering = l(1, 1_000_000, 1_000_000);
     let want = vec![
         (CrabKey::Placed(Some(placed)), l(2, 578, 432)),
