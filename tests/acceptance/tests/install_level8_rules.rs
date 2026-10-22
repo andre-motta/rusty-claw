@@ -4,9 +4,11 @@
 //! the ticks around it, which equals the original's.
 //!
 //! The routes are `routes/earlier/level8-original.csv`, the eighth level's
-//! original-speeds route as it was before these rules, played from the
-//! level's start and as the second level of a game (with the progress
-//! `routes/level7-original.level8.csv` starts with), and
+//! original-speeds route as it was before the first three rules, played
+//! from the level's start and as the second level of a game (with the
+//! progress `routes/level7-original.level8.csv` starts with),
+//! `routes/earlier/level8-original-2.csv`, the same route as it was
+//! before the last four, played the same two ways, and
 //! `routes/level8-introskip.csv`, the jump-in route:
 //!
 //! - an effect leaves its first-call state once its first call has set it
@@ -30,7 +32,28 @@
 //!   still marked; his first bounce step (tick 15840) does not move him,
 //!   his second bounce (tick 15856) lands him on the peg at once, and the
 //!   landing costs him his 4 health in tick 15886, as in the original
-//!   game, which the route then follows to the level's end.
+//!   game, which the route then follows to the level's end;
+//! - walking off a ledge with an enemy in his hands, Claw drops it, as a
+//!   hit or the hold limit does, and it keeps his walk's speed across:
+//!   Claw walks off Gabriel's deck carrying him in tick 16549 of the
+//!   second route; Gabriel falls left at 225 px/s, lands on the dock in
+//!   tick 16577 without a bounce or a landing's cost, and gets up a
+//!   second after the drop, in tick 16605, where he landed;
+//! - a pirate Gabriel calls in leaps from the height it was made at when
+//!   its leap comes at its first call: with Gabriel down on the dock, the
+//!   pirate he makes in tick 16899 is past the end of its run already, 17
+//!   px above the pixel its building set on his deck, and it leaps from
+//!   there in tick 16900;
+//! - Gabriel's bombs are always active: Claw falls to his death below the
+//!   dock in tick 17073 while three of them fly, and they fly their whole
+//!   arcs, exploding in ticks 17104, 17110 and 17115;
+//! - Claw's respawn resets the current boss before its update passes: in
+//!   tick 17242 Gabriel starts his fight over and his pirate, listed
+//!   before him, is marked for removal before any object runs, so the
+//!   pirate makes its roll in the first pass only. The route then ends
+//!   without the level's end, as it did in the original game, and the
+//!   stream stays the original's to the original run's last tick, 112
+//!   ticks past the route's last row, with nothing held.
 
 use std::path::Path;
 
@@ -38,6 +61,7 @@ use claw_acceptance::install;
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_bot::route::{self, TuningName};
 use claw_frame::GameEvent;
+use claw_sim::logic::enemy::gabriel::bomb;
 use claw_sim::logic::enemy::{EnemyState, redtail_pirate};
 use claw_sim::logic::{ObjectData, effect};
 use claw_sim::object::{Object, ObjectId, draw_flags, flags};
@@ -96,6 +120,41 @@ const EARLIER_RUN_TICKS: usize = 17412;
 /// Where the boss room's door puts Claw.
 const ROOM: (i32, i32) = (43063, 5212);
 
+/// The original game's random state after these ticks of the second
+/// earlier route, from the level's start or as the game's second level.
+const SECOND_RNG: [(usize, u32); 22] = [
+    (16548, 3_431_305_229),
+    (16549, 3_305_136_796),
+    (16577, 1_400_284_286),
+    (16605, 852_194_993),
+    (16606, 3_613_277_872),
+    (16899, 1_353_536_739),
+    (16900, 1_353_536_739),
+    (16960, 894_291_960),
+    (16961, 2_070_089_435),
+    (17070, 1_927_534_570),
+    (17073, 3_792_741_106),
+    (17103, 3_781_115_327),
+    (17104, 2_593_804_849),
+    (17110, 255_971_122),
+    (17115, 4_239_181_700),
+    (17241, 645_825_042),
+    (17242, 3_374_936_348),
+    (17243, 4_194_941_807),
+    (17300, 3_169_484_595),
+    (17488, 2_636_022_607),
+    (17550, 480_159_316),
+    (17600, 3_810_136_343),
+];
+
+/// Ticks the original run of the second earlier route lasted.
+const SECOND_RUN_TICKS: usize = 17601;
+
+/// Where Gabriel lands on the dock after Claw walks off his deck with
+/// him, and where he gets up.
+const DROPPED_AT: (i32, i32) = (43032, 5257);
+const UP_AT: (i32, i32) = (43032, 5238);
+
 fn level8(root: &Path) -> SimLevel {
     let store = Install::open(root).unwrap().store().unwrap();
     let data = LevelData::build(&store, LevelSource::Retail(8)).unwrap();
@@ -112,7 +171,13 @@ fn routes_file(name: &str) -> String {
 /// The earlier route as the game's second level: its rows, with the
 /// progress the game's eighth level starts with.
 fn earlier_in_game() -> String {
-    let rows = routes_file("earlier/level8-original.csv");
+    in_game("earlier/level8-original.csv")
+}
+
+/// Route `name` as the game's second level: its rows, with the progress
+/// the game's eighth level starts with.
+fn in_game(name: &str) -> String {
+    let rows = routes_file(name);
     let game = routes_file("level7-original.level8.csv");
     let starts: String = game
         .lines()
@@ -207,6 +272,16 @@ impl Run {
                 ObjectData::Gabriel(d) => Some((o, d.enemy.vy)),
                 _ => None,
             })
+            .expect("Gabriel")
+    }
+
+    /// Gabriel's object id.
+    fn gabriel_id(&self) -> ObjectId {
+        self.sim
+            .objects()
+            .all()
+            .find(|(_, o)| matches!(o.data, ObjectData::Gabriel(_)))
+            .map(|(id, _)| id)
             .expect("Gabriel")
     }
 
@@ -373,5 +448,174 @@ fn install_a_riding_enemy_moves_by_the_platform_only() {
     );
     println!(
         "a riding enemy moves by the platform only: Gabriel stays at {ON_THE_PEG:?} in tick 15840 and pays the landing in tick 15886"
+    );
+}
+
+/// The second earlier route (`text`) to tick 16548: Claw on Gabriel's deck
+/// with him in his hands.
+fn at_the_deck_edge(level: &SimLevel, text: &str) -> (Run, ObjectId) {
+    let mut run = Run::new(level, text);
+    run.to(16548);
+    let g = run.gabriel_id();
+    assert_eq!(run.sim.claw().special.lifted, Some(g), "carrying Gabriel");
+    (run, g)
+}
+
+fn state_of(run: &Run, id: ObjectId) -> Option<EnemyState> {
+    run.sim
+        .objects()
+        .get(id)
+        .and_then(|o| EnemyState::from_id(o.state))
+}
+
+#[test]
+fn install_a_ledge_walk_drops_what_claw_carries() {
+    let Some(root) = install() else { return };
+    let level = level8(&root);
+    for text in [
+        routes_file("earlier/level8-original-2.csv"),
+        in_game("earlier/level8-original-2.csv"),
+    ] {
+        let (mut run, g) = at_the_deck_edge(&level, &text);
+        // He walks off the deck's edge with Left held: Gabriel is dropped,
+        // with the walk's speed across.
+        run.to(16549);
+        assert_eq!(run.sim.claw().special.lifted, None, "let go");
+        assert_eq!(state_of(&run, g), Some(EnemyState::Dropped));
+        let (o, _) = run.gabriel();
+        assert_eq!(o.physics_type, ptype::FLY);
+        let vx = match &o.data {
+            ObjectData::Gabriel(d) => d.enemy.vx,
+            _ => unreachable!(),
+        };
+        assert_eq!(vx, -225.0, "the walk's speed across");
+        // He lands on the dock without a bounce and gets up a second
+        // after the drop where he landed, unhurt.
+        run.to(16576);
+        assert_eq!(run.gabriel().0.physics_type, ptype::FLY);
+        run.to(16577);
+        let (o, _) = run.gabriel();
+        assert_eq!((o.x, o.y), DROPPED_AT, "on the dock");
+        assert_eq!(o.physics_type, ptype::STAND);
+        run.to(16604);
+        assert_eq!(state_of(&run, g), Some(EnemyState::Dropped), "no bounce");
+        assert_eq!(run.gabriel().0.health, 100, "no landing's cost");
+        run.to(16606);
+        let (o, _) = run.gabriel();
+        assert_eq!((o.x, o.y), UP_AT, "up where he landed");
+        assert_ne!(state_of(&run, g), Some(EnemyState::Dropped));
+        run.check_rng(&SECOND_RNG);
+    }
+    println!(
+        "a ledge walk drops Gabriel: he lands at {DROPPED_AT:?} in tick 16577 and gets up at {UP_AT:?}"
+    );
+}
+
+#[test]
+fn install_a_pirate_leaping_at_its_first_call_leaves_from_where_it_was_made() {
+    let Some(root) = install() else { return };
+    let level = level8(&root);
+    let mut run = Run::new(&level, &routes_file("earlier/level8-original-2.csv"));
+    run.to(16898);
+    assert!(run.his_pirates().is_empty());
+    run.to(16899);
+    let pirates = run.his_pirates();
+    assert_eq!(pirates.len(), 1, "he calls a pirate in");
+    let p = pirates[0];
+    let o = run.sim.objects().get(p).unwrap();
+    assert_eq!((o.x, o.y), (43182, 5211), "set on his deck");
+    let carry = claw_sim::logic::enemy::data_of(o).unwrap().carry;
+    assert_eq!(carry, (0.0, 17.0), "made 17 px lower");
+    assert_eq!(state_of(&run, p), Some(EnemyState::GabrielAttack));
+    // Past the end of its run already: it leaps at its first call, from
+    // the height it was made at.
+    run.to(16900);
+    assert_eq!(state_of(&run, p), Some(EnemyState::Jump));
+    let o = run.sim.objects().get(p).unwrap();
+    assert_eq!((o.x, o.y), (43182, 5205));
+    // It lands on the deck in tick 16960 and makes its draws in 16962.
+    run.to(16959);
+    assert_eq!(state_of(&run, p), Some(EnemyState::Jump));
+    run.to(16962);
+    assert_eq!(run.sim.objects().get(p).unwrap().y, 5038);
+    run.check_rng(&SECOND_RNG);
+    println!("a pirate leaping at its first call leaves from 5228.0: y 5205 after tick 16900");
+}
+
+#[test]
+fn install_gabriels_bombs_fly_on_while_claw_lies_dead() {
+    let Some(root) = install() else { return };
+    let level = level8(&root);
+    let mut run = Run::new(&level, &routes_file("earlier/level8-original-2.csv"));
+    run.to(17070);
+    let bombs = run.of_logic("GabrielBomb");
+    assert_eq!(bombs.len(), 3, "he lobs three bombs");
+    for &b in &bombs {
+        let o = run.sim.objects().get(b).unwrap();
+        assert!(o.flags & flags::ALWAYS_ACTIVE != 0, "always active");
+    }
+    run.to(17073);
+    assert_eq!(run.claw_at(), (42295, 5713), "Claw dead below the dock");
+    // They fly their whole arcs and explode one after the other.
+    let exploding = |run: &Run| {
+        bombs
+            .iter()
+            .filter(|&&b| {
+                run.sim
+                    .objects()
+                    .get(b)
+                    .is_some_and(|o| o.state == bomb::state::EXPLODING)
+            })
+            .count()
+    };
+    run.to(17103);
+    assert_eq!(exploding(&run), 0);
+    assert!(bombs.iter().all(|&b| run.sim.objects().get(b).is_some()));
+    for (tick, n) in [(17104, 1), (17110, 2), (17115, 3)] {
+        run.to(tick - 1);
+        assert_eq!(exploding(&run), n - 1, "before tick {tick}");
+        run.to(tick);
+        assert_eq!(exploding(&run), n, "in tick {tick}");
+    }
+    run.check_rng(&SECOND_RNG);
+    println!("Gabriel's bombs fly on and explode in ticks 17104, 17110 and 17115");
+}
+
+/// Plays the second earlier route (`text`) to the original run's end:
+/// the respawn resets Gabriel before its passes.
+fn the_respawn_resets_him_first(level: &SimLevel, text: &str) {
+    let mut run = Run::new(level, text);
+    run.to(17072);
+    let lives = run.sim.stats().lives;
+    run.to(17241);
+    let pirates = run.his_pirates();
+    assert_eq!(pirates.len(), 1, "one pirate of his");
+    let p = pirates[0];
+    let g = run.gabriel_id();
+    let listed = run.sim.objects().listed();
+    let at = |id| listed.iter().position(|&x| x == id).unwrap();
+    assert!(at(p) < at(g), "the pirate is listed before him");
+    run.to(17242);
+    assert_eq!(run.claw_at(), ROOM, "back at the room's checkpoint");
+    assert!(run.sim.objects().get(p).is_none(), "the pirate is gone");
+    assert!(run.his_pirates().is_empty());
+    assert_eq!(run.gabriel().0.health, 100);
+    run.to(SECOND_RUN_TICKS - 1);
+    run.check_rng(&SECOND_RNG);
+    assert_eq!(run.claw_at(), (43133, 5212));
+    assert_eq!(run.sim.stats().health, 100);
+    assert_eq!(run.sim.stats().lives, lives - 1, "one life lost");
+    assert!(run.sim.boss().defeated().is_none(), "Gabriel undefeated");
+}
+
+#[test]
+fn install_the_respawn_resets_the_boss_before_its_passes() {
+    let Some(root) = install() else { return };
+    let level = level8(&root);
+    the_respawn_resets_him_first(&level, &routes_file("earlier/level8-original-2.csv"));
+    the_respawn_resets_him_first(&level, &in_game("earlier/level8-original-2.csv"));
+    println!(
+        "the respawn resets Gabriel first: the stream is the original's to tick {}",
+        SECOND_RUN_TICKS - 1
     );
 }

@@ -59,8 +59,8 @@
 //!
 //! # When Claw respawns
 //!
-//! Claw's respawn resets her on her first call after it, in the first of
-//! the respawn's update passes ([`reset`]): back at her place on her
+//! Claw's respawn resets her itself, once Claw is back at his checkpoint
+//! and before its update passes ([`reset`]): back at her place on her
 //! floor with full health, in the state she was in. The respawn's passes
 //! take no game time for her ([`between_ticks`]): she makes her draws and
 //! her decisions on where Claw now is (a pacing or running Katherine goes
@@ -146,7 +146,6 @@ use crate::logic::{ObjectData, World, boss_stage};
 use crate::object::{ObjectId, Rect, engine_state, flags};
 use crate::physics::ptype;
 use crate::player::attack::kind as attack_kind;
-use crate::player::state as claw_state;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["Katherine"];
@@ -380,16 +379,13 @@ fn own_mut<'a>(w: &'a mut World, id: ObjectId) -> Option<&'a mut KatherineData> 
 // ----------------------------------------------------------------------
 // The logic call
 
-/// One logic call: the reset when Claw has respawned, the human logic call
-/// with her own post-tick (see [`run`]), then her death's report. Being
-/// removed, she stops being the current boss.
+/// One logic call: the human logic call with her own post-tick (see
+/// [`run`]), then her death's report. Being removed, she stops being the
+/// current boss. Claw's respawn resets her itself ([`reset`]).
 pub fn tick(w: &mut World, id: ObjectId) {
     let raw = obj(w, id).state;
     if raw == engine_state::DESTROYING && w.current_boss() == Some(id) {
         w.set_current_boss(None);
-    }
-    if EnemyState::from_id(raw).is_some() && claw_respawned(w, id) {
-        reset(w, id);
     }
     run(w, id);
     after_call(w, id);
@@ -639,24 +635,10 @@ fn boss_died(w: &mut World, id: ObjectId) {
     }
 }
 
-/// True once per death of Claw, from his respawn on: his attempt number
-/// has moved on since her last reset and he is no longer dying. The
-/// original resets the boss from Claw's respawn itself, so she is reset
-/// on her first call after it, whether she runs before or after Claw in
-/// the respawn's passes.
-fn claw_respawned(w: &World, id: ObjectId) -> bool {
-    let dying = w.claw_object().is_none_or(|c| {
-        matches!(
-            c.state,
-            claw_state::DEATH_FALL | claw_state::DEATH | claw_state::INIT
-        )
-    });
-    let attempt = w.attempt();
-    !dying && data(w, id).is_some_and(|d| d.human.boss.is_some_and(|b| b.attempt != attempt))
-}
-
-/// The reset when Claw respawns: back where she was placed with full
-/// health; standing, she is put straight down on the floor below that
+/// The reset when Claw respawns, run by the respawn once Claw is back at
+/// his checkpoint and before its update passes
+/// ([`crate::logic::World::reset_boss_on_respawn`]): back where she was
+/// placed with full health; standing, she is put straight down on the floor below that
 /// point (her level record places her 8 px above it, and the original
 /// shows her on the floor at the end of the respawn's step), exactly on
 /// her pixel with gravity pulling on her from then on (so one tick's fall

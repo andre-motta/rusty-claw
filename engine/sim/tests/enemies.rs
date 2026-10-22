@@ -1767,6 +1767,61 @@ fn a_dropped_officer_gets_up_and_goes_home() {
 }
 
 #[test]
+fn an_officer_carried_off_a_ledge_is_dropped_with_the_walks_speed() {
+    let (mut sim, id) = lone("Officer", None);
+    let claw = claw_of(&sim);
+    sim.with_world(|w| lift::lifted(w, id, claw));
+    // Held over Claw's head as he walks off a ledge to the left, 100 px
+    // above the floor.
+    sim.with_world(|w| w.objects.get_mut(id).unwrap().y -= 100);
+    let health = obj(&sim, id).health;
+    assert!(sim.with_world(|w| claw_sim::logic::walked_off(w, id, -225)));
+    sim.step(TickInput::default());
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Dropped), "dropped");
+    assert_eq!(
+        obj(&sim, id).type_flags,
+        types::ENEMY,
+        "not a thrown object"
+    );
+    let x0 = obj(&sim, id).x;
+    let mut seen = Vec::new();
+    for _ in 0..80 {
+        sim.step(TickInput::default());
+        let s = state_of(&sim, id).unwrap();
+        if seen.last() != Some(&s) {
+            seen.push(s);
+        }
+        if obj(&sim, id).physics_type == ptype::STAND {
+            break;
+        }
+        assert_eq!(data(&sim, id).vx, -225.0, "the walk's speed in the fall");
+    }
+    assert_eq!(seen, vec![EnemyState::Dropped], "no bounce");
+    let o = obj(&sim, id);
+    assert_eq!(feet_of(o), 959, "on the floor");
+    assert!(x0 - o.x > 20, "carried left by the walk: {} to {}", x0, o.x);
+    // Standing, it stops; after its second it gets up with no landing cost.
+    sim.step(TickInput::default());
+    assert_eq!(data(&sim, id).vx, 0.0);
+    idle(&mut sim, 60);
+    assert_ne!(state_of(&sim, id), Some(EnemyState::Dropped));
+    assert_eq!(obj(&sim, id).health, health);
+    assert!(obj(&sim, id).flags & (flags::SAFE | flags::NO_COLLIDE) == 0);
+}
+
+#[test]
+fn only_a_human_enemy_is_dropped_off_a_ledge() {
+    let (mut sim, id) = lone("Officer", None);
+    let claw = claw_of(&sim);
+    // Not held: nothing happens to it, though it is a human enemy.
+    assert!(sim.with_world(|w| claw_sim::logic::walked_off(w, id, 225)));
+    assert_ne!(state_of(&sim, id), Some(EnemyState::Dropped));
+    assert_eq!(data(&sim, id).deferred, None);
+    // Claw is no enemy: the caller throws anything else.
+    assert!(!sim.with_world(|w| claw_sim::logic::walked_off(w, claw, 225)));
+}
+
+#[test]
 fn a_rat_cannot_be_lifted() {
     let (mut sim, id) = lone("Rat", None);
     idle(&mut sim, 2);

@@ -80,7 +80,6 @@ use crate::logic::world_boss::fight;
 use crate::logic::{ObjectData, World};
 use crate::object::{ObjectId, Rect, engine_state, flags};
 use crate::player::attack::kind as attack_kind;
-use crate::player::state as claw_state;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["Raux"];
@@ -216,16 +215,13 @@ fn handler(s: EnemyState) -> Option<Handler> {
 // ----------------------------------------------------------------------
 // The logic call
 
-/// One logic call: the reset when Claw has respawned, the human logic
-/// call ([`human::run`]), then his death's report and the health bar.
-/// Being removed, he stops being the current boss.
+/// One logic call: the human logic call ([`human::run`]), then his
+/// death's report and the health bar. Being removed, he stops being the
+/// current boss. Claw's respawn resets him itself ([`reset`]).
 pub fn tick(w: &mut World, id: ObjectId) {
     let raw = obj(w, id).state;
     if raw == engine_state::DESTROYING && w.current_boss() == Some(id) {
         w.set_current_boss(None);
-    }
-    if EnemyState::from_id(raw).is_some() && claw_respawned(w, id) {
-        reset(w, id);
     }
     human::run(w, id, &CLASS);
     after_call(w, id);
@@ -338,16 +334,9 @@ fn boss_died(w: &mut World, id: ObjectId) {
     }
 }
 
-/// True once per death of Claw, when he respawns.
-fn claw_respawned(w: &World, id: ObjectId) -> bool {
-    let respawning = w
-        .claw_object()
-        .is_some_and(|c| c.state == claw_state::RESPAWN);
-    let attempt = w.attempt();
-    respawning && data(w, id).is_some_and(|d| d.human.boss.is_some_and(|b| b.attempt != attempt))
-}
-
-/// The reset when Claw respawns: back where he was placed with full
+/// The reset when Claw respawns, run by the respawn once Claw is back at
+/// his checkpoint and before its update passes
+/// ([`World::reset_boss_on_respawn`]): back where he was placed with full
 /// health; his state, speed, timers and busy flag stay as they are.
 pub fn reset(w: &mut World, id: ObjectId) {
     let attempt = w.attempt();

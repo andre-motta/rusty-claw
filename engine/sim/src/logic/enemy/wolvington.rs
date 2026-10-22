@@ -87,8 +87,9 @@
 //!
 //! # When Claw respawns
 //!
-//! Claw's respawn puts him back on his first call after it: at his place
-//! on his floor with full health, in the state he was in (the boss reset
+//! Claw's respawn puts him back itself, once Claw is back at his
+//! checkpoint and before its update passes ([`reset`]): at his place on
+//! his floor with full health, in the state he was in (the boss reset
 //! keeps state, timers and speed).
 //!
 //! # State numbers
@@ -159,7 +160,6 @@ use crate::logic::{ObjectData, World, boss_stage};
 use crate::object::{ObjectId, Rect, engine_state, flags, types};
 use crate::physics::ptype;
 use crate::player::attack::kind as attack_kind;
-use crate::player::state as claw_state;
 
 /// Logic names this family runs.
 pub const NAMES: &[&str] = &["Wolvington"];
@@ -396,16 +396,13 @@ pub fn reference_state_id(s: EnemyState) -> Option<i32> {
 // ----------------------------------------------------------------------
 // The logic call
 
-/// One logic call: the reset when Claw has respawned, the human logic call
-/// ([`human::run`]), then his death's report. Being removed, he stops
-/// being the current boss.
+/// One logic call: the human logic call ([`human::run`]), then his death's
+/// report. Being removed, he stops being the current boss. Claw's respawn
+/// resets him itself ([`reset`]).
 pub fn tick(w: &mut World, id: ObjectId) {
     let raw = obj(w, id).state;
     if raw == engine_state::DESTROYING && w.current_boss() == Some(id) {
         w.set_current_boss(None);
-    }
-    if EnemyState::from_id(raw).is_some() && claw_respawned(w, id) {
-        reset(w, id);
     }
     run(w, id);
     after_call(w, id);
@@ -637,21 +634,11 @@ fn boss_died(w: &mut World, id: ObjectId) {
     }
 }
 
-/// True once per death of Claw, from his respawn on: his attempt number
-/// has moved on since the last reset and he is no longer dying.
-fn claw_respawned(w: &World, id: ObjectId) -> bool {
-    let dying = w.claw_object().is_none_or(|c| {
-        matches!(
-            c.state,
-            claw_state::DEATH_FALL | claw_state::DEATH | claw_state::INIT
-        )
-    });
-    let attempt = w.attempt();
-    !dying && data(w, id).is_some_and(|d| d.human.boss.is_some_and(|b| b.attempt != attempt))
-}
-
-/// The reset when Claw respawns: back where he was placed with full
-/// health, standing on the floor below that point when he stands (his
+/// The reset when Claw respawns, run by the respawn once Claw is back at
+/// his checkpoint and before its update passes
+/// ([`crate::logic::World::reset_boss_on_respawn`]): back where he was
+/// placed with full health, standing on the floor below that point when
+/// he stands (his
 /// record places him 1 px above it); his state, speed, timers and busy
 /// flag stay as they are.
 pub fn reset(w: &mut World, id: ObjectId) {
