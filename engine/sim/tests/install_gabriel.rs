@@ -680,10 +680,12 @@ fn start_at(sim: &mut Sim, at: (i32, i32), t0_ms: u64, seed: u32, catnip_ms: Opt
 /// tick in the room, that this build does not do yet: the door runs one
 /// more call of each object he leaves behind outside the room's window,
 /// with the frame pulse of the tick just played (their draws of that call
-/// come before the room's first tick), and they sleep from then on; the
-/// effects already running (the Catnip glitter) have no call then. The
-/// replay makes those calls and holds those objects and effects for the
-/// room's first tick when Claw is about to go through the door.
+/// come before the room's first tick), and they sleep from then on. The
+/// replay makes those calls and holds those objects for the room's first
+/// tick when Claw is about to go through the door. The effects already
+/// running (the Catnip glitter) have no call then, which the build does
+/// itself: once set up they are out of the first-call state, so the
+/// door's set-up pass leaves them alone, and they are not held.
 fn through_the_door(sim: &mut Sim) {
     let Some(target) = sim.claw().special.warp_to else {
         return;
@@ -696,7 +698,7 @@ fn through_the_door(sim: &mut Sim) {
         .filter(|(_, o)| o.is_listed())
         .filter(|(_, o)| {
             if o.kind == LogicKind::Game(GameLogic::Effect) {
-                return true;
+                return false;
             }
             if o.flags & flags::WORLD == 0 || o.flags & flags::ALWAYS_ACTIVE != 0 {
                 return false;
@@ -709,13 +711,7 @@ fn through_the_door(sim: &mut Sim) {
         .collect();
     sim.with_world(|w| {
         for id in held {
-            let effect = w
-                .objects
-                .get(id)
-                .is_some_and(|o| o.kind == LogicKind::Game(GameLogic::Effect));
-            if !effect {
-                claw_sim::logic::tick(w, id);
-            }
+            claw_sim::logic::tick(w, id);
             if let Some(o) = w.objects.get_mut(id) {
                 o.frame_delay = 1;
             }
