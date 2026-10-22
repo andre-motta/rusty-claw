@@ -638,12 +638,13 @@ fn boss_died(w: &mut World, id: ObjectId) {
 /// The reset when Claw respawns, run by the respawn once Claw is back at
 /// his checkpoint and before its update passes
 /// ([`crate::logic::World::reset_boss_on_respawn`]): back where she was
-/// placed with full health; standing, she is put straight down on the floor below that
-/// point (her level record places her 8 px above it, and the original
-/// shows her on the floor at the end of the respawn's step), exactly on
-/// her pixel with gravity pulling on her from then on (so one tick's fall
-/// below it at the end of the respawn's tick, see [`next_stand_fraction`]).
-/// Her state, speed, timers and busy flag stay as they are.
+/// placed with full health; standing, she is put straight down on the
+/// floor below that point (her level record places her 8 px above it, and
+/// the original shows her on the floor at the end of the respawn's step),
+/// exactly on her pixel with gravity pulling on her from then on (so one
+/// tick's fall below it at the end of the respawn's tick, see
+/// [`next_stand_fraction`]). Her state, speed, timers and busy flag stay
+/// as they are.
 pub fn reset(w: &mut World, id: ObjectId) {
     let attempt = w.attempt();
     let Some(b) = data(w, id).and_then(|d| d.human.boss) else {

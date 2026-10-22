@@ -837,6 +837,9 @@ pub struct EnemyFields {
     /// Game time of the last movement step, ms (see [`motion`]); `None`
     /// before the first.
     pub last_move_ms: Option<u64>,
+    /// A movement step has moved it (a frozen one does not count): until
+    /// then its exact position is the one its building left.
+    pub stepped: bool,
     /// No movement at all (dead in place, or carried by Claw).
     pub frozen: bool,
     /// An x the enemy's own logic wrote as its new position in this tick
@@ -935,6 +938,7 @@ impl Default for EnemyFields {
             moved_to: None,
             last_result: 0,
             last_move_ms: None,
+            stepped: false,
             frozen: false,
             teleport_to: None,
             bounce_lift: false,

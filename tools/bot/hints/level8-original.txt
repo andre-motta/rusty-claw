@@ -151,8 +151,11 @@
 30900,5540
 31280,5480
 # 16. The door, Gabriel and the gem, no waypoints; two endings.
-#     level8-introskip.csv: --intro skip. The jump-in, with the Catnip
-#     still running, lands Claw on Gabriel's deck; he lifts Gabriel, who
+#     level8-introskip.csv: --intro skip. The jump-in, a tap of Right and
+#     Jump held 2 ticks on the first tick in the room (route tick 15582),
+#     lands Claw on the dock; from there a jump with the Catnip still
+#     running (Right and Jump held 14 ticks from route tick 15604) lands
+#     him on Gabriel's deck (route tick 15632); he lifts Gabriel, who
 #     sleeps in his start-up pose, and throws him into the water by his
 #     dock; the gem rises from the water.
 #     level8-original.csv: the first 24 ticks of the jump-in route's last

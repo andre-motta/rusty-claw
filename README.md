@@ -453,8 +453,9 @@ for the landing, and gets up a second later; the eighth level's routes
 that sit through the introduction walk off Gabriel's deck with him this
 way before they throw him into the water.
 On the eighth level no jump of Claw's own reaches Gabriel's deck:
-`level8-introskip.csv` takes the Catnip near the last checkpoint and lands
-there with the jump-in while it lasts, and the routes that sit through
+`level8-introskip.csv` takes the Catnip near the last checkpoint, and
+while it lasts its jump-in, a short hop, lands Claw on the dock and a
+jump from there lands him on the deck; the routes that sit through
 the introduction get up with a dynamite boost (written into them by hand,
 as the third level's is; `tools/bot/hints/level8-original.txt` lists the
 held buttons). They

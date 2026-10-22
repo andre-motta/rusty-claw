@@ -1486,12 +1486,11 @@ pub mod pirates {
         Some(w.now_ms.saturating_sub(made) / u64::from(TICK_MS))
     }
 
-    /// True on pirate `id`'s first call after the tick it was made in (or
-    /// in that tick): it has made no movement step yet, so its exact
-    /// height is still where it was made, below the pixel its building
-    /// set on the floor.
+    /// True until pirate `id` has made its first movement step: its exact
+    /// height is then still where it was made, below the pixel its
+    /// building set on the floor.
     fn first_call(w: &World, id: ObjectId) -> bool {
-        ticks_since_made(w, id).is_some_and(|t| t <= 1)
+        data(w, id).is_some_and(|d| !d.stepped)
     }
 
     /// True while pirate `id` is in the leap Gabriel's attack ends in: one

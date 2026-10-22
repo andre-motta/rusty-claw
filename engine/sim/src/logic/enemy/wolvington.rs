@@ -638,9 +638,8 @@ fn boss_died(w: &mut World, id: ObjectId) {
 /// his checkpoint and before its update passes
 /// ([`crate::logic::World::reset_boss_on_respawn`]): back where he was
 /// placed with full health, standing on the floor below that point when
-/// he stands (his
-/// record places him 1 px above it); his state, speed, timers and busy
-/// flag stay as they are.
+/// he stands (his record places him 1 px above it); his state, speed,
+/// timers and busy flag stay as they are.
 pub fn reset(w: &mut World, id: ObjectId) {
     let attempt = w.attempt();
     let Some(b) = data(w, id).and_then(|d| d.human.boss) else {

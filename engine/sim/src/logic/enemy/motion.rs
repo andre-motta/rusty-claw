@@ -203,6 +203,7 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
         d.last_move_ms = Some(w.now_ms);
         return None;
     }
+    d.stepped = true;
     let (x0, y0, entry, ride) = {
         let o = obj(w, id);
         let ride = if o.flags & flags::ON_ELEVATOR != 0 {

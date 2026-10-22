@@ -543,11 +543,27 @@ fn a_pirate_made_past_the_end_of_its_run_leaps_from_where_it_was_made() {
     assert_eq!(state_of(&first, p), Some(EnemyState::Jump));
     let d = enemy::data_of(obj(&first, p)).unwrap();
     assert_eq!(d.carry.1, carry, "from where it was made");
-    // A leap at a later call leaves from the part of a pixel it stands
-    // below its own.
+    // It made no movement step in the tick it was made in; the next tick's
+    // is its first.
+    assert!(!enemy::data_of(obj(&sim, p)).unwrap().stepped);
+    let mut stepped = sim.clone();
+    stepped.step(TickInput::default());
+    assert!(enemy::data_of(obj(&stepped, p)).unwrap().stepped);
+    // A later call before its first movement step leaves from where it was
+    // made too: the clock alone does not move it.
+    let mut late = sim.clone();
+    late.with_world(|w| {
+        w.now_ms += 2 * u64::from(TICK_MS);
+        gabriel::pirates::attack_tick(w, p);
+    });
+    let d = enemy::data_of(obj(&late, p)).unwrap();
+    assert_eq!(d.carry.1, carry, "no step yet");
+    // A leap after a movement step leaves from the part of a pixel it
+    // stands below its own.
     let mut later = sim.clone();
     later.with_world(|w| {
         w.now_ms += 2 * u64::from(TICK_MS);
+        enemy::data_mut(w, p).unwrap().stepped = true;
         gabriel::pirates::attack_tick(w, p);
     });
     assert_eq!(state_of(&later, p), Some(EnemyState::Jump));

@@ -424,6 +424,61 @@ fn route_hints(hints: Option<&Path>, prefix_hints: Option<String>) -> Option<Str
         .or(prefix_hints)
 }
 
+/// What `--from-route` continues: the first ticks of another route and
+/// what its header says about them.
+#[derive(Debug, Default)]
+struct Prefix {
+    /// The ticks played before the search starts.
+    script: InputScript,
+    /// The hints file the route was found with.
+    hints: Option<String>,
+    /// The route's segment start (`# start X,Y`), which the continued
+    /// route starts from too.
+    start: Option<(i32, i32)>,
+    /// The route's crab values and further sets.
+    crabs: (CrabValues, Vec<CrabValues>),
+}
+
+/// The first `t` ticks of the route `text`, for `--from-route`: its
+/// `# level`, `# tuning` and `# seed` lines must match the arguments and
+/// its progress (`# start_...` lines) `carry`, and it may hold no directive
+/// at or before `t`. Its segment start, `# start X,Y`, is always the
+/// continued route's, none when it has none.
+fn read_prefix(
+    text: &str,
+    t: usize,
+    level: u32,
+    tuning: TuningName,
+    seed: u32,
+    carry: Option<&Carry>,
+) -> Result<Prefix, String> {
+    let script = InputScript::parse(text).map_err(|e| e.to_string())?;
+    let header = Header::parse(text);
+    prefix_matches(&script.header, level, tuning, seed)?;
+    if t > script.ticks.len() {
+        return Err(format!("the route has only {} ticks", script.ticks.len()));
+    }
+    if route::parse_carry(text)?.as_ref() != carry {
+        return Err("the route starts with other progress than --carry gives".to_string());
+    }
+    // The search plays the prefix as plain ticks, so a directive inside
+    // it would make the continued route play differently.
+    if let Some(d) = script.directives.iter().find(|d| d.tick <= t) {
+        return Err(format!(
+            "the route has a directive at tick {}, at or before the continue point {t}; only plain ticks can be continued",
+            d.tick
+        ));
+    }
+    let mut ticks = InputScript::default();
+    ticks.ticks = script.ticks[..t].to_vec();
+    Ok(Prefix {
+        script: ticks,
+        hints: header.hints,
+        start: header.start,
+        crabs: route::crab_values(text)?,
+    })
+}
+
 /// Checks that the header keys a continued route states (level, tuning and
 /// seed) are the ones the search runs with: a prefix played in another
 /// game would lead a route that does not play as found.
@@ -503,46 +558,24 @@ fn run(a: Args) -> Result<bool, String> {
             s
         }
     };
-    let mut prefix = InputScript::default();
-    let mut prefix_hints = None;
-    let mut seg_start = a.start;
-    let mut prefix_crabs = (CrabValues::default(), Vec::new());
+    let mut prefix = Prefix::default();
     if let (Some(path), Some(t)) = (&a.from_route, a.from_tick) {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("reading {}: {e}", path.display()))?;
-        let script = InputScript::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        let prefix_header = Header::parse(&text);
-        prefix_hints = prefix_header.hints;
-        seg_start = prefix_header.start;
-        prefix_matches(&script.header, level_no, a.tuning, seed)
+        prefix = read_prefix(&text, t, level_no, a.tuning, seed, carry.as_ref())
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        if t > script.ticks.len() {
-            return Err(format!(
-                "{} has only {} ticks",
-                path.display(),
-                script.ticks.len()
-            ));
-        }
-        // The search plays the prefix as plain ticks, so a directive inside
-        // it would make the continued route play differently.
-        let prefix_carry =
-            route::parse_carry(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        if prefix_carry != carry {
-            return Err(format!(
-                "{}: the route starts with other progress than --carry gives",
-                path.display()
-            ));
-        }
-        if let Some(d) = script.directives.iter().find(|d| d.tick <= t) {
-            return Err(format!(
-                "{} has a directive at tick {}, at or before the continue point {t}; only plain ticks can be continued",
-                path.display(),
-                d.tick
-            ));
-        }
-        prefix.ticks = script.ticks[..t].to_vec();
-        prefix_crabs = route::crab_values(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     }
+    let Prefix {
+        script: prefix,
+        hints: prefix_hints,
+        start: prefix_start,
+        crabs: prefix_crabs,
+    } = prefix;
+    let seg_start = if a.from_route.is_some() {
+        prefix_start
+    } else {
+        a.start
+    };
     let crabs = match &a.crabs {
         Some(p) => read_crabs(p)?,
         None => prefix_crabs.0,
@@ -787,6 +820,29 @@ mod tests {
         assert_eq!(hints.foot, [1, 2]);
         assert_eq!(parse_hints("100,200\n300,400 feet\n"), Err(2));
         assert_eq!(parse_hints("100\n"), Err(1));
+    }
+
+    #[test]
+    fn a_continued_route_starts_where_the_route_it_continues_starts() {
+        let rows: String = (0..10).map(|t| format!("{t},0x0,0x0\n")).collect();
+        let read = |head: &str, t| {
+            let text = format!("# level 8\n# tuning original\n# seed 7\n{head}{rows}");
+            read_prefix(&text, t, 8, TuningName::Original, 7, None)
+        };
+        // A segment's prefix: the continued route is a segment from the
+        // same start point, with the prefix's hints and first ticks.
+        let p = read("# hints level8\n# start 31700,5200\n", 4).unwrap();
+        assert_eq!(p.start, Some((31700, 5200)));
+        assert_eq!(p.hints, Some("level8".into()));
+        assert_eq!(p.script.ticks.len(), 4);
+        // A prefix from the level's start: no start point.
+        assert_eq!(read("", 10).unwrap().start, None);
+        // The prefix's header must match the search's game.
+        assert!(read("", 11).unwrap_err().contains("only 10 ticks"));
+        let other = format!("# level 7\n{rows}");
+        assert!(read_prefix(&other, 1, 8, TuningName::Original, 7, None).is_err());
+        let e = read("# start_score = 5\n", 1).unwrap_err();
+        assert!(e.contains("start_"), "{e}");
     }
 
     #[test]
