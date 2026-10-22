@@ -1002,7 +1002,7 @@ fn claws_respawn_puts_her_back_on_her_floor_with_full_health_in_her_state() {
     hit(&mut sim, id, blow, 900, false);
     sim.with_world(|w| w.objects.get_mut(id).unwrap().x = 2800);
     let state = state_of(&sim, id);
-    // Claw loses a life: nothing while he is dying.
+    // Claw loses a life: nothing while he is dying, her own calls included.
     sim.with_world(|w| {
         w.claw.stats.count_attempt();
         let c = w.claw_id.unwrap();
@@ -1010,10 +1010,12 @@ fn claws_respawn_puts_her_back_on_her_floor_with_full_health_in_her_state() {
         katherine::tick(w, id);
     });
     assert_eq!(obj(&sim, id).health, 90);
-    // He respawns: her next call puts her back, on her floor.
+    // He respawns: the respawn puts her back, on her floor, before her
+    // next call.
     sim.with_world(|w| {
         let c = w.claw_id.unwrap();
-        w.objects.get_mut(c).unwrap().state = claw_state::STAND;
+        w.objects.get_mut(c).unwrap().state = claw_state::RESPAWN;
+        w.reset_boss_on_respawn();
         katherine::tick(w, id);
     });
     let o = obj(&sim, id);
@@ -1026,7 +1028,7 @@ fn claws_respawn_puts_her_back_on_her_floor_with_full_health_in_her_state() {
     let k = her(&sim, id);
     assert!(k.falls);
     assert_eq!((k.stand_y * 1000.0).round(), 324.0);
-    // Once per respawn.
+    // Only the respawn resets her: her own calls do not.
     sim.with_world(|w| {
         w.objects.get_mut(id).unwrap().health = 40;
         katherine::tick(w, id);

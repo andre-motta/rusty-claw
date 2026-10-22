@@ -33,8 +33,8 @@
 use claw_frame::SoundChannel;
 use claw_frame::output::BossMeter;
 
-use crate::logic::{World, pickup, sound};
-use crate::object::ObjectId;
+use crate::logic::{GameLogic, World, enemy, pickup, sound};
+use crate::object::{LogicKind, ObjectId};
 
 /// Played as the gem rises out of a defeated boss.
 pub const AMULET_SOUND: &str = "GAME_AMULETRISE";
@@ -130,6 +130,35 @@ impl World<'_> {
     /// Sets (or clears) the current boss.
     pub fn set_current_boss(&mut self, id: Option<ObjectId>) {
         self.out.boss.current = id;
+    }
+
+    /// Claw's respawn, once he is back at his checkpoint and before the
+    /// respawn's update passes: the current boss, built and not being
+    /// removed, resets for the next attempt there, so every object that
+    /// runs in the passes sees him reset. Raux ([`enemy::raux::reset`]),
+    /// Katherine ([`enemy::katherine::reset`]), Wolvington
+    /// ([`enemy::wolvington::reset`]) and Gabriel
+    /// ([`enemy::gabriel::respawn_reset`], which also marks what goes at a
+    /// respawn for removal) reset here. Marrow, Red Tail, Aquatis and Omar
+    /// keep their own resets, each run by the first of their logics to run
+    /// after the respawn.
+    pub fn reset_boss_on_respawn(&mut self) {
+        let Some(id) = self.current_boss() else {
+            return;
+        };
+        let Some(o) = self.objects.get(id) else {
+            return;
+        };
+        if enemy::EnemyState::from_id(o.state).is_none() {
+            return;
+        }
+        match o.kind {
+            LogicKind::Game(GameLogic::Raux) => enemy::raux::reset(self, id),
+            LogicKind::Game(GameLogic::Katherine) => enemy::katherine::reset(self, id),
+            LogicKind::Game(GameLogic::Wolvington) => enemy::wolvington::reset(self, id),
+            LogicKind::Game(GameLogic::Gabriel) => enemy::gabriel::respawn_reset(self, id),
+            _ => {}
+        }
     }
 
     /// Points the camera at a scripted point, or gives it back to Claw with

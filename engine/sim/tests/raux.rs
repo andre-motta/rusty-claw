@@ -970,11 +970,13 @@ fn claws_respawn_puts_him_back_with_full_health_in_his_state() {
         o.x = 3150;
     });
     let state = state_of(&sim, id);
-    // Claw lost a life and respawns.
+    // Claw lost a life and respawns: the respawn resets him before his
+    // next call.
     sim.with_world(|w| {
         w.claw.stats.count_attempt();
         let c = w.claw_id.unwrap();
         w.objects.get_mut(c).unwrap().state = claw_state::RESPAWN;
+        w.reset_boss_on_respawn();
         raux::tick(w, id);
     });
     // Put back where he was placed, then his tick goes on from there.
@@ -983,7 +985,7 @@ fn claws_respawn_puts_him_back_with_full_health_in_his_state() {
     assert_eq!(o.y, 900);
     assert_eq!(o.health, 100);
     assert_eq!(state_of(&sim, id), state, "his state is kept");
-    // Once per respawn.
+    // Only the respawn resets him: his own calls do not.
     sim.with_world(|w| {
         w.objects.get_mut(id).unwrap().health = 40;
         raux::tick(w, id);

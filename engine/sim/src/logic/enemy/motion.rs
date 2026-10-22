@@ -86,7 +86,11 @@
 //! tiles, and that x counts as where it stood before the step, so a wall
 //! that stops the move, or a ledge that sends it back, makes that x its
 //! patrol limit on that side (the ledge also puts it there). Which edge
-//! leads is still decided by where the object stood. The move itself
+//! leads is still decided by where the object stood. The riding mark
+//! (step 2) overrides a written position: one marked as riding moves
+//! from where it stands by the platform's move only, and the written x
+//! then only counts as where it stood before the step and as the start of
+//! the dropped move across that picks the ledge guard's edge. The move itself
 //! stops at the plane's edge: a target outside the plane (the Chameleon's
 //! phase sends an unbounded lizard toward x = -2147483647) takes an
 //! object on a floor that runs to the edge of the level there and no
@@ -193,6 +197,8 @@ fn clock_seconds(now: u64) -> f64 {
 }
 
 fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
+    // The next movement step clears the bounce's lift, a frozen one too.
+    let lift = std::mem::take(&mut d.bounce_lift);
     if d.frozen {
         d.last_move_ms = Some(w.now_ms);
         return None;
@@ -222,7 +228,6 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     let before_x = jump.unwrap_or(x0);
     let dt = step_seconds(d, w.now_ms);
     let standing = entry == ptype::STAND;
-    let lift = std::mem::take(&mut d.bounce_lift);
     if riding_mark(w, id) {
         let from = RideFrom {
             x: x0,

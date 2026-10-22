@@ -23,7 +23,9 @@
 //!   at 0 or below it dies where it lies, otherwise it gets up, goes Home
 //!   and cannot be lifted for 1.5 s.
 //! - Dropped: it falls, stops on landing, and after 1 s gets up and goes
-//!   Home.
+//!   Home. When Claw walks off a ledge carrying it, it is dropped too, not
+//!   thrown ([`walked_off`]): it keeps his walk's speed across (225 px/s)
+//!   while it falls, but it neither bounces nor pays for a landing.
 //!
 //! A defeated officer or soldier can be lifted too, as long as it is
 //! still an enemy (killed by a blow or on spikes; one killed by the
@@ -234,6 +236,23 @@ pub fn dropped(w: &mut World, id: ObjectId) {
     ) && let Some(d) = data_mut(w, id)
     {
         d.deferred = Some(Deferred::Dropped);
+    }
+}
+
+/// Claw walked off a ledge carrying `id`, his walk moving it `vx` px/s
+/// across (225 either way, or 0 when he stood still): it is dropped as in
+/// [`dropped`], not thrown, so it neither bounces nor pays for a landing,
+/// but it keeps that speed across while it falls, until it stands.
+pub fn walked_off(w: &mut World, id: ObjectId, vx: i32) {
+    if !matches!(
+        super::state(w, id),
+        Some(EnemyState::Lifted | EnemyState::Flailing)
+    ) {
+        return;
+    }
+    dropped(w, id);
+    if let Some(d) = data_mut(w, id) {
+        d.vx = f64::from(vx);
     }
 }
 

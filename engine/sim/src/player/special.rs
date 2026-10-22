@@ -29,9 +29,11 @@
 //! through [`tell_lifted`] and his movement box grows by
 //! [`LIFT_RAISE`] px upwards. Once lifted he carries it: Left and Right
 //! turn him and walk at [`CARRY_SPEED`] px/s (no step on the walk's event
-//! frames). Walking off a ledge lets go of the object with a sideways
-//! speed of [`LEDGE_RELEASE_SPEED`] px/s in the walking direction (or
-//! drops it when he stood still) and he falls. After
+//! frames). Walking off a ledge lets go of the object and he falls: a
+//! human enemy is dropped as when he is hit, only it keeps a sideways
+//! speed of [`LEDGE_RELEASE_SPEED`] px/s in the walking direction (none
+//! when he stood still) while it falls; anything else is thrown sideways
+//! at that speed (or dropped when he stood still). After
 //! [`LIFT_HOLD_MS`] of carrying the object is put down and he stands.
 //!
 //! Attack or Lift starts the throw, and the object's family is told that
@@ -358,14 +360,16 @@ fn restore_move_rect(c: &mut Ctx) {
     }
 }
 
-/// Lets go of the carried object: thrown sideways at `vx` px/s, or just
-/// dropped when `vx` is 0.
+/// Lets go of the carried object: just dropped when `vx` is 0. Otherwise
+/// Claw walked off a ledge with it at `vx` px/s across: a human enemy is
+/// dropped keeping that speed ([`logic::walked_off`]), and anything else
+/// (a keg, a crate, a hermit crab) is thrown sideways at it.
 fn let_go(c: &mut Ctx, vx: i32) {
     if let Some(id) = c.p.special.lifted.take() {
         c.with_world(|w| {
             if vx == 0 {
                 tell_dropped(w, id);
-            } else {
+            } else if crab::is_crab(w, id) || !logic::walked_off(w, id, vx) {
                 tell_thrown(w, id, vx, 0);
             }
         });

@@ -361,6 +361,19 @@ fn a_bomb_that_strikes_claw_in_flight_explodes_there() {
 }
 
 #[test]
+fn his_bombs_are_always_active() {
+    let (mut sim, _) = in_fight();
+    let b = sim.with_world(|w| bomb::spawn(w, (3000, 600, 0), -100));
+    let f = obj(&sim, b).flags;
+    assert!(
+        f & flags::ALWAYS_ACTIVE != 0,
+        "never leaves with its window"
+    );
+    assert!(f & flags::DESTROY_FAR != 0, "still removed far outside");
+    assert!(obj(&sim, b).special_flags & projectile::RESPAWN_PURGE != 0);
+}
+
+#[test]
 fn the_pirate_he_calls_in() {
     let (mut sim, id) = in_fight();
     choose(&mut sim, id, 1);
@@ -504,6 +517,42 @@ fn his_pirate_keeps_its_leap_when_his_list_no_longer_holds_it() {
         assert!(!gabriel::pirates::mode_step(w, p), "its own call");
     });
     let _ = id;
+}
+
+#[test]
+fn a_pirate_made_past_the_end_of_its_run_leaps_from_where_it_was_made() {
+    let (mut sim, id) = in_fight();
+    // As when he stands down on the dock: the end of its run lies right of
+    // where he makes it.
+    sim.with_world(|w| w.gabriel_link_mut().unwrap().run_to = PLACED.0 + 1000);
+    choose(&mut sim, id, 1);
+    until(&mut sim, 50, |s| !gabriel_pirates(s).is_empty());
+    let p = gabriel_pirates(&sim)[0];
+    assert_eq!(state_of(&sim, p), Some(EnemyState::GabrielAttack));
+    // Made 10 px above his position; its building set its pixel on the
+    // deck below that and kept the height it was made at.
+    let made_y = obj(&sim, id).y + gabriel::PIRATE_SPAWN.1;
+    let y = obj(&sim, p).y;
+    let carry = enemy::data_of(obj(&sim, p)).unwrap().carry.1;
+    assert!(carry >= 1.0, "below its pixel: {carry}");
+    assert_eq!(f64::from(y) + carry, f64::from(made_y));
+    // Its first call after the tick it was made in (the game's clock is
+    // at the next tick already) is its leap, from there.
+    let mut first = sim.clone();
+    first.with_world(|w| gabriel::pirates::attack_tick(w, p));
+    assert_eq!(state_of(&first, p), Some(EnemyState::Jump));
+    let d = enemy::data_of(obj(&first, p)).unwrap();
+    assert_eq!(d.carry.1, carry, "from where it was made");
+    // A leap at a later call leaves from the part of a pixel it stands
+    // below its own.
+    let mut later = sim.clone();
+    later.with_world(|w| {
+        w.now_ms += 2 * u64::from(TICK_MS);
+        gabriel::pirates::attack_tick(w, p);
+    });
+    assert_eq!(state_of(&later, p), Some(EnemyState::Jump));
+    let d = enemy::data_of(obj(&later, p)).unwrap();
+    assert!(d.carry.1 >= 0.0 && d.carry.1 < 1.0, "{}", d.carry.1);
 }
 
 #[test]
@@ -708,6 +757,28 @@ fn claws_respawn_starts_the_fight_over_only_while_the_flag_is_set() {
 
 // ----------------------------------------------------------------------
 // Lifting him, and his place
+
+#[test]
+fn the_respawn_resets_him_and_his_own_call_does_not() {
+    let (mut sim, id) = in_fight();
+    choose(&mut sim, id, 1);
+    until(&mut sim, 50, |s| !gabriel_pirates(s).is_empty());
+    let p = gabriel_pirates(&sim)[0];
+    sim.with_world(|w| w.objects.get_mut(id).unwrap().health = 40);
+    // Claw lost a life: his own calls leave him as he is.
+    sim.with_world(|w| {
+        w.claw.stats.count_attempt();
+        gabriel::tick(w, id);
+    });
+    assert_eq!(obj(&sim, id).health, 40);
+    // The respawn resets him before any object runs, and marks his pirate
+    // for removal.
+    sim.with_world(|w| w.reset_boss_on_respawn());
+    assert_eq!(obj(&sim, id).health, gabriel::HEALTH);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::Idle));
+    assert!(obj(&sim, p).flags & flags::DESTROY != 0);
+    assert!(gabriel_pirates(&sim).is_empty());
+}
 
 #[test]
 fn after_a_recovery_his_strike_never_ends() {

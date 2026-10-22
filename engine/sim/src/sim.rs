@@ -898,7 +898,11 @@ impl Sim {
     }
 
     /// The respawn between ticks (see [`player::death`]): Claw at the
-    /// checkpoint; a first update pass runs over the objects still awake
+    /// checkpoint; the current boss's reset for the next attempt
+    /// ([`World::reset_boss_on_respawn`]), so Gabriel's start of fight
+    /// again and the removal of what goes at a respawn come before any
+    /// object runs, and an object so marked still runs in the first pass
+    /// only; a first update pass runs over the objects still awake
     /// around the place of the death, in which the camera's own call jumps
     /// to Claw when he is beyond its snap distance; then the objects now
     /// out of the camera's reach go to sleep, those around Claw wake, and a
@@ -942,6 +946,8 @@ impl Sim {
             });
             runner.list_spawned(objects);
         }
+        // Then the current boss resets, before any object runs again.
+        self.with_world(|w| w.reset_boss_on_respawn());
         // The camera is not moved here: its own call in the first pass
         // snaps it to Claw where that pass leaves him, when he is beyond
         // its snap distance. The passes run with the keys of the tick that

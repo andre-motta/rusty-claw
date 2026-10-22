@@ -446,7 +446,12 @@ A throw may land him anywhere: an enemy that lands on a platform object
 (a peg or an elevator) rides it, and while it rides, its movement moves it
 by the platform only, so a thrown Gabriel that lands on a peg reaching
 past the dock's edge bounces from where he landed and comes to rest on
-the peg at his second bounce.
+the peg at his second bounce. Walking off a ledge with Gabriel (or any
+enemy) in his hands, Claw drops him rather than throwing him: he keeps
+Claw's walking speed across while he falls, but neither bounces nor pays
+for the landing, and gets up a second later; the eighth level's routes
+that sit through the introduction walk off Gabriel's deck with him this
+way before they throw him into the water.
 On the eighth level no jump of Claw's own reaches Gabriel's deck:
 `level8-introskip.csv` takes the Catnip near the last checkpoint and lands
 there with the jump-in while it lasts, and the routes that sit through

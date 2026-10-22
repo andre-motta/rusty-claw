@@ -951,6 +951,39 @@ pub fn wind_up(w: &mut World, id: ObjectId) {
     }
 }
 
+/// Claw walked off a ledge carrying `id`, his walk moving it `vx` px/s
+/// across: a human enemy is let go as when he is hit or holds it too long,
+/// keeping that speed across (see [`enemy::lift::walked_off`]), and true
+/// is returned. Any other family (a keg, a crate) is left to the caller:
+/// false.
+pub fn walked_off(w: &mut World, id: ObjectId, vx: i32) -> bool {
+    match family(w, id) {
+        Some(
+            GameLogic::Officer
+            | GameLogic::Soldier
+            | GameLogic::CutThroat
+            | GameLogic::RobberThief
+            | GameLogic::Katherine
+            | GameLogic::TownGuard1
+            | GameLogic::TownGuard2
+            | GameLogic::Wolvington
+            | GameLogic::RedTailPirate
+            | GameLogic::BearSailor
+            | GameLogic::Gabriel
+            | GameLogic::HookPirate
+            | GameLogic::PegLeg
+            | GameLogic::Mercat
+            | GameLogic::Siren
+            | GameLogic::Aquatis
+            | GameLogic::TigerGuard,
+        ) => {
+            enemy::lift::walked_off(w, id, vx);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// `id` was put down or let go.
 pub fn dropped(w: &mut World, id: ObjectId) {
     match family(w, id) {

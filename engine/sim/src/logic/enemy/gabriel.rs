@@ -135,8 +135,15 @@
 //! fight again: full health, back at his place, no cannon hits, no pirates
 //! counted, the cannon's flags cleared and its reset asked for, and idle
 //! (once defeated, only idle). Everything thrown or fired and the pirates
-//! he called in are removed. With the flag at 0 (after a skipped
-//! introduction) nothing of this happens.
+//! he called in are marked for removal. With the flag at 0 (after a
+//! skipped introduction) nothing of this happens.
+//!
+//! The respawn itself runs this reset ([`respawn_reset`]), once Claw is
+//! back at his checkpoint and before the respawn's update passes, not his
+//! own logic call: in the first pass, an object listed before him (a
+//! pirate he called in, made one step in front of him) already sees him
+//! reset, and its own call there is its last, since what was marked for
+//! removal is gone before the second pass.
 //!
 //! # The link
 //!
@@ -637,16 +644,13 @@ fn handler(s: EnemyState) -> Option<Handler> {
 // ----------------------------------------------------------------------
 // The logic call
 
-/// One logic call: the start of fight again when Claw has respawned with
-/// the fight flag set, the human logic call ([`human::run`]), then his
+/// One logic call: the human logic call ([`human::run`]), then his
 /// drowning's report. Being removed, he stops being the current boss.
+/// Claw's respawn resets him from the respawn itself ([`respawn_reset`]).
 pub fn tick(w: &mut World, id: ObjectId) {
     let raw = obj(w, id).state;
     if raw == engine_state::DESTROYING && w.current_boss() == Some(id) {
         w.set_current_boss(None);
-    }
-    if EnemyState::from_id(raw).is_some() && claw_respawned(w, id) {
-        respawned(w, id);
     }
     count_pirates(w, id);
     let stood = standing(w, id);
@@ -683,18 +687,12 @@ fn settle(w: &mut World, id: ObjectId, stood: bool) {
     }
 }
 
-/// True once per death of Claw, from his respawn on: his attempt number
-/// has moved on since the last reset and he is no longer dying.
-fn claw_respawned(w: &World, id: ObjectId) -> bool {
-    use crate::player::state as claw_state;
-    let dying = w.claw_object().is_none_or(|c| {
-        matches!(
-            c.state,
-            claw_state::DEATH_FALL | claw_state::DEATH | claw_state::INIT
-        )
-    });
-    let attempt = w.attempt();
-    !dying && data(w, id).is_some_and(|d| d.human.boss.is_some_and(|b| b.attempt != attempt))
+/// Claw's respawn, as the current boss: run by the respawn once Claw is
+/// back at his checkpoint and before its update passes
+/// ([`World::reset_boss_on_respawn`], see the module documentation). He
+/// starts his fight over when the fight flag is set ([`respawned`]).
+pub fn respawn_reset(w: &mut World, id: ObjectId) {
+    respawned(w, id);
 }
 
 /// Each of his pirates that died (or is gone) since his last call lowers
@@ -1466,20 +1464,34 @@ pub mod pirates {
     /// [`wolvington::LANDED_FRACTION`] below its pixel then and sinks on
     /// each tick since ([`wolvington::next_stand_fraction`]).
     fn stand_fraction(w: &World, id: ObjectId) -> f64 {
-        let Some(made) = w.current_boss().and_then(|b| {
-            let d = super::gabriel_data(w, b)?;
-            let i = d.summoned.iter().position(|&p| p == id)?;
-            d.summoned_ms.get(i).copied()
-        }) else {
+        let Some(ticks) = ticks_since_made(w, id) else {
             return 0.0;
         };
         let ay = data(w, id).map_or(GRAVITY, |d| d.ay);
-        let ticks = w.now_ms.saturating_sub(made) / u64::from(TICK_MS);
         let mut f = wolvington::LANDED_FRACTION;
         for _ in 1..ticks {
             f = wolvington::next_stand_fraction(f, ay);
         }
         f
+    }
+
+    /// Whole ticks since Gabriel called pirate `id` in, while it is in his
+    /// list.
+    fn ticks_since_made(w: &World, id: ObjectId) -> Option<u64> {
+        let made = w.current_boss().and_then(|b| {
+            let d = super::gabriel_data(w, b)?;
+            let i = d.summoned.iter().position(|&p| p == id)?;
+            d.summoned_ms.get(i).copied()
+        })?;
+        Some(w.now_ms.saturating_sub(made) / u64::from(TICK_MS))
+    }
+
+    /// True on pirate `id`'s first call after the tick it was made in (or
+    /// in that tick): it has made no movement step yet, so its exact
+    /// height is still where it was made, below the pixel its building
+    /// set on the floor.
+    fn first_call(w: &World, id: ObjectId) -> bool {
+        ticks_since_made(w, id).is_some_and(|t| t <= 1)
     }
 
     /// True while pirate `id` is in the leap Gabriel's attack ends in: one
@@ -1512,7 +1524,12 @@ pub mod pirates {
 
     /// GabrielAttack: it runs on while its x is greater than
     /// [`super::GabrielLink::run_to`]; then it jumps on the lowest arc
-    /// towards [`super::GabrielLink::leap_to`].
+    /// towards [`super::GabrielLink::leap_to`]. It leaves from its exact
+    /// position: after a run, the part of a pixel it stands below its own
+    /// ([`stand_fraction`]); at its first call, as when Gabriel stands
+    /// down on the dock and makes it past the end of its run already, the
+    /// height it was made at ([`super::PIRATE_SPAWN`] of him), which its
+    /// building keeps when it sets its pixel on the floor above it.
     pub fn attack_tick(w: &mut World, id: ObjectId) {
         w.advance_anim(id);
         let Some(link) = w.gabriel_link().cloned() else {
@@ -1526,14 +1543,19 @@ pub mod pirates {
         if run_x > f64::from(link.run_to) {
             return;
         }
-        let fy = stand_fraction(w, id);
+        // A leap at its first call leaves from the height it was made at,
+        // which it still carries below its pixel; after a run it leaves
+        // from the part of a pixel it stands below its own.
+        let fy = (!first_call(w, id)).then(|| stand_fraction(w, id));
         human::enter_jump(w, id);
         if let Some(d) = data_mut(w, id) {
             d.bounds = UNBOUNDED;
             d.bounds_y = UNBOUNDED;
             // Where it leaves from, exactly: the part of a pixel it ran
-            // with, and the part of a pixel it stands below its own.
-            d.carry.1 = fy;
+            // with, and the part of a pixel below its own it leaves from.
+            if let Some(fy) = fy {
+                d.carry.1 = fy;
+            }
             d.moved_to = Some((x, y));
             let from = (f64::from(x) + d.carry.0, f64::from(y) + d.carry.1);
             let (vx, vy) = human::launch(
@@ -1554,7 +1576,8 @@ pub mod pirates {
 /// ticks. In flight and in the blast it costs Claw [`bomb::DAMAGE`]
 /// (Claw's hit removes it in flight); the blast also hurts the pirates he
 /// calls in. It has no fuse and never bounces: one that lands above the
-/// dock lies there unexploded. All of them are removed when Gabriel is
+/// dock lies there unexploded. It is always active, so it never leaves
+/// with its activation window. All of them are removed when Gabriel is
 /// defeated, and when Claw respawns during the fight.
 ///
 /// It moves as the projectiles do (each step covers the game time since its
@@ -1668,8 +1691,10 @@ pub mod bomb {
     }
 
     /// Makes a bomb at (x, y, z) and throws it at the point `dx` px to the
-    /// side at its own height. It is an enemy shot hittable by nothing,
-    /// removed far outside its window or the level and when Claw respawns.
+    /// side at its own height. It is an enemy shot hittable by nothing and
+    /// always active: the leave pass never removes it for leaving its
+    /// window, so it flies its whole arc wherever Claw is (dead far below
+    /// it, say); only its far-outside removal and Claw's respawn remove it.
     pub fn spawn(w: &mut World, (x, y, z): (i32, i32, i32), dx: i32) -> ObjectId {
         let mut o = new_object(NAMES[0], x, y, z);
         o.image_set = runtime_image_set(IMAGE_SET);
@@ -1679,7 +1704,7 @@ pub mod bomb {
         o.type_flags = types::ENEMY_SHOT;
         o.hit_type_flags = 0;
         o.damage = DAMAGE;
-        o.flags |= flags::DESTROY_OUTSIDE | flags::DESTROY_FAR;
+        o.flags |= flags::ALWAYS_ACTIVE | flags::DESTROY_OUTSIDE | flags::DESTROY_FAR;
         o.special_flags |= RESPAWN_PURGE | special::OWN_IMPACT;
         o.physics_type = ptype::FLY;
         o.state = state::FALLING;
