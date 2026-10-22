@@ -20,7 +20,9 @@
 //! - on a level that ends with a boss, the boss is defeated before the
 //!   level is won, and the boss's introduction plays (the fight flag goes
 //!   0, 1, 2) unless the route is an intro-skip route (`introskip` in its
-//!   name), whose jump-in entry keeps the flag at 0 all along;
+//!   name), whose jump-in entry keeps the flag at 0 all along; and a
+//!   boss the bot drowns (Gabriel) never bounces off a throw's landing
+//!   next to a drop, except on an intro-skip route;
 //! - every change of the held buttons comes at least 2 ticks after the
 //!   previous one, so a 60 Hz display never drops a press;
 //! - nothing is held in the first tick (keys down when play starts count
@@ -52,7 +54,7 @@ use std::time::Duration;
 use claw_acceptance::install;
 use claw_acceptance::play::{Feed, Player, digest, replay};
 use claw_bot::route::{self, TuningName};
-use claw_bot::search::{BossEnd, boss_end};
+use claw_bot::search::{BossEnd, boss_end, bounces_by_a_drop};
 use claw_frame::GameEvent;
 use claw_game::flow::{self, Effect, Flow, Screen, Start};
 use claw_game::load::{LevelBundle, load_level};
@@ -226,6 +228,9 @@ struct BossRun {
     fight_on: Option<u64>,
     /// The tick the boss was defeated.
     defeated: Option<u64>,
+    /// The first tick a boss the bot drowns bounced off a throw's landing
+    /// next to a drop.
+    by_a_drop: Option<u64>,
 }
 
 /// True when Claw went from `from` to `to` through the boss room's door.
@@ -328,6 +333,9 @@ fn install_routes_win_the_same_way_every_time() {
             if boss.defeated.is_none() && b.defeated().is_some() {
                 boss.defeated = Some(i);
             }
+            if boss.by_a_drop.is_none() && bounces_by_a_drop(&q.sim) {
+                boss.by_a_drop = Some(i);
+            }
         }
         let mut fight_note = String::new();
         if end.is_some() {
@@ -351,6 +359,10 @@ fn install_routes_win_the_same_way_every_time() {
                     boss.flags,
                     vec![fight::NONE, fight::STAGING, fight::ON],
                     "{name}: the introduction plays, then the fight"
+                );
+                assert_eq!(
+                    boss.by_a_drop, None,
+                    "{name}: the boss lands next to a drop"
                 );
                 let on = boss.fight_on.unwrap();
                 fight_note = format!(

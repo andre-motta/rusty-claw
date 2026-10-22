@@ -467,6 +467,46 @@ fn his_pirate_runs_along_the_deck_and_leaps_from_its_exact_place() {
 }
 
 #[test]
+fn his_pirate_keeps_its_leap_when_his_list_no_longer_holds_it() {
+    let (mut sim, id) = in_fight();
+    // A pirate built while he fights is one of his, for good; this one is
+    // not in his list, as after his reset on Claw's respawn.
+    let p = sim.with_world(|w| {
+        let o = logic::new_object(redtail_pirate::NAMES[0], PLACED.0 + 150, PLACED.1, 0);
+        let p = w.spawn(o);
+        redtail_pirate::construct(w, p);
+        gabriel::pirates::enter_attack(w, p);
+        p
+    });
+    assert!(sim.with_world(|w| redtail_pirate::called_in(w, p)));
+    assert!(!gabriel_pirates(&sim).contains(&p));
+    let mut ticks = 0u64;
+    while state_of(&sim, p) == Some(EnemyState::GabrielAttack) {
+        ticks += 1;
+        sim.with_world(|w| {
+            w.now_ms += ticks * u64::from(TICK_MS);
+            assert!(gabriel::pirates::mode_step(w, p));
+        });
+        assert!(ticks < 100);
+    }
+    assert_eq!(state_of(&sim, p), Some(EnemyState::Jump));
+    // In its leap the call is only the leap's step and the movement step.
+    sim.with_world(|w| {
+        w.now_ms += u64::from(TICK_MS);
+        assert!(gabriel::pirates::mode_step(w, p), "the leap's step");
+    });
+    assert_eq!(state_of(&sim, p), Some(EnemyState::Jump));
+    // A pirate that is not one of his runs its own call in a jump.
+    sim.with_world(|w| {
+        if let ObjectData::RedTailPirate(d) = &mut w.objects.get_mut(p).unwrap().data {
+            d.called_in = false;
+        }
+        assert!(!gabriel::pirates::mode_step(w, p), "its own call");
+    });
+    let _ = id;
+}
+
+#[test]
 fn once_he_is_defeated_his_pirates_die() {
     let (mut sim, id) = in_fight();
     let p = sim.with_world(|w| {

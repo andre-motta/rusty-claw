@@ -157,10 +157,11 @@ fn start_at(sim: &mut Sim, at: (i32, i32), t0_ms: u64, seed: u32, catnip_ms: Opt
 /// tick in the room, that this build does not do yet: the objects he left
 /// behind outside their windows go to sleep at once (this build puts them
 /// to sleep after that first tick, so the guards by the door would draw
-/// their tick's rolls in it), and the effects already running (the Catnip
-/// glitter) have no call in the door's set-up (this build calls them there
-/// with the objects that wake by the room). The replay holds both for one
-/// call when Claw is about to go through the door.
+/// their tick's rolls in it). The replay holds those for one call when
+/// Claw is about to go through the door. The effects already running (the
+/// Catnip glitter) have no call in the door's set-up, which the build does
+/// itself: once set up they are out of the first-call state, so that pass
+/// leaves them alone, and they are not held.
 fn through_the_door(sim: &mut Sim) {
     let Some(target) = sim.claw().special.warp_to else {
         return;
@@ -173,7 +174,7 @@ fn through_the_door(sim: &mut Sim) {
         .filter(|(_, o)| o.is_listed())
         .filter(|(_, o)| {
             if o.kind == LogicKind::Game(GameLogic::Effect) {
-                return true;
+                return false;
             }
             if o.flags & flags::WORLD == 0 || o.flags & flags::ALWAYS_ACTIVE != 0 {
                 return false;
