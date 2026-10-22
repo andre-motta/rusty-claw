@@ -340,7 +340,9 @@ pub static CLASS: Class = Class {
 /// What a crab starts with that the original game does not fix: the
 /// side its first regroup faces by ([`SIDE_RIGHT`] faces right, anything
 /// else left), its second range box (half width, half height) and, for a
-/// crab a nest hatched, whether it starts stationary. The values differ
+/// crab a nest hatched, whether it starts stationary (a placed crab may
+/// be given as stationary too, and then starts so; one its record
+/// already makes stationary stays so either way). The values differ
 /// from crab to crab and from run to run of the original; the plain
 /// default is an unmirrored start, an empty box and a crab that is not
 /// stationary. A box with both half extents larger than the crab's reach
@@ -607,7 +609,10 @@ pub const VARIANT_WORD: &str = "crab_variant";
 /// for a crab placed in the level, by its record, and for the crab a
 /// nest hatched in place HATCH (1 for its first crab), by the nest's
 /// record. STATIONARY is 1 for a crab that starts stationary and 0 (the
-/// default when it is left out) for one that does not. A `*` for a record or a place names every crab of that kind;
+/// default when it is left out) for one that does not; it is read on
+/// either kind of entry, a placed crab's included (a placed crab its
+/// record makes stationary stays so whatever its entry says). A `*` for
+/// a record or a place names every crab of that kind;
 /// the entry that names a crab most exactly counts, and between two
 /// equally exact ones the first. A crab no entry names starts with the
 /// plain default. In a file, blank lines and other `#` lines are
@@ -2189,6 +2194,10 @@ nest_crab * * = 1, 1000000, 1000000
         assert_eq!(CrabValues::from_header(&v.header_lines()).unwrap(), v);
         let sets = CrabValues::variants_from_header(&v.variant_lines(1)).unwrap();
         assert_eq!(sets, vec![v.clone()]);
+        // A placed crab's entry takes the value too.
+        let placed = CrabValues::parse("crab 85 = 3, 1, 2, 1\n").unwrap();
+        assert!(placed.values_for(CrabKey::Placed(Some(85))).stationary);
+        assert_eq!(placed.file_lines(), "crab 85 = 3, 1, 2, 1\n");
         let e = CrabValues::parse("crab 1 = 2, 3, 4, 2\n").unwrap_err();
         assert!(e.contains("bad stationary value"), "{e}");
         let e = CrabValues::parse("crab 1 = 2, 3, 4, 1, 0\n").unwrap_err();

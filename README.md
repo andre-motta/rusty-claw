@@ -513,12 +513,18 @@ objects, from 0) and
 for the crab a nest hatched in that place (from 1), where STATIONARY is 1
 for a stationary crab and 0, the default when it is left out, for one
 that is not (`# nest_crab 1306 3 = 0, 0, 0, 1`); a `*` names every crab
-of that kind, and the entry that names a crab most exactly counts. `claw-replay`
+of that kind, and the entry that names a crab most exactly counts; a
+placed crab's entry may say STATIONARY too. `claw-replay`
 and `make compare` give each crab its values as it is built, before its
 first tick; `claw-replay --crabs FILE` takes them from a file of the same
 lines instead, and `--crab-variant N` takes the route's further set N.
 Without values every crab starts with an empty box, facing left, and not
-stationary.
+stationary. A reference store may hold each repeat's crab values in a
+file of such lines beside its trace, `crabs-<clock>-r<k>.replay.txt` or
+`crabs-<clock>-r<k>.txt` for the `k`-th trace its `meta.toml` lists:
+`make compare` and the reference tests then compare that trace with the
+route replayed under those values (the replay form first), so repeats
+whose crabs started otherwise can all be exact.
 `rusty-claw --replay` gives the crabs the values the route's own header
 lines name, as `claw-replay` does, both when the route is watched in the
 window and with `--trace`. `claw-bot --crabs FILE` searches under such

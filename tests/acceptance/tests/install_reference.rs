@@ -8,7 +8,10 @@
 //! the random state at the route's time zero and, for a segment that starts
 //! away from the level's start, Claw placed at the store's start point (see
 //! `claw_acceptance::reference`), and compared with each reference trace of
-//! that clock. Every compared column
+//! that clock, each under its repeat's hermit crab values when the store
+//! carries them (`crabs-<clock>-r<k>.replay.txt`, else
+//! `crabs-<clock>-r<k>.txt`; the route header's values otherwise). Every
+//! compared column
 //! must stay within its tolerance up to the first divergence the entry
 //! records for it as known (`known.<column> = <ms>`), and throughout when it
 //! records none: a divergence that is new or comes earlier fails the test.
@@ -119,7 +122,17 @@ fn print_clock(store: &Store, result: &ClockResult, tolerance: &str, entry: Opti
         );
     }
     for t in &result.traces {
-        println!("\n-- {}", t.trace.display());
+        match &t.crabs {
+            Some(file) => println!(
+                "\n-- {} (the crabs' values of {})",
+                t.trace.display(),
+                file.display()
+            ),
+            None => println!(
+                "\n-- {} (the crabs' values of the route's header)",
+                t.trace.display()
+            ),
+        }
         print!("{}", t.report);
         if t.comparison
             .first_divergence

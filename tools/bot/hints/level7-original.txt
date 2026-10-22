@@ -25,6 +25,15 @@
 # telling its last attacker by that place); the routes from before are
 # kept there as level7-original-3.csv and level6-original-3.level7.csv.
 #
+# earlier/level7-original-4.csv won under three sets of values: a run in
+# which the crab of record 101 has a box that covers its beach, a run in
+# which that box is empty, and the latter with the third crab of nest
+# 1306 stationary. Of the ten sets searched for (each run's own values,
+# and either run's values with the first crab of nest 165, the first of
+# nest 185, the second of nest 286 or the third of nest 1306 stationary
+# on top), the other seven were dropped: none of them played otherwise
+# than its run's own values.
+#
 # Both were searched again once an object counted as on screen while any
 # pixel of its picture was in the view (the picture's last row and
 # column included) and a human enemy's hop back aimed from its exact
@@ -43,12 +52,13 @@
 # (record 101 side 2058048938, box -2006994985 by 1514611473; the first
 # crab of nest 165, the first of nest 286 and the third of nest 1306
 # stationary; that run's nest crabs). The sets with the first crab of
-# nest 165, the first of nest 185, the first or the second of nest 286 or
-# the third of nest 1306 stationary on top of either run's values (eight
-# sets, the others being a run's own values) were dropped: none of them
-# plays otherwise than its run's own values on the earlier route or on
-# this one. From stretch 16 on: stretches 17 and 18 run with
-# --fragile-cost 0; stretch 23 is not searched (see there).
+# nest 185, the first or the second of nest 286 or the third of nest 1306
+# stationary on top of either run's values (six sets, the other two being
+# the second run's own values; the first crab of nest 165 is stationary
+# in both runs) were dropped: none of them plays otherwise than its run's
+# own values on the earlier route or on this one. From stretch 16 on:
+# stretches 17 and 18 run with --fragile-cost 0; stretch 23 is not
+# searched (see there).
 #
 # level6-original.level7.csv carries on from tick 4360 of
 # earlier/level6-original-4.level7.csv (the start of stretch 10, before
