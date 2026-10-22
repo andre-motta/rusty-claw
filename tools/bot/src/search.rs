@@ -48,11 +48,15 @@
 //! stages ([`BossStage`]): to the boss room's door, the fight, and the gem
 //! the boss's defeat releases. The distance the search is guided by is the
 //! path distance to the door, then the boss's health and Claw's distance
-//! to him, then the path distance to where the gem lands; each stage costs
+//! to him (none while Claw carries him or he flies from Claw's throw, and,
+//! for a boss no blow hurts ([`drowns`]), plus his distance from the water
+//! beside him, where a throw drowns him), then the path distance to where
+//! the gem lands; each stage costs
 //! less than any state of the stage before, and the first state of a new
 //! stage becomes the root of a fresh segment, as a waypoint does. Through
 //! the boss's introduction and the gem's flight Claw is held, so the time
-//! is part of the coarse state there. With [`SearchConfig::intro`] the
+//! is part of the coarse state there, and so it is while a boss Claw threw
+//! cannot be lifted again yet. With [`SearchConfig::intro`] the
 //! search keeps to routes that play the introduction (the normal entry) or
 //! to routes that skip it (the jump-in entry).
 //!
@@ -84,15 +88,18 @@ use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use claw_sim::claw_frame::GameEvent;
+use claw_sim::logic::enemy::EnemyState;
 use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::logic::world_boss::fight;
 use claw_sim::logic::{
     ObjectData, boss_stage, enemy, floor_spike, goo_vent, path_elevator, pickup, platform,
     springboard,
 };
+use claw_sim::object::special;
 use claw_sim::player::special::BOSS_END;
 use claw_sim::player::state;
-use claw_sim::{Buttons, InputScript, Sim, TickInput};
+use claw_sim::tiles::{DEATH, GROUND, SOLID};
+use claw_sim::{Buttons, InputScript, Sim, SimLevel, TickInput};
 
 use crate::actions::{self, Action, Arena, MIN_SPACING};
 use crate::field::{BLOWER_HALF_WIDTH, DistanceField, Grid, Reach, UNREACHABLE};
@@ -623,7 +630,19 @@ pub fn is_boss(logic: &str) -> bool {
     enemy::raux::NAMES.contains(&logic)
         || enemy::katherine::NAMES.contains(&logic)
         || enemy::wolvington::NAMES.contains(&logic)
+        || enemy::gabriel::NAMES.contains(&logic)
 }
+
+/// The bosses whose fall the search guides into the water: blows cannot
+/// hurt them, and Claw lifts them and throws them in (see
+/// [`BossEnd::water`]).
+pub fn drowns(logic: &str) -> bool {
+    enemy::gabriel::NAMES.contains(&logic)
+}
+
+/// How far either side of a boss the water he can be thrown into is
+/// looked for, px.
+pub const WATER_SEARCH: i32 = 3000;
 
 /// Record fields of the boss room's door: where it leads, x and y.
 const DOOR_TO: [usize; 2] = [55, 56];
@@ -644,6 +663,10 @@ pub struct BossEnd {
     pub boss: (i32, i32),
     /// Where the gem lands.
     pub gem: (i32, i32),
+    /// For a boss the search drowns ([`drowns`]), the x of the nearest
+    /// column beside him where nothing below his feet holds a body up
+    /// before the level's death tiles.
+    pub water: Option<i32>,
 }
 
 /// The boss end of the level `sim` plays, when it has a boss room's door
@@ -653,13 +676,41 @@ pub fn boss_end(sim: &Sim) -> Option<BossEnd> {
     let door = objects.iter().find(|o| o.logic == boss_stage::WARP)?;
     let boss = objects.iter().find(|o| is_boss(&o.logic))?;
     let at = |r: &[i32], f: [usize; 2]| (r[f[0]], r[f[1]]);
+    let place = at(&boss.record, [5, 6]);
     Some(BossEnd {
         door: at(&door.record, [5, 6]),
         room: at(&door.record, DOOR_TO),
-        boss: at(&boss.record, [5, 6]),
+        boss: place,
         gem: at(&boss.record, GEM_TO),
+        water: drowns(&boss.logic)
+            .then(|| water_beside(sim.level(), place))
+            .flatten(),
     })
 }
+
+/// The x of the column nearest `at` (within [`WATER_SEARCH`], either
+/// side, in steps of a tile's width) in which a body falling from `at`'s
+/// height meets a death tile before any solid or ground tile.
+pub fn water_beside(level: &SimLevel, at: (i32, i32)) -> Option<i32> {
+    let map = &level.map;
+    let falls_in = |x: i32| {
+        let mut y = at.1;
+        while y < map.height() {
+            match map.attr(x, y) {
+                DEATH => return true,
+                SOLID | GROUND => return false,
+                _ => y += WATER_STEP,
+            }
+        }
+        false
+    };
+    (0..=WATER_SEARCH / WATER_STEP)
+        .flat_map(|k| [at.0 - k * WATER_STEP, at.0 + k * WATER_STEP])
+        .find(|&x| x >= 0 && x < map.width() && falls_in(x))
+}
+
+/// The step of [`water_beside`]'s look, px.
+const WATER_STEP: i32 = 16;
 
 /// Where a boss level's route is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -709,15 +760,49 @@ pub const BOSS_NEAR_CAP: u32 = 1000;
 /// The boss's most health the guide counts, points.
 pub const BOSS_HEALTH_CAP: u32 = 200;
 
+/// Most the distance from a boss to be drowned to the water counts for,
+/// px.
+pub const WATER_CAP: u32 = 1500;
+
 /// The distance of the fight's start, px: any state on the way to the
 /// door is guided as at least this far.
-pub const DOOR_BASE: u32 = FIGHT_BASE + BOSS_HEALTH_CAP * BOSS_HEALTH_PX + BOSS_NEAR_CAP;
+pub const DOOR_BASE: u32 =
+    FIGHT_BASE + BOSS_HEALTH_CAP * BOSS_HEALTH_PX + BOSS_NEAR_CAP + WATER_CAP;
 
 /// The boss in play, its health and where it is.
 fn boss_in_play(sim: &Sim) -> Option<(i32, i32, i32)> {
     let id = sim.boss().current()?;
     let o = sim.objects().get(id)?;
     Some((o.health, o.x, o.y))
+}
+
+/// True while Claw carries the boss in play or the boss flies from his
+/// throw: wherever it lands, Claw is as near him as a throw takes him.
+pub fn boss_carried(sim: &Sim) -> bool {
+    sim.boss()
+        .current()
+        .and_then(|id| sim.objects().get(id))
+        .and_then(|o| EnemyState::from_id(o.state))
+        .is_some_and(|s| {
+            matches!(
+                s,
+                EnemyState::Lifted | EnemyState::Flailing | EnemyState::Thrown
+            )
+        })
+}
+
+/// True while the boss in play gets up from a throw and cannot be lifted
+/// again yet: the time it has left counts in the coarse state, so a wait
+/// for it is progress.
+fn boss_guarded(sim: &Sim) -> bool {
+    sim.boss()
+        .current()
+        .and_then(|id| sim.objects().get(id))
+        .is_some_and(|o| {
+            drowns(&o.logic)
+                && o.special_flags & special::LIFTABLE == 0
+                && enemy::data_of(o).is_some_and(|d| d.may_lift && !d.dead)
+        })
 }
 
 /// The boss end's guide: the gem's field, besides the door's, which is the
@@ -1103,11 +1188,20 @@ impl Search<'_> {
                     boss.end.boss.1,
                 ));
                 let health = (health.max(0) as u32).min(BOSS_HEALTH_CAP);
-                // Near enough to strike counts as there.
-                let near = ((bx - o.x).unsigned_abs().saturating_sub(60)
-                    + (by - o.y).unsigned_abs())
-                .min(BOSS_NEAR_CAP);
-                FIGHT_BASE + health * BOSS_HEALTH_PX + near
+                // Near enough to strike counts as there, and so does the
+                // boss in Claw's hands or in the flight of his throw.
+                let near = if boss_carried(sim) {
+                    0
+                } else {
+                    ((bx - o.x).unsigned_abs().saturating_sub(60) + (by - o.y).unsigned_abs())
+                        .min(BOSS_NEAR_CAP)
+                };
+                // A boss to be drowned is as far as he is from the water.
+                let wet = boss
+                    .end
+                    .water
+                    .map_or(0, |wx| (bx - wx).unsigned_abs().min(WATER_CAP));
+                FIGHT_BASE + health * BOSS_HEALTH_PX + near + wet
             }
             BossStage::Gem => boss.gem.at(o.x, feet).min(FIGHT_BASE - 1),
         }
@@ -1808,6 +1902,11 @@ pub fn state_key(sim: &Sim) -> u64 {
         }
         if matches!(c.state, state::FREEZE | BOSS_END) {
             k.add(&[4, sim.tick() as i64]);
+        }
+        // Getting up from a throw, the boss cannot be lifted again for a
+        // while: the time tells a wait for it apart.
+        if boss_guarded(sim) {
+            k.add(&[13, (sim.tick() / actions::STEP as u64) as i64]);
         }
     }
     k.0

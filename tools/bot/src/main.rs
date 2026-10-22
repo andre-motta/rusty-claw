@@ -35,7 +35,9 @@
 //! middle of a jump; a `foot` after a waypoint's `x,y` in the file makes
 //! that waypoint alone count that way.
 //! `--from-route` starts from the game after the first T ticks of another
-//! route, which lead the new one. When the prefix changed its held mask
+//! route, which lead the new one; a segment's prefix (`# start X,Y` in
+//! its header) is played from its start point, and the new route is a
+//! segment from there too. When the prefix changed its held mask
 //! less than two ticks before T, the new part first keeps that mask for
 //! the ticks missing. The other route's `# level`, `# tuning` and
 //! `# seed` lines, when it has them, must match the arguments. Without
@@ -503,12 +505,15 @@ fn run(a: Args) -> Result<bool, String> {
     };
     let mut prefix = InputScript::default();
     let mut prefix_hints = None;
+    let mut seg_start = a.start;
     let mut prefix_crabs = (CrabValues::default(), Vec::new());
     if let (Some(path), Some(t)) = (&a.from_route, a.from_tick) {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("reading {}: {e}", path.display()))?;
         let script = InputScript::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        prefix_hints = Header::parse(&text).hints;
+        let prefix_header = Header::parse(&text);
+        prefix_hints = prefix_header.hints;
+        seg_start = prefix_header.start;
         prefix_matches(&script.header, level_no, a.tuning, seed)
             .map_err(|e| format!("{}: {e}", path.display()))?;
         if t > script.ticks.len() {
@@ -555,7 +560,7 @@ fn run(a: Args) -> Result<bool, String> {
             sim_level.clone(),
             a.tuning,
             seed,
-            a.start,
+            seg_start,
             carry.as_ref(),
             c,
         );
@@ -636,7 +641,7 @@ fn run(a: Args) -> Result<bool, String> {
         seed,
         mid_air_hit_fix: false,
         hints: route_hints(a.hints.as_deref(), prefix_hints),
-        start: a.start,
+        start: seg_start,
         carry: carry.clone(),
         crabs: crabs.clone(),
         crab_variants: crab_variants.clone(),
@@ -651,7 +656,7 @@ fn run(a: Args) -> Result<bool, String> {
         sim_level.clone(),
         a.tuning,
         seed,
-        a.start,
+        seg_start,
         carry.as_ref(),
         &crabs,
     );
@@ -681,7 +686,7 @@ fn run(a: Args) -> Result<bool, String> {
             sim_level.clone(),
             a.tuning,
             seed,
-            a.start,
+            seg_start,
             carry.as_ref(),
             v,
         );

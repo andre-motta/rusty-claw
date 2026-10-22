@@ -1,8 +1,9 @@
-//! The search through the second and sixth levels' boss rooms on your own
-//! install (skipped without `CLAW_INSTALL`): from beside the door, Claw
-//! goes through it, sits through the boss's introduction (or skips it with
-//! the jump-in), fights Raux or Wolvington down and takes the gem his
-//! defeat releases. Nothing from an install is stored in the repository.
+//! The search through the second, sixth and eighth levels' boss rooms on
+//! your own install (skipped without `CLAW_INSTALL`): from beside the
+//! door, Claw goes through it, sits through the boss's introduction (or
+//! skips it with the jump-in), fights Raux or Wolvington down, or lifts
+//! Gabriel and throws him into the water, and takes the gem his defeat
+//! releases. Nothing from an install is stored in the repository.
 
 use std::path::PathBuf;
 
@@ -12,6 +13,7 @@ use claw_bot::search::{BossStage, Intro, boss_end, boss_stage};
 use claw_bot::{Goal, SearchConfig, search_report};
 use claw_sim::claw_frame::GameEvent;
 use claw_sim::logic::world_boss::fight;
+use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::{Buttons, InputScript, Sim, SimLevel};
 
 /// Beside the boss room's door, where the reference runs of the room
@@ -21,6 +23,18 @@ const DOOR_SIDE: (i32, i32) = (20150, 2091);
 /// Under the sixth level's boss room door, where the reference runs of
 /// that room start (a jump takes Claw into the door).
 const DOOR_UNDER_6: (i32, i32) = (30685, 4175);
+
+/// Right of the eighth level's boss room door, where the reference runs of
+/// that room start (a walk left takes Claw into the door).
+const DOOR_RIGHT_8: (i32, i32) = (31700, 5200);
+
+/// Further right on the floor beside the eighth level's door, where the
+/// search has room to time its jump-in.
+const FLOOR_RIGHT_8: (i32, i32) = (31800, 5200);
+
+/// Where the eighth level's dock ends: the water Gabriel is thrown into
+/// lies left of it.
+const DOCK_END_8: i32 = 42471;
 
 /// The random state those runs set when Claw has settled there.
 const SEGMENT_SEED: u32 = 111_567;
@@ -176,4 +190,43 @@ fn install_level6_the_search_finds_the_jump_in_and_beats_the_dormant_wolvington(
         assert!(held(i).contains(Buttons::JUMP | Buttons::RIGHT), "tick {i}");
     }
     assert!(!held(first + 12).contains(Buttons::JUMP));
+}
+
+#[test]
+fn install_level8_gabriel_is_read_with_the_water_beside_his_dock() {
+    let Some(level) = retail(8) else { return };
+    let start = settled(level, TuningName::Original, DOOR_RIGHT_8);
+    let end = boss_end(&start).expect("the eighth level ends with a boss");
+    assert_eq!(end.room, (43058, 5212));
+    assert_eq!(end.boss, (43223, 5068));
+    assert_eq!(end.gem, (43036, 5028));
+    assert_eq!(end.water, Some(DOCK_END_8));
+}
+
+#[test]
+fn install_level8_the_search_lifts_the_dormant_gabriel_and_drowns_him() {
+    let Some(level) = retail(8) else { return };
+    // With Catnip, as the level's route brings him there, the jump-in
+    // lands Claw on Gabriel's deck.
+    let mut start = settled(level, TuningName::Original, FLOOR_RIGHT_8);
+    start.give_powerup(AidPowerup::parse("catnip:40").unwrap());
+    start.step(Default::default());
+    let found = search_report(
+        &start,
+        Goal::LevelComplete,
+        &SearchConfig {
+            threads: 8,
+            ..cfg(Intro::Skip)
+        },
+    )
+    .expect("a route");
+    let (flags, defeated, won) = play(&start, &found.script);
+    println!(
+        "jump-in: {} ticks, Gabriel drowned at {defeated:?}, won at {won:?}, {} nodes, {} health lost",
+        found.script.ticks.len(),
+        found.stats.expanded,
+        found.stats.health_lost
+    );
+    assert_eq!(flags, vec![fight::NONE], "the introduction never starts");
+    assert!(defeated.is_some() && won.is_some() && defeated < won);
 }

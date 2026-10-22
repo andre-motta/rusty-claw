@@ -401,6 +401,22 @@ fn a_boss_fight_without_an_introduction_is_dropped_when_the_route_must_play_it()
 }
 
 #[test]
+fn the_longest_throw_of_each_tuning_charges_in_full() {
+    // A throw charges for 3 s at most: 167 ticks at the original speeds,
+    // 180 with the default tuning's 16.7 ms a tick, and a few to spare.
+    for (tuning, full) in [
+        (route::TuningName::Original, 170),
+        (route::TuningName::Default, 183),
+    ] {
+        let rows = room(30, 10);
+        let sim = Sim::new(level(&rows, (5 * 64, 7 * 64)), route::sim_config(tuning, 1));
+        let holds = actions::throw_holds(&sim);
+        assert_eq!(holds[3], full, "{tuning:?}");
+        assert_eq!(holds[..3], actions::THROW_HOLDS[..3]);
+    }
+}
+
+#[test]
 fn the_full_jump_of_each_tuning_reaches_the_full_height() {
     // A held jump rises 145 px at both tunings once the hold window is
     // credited in full; the default tuning credits 16.7 ms a tick, so its
