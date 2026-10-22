@@ -311,6 +311,55 @@ fn goodies_bounce_four_times_then_settle() {
     assert_eq!((obj(&sim, g).x, obj(&sim, g).y), at);
 }
 
+/// A goodie dropped at x 1500 under a low ceiling (its bottom at y 703),
+/// flying up and to the left at (-100, -493) px/s; its speed after each
+/// tick until it is falling, with the result of that tick's move.
+fn goodie_under_a_ceiling() -> Vec<(f64, f64)> {
+    let mut l = level(vec![]);
+    let mut rows: Vec<String> = vec![".".repeat(200); 15];
+    rows[10] = "#".repeat(200);
+    rows.push("#".repeat(200));
+    rows.push("#".repeat(200));
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    l.map = TileMap::from_ascii(64, &rows);
+    let mut sim = Sim::new(l, SimConfig::default());
+    step(&mut sim, 2);
+    let g = sim
+        .with_world(|w| {
+            let g = pickup::spawn_drop(w, 1500, 760, 1)?;
+            let o = w.objects.get_mut(g)?;
+            if let ObjectData::Pickup(d) = &mut o.data {
+                let goodie = d.goodie.as_mut()?;
+                goodie.vx = -100.0;
+                goodie.vy = -493.0;
+            }
+            Some(g)
+        })
+        .expect("a goodie");
+    let mut out = Vec::new();
+    for _ in 0..40 {
+        step(&mut sim, 1);
+        let gd = data(obj(&sim, g)).goodie.expect("still a goodie");
+        out.push((gd.vx, gd.vy));
+        if gd.vy > 0.0 {
+            break;
+        }
+    }
+    out
+}
+
+#[test]
+fn a_goodie_that_meets_a_ceiling_keeps_its_speed_across() {
+    let speeds = goodie_under_a_ceiling();
+    let &(vx, vy) = speeds.last().unwrap();
+    assert!(vy > 0.0, "it turned at the ceiling: {speeds:?}");
+    // The step into the ceiling also meets the ceiling's side at the
+    // goodie's new height; the ceiling ends the step's reactions, so the
+    // speed across stays as it was.
+    assert_eq!(vx, -100.0, "{speeds:?}");
+    assert!(speeds.iter().all(|&(x, _)| x == -100.0), "{speeds:?}");
+}
+
 #[test]
 fn goodies_on_deadly_tiles_flash_and_go() {
     let mut sim = Sim::new(

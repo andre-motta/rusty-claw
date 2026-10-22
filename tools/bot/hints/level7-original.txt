@@ -10,40 +10,45 @@
 #
 # The hermit crabs' values. A crab starts with a side and a second range
 # box that the original game does not fix, and both routes give the
-# values of the original's runs in their headers (--crabs) and win under
-# further sets (--crab-variants), so from where those values first change
-# the game both are searched again with them:
+# values of one of the original's runs in their headers (--crabs) and win
+# under further sets (--crab-variants). Both were searched again once
+# hermit crabs fell through platform objects, Claw disappeared into a
+# splash on the level's liquid death tiles, a goodie meeting a ceiling
+# kept its speed across, and an enemy walking at Claw went idle only
+# exactly on its patrol limit; the routes from before are kept in
+# tests/acceptance/routes/earlier/ as level7-original-2.csv and
+# level6-original-2.level7.csv.
 #
-# level7-original.csv carries on from tick 3314 of the route searched
-# before with every crab at the default (the game is the same up to
-# there), with the placed crabs' values of a direct start (record 1647
-# side 3, box 300 by 40; record 86 side 2, 300 by 40; record 85 side
-# 1721092825, 857312352 by -117703298; record 101 side 1294344774,
-# 857312352 by 784380376) and, as the further set, the same with every
-# crab a nest hatches given a covering box (nest_crab * * = 1, 1000000,
-# 1000000). From stretch 8 on: stretch 8 ends at 13640,6830; stretch 13
-# runs with --fragile-cost 0; stretch 15 starts after 333 ticks with
-# nothing held where stretch 14 ends (the air cart comes by the ledge
-# every 644 ticks); after stretch 16 the route holds nothing for 228 more
-# ticks from its tick 9600, on the ladder below the high floor, so Claw
-# reaches the floor's end as the high air cart comes; stretches 17 and 18
-# are then searched as one, goal 26800,6235 with --goal-on-foot and
-# --fragile-cost 0; stretch 19 runs with --drift-cost 4.
+# level7-original.csv carries on from tick 3314 of
+# earlier/level7-original-2.csv (the game is the same up to there under
+# every set) with the values of a run of a direct start in which the crab
+# of record 101 has a box that covers its beach (record 1647 side 2, box
+# 300 by 40; record 86 side 2, 300 by 40; record 85 side 1721092825,
+# 857312352 by -117703298; record 101 side 1294344774, 857312352 by
+# 784380376; the nests' crabs as the header lists them) and, as further
+# sets, a run in which that crab's box is empty (record 101 side
+# 2058048938, box -2006994985 by 1514611473, with that run's nest crabs),
+# and the first set's placed crabs with every crab a nest hatches given a
+# covering box (nest_crab * * = 1, 1000000, 1000000). From stretch 8 on:
+# stretch 8 ends at 13640,6830; stretches 13 and 19 run with
+# --fragile-cost 0, and stretch 19 with --drift-cost 4; stretch 15 starts
+# after 180 ticks with nothing held where stretch 14 ends (the air cart
+# comes by the ledge every 644 ticks); stretches 17 and 18 are searched as
+# one, as stretch 17 says; stretch 23 is not searched (see there).
 #
-# level6-original.level7.csv carries on from its tick 2863 with the
-# values of the first launch of that game (as above, but record 86 side
-# 3; record 101 side 2058048938, box -2006994985 by 1514611473; the first
-# three crabs of nest record 1304, whose crabs hatch at 12603,7296 (the
-# hatch point), side -546326565 box 1746340737 by 832086994, then side 0
-# box 0 by 636097, then all 0) and,
-# as further sets, the same with record 1647's box covering Claw (382 by
-# 382), and the record crabs' values with every crab a nest hatches given
-# a covering box. Every stretch from 7 on runs with --drift-cost 4 (2 for
-# stretches 7 and 8); stretches 13 and 19 run with --fragile-cost 0;
-# stretch 15 starts after 348 ticks with nothing held; after stretch 16
-# the route holds nothing for 81 more ticks from its tick 10102, standing
-# on the ledge below the high floor, and stretches 17 and 18 are searched
-# as the sixth level's game says below with --fragile-cost 0.
+# level6-original.level7.csv carries on from tick 2863 of
+# earlier/level6-original-2.level7.csv with the values of a launch of
+# that game in which the crab of record 1647 has a box of 300 by 40
+# (record 1647 side 2; record 86 side 3, 300 by 40; record 85 as above;
+# record 101 side 2058048938, box -2006994985 by 1514611473; the nests'
+# crabs as the header lists them) and, as further sets, a launch in which
+# that crab's box covers Claw (side 270720, box 52951952 by 52951984, with
+# that launch's nest crabs), and the first set's placed crabs with every
+# crab a nest hatches given a covering box. Every stretch from 7 on runs
+# with --drift-cost 4 (2 for stretches 7 and 8); stretches 13, 17, 18 and
+# 19 run with --fragile-cost 0; stretch 15 starts after 167 ticks with
+# nothing held where stretch 14 ends; stretches 17 and 18 run as the
+# sixth level's game says there; stretch 23 is not searched (see there).
 #
 # 1. To the first checkpoint: no waypoints, goal 2914,7387.
 # 2. To the checkpoint by the first bear: no waypoints, goal 3777,7387.
@@ -75,13 +80,14 @@
 # 15. Thrown by the rock spring on the pier up to the ladder over it, up
 #     to the ledge, on to the air cart and from its right end to the
 #     ladder hanging there: goal 26588,6640.
-#     The sixth level's game first stands still for 421 ticks where the
-#     stretch starts (not searched: held buttons 0x0, route ticks 8122 to
-#     8542 of level6-original.level7.csv). The cart comes by the ledge
-#     every 644 ticks and a pirate on the ledge beats Claw down while he
-#     waits there, so he waits by the second super checkpoint instead,
-#     long enough to reach the ledge as the cart comes. The stretch is
-#     searched from the tick after the wait.
+#     Both routes first stand still where the stretch starts (not
+#     searched: held buttons 0x0, route ticks 8405 to 8584 of
+#     level7-original.csv and 8418 to 8584 of level6-original.level7.csv).
+#     The cart comes by the ledge every 644 ticks and a pirate on the
+#     ledge beats Claw down while he waits there, so he waits by the
+#     second super checkpoint instead, long enough to reach the ledge as
+#     the cart comes. The stretch is searched from the tick after the
+#     wait.
 25692,7100
 25800,6875
 # 16. Across the ledge and the ladders to its left up to the high floor:
@@ -89,32 +95,12 @@
 26300,6555
 26012,6480
 25756,6450
-# 17. Past the pirate on the high floor to its right end: no waypoints,
-#     goal 25850,6235 with --goal-on-foot.
-#     The sixth level's game, where the pirate stands at the floor's end:
-#     on to the high air cart, no waypoints, goal 26150,6182 with
+# 17. On to the high air cart: no waypoints, goal 26150,6182 with
 #     --goal-on-foot.
-# 18. Not searched: the high air cart comes back to the floor's end only
-#     every 5.8 s, and the search, which counts the time a wait costs,
-#     gives up waiting for it at the edge. Claw waits for the cart, jumps
-#     on to it, rides it and, near its right end, walks to its edge and
-#     jumps on to the floor beyond. The stretch is written into the route
-#     as these held buttons (masks of the route file), in ticks counted
-#     from the stretch's first tick, each range inclusive; each wait is
-#     the middle of the waits that work (290 to 300 ticks on the floor,
-#     and on the cart 110 to 145 ticks from the stretch's tick 331).
-#     level7-original.csv: route ticks 9025 to 9576
-#        0-294 0x0 nothing
-#      295-300 0x2000000 right
-#      301-314 0x2000001 right and jump
-#      315-330 0x2000000 right
-#      331-457 0x0 nothing
-#      458-487 0x2000000 right
-#      488-501 0x2000001 right and jump
-#      502-531 0x2000000 right
-#      532-551 0x0 nothing
-#     The sixth level's game, where Claw is on the cart already: searched,
-#     on the cart over to the right and on to the floor beyond, no
+#     level7-original.csv, where the cart comes as Claw reaches the
+#     floor's end: stretches 17 and 18 searched as one, no waypoints,
+#     goal 26800,6235 with --goal-on-foot.
+# 18. On the cart over to the right and on to the floor beyond: no
 #     waypoints, goal 26800,6235 with --goal-on-foot.
 # 19. Down the steps of ledges to the checkpoint: goal 28217,6683.
 27225,6299
@@ -128,5 +114,26 @@
 #     waypoints, goal 30060,6950 with --goal-on-foot.
 # 23. Across the third and fourth rings and on to the ledge beyond: no
 #     waypoints, goal 31720,6559 with --goal-on-foot.
+#     Not searched in either route: the search, which counts the time a
+#     wait costs, does not wait for the third ring's cart, and the further
+#     sets leave Claw at other heights on the ladder. The stretch is
+#     written into the route as these held buttons, in ticks counted from
+#     the stretch's first tick, each range inclusive: up the ladder to its
+#     top, where every set stands at 30047,6805, a step right, a wait with
+#     nothing held up to route tick 11568, then from route tick 11569 the
+#     held buttons of route ticks 11568 to 12363 of
+#     earlier/level7-original-2.csv (on to the third ring's cart, across
+#     the rings and on to the ledge). The wait is the middle of the three
+#     that work (the held buttons starting at route tick 11568 to 11570).
+#     level7-original.csv: route ticks 11239 to 12364
+#          0-49  0x4000000 up
+#         50-58  0x2000000 right
+#        59-329  0x0 nothing
+#      330-1125  the earlier route's ticks 11568 to 12363
+#     level6-original.level7.csv: route ticks 11381 to 12364
+#          0-49  0x4000000 up
+#         50-58  0x2000000 right
+#        59-187  0x0 nothing
+#       188-983  the earlier route's ticks 11568 to 12363
 # 24. Down the long ladder through the ledge, past the pirates on the
 #     floor below and to the gem: no goal.

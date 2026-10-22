@@ -633,9 +633,11 @@ pub struct Flight {
 /// new exact position (towards 0). When the tiles stop it short on an
 /// axis, the exact position on that axis becomes where it stopped, and
 /// under gravity the speed becomes the one it has at that height
-/// (`sign(v) sqrt(v^2 + 2 a (stopped - wanted))`). Then a wall on the
-/// right or the left turns the speed across around at half, and a ceiling
-/// turns the speed up and down around.
+/// (`sign(v) sqrt(v^2 + 2 a (stopped - wanted))`). Then a ceiling turns
+/// the speed up and down around and nothing else happens in that step (a
+/// wall met in the same step leaves the speed across as it is); without
+/// a ceiling, a wall on the right or the left turns the speed across
+/// around at half.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Goodie {
     /// Horizontal speed, px/s.
@@ -1389,14 +1391,17 @@ fn goodie_tick(w: &mut World, id: ObjectId) {
         g.vy = if g.vy > 0.0 { v } else { -v };
         g.pos.1 = f64::from(o.y);
     }
+    // A ceiling turns the vertical speed and ends the step's reactions: a
+    // wall met in the same step leaves the horizontal speed as it is.
     if r & res::CEILING != 0 {
         g.vy = -g.vy;
-    }
-    if r & res::RIGHT != 0 {
-        g.vx *= -0.5;
-    }
-    if r & res::LEFT != 0 {
-        g.vx *= -0.5;
+    } else {
+        if r & res::RIGHT != 0 {
+            g.vx *= -0.5;
+        }
+        if r & res::LEFT != 0 {
+            g.vx *= -0.5;
+        }
     }
     g.age_ms = g.age_ms.saturating_add(TICK_MS);
     if r & res::DEATH_TILE != 0 {

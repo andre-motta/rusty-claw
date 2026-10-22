@@ -461,6 +461,7 @@ pub fn construct(w: &mut World, id: ObjectId) {
         ),
         stationary: user_0 > 0,
         ledge_guard: true,
+        tiles_only: true,
         z_sort: true,
         z_base: Z_BASE,
         smarts: record(w, id, 17),

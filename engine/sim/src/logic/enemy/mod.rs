@@ -793,6 +793,9 @@ pub struct EnemyFields {
     pub stationary: bool,
     /// Turns at ledges.
     pub ledge_guard: bool,
+    /// Lands only on the tiles: falls through pegs, elevators and every
+    /// other platform object, in every state (a hermit crab).
+    pub tiles_only: bool,
     /// Drawn in front of or behind Claw by who stands higher.
     pub z_sort: bool,
     /// Depth base of the depth against Claw.
@@ -908,6 +911,7 @@ impl Default for EnemyFields {
             bounds_y: UNBOUNDED,
             stationary: false,
             ledge_guard: false,
+            tiles_only: false,
             z_sort: false,
             z_base: 0,
             dead: false,

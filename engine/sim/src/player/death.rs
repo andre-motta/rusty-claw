@@ -11,7 +11,12 @@
 //!   he has fallen [`DEATH_FALL_DEPTH`] pixels the lives step runs.
 //! - Touching a death tile ([`DeathCause::DeathTile`]): he plays the spike
 //!   death in place (state [`state::DEATH`]) with the death-tile sound, and
-//!   the lives step runs when the animation ends.
+//!   the lives step runs when the animation ends. On a level whose death
+//!   tiles are a liquid (goo, water or lava, see
+//!   [`crate::logic::enemy::goo::is_goo_level`]) he is not drawn: he
+//!   disappears into a splash, raised by the level's splash height and
+//!   just in front of him ([`liquid_splash`]); the animation still runs
+//!   and times the lives step.
 //!
 //! Either way he stops reacting to anything (no collisions, safe from
 //! attacks), drops what he carries, stops his attack and loses his powerup.
@@ -62,7 +67,8 @@ use claw_frame::{
 
 use super::{Ctx, fallback_tick, progress, state, transition};
 use crate::logic::effect;
-use crate::object::{ObjectId, flags, types};
+use crate::logic::enemy::goo;
+use crate::object::{ObjectId, draw_flags, flags, types};
 use crate::physics::ptype;
 use crate::tuning::TICK_MS;
 
@@ -232,8 +238,20 @@ fn kill_in_place(c: &mut Ctx) {
     c.o.flags |= flags::NO_COLLIDE | flags::SAFE;
     c.speeds_zero();
     c.p.stats.health = 0;
+    if let Some((x, y)) = liquid_splash(c.level_number(), c.o.x, c.o.y) {
+        c.o.draw_flags |= draw_flags::HIDDEN;
+        c.with_world(|w| effect::spawn(w, effect::EffectKind::Splash, x, y));
+    }
     c.play(DEATH_TILE_SOUND, SoundChannel::Effect);
     set_powerup(c, 0, 0);
+}
+
+/// Where the splash of Claw's death on a death tile at (x, y) goes on level
+/// `number`: on a level whose death tiles are a liquid, at his position
+/// raised by the level's splash height (the splash itself sits just in
+/// front of him, see [`effect::spawn`]); `None` on a level of spikes.
+pub fn liquid_splash(number: u32, x: i32, y: i32) -> Option<(i32, i32)> {
+    goo::is_goo_level(number).then(|| (x, y - goo::splash_y(number).unwrap_or(0)))
 }
 
 /// Falling off the screen after losing all health (state 5004). Entered

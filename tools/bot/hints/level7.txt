@@ -6,6 +6,13 @@
 # --from-tick at its last tick); the last stretch has no goal and ends at
 # the gem. Every stretch uses --seed level and --fragile-cost 100.
 #
+# The route was searched again from its tick 5423, in stretch 13, once
+# hermit crabs fell through platform objects, Claw disappeared into a
+# splash on the level's liquid death tiles, a goodie meeting a ceiling
+# kept its speed across, and an enemy walking at Claw went idle only
+# exactly on its patrol limit: from there the game went otherwise and the
+# route no longer won. The crabs start with the default values.
+#
 # 1. To the first checkpoint: no waypoints, goal 2914,7387.
 # 2. To the checkpoint by the first bear: no waypoints, goal 3777,7387.
 # 3. To the checkpoint: no waypoints, goal 6157,7387.
@@ -36,8 +43,8 @@
 # 15. Thrown by the rock spring on the pier up to the ladder over it, up
 #     to the ledge, on to the air cart and from its right end to the
 #     ladder hanging there: goal 26588,6640. The stretch first stands
-#     still for 140 ticks where it starts (not searched: held buttons 0x0,
-#     route ticks 7128 to 7267): the cart comes by the ledge only every
+#     still for 238 ticks where it starts (not searched: held buttons 0x0,
+#     route ticks 7030 to 7267): the cart comes by the ledge only every
 #     few seconds and a pirate on the ledge beats Claw down while he waits
 #     there, so he waits by the second super checkpoint instead, long
 #     enough to reach the ledge as the cart comes, as at the original
