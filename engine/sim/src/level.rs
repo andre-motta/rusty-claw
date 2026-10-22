@@ -84,6 +84,10 @@ pub struct ImageFrames {
     /// Box of each frame whose image could be read, by frame number,
     /// relative to the object's position (see [`frame_box`]).
     pub boxes: BTreeMap<i32, Rect>,
+    /// Box each frame's picture is drawn in, by frame number, relative to
+    /// the object's position (see [`picture_box`]). A frame missing here
+    /// is drawn in its [`ImageFrames::boxes`] box.
+    pub picture_boxes: BTreeMap<i32, Rect>,
 }
 
 impl ImageFrames {
@@ -93,6 +97,7 @@ impl ImageFrames {
             first,
             last,
             boxes: BTreeMap::new(),
+            picture_boxes: BTreeMap::new(),
         }
     }
 }
@@ -100,9 +105,9 @@ impl ImageFrames {
 /// The box a frame of `width` x `height` pixels with hotspot offset
 /// (`offset_x`, `offset_y`) covers around its object's position, edges
 /// included: `{ox - w/2, oy - h/2, ox + w/2 - 1, oy + h/2 - 1}`, the halves
-/// rounded down. This is the frame box logics use for pickup and hit
-/// boxes, and it is where the frame is drawn when the object is neither
-/// mirrored nor inverted.
+/// rounded down, so a frame of odd size loses its last row and column.
+/// This is the frame box logics use for pickup, hit and move boxes; where
+/// the frame is drawn is its [`picture_box`].
 pub fn frame_box(width: i32, height: i32, offset_x: i32, offset_y: i32) -> Rect {
     let (cx, cy) = (width >> 1, height >> 1);
     Rect::new(
@@ -113,10 +118,28 @@ pub fn frame_box(width: i32, height: i32, offset_x: i32, offset_y: i32) -> Rect 
     )
 }
 
-/// The frame box of a PID image read from its header (size and hotspot
-/// offset); `None` when the header is short or the size is not a valid
-/// image size.
-pub fn pid_frame_box(data: &[u8]) -> Option<Rect> {
+/// The box a picture of `width` x `height` pixels with hotspot offset
+/// (`offset_x`, `offset_y`) is drawn in around its object's position,
+/// edges included: every pixel of the picture, from
+/// `{ox - w/2, oy - h/2}` (the halves rounded down) to `width` and
+/// `height` pixels further, so a picture of odd size keeps its last row
+/// and column. This is the box that says whether an object is on screen;
+/// the logic boxes stay [`frame_box`].
+pub fn picture_box(width: i32, height: i32, offset_x: i32, offset_y: i32) -> Rect {
+    let left = offset_x.saturating_sub(width >> 1);
+    let top = offset_y.saturating_sub(height >> 1);
+    Rect::new(
+        left,
+        top,
+        left.saturating_add(width).saturating_sub(1),
+        top.saturating_add(height).saturating_sub(1),
+    )
+}
+
+/// Size and hotspot offset of a PID image read from its header:
+/// `(width, height, offset_x, offset_y)`; `None` when the header is short
+/// or the size is not a valid image size.
+fn pid_geometry(data: &[u8]) -> Option<(i32, i32, i32, i32)> {
     if data.len() < pid::HEADER_SIZE {
         return None;
     }
@@ -128,7 +151,21 @@ pub fn pid_frame_box(data: &[u8]) -> Option<Rect> {
     if w <= 0 || h <= 0 || w > pid::MAX_DIMENSION || h > pid::MAX_DIMENSION {
         return None;
     }
-    Some(frame_box(w, h, int(16)?, int(20)?))
+    Some((w, h, int(16)?, int(20)?))
+}
+
+/// The picture box of a PID image read from its header (see
+/// [`picture_box`]); `None` when the header is short or the size is not a
+/// valid image size.
+pub fn pid_picture_box(data: &[u8]) -> Option<Rect> {
+    pid_geometry(data).map(|(w, h, ox, oy)| picture_box(w, h, ox, oy))
+}
+
+/// The frame box of a PID image read from its header (size and hotspot
+/// offset); `None` when the header is short or the size is not a valid
+/// image size.
+pub fn pid_frame_box(data: &[u8]) -> Option<Rect> {
+    pid_geometry(data).map(|(w, h, ox, oy)| frame_box(w, h, ox, oy))
 }
 
 /// Retail level number a level counts as when nothing says otherwise.
@@ -299,9 +336,14 @@ impl SimLevel {
                 if store.file(file).type_code() != TYPE_PID {
                     continue;
                 }
-                if let Some(b) = store.read(file).ok().and_then(|d| pid_frame_box(&d)) {
-                    frames.boxes.insert(index, b);
-                }
+                let Some((w, h, ox, oy)) = store.read(file).ok().and_then(|d| pid_geometry(&d))
+                else {
+                    continue;
+                };
+                frames.boxes.insert(index, frame_box(w, h, ox, oy));
+                frames
+                    .picture_boxes
+                    .insert(index, picture_box(w, h, ox, oy));
             }
         }
         Ok(sim_level)
@@ -320,14 +362,29 @@ impl SimLevel {
         self.images.get(set)?.boxes.get(&frame).copied()
     }
 
-    /// The box `o` is drawn in, in level pixels: the box of its current
-    /// frame, mirrored and flipped as it is drawn, at its position; `None`
-    /// when the level does not know the frame. A mirrored picture is
-    /// flipped about its anchor pixel, so its box is the mirrored box one
-    /// pixel further left: a soldier facing left whose box reaches the
-    /// view's left edge in the plain mirror does not count as on screen.
+    /// Box frame `frame` of the image set `set` is drawn in, relative to
+    /// the object's position (see [`picture_box`]): its picture box, or its
+    /// frame box when only that is known; `None` when the set, the frame or
+    /// its image is unknown.
+    pub fn picture_box(&self, set: &str, frame: i32) -> Option<Rect> {
+        let f = self.images.get(set)?;
+        f.picture_boxes
+            .get(&frame)
+            .or_else(|| f.boxes.get(&frame))
+            .copied()
+    }
+
+    /// The box `o` is drawn in, in level pixels: the picture box of its
+    /// current frame (every pixel of the picture, so a picture of odd size
+    /// keeps its last row and column), mirrored and flipped as it is drawn,
+    /// at its position; `None` when the level does not know the frame. An
+    /// object is on screen when any pixel of this box is in the view. A
+    /// mirrored picture is flipped about its anchor pixel, so its box is
+    /// the mirrored box one pixel further left: a soldier facing left whose
+    /// box reaches the view's left edge in the plain mirror does not count
+    /// as on screen.
     pub fn draw_box(&self, o: &Object) -> Option<Rect> {
-        let mut b = self.frame_box(&o.image_set, o.frame)?;
+        let mut b = self.picture_box(&o.image_set, o.frame)?;
         if o.draw_flags & draw_flags::MIRROR != 0 {
             let m = b.mirrored();
             b = Rect::new(m.left - 1, m.top, m.right - 1, m.bottom);
@@ -409,6 +466,23 @@ mod tests {
     }
 
     #[test]
+    fn picture_boxes_keep_every_row_and_column_of_the_picture() {
+        assert_eq!(picture_box(20, 30, 0, 0), frame_box(20, 30, 0, 0));
+        assert_eq!(picture_box(20, 30, 4, -6), frame_box(20, 30, 4, -6));
+        // An odd size keeps its last row and column: 5 by 3 pixels.
+        assert_eq!(picture_box(5, 3, 0, 0), Rect::new(-2, -1, 2, 1));
+        // A picture 84 by 111 with offset (12, 9): 111 rows, from 55 above
+        // the anchor's row plus the offset.
+        let b = picture_box(84, 111, 12, 9);
+        assert_eq!(b, Rect::new(-30, -46, 53, 64));
+        assert_eq!(b.bottom - b.top + 1, 111);
+        assert_eq!(frame_box(84, 111, 12, 9).bottom, 63);
+        let data = pid::build(84, 111, pid::FLAG_RLE, (12, 9), &[]);
+        assert_eq!(pid_picture_box(&data), Some(b));
+        assert_eq!(pid_picture_box(&data[..pid::HEADER_SIZE - 1]), None);
+    }
+
+    #[test]
     fn frame_boxes_come_from_the_image_header() {
         let data = pid::build(20, 30, pid::FLAG_RLE, (4, -6), &[]);
         assert_eq!(pid_frame_box(&data), Some(Rect::new(-6, -21, 13, 8)));
@@ -432,5 +506,15 @@ mod tests {
         assert_eq!(l.frame_box("SET", 4), Some(Rect::new(-1, -2, 3, 4)));
         assert_eq!(l.frame_box("SET", 5), None);
         assert_eq!(l.frame_box("OTHER", 4), None);
+        // Without its picture box a frame is drawn in its frame box.
+        assert_eq!(l.picture_box("SET", 4), Some(Rect::new(-1, -2, 3, 4)));
+        l.images
+            .get_mut("SET")
+            .unwrap()
+            .picture_boxes
+            .insert(4, Rect::new(-1, -2, 3, 5));
+        assert_eq!(l.picture_box("SET", 4), Some(Rect::new(-1, -2, 3, 5)));
+        assert_eq!(l.frame_box("SET", 4), Some(Rect::new(-1, -2, 3, 4)));
+        assert_eq!(l.picture_box("SET", 5), None);
     }
 }

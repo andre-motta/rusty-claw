@@ -469,6 +469,44 @@ fn its_hop_lands_about_96_px_away_after_18_ticks() {
     panic!("no seed hopped");
 }
 
+/// The arena with the pirate's right patrol limit exactly 100 px right
+/// of its whole pixel and `fraction` px of its exact position past it.
+fn limit_100_px_away(seed: u32, fraction: f64) -> (Sim, ObjectId) {
+    let (mut sim, id) = with_claw(7, seed, -70);
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(id).unwrap();
+        let (x, y) = (o.x, o.y);
+        let d = o.data.enemy_mut().unwrap();
+        d.bounds.1 = x + 100;
+        d.carry.0 = fraction;
+        d.moved_to = Some((x, y));
+    });
+    (sim, id)
+}
+
+#[test]
+fn a_hop_back_whose_spot_is_a_fraction_past_its_limit_is_refused() {
+    for seed in 1..10 {
+        let (mut on, id) = limit_100_px_away(seed, 0.0);
+        on.step(press(ATTACK));
+        if state_of(&on, id) != Some(EnemyState::JumpBack) {
+            continue;
+        }
+        // The spot 100 px from the exact position is on the limit: it
+        // hops. A tenth of a pixel further, the spot is past the limit
+        // although its whole pixel is not: it stays on the floor.
+        let (mut past, id) = limit_100_px_away(seed, 0.1);
+        let exact = past.with_world(|w| enemy::exact_x(w, id));
+        assert!((exact - f64::from(obj(&past, id).x) - 0.1).abs() < 1e-9);
+        past.step(press(ATTACK));
+        assert_ne!(state_of(&past, id), Some(EnemyState::JumpBack));
+        assert_eq!(obj(&past, id).physics_type, ptype::STAND);
+        assert_eq!(obj(&past, id).flags & flags::SAFE, 0);
+        return;
+    }
+    panic!("no seed hopped");
+}
+
 #[test]
 fn out_of_range_its_hop_chance_goes_back_to_90() {
     for seed in 1..10 {

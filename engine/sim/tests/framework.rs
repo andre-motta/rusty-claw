@@ -16,7 +16,7 @@ use std::sync::Arc;
 use claw_assets::level::RETAIL_LEVELS;
 use claw_assets::{AssetStore, Install, LevelData, LevelSource};
 use claw_sim::anim::Animation;
-use claw_sim::level::{ImageFrames, frame_box};
+use claw_sim::level::{ImageFrames, frame_box, picture_box};
 use claw_sim::object::{LogicKind, Object, Rect, draw_flags, engine_state, flags, types};
 use claw_sim::player::state;
 use claw_sim::{Buttons, Sim, SimConfig, SimLevel, TickInput};
@@ -176,6 +176,35 @@ fn image_ranges_and_frame_boxes_reach_the_logics() {
         // box (87..106) one pixel further left.
         o.draw_flags |= draw_flags::MIRROR;
         assert_eq!(w.draw_box(&o), Some(Rect::new(86, 179, 105, 208)));
+    });
+}
+
+#[test]
+fn an_object_is_on_screen_while_any_row_of_its_picture_is_in_view() {
+    let mut level = flat_level();
+    let mut set = ImageFrames::range(1, 1);
+    // A picture 84 by 111 with offset (12, 9): its frame box has 110 rows,
+    // the picture 111.
+    set.boxes.insert(1, frame_box(84, 111, 12, 9));
+    set.picture_boxes.insert(1, picture_box(84, 111, 12, 9));
+    level.images.insert("TEST_SET".into(), set);
+    let mut sim = Sim::new(level, SimConfig::default());
+    sim.with_world(|w| {
+        let id = w.claw_id.unwrap();
+        let mut o = w.objects.get(id).unwrap().clone();
+        o.image_set = "TEST_SET".into();
+        o.frame = 1;
+        o.draw_flags = 0;
+        o.x = 25726;
+        o.y = 6234;
+        // Rows 6188 to 6298 and columns 25696 to 25779.
+        assert_eq!(w.draw_box(&o), Some(Rect::new(25696, 6188, 25779, 6298)));
+        // The view starts on the picture's last row: on screen.
+        w.view = Rect::new(25500, 6298, 26139, 6777);
+        assert!(w.on_screen(&o));
+        // One row lower, nothing of it is in view.
+        w.view = Rect::new(25500, 6299, 26139, 6778);
+        assert!(!w.on_screen(&o));
     });
 }
 

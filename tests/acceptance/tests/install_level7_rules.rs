@@ -1,4 +1,4 @@
-//! Six rules of the seventh level's play and one value of its crabs on
+//! Eight rules of the seventh level's play and one value of its crabs on
 //! your own install (skipped without `CLAW_INSTALL`), each pinned to a
 //! moment of an earlier route where the original game showed it.
 //!
@@ -8,7 +8,9 @@
 //! level as the second level of a game), `routes/earlier/level7-original.csv`,
 //! the first route of the level, and `routes/earlier/level7-original-3.csv`
 //! and `routes/earlier/level6-original-3.level7.csv`, the two routes after
-//! the first four rules. Each is played with the hermit crabs' values that
+//! the first four rules, and `routes/earlier/level7-original-4.csv` and
+//! `routes/earlier/level6-original-4.level7.csv`, the two routes after the
+//! first seven. Each is played with the hermit crabs' values that
 //! a run of the original game gave them (see [`CrabValues`]):
 //!
 //! - a hermit crab never lands on a platform object: the third crab
@@ -42,7 +44,17 @@
 //!   place: the bomb the crab hatched second by the nest of record 185
 //!   throws at tick 6047 takes the place of the bomb whose blast hit the
 //!   crab at tick 6026, so its blast, which goes off on Claw at once, does
-//!   not kill the crab.
+//!   not kill the crab;
+//! - an object is on screen while any pixel of its picture is in the
+//!   view, the picture's last row and column included: the pirate of
+//!   record 2423, running at Claw on a picture 111 pixels high, has only
+//!   its last row in view at tick 9538 and runs on one tick more before it
+//!   goes idle (also from a direct start, at tick 9470);
+//! - a human enemy's hop back aims 100 px from its exact position and is
+//!   refused when that spot is past its patrol limit by any fraction: the
+//!   pirate of record 2399, walking back at x 16002.1 with its limit at
+//!   16102, stays on the floor when Claw swings at tick 4830, and the
+//!   swing's blow hits it at tick 4838.
 
 use std::path::Path;
 
@@ -604,5 +616,289 @@ fn install_a_bomb_in_the_place_of_the_last_attacker_spares_its_crab() {
     println!(
         "the bomb thrown at tick 6047 takes the place of the crab's last attacker and spares it; random state after tick 6047 {}",
         run.rng[6047]
+    );
+}
+/// The crabs' values of a run of the level's part of
+/// `earlier/level6-original-4.level7.csv` in the original game in which
+/// the crab of record 1647 has a box of 300 by 40 and the third crab of
+/// the nest of record 175 starts stationary.
+const PAIR_4_SMALL: &str = "\
+crab 85 = 1721092825, 857312352, -117703298
+crab 86 = 3, 300, 40
+crab 101 = 2058048938, -2006994985, 1514611473
+crab 1647 = 2, 300, 40
+nest_crab 164 1 = 0, 0, 0
+nest_crab 164 2 = 0, 0, 0
+nest_crab 164 3 = 0, 0, 0
+nest_crab 165 1 = 3, 200, 40
+nest_crab 165 2 = 0, 0, 0
+nest_crab 165 3 = 0, 0, 0
+nest_crab 175 1 = 3, 200, 40
+nest_crab 175 2 = 3, 0, 0
+nest_crab 175 3 = 0, 0, 0, 1
+nest_crab 184 1 = 0, 0, 0
+nest_crab 184 2 = 0, 0, 0
+nest_crab 184 3 = 0, 0, 0
+nest_crab 185 1 = 3, 200, 40
+nest_crab 185 2 = 3, 200, 40
+nest_crab 185 3 = 3, 0, 0
+nest_crab 284 1 = 0, 0, 0
+nest_crab 284 2 = 0, 0, 0
+nest_crab 284 3 = 0, 0, 0
+nest_crab 285 1 = 0, 0, 0
+nest_crab 285 2 = 0, 0, 0
+nest_crab 285 3 = 0, 0, 0
+nest_crab 286 1 = 3, 300, 40
+nest_crab 286 2 = 3, 0, 0
+nest_crab 286 3 = 3, 0, 0
+nest_crab 1304 1 = 302023104, 21955672, 0
+nest_crab 1304 2 = 0, 0, 0
+nest_crab 1304 3 = 0, 0, 0
+nest_crab 1305 1 = 3, 21955672, 0
+nest_crab 1305 2 = 3, 0, 0
+nest_crab 1305 3 = 0, 0, 0
+nest_crab 1306 1 = 3, 21955672, 0
+nest_crab 1306 2 = 0, 0, 0
+nest_crab 1306 3 = 0, 0, 0
+nest_crab 1351 1 = 0, 0, 0
+nest_crab 1351 2 = 0, 0, 0
+nest_crab 1351 3 = 0, 0, 0
+nest_crab 1352 1 = 3, 0, 0
+nest_crab 1352 2 = 3, 0, 0
+nest_crab 1352 3 = 0, 0, 0
+";
+
+/// The crabs' values of a run of `earlier/level7-original-4.csv` in the
+/// original game in which the crab of record 101 has an empty box.
+const DIRECT_4_EMPTY: &str = "\
+crab 85 = 1721092825, 857312352, -117703298
+crab 86 = 2, 300, 40
+crab 101 = 2058048938, -2006994985, 1514611473
+crab 1647 = 2, 300, 40
+nest_crab 164 1 = 0, 0, 0
+nest_crab 164 2 = 0, 0, 0
+nest_crab 164 3 = 0, 0, 0
+nest_crab 165 1 = 3, 200, 40, 1
+nest_crab 165 2 = 0, 0, 0
+nest_crab 165 3 = 0, 0, 0
+nest_crab 184 1 = 3, 0, 0
+nest_crab 184 2 = 0, 0, 0
+nest_crab 184 3 = 0, 0, 0
+nest_crab 185 1 = 3, 200, 40
+nest_crab 185 2 = 3, 0, 0
+nest_crab 185 3 = 3, 0, 0
+nest_crab 284 1 = 3, 0, 0
+nest_crab 284 2 = 0, 0, 0
+nest_crab 284 3 = 0, 0, 0
+nest_crab 285 1 = 3, 0, 0
+nest_crab 285 2 = 0, 0, 0
+nest_crab 285 3 = 0, 0, 0
+nest_crab 286 1 = 3, 0, 0, 1
+nest_crab 286 2 = 3, 0, 0
+nest_crab 286 3 = 3, 200, 40
+nest_crab 1304 1 = 0, 0, 0
+nest_crab 1304 2 = 0, 0, 0
+nest_crab 1304 3 = 0, 0, 0
+nest_crab 1305 1 = 3, 0, 0
+nest_crab 1305 2 = 3, 0, 0
+nest_crab 1305 3 = 0, 0, 0
+nest_crab 1306 1 = 0, 0, 0
+nest_crab 1306 2 = 0, 0, 0
+nest_crab 1306 3 = 0, 0, 0, 1
+nest_crab 1351 1 = 3, 0, 0
+nest_crab 1351 2 = 0, 0, 0
+nest_crab 1351 3 = 0, 0, 0
+nest_crab 1352 1 = 3, 0, 0
+nest_crab 1352 2 = 3, 0, 0
+nest_crab 1352 3 = 3, 0, 0
+";
+
+/// The crabs' values of a run of the level's part of
+/// `earlier/level6-original-4.level7.csv` in the original game in which
+/// the crab of record 1647 has a box that covers Claw; no crab starts
+/// stationary.
+const PAIR_4_COVERING: &str = "\
+crab 85 = 1721092825, 857312352, -117703298
+crab 86 = 3, 300, 40
+crab 101 = 2058048938, -2006994985, 1514611473
+crab 1647 = -1051409578, 14418135, 1556241857
+nest_crab 164 1 = 0, 0, 0
+nest_crab 164 2 = 0, 0, 0
+nest_crab 164 3 = 0, 0, 0
+nest_crab 165 1 = 3, 200, 40
+nest_crab 165 2 = 0, 0, 0
+nest_crab 165 3 = 0, 0, 0
+nest_crab 175 1 = 3, 200, 40
+nest_crab 175 2 = 0, 0, 0
+nest_crab 175 3 = 0, 0, 0
+nest_crab 184 1 = 0, 0, 0
+nest_crab 184 2 = 0, 0, 0
+nest_crab 184 3 = 0, 0, 0
+nest_crab 185 1 = 3, 200, 40
+nest_crab 185 2 = 3, 200, 40
+nest_crab 185 3 = 3, 0, 0
+nest_crab 284 1 = 0, 0, 0
+nest_crab 284 2 = 0, 0, 0
+nest_crab 284 3 = 0, 0, 0
+nest_crab 285 1 = 0, 0, 0
+nest_crab 285 2 = 0, 0, 0
+nest_crab 285 3 = 0, 0, 0
+nest_crab 286 1 = 3, 200, 40
+nest_crab 286 2 = 1105199103, -1, 1
+nest_crab 286 3 = 3, 0, 0
+nest_crab 1304 1 = 302023104, 21955672, 0
+nest_crab 1304 2 = 0, 0, 0
+nest_crab 1304 3 = 0, 0, 0
+nest_crab 1305 1 = 3, 21955672, 0
+nest_crab 1305 2 = 3, 0, 0
+nest_crab 1305 3 = 0, 0, 0
+nest_crab 1306 1 = 3, 21955672, 0
+nest_crab 1306 2 = 0, 0, 0
+nest_crab 1306 3 = 0, 0, 0
+nest_crab 1351 1 = 0, 0, 0
+nest_crab 1351 2 = 0, 0, 0
+nest_crab 1351 3 = 0, 0, 0
+nest_crab 1352 1 = 0, 0, 0
+nest_crab 1352 2 = 0, 0, 0
+nest_crab 1352 3 = 0, 0, 0
+";
+
+/// The enemy's state.
+fn state_of(run: &Run, id: ObjectId) -> Option<EnemyState> {
+    EnemyState::from_id(run.sim.objects().get(id).unwrap().state)
+}
+
+/// The seventh level with every frame drawn in its frame box, as before
+/// a picture's last row and column counted for being on screen.
+fn without_picture_boxes(mut level: SimLevel) -> SimLevel {
+    for f in level.images.values_mut() {
+        f.picture_boxes.clear();
+    }
+    level
+}
+
+#[test]
+fn install_a_pirate_with_one_row_in_view_is_on_screen() {
+    let Some(root) = install() else { return };
+    let level = level7(&root);
+    let text = earlier("level6-original-4.level7.csv");
+    let mut run = Run::new(&level, &text, PAIR_4_SMALL);
+    let mut before = Run::new(&without_picture_boxes(level.clone()), &text, PAIR_4_SMALL);
+    run.to(9537);
+    before.to(9537);
+    assert_eq!(run.rng, before.rng);
+    let pirate = run
+        .find("RedTailPirate", 2423)
+        .expect("the pirate of record 2423");
+    let o = run.sim.objects().get(pirate).unwrap().clone();
+    assert_eq!(state_of(&run, pirate), Some(EnemyState::FastAdvance));
+    assert_eq!(run.at(pirate), (25726, 6234));
+    // Its picture is 84 by 111 pixels: 111 rows, one more than its frame
+    // box has.
+    let picture = level.picture_box(&o.image_set, o.frame).unwrap();
+    let frame = level.frame_box(&o.image_set, o.frame).unwrap();
+    assert_eq!(picture.bottom - picture.top + 1, 111);
+    assert_eq!(picture.bottom, frame.bottom + 1);
+    // It covers rows 6188 to 6298, and the view the next tick tests it
+    // against starts at row 6298: one row of it is in view.
+    let drawn = run.sim.with_world(|w| w.draw_box(&o)).unwrap();
+    let view = run.sim.with_world(|w| w.view);
+    assert_eq!((drawn.top, drawn.bottom), (6188, 6298));
+    assert_eq!(view.top, 6298);
+    // So it is on screen and runs on one tick more before it goes idle.
+    run.to(9538);
+    before.to(9538);
+    assert_eq!(state_of(&run, pirate), Some(EnemyState::FastAdvance));
+    assert_eq!(run.at(pirate), (25731, 6234));
+    assert_eq!(run.rng[9538], 1_866_851_303);
+    // Counted off screen a tick early, it goes idle at once.
+    let other = before.find("RedTailPirate", 2423).unwrap();
+    assert_eq!(state_of(&before, other), Some(EnemyState::Idle));
+    assert_eq!(before.at(other), (25726, 6234));
+    assert_eq!(before.rng[9538], 4_002_631_438);
+    run.to(9539);
+    assert_eq!(state_of(&run, pirate), Some(EnemyState::Idle));
+    assert_eq!(run.at(pirate), (25731, 6234));
+    assert_eq!(run.rng[9539], 3_435_369_622);
+    println!(
+        "the pirate of record 2423 has its last row in view at tick 9538 and runs on to (25731, 6234); idle at tick 9539; random state after tick 9538 {}",
+        run.rng[9538]
+    );
+}
+
+#[test]
+fn install_a_pirate_with_one_row_in_view_runs_on_from_a_direct_start() {
+    let Some(root) = install() else { return };
+    let level = level7(&root);
+    let text = earlier("level7-original-4.csv");
+    let mut run = Run::new(&level, &text, DIRECT_4_EMPTY);
+    let mut before = Run::new(&without_picture_boxes(level), &text, DIRECT_4_EMPTY);
+    run.to(9469);
+    before.to(9469);
+    assert_eq!(run.rng, before.rng);
+    let pirate = run
+        .find("RedTailPirate", 2423)
+        .expect("the pirate of record 2423");
+    assert_eq!(state_of(&run, pirate), Some(EnemyState::FastAdvance));
+    run.to(9471);
+    before.to(9470);
+    assert_eq!(run.rng[9470], 2_133_050_505);
+    assert_eq!(before.rng[9470], 1_351_267_624);
+    assert_eq!(run.rng[9471], 2_058_887_197);
+    println!(
+        "from a direct start the pirate of record 2423 runs on at tick 9470; random state after it {}",
+        run.rng[9470]
+    );
+}
+
+#[test]
+fn install_a_hop_back_a_fraction_past_its_limit_is_refused() {
+    let Some(root) = install() else { return };
+    let level = level7(&root);
+    let text = earlier("level6-original-4.level7.csv");
+    let mut run = Run::new(&level, &text, PAIR_4_COVERING);
+    run.to(2000);
+    assert_eq!(run.rng[2000], 958_775_274);
+    run.to(4829);
+    let pirate = run
+        .find("RedTailPirate", 2399)
+        .expect("the pirate of record 2399");
+    // Walking back, a tenth of a pixel past 16002, with its right limit
+    // 100 px from the whole pixel.
+    assert_eq!(state_of(&run, pirate), Some(EnemyState::MoveBack));
+    assert_eq!(run.at(pirate), (16002, 7386));
+    let exact = run.sim.with_world(|w| enemy::exact_x(w, pirate));
+    assert!((exact - 16002.1).abs() < 0.005, "{exact}");
+    let bounds = enemy::data_of(run.sim.objects().get(pirate).unwrap())
+        .unwrap()
+        .bounds;
+    assert_eq!(bounds, (15844, 16102));
+    // Claw's swing at tick 4830 makes it try a hop back to 16102.1, past
+    // the limit: it walks on, on the floor, and the swing's blow hits it
+    // at tick 4838.
+    for t in 4830..=4837 {
+        run.to(t);
+        let o = run.sim.objects().get(pirate).unwrap();
+        assert_eq!(state_of(&run, pirate), Some(EnemyState::MoveBack), "{t}");
+        assert_eq!(o.physics_type, ptype::STAND, "{t}");
+        assert_eq!(o.flags & flags::SAFE, 0, "{t}");
+    }
+    assert_eq!(run.at(pirate), (16023, 7386));
+    run.to(4838);
+    assert_eq!(state_of(&run, pirate), Some(EnemyState::HitLow));
+    assert_eq!(run.rng[4838], 1_148_499_532);
+    // On through the rest of the original's run.
+    for (t, rng) in [
+        (6000, 1_599_123_078),
+        (9000, 1_927_483_480),
+        (12000, 4_126_983_214),
+        (12748, 2_940_342_670),
+    ] {
+        run.to(t);
+        assert_eq!(run.rng[t], rng, "tick {t}");
+    }
+    println!(
+        "the pirate of record 2399 at x {exact:.2} does not hop back past its limit 16102 and is hit at tick 4838; random state after it {}",
+        run.rng[4838]
     );
 }
