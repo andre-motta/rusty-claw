@@ -141,5 +141,9 @@
 #        on the deck. As at the original speeds, the jump works with 94
 #        or 96 ticks of wait and the second jump 28 or 26 ticks after the
 #        first (also 64 and 58).
-#     c. --intro play, no waypoints: he lifts Gabriel and throws him into
-#        the water.
+#     c. --intro play, no waypoints, from route tick 13684 (the boost's
+#        last 20 ticks of nothing): he lifts Gabriel, throws him off the
+#        deck on to the flat of the dock twice, and with the third throw
+#        into the water beyond the dock's end. The search never keeps a
+#        throw that lands Gabriel next to a drop (a peg, or a floor's
+#        edge).

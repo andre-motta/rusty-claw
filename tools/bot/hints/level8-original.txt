@@ -168,8 +168,12 @@
 #     nothing 20: he lands on the deck (route tick 16482). The jump
 #     works with 94 or 96 ticks of wait and the second jump 28 or 26
 #     ticks after the first (also 64 and 58). The search carries on from
-#     there with --intro play: he lifts Gabriel and throws him into the
-#     water.
+#     route tick 16462 (the boost's last 20 ticks of nothing) with
+#     --intro play: he lifts Gabriel, throws him off
+#     the deck on to the flat of the dock twice, and with the third throw
+#     into the water beyond the dock's end. The search never keeps a
+#     throw that lands Gabriel next to a drop (a peg, or a floor's edge),
+#     as the intro-skip route's first throw does.
 #     The eighth level of the seventh level's game
 #     (level7-original.level8.csv) plays level8-original.csv's inputs
 #     from the progress that game carries in; they win the level the
