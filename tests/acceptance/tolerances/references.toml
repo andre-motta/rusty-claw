@@ -1125,3 +1125,13 @@ known.physics_type = 9267
 known.health = 9584
 known.events = 12618
 known.lives = 13350
+
+# The bot's route of the ninth level (original speeds), one 18 ms step per
+# frame: it takes PegLeg's Catnip, warps near the end, climbs the shaft on
+# three dynamite blasts set off through help screens and a powder keg's
+# blast, and reaches the end of the level. Every repeat wins the level and
+# is equal on every compared row, the random stream included.
+[[compare]]
+reference = "level9/bot-original"
+clock = "c18"
+tolerance = "exact"
