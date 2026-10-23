@@ -4,8 +4,10 @@
 //!
 //! Each route puts Claw down at a fixed point of the level after its first
 //! tick, the way the original's runs put him there (between two ticks, as
-//! a warp does, at the point the runs name, a little above the floor, so
-//! that he lands there and his idle wait starts from the landing), waits
+//! a warp does but without the warp's own frame, see
+//! [`Sim::place_between_ticks`], at the point the runs name, a little
+//! above the floor, so that he lands there and his idle wait starts from
+//! the landing), waits
 //! until the level clock reaches the time the original's run started at,
 //! and starts the shared random stream from the run's state, once. A
 //! tiger awake before that time is put in step with the run there
@@ -524,7 +526,7 @@ fn t0_ms(clock: &str) -> u64 {
 fn at_time_zero(level: &SimLevel, clock: &str, r: &Route, t0_ms: u64, seed: u32) -> Sim {
     let mut sim = Sim::new(level.clone(), config(clock, seed));
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(r.start));
+    sim.place_between_ticks(r.start.0, r.start.1);
     while sim.tick() * TICK < t0_ms {
         sim.step(TickInput::default());
     }
