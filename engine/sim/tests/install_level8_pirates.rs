@@ -4,8 +4,9 @@
 //! The route puts Claw down 103 px right of the red-tail pirate standing
 //! at x 30914 on the floor at 5531, far from the boss room, after the
 //! level's first tick, the way the original's runs put him there (between
-//! two ticks, as a warp does: the pirate wakes then, strikes him and
-//! knocks him back before the route starts), waits until the level clock
+//! two ticks, as a warp does but without the warp's own frame: the pirate
+//! wakes then, strikes him and knocks him back before the route starts),
+//! waits until the level clock
 //! reaches the time the original's run started at, and starts the shared
 //! random stream from the run's state, once. Claw then taps Left to face
 //! the pirate and swings his sword every 12 ticks: the pirate flinches
@@ -354,7 +355,7 @@ fn at_time_zero(level: &SimLevel, clock: &str, t0_ms: u64, seed: u32) -> Sim {
     let mut sim = Sim::new(level.clone(), cfg);
     sim.step(TickInput::default());
     let at = at_t0(clock);
-    sim.with_world(|w| w.claw.special.warp_to = Some(at.claw));
+    sim.place_between_ticks(at.claw.0, at.claw.1);
     let strike_at = t0_ms.saturating_sub(at.strike_ticks_before * TICK);
     let mut id = None;
     while sim.tick() * TICK < t0_ms {

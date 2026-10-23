@@ -4,9 +4,10 @@
 //!
 //! Each route but the last puts Claw down at a fixed point of the level
 //! after its first tick, the way the original's runs put him there
-//! (between two ticks, as a warp does), waits until the level clock
-//! reaches the time the original's run started at, and starts the shared
-//! random stream from the run's state, once. The routes:
+//! (between two ticks, as a warp does but without the warp's own frame),
+//! waits until the level clock reaches the time the original's run started
+//! at, and starts the shared random stream from the run's state, once. The
+//! routes:
 //!
 //! - beside the laser at (8675, 2719): Claw put down at 8780, out of its
 //!   beam, stands (the laser's cycle); or put down in the beam at 8675 and
@@ -258,7 +259,7 @@ fn at_time_zero(level: &SimLevel, clock: &str, r: &Route, t0_ms: u64, seed: u32)
         return sim;
     };
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(start));
+    sim.place_between_ticks(start.0, start.1);
     while sim.tick() * TICK < t0_ms {
         sim.step(TickInput::default());
     }

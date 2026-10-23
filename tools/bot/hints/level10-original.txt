@@ -47,6 +47,11 @@
 #    enemy's move past the top or bottom of its range kept on it, the
 #    parrot ends that carry on its flight line, and its later dives come
 #    at other times than the earlier route counted on.
+# 13c. Searched again the same way from route tick 17358, the start of
+#    Marrow's third carry (the route's first 17358 ticks kept): with the
+#    parrot's grab point kept exact, that carry starts a tick earlier, the
+#    bird stays on its flight line and Marrow, dropped out of Claw's reach,
+#    keeps his shot, which hit Claw on the earlier route.
 #
 # level10-introskip.csv: stretches 1 to 12 as above, then:
 # 13s. Not searched: the walk into the door, the jump-in that skips

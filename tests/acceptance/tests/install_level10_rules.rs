@@ -1,12 +1,12 @@
-//! Two rules of the tenth level's play on your own install (skipped
-//! without `CLAW_INSTALL`), each pinned to a moment of a route where the
-//! original game showed it, by the state of the shared random stream after
-//! the ticks around it, which equals the original's.
+//! Rules of the tenth level's play on your own install (skipped without
+//! `CLAW_INSTALL`), each pinned to a moment of a route where the original
+//! game showed it, by the state of the shared random stream after the
+//! ticks around it, which equals the original's.
 //!
-//! The route is `routes/earlier/level10-original.csv`, the tenth level's
-//! original-speeds route as it was before these rules, played from the
-//! level's start; `routes/level10-original.csv`, found again under the
-//! rules, keeps its first 14799 ticks:
+//! The first two rules are pinned on `routes/earlier/level10-original.csv`,
+//! the tenth level's original-speeds route as it was before them, played
+//! from the level's start; `routes/earlier/level10-original-2.csv`, found
+//! again under them, keeps its first 14799 ticks:
 //!
 //! - an enemy's move up or down that would take it past the top or bottom
 //!   of its range puts it there, with the speed the energy of the move to
@@ -27,6 +27,31 @@
 //!   ends without the level's end, as it did in the original game, and the
 //!   stream stays the original's to the original run's last tick, 112
 //!   ticks past the route's last row, with nothing held.
+//!
+//! The next three are pinned on `routes/earlier/level10-original-2.csv`,
+//! played from the level's start; `routes/level10-original.csv`, found
+//! again under them, keeps its first 17358 ticks:
+//!
+//! - the parrot keeps the point beside Marrow where it takes hold of him
+//!   exact, to the part of a pixel, and takes hold of him once its exact
+//!   x has passed that point's: Marrow, whistling from tick 17338, stops
+//!   at x 41101.44, so the parrot, coming from the right, aims at x
+//!   41043.44 and, at x 41043.249 after tick 17357, starts the carry in
+//!   tick 17358 (with the point's whole pixel it would fly a tick longer).
+//!   The bird reaches its flight line in tick 17412 and stays on it to the
+//!   carry's end, Marrow hanging out of reach above Claw's ledge, and
+//!   dropped at (40607, 7253) in tick 17482 he keeps his shot;
+//! - standing, Marrow's part of a pixel creeps again from the end of each
+//!   whistle, after a drop too: from tick 17354 his exact height is
+//!   7253.324, 7253.648, 7253.972, 7253.000, so the carry aims at 7143.324;
+//! - Claw's respawn removes every projectile before its passes: Claw dies
+//!   in tick 18589, a shot of Marrow's is still flying at (40674, 7229)
+//!   after tick 18683, and the respawn between ticks 18683 and 18684 takes
+//!   it away, so Claw stands unhurt until Marrow's next shot hits him in
+//!   tick 18755. The route ends without the level's end, as it did in the
+//!   original game, and the stream stays the original's to the original
+//!   run's last tick, 112 ticks past the route's last row, with nothing
+//!   held.
 
 use std::path::Path;
 
@@ -34,7 +59,9 @@ use claw_acceptance::install;
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_bot::route::{self, TuningName};
 use claw_frame::GameEvent;
-use claw_sim::logic::enemy::EnemyState;
+use claw_sim::logic::ObjectData;
+use claw_sim::logic::enemy::{self, EnemyState};
+use claw_sim::logic::projectile::RESPAWN_PURGE;
 use claw_sim::{InputScript, Sim, SimLevel, TickInput};
 
 /// The original game's random state after these ticks of the earlier
@@ -67,6 +94,33 @@ const EARLIER_RNG: [(usize, u32); 23] = [
 
 /// Ticks the original run of the earlier route lasted.
 const EARLIER_RUN_TICKS: usize = 18679;
+
+/// The original game's random state after these ticks of the second
+/// earlier route.
+const SECOND_RNG: [(usize, u32); 19] = [
+    (17353, 270_338_638),
+    (17354, 505_715_512),
+    (17357, 3_483_353_970),
+    (17358, 3_483_353_970),
+    (17411, 3_688_787_958),
+    (17412, 3_688_787_958),
+    (17481, 810_869_068),
+    (17482, 810_869_068),
+    (17483, 3_560_792_403),
+    (17484, 479_048_293),
+    (17485, 1_695_505_300),
+    (17532, 1_449_261_031),
+    (18018, 4_274_414_505),
+    (18589, 600_852_122),
+    (18684, 1_357_501_034),
+    (18699, 2_723_537_189),
+    (18754, 1_973_303_692),
+    (18755, 4_140_607_726),
+    (18762, 707_039_080),
+];
+
+/// Ticks the original run of the second earlier route lasted.
+const SECOND_RUN_TICKS: usize = 18763;
 
 /// The parrot's flight line: the top of its range, y.
 const FLIGHT_LINE: i32 = 7029;
@@ -133,7 +187,11 @@ impl Run {
     }
 
     fn check_rng(&self) {
-        for &(t, want) in &EARLIER_RNG {
+        self.check(&EARLIER_RNG);
+    }
+
+    fn check(&self, table: &[(usize, u32)]) {
+        for &(t, want) in table {
             if t < self.rng.len() {
                 assert_eq!(self.rng[t], want, "random state after tick {t}");
             }
@@ -147,17 +205,53 @@ impl Run {
         (o.x, o.y, o.state)
     }
 
+    /// Marrow's exact height: his y and the part of a pixel his last
+    /// movement step carried, when nothing else has moved him since.
+    fn marrow_exact_y(&self) -> f64 {
+        let link = self.sim.marrow_link().expect("Marrow's link");
+        let o = self.sim.objects().get(link.marrow).expect("Marrow");
+        let part = enemy::data_of(o)
+            .filter(|d| d.moved_to == Some((o.x, o.y)))
+            .map_or(0.0, |d| d.carry.1);
+        f64::from(o.y) + part
+    }
+
     /// The parrot: (x, y).
     fn parrot(&self) -> (i32, i32) {
+        let o = self.parrot_object();
+        (o.x, o.y)
+    }
+
+    fn parrot_object(&self) -> &claw_sim::object::Object {
         let mut parrots = self
             .sim
             .objects()
             .all()
             .filter(|(_, o)| &*o.logic == "Parrot")
-            .map(|(_, o)| (o.x, o.y));
+            .map(|(_, o)| o);
         let p = parrots.next().expect("the parrot");
         assert!(parrots.next().is_none(), "one parrot");
         p
+    }
+
+    /// The parrot's state, the grab point it keeps exact and the target
+    /// it keeps in whole pixels.
+    fn parrot_flight(&self) -> (i32, (f64, f64), (i32, i32)) {
+        let o = self.parrot_object();
+        let ObjectData::Parrot(p) = &o.data else {
+            panic!("the parrot's data")
+        };
+        (o.state, p.grab, p.target)
+    }
+
+    /// The projectiles about: (x, y) each.
+    fn projectiles(&self) -> Vec<(i32, i32)> {
+        self.sim
+            .objects()
+            .all()
+            .filter(|(_, o)| o.special_flags & RESPAWN_PURGE != 0)
+            .map(|(_, o)| (o.x, o.y))
+            .collect()
     }
 
     fn claw_at(&self) -> (i32, i32) {
@@ -172,8 +266,106 @@ fn install_the_route_found_again_keeps_the_earlier_routes_start() {
         return;
     }
     let earlier = InputScript::parse(&routes_file("earlier/level10-original.csv")).unwrap();
-    let now = InputScript::parse(&routes_file("level10-original.csv")).unwrap();
+    let now = InputScript::parse(&routes_file("earlier/level10-original-2.csv")).unwrap();
     assert_eq!(earlier.ticks[..14799], now.ticks[..14799]);
+}
+
+#[test]
+fn install_the_route_found_again_keeps_the_second_earlier_routes_start() {
+    if install().is_none() {
+        return;
+    }
+    let earlier = InputScript::parse(&routes_file("earlier/level10-original-2.csv")).unwrap();
+    let now = InputScript::parse(&routes_file("level10-original.csv")).unwrap();
+    assert_eq!(earlier.ticks[..17358], now.ticks[..17358]);
+}
+
+#[test]
+fn install_the_parrot_takes_hold_of_marrow_past_its_exact_grab_point() {
+    let Some(root) = install() else { return };
+    let level = level(&root, 10);
+    let mut run = Run::new(&level, &routes_file("earlier/level10-original-2.csv"));
+    run.to(17353);
+    // His part of a pixel creeps from the whistle's end, after the drop
+    // that ended the last carry too.
+    let mut heights = Vec::new();
+    for t in 17354..=17357 {
+        run.to(t);
+        heights.push((run.marrow_exact_y() * 1000.0).round() as i64);
+    }
+    assert_eq!(heights, [7_253_324, 7_253_648, 7_253_972, 7_253_000]);
+    let (state, grab, target) = run.parrot_flight();
+    assert_eq!(state, EnemyState::FlyToMarrow as i32);
+    assert!((grab.0 - 41043.44).abs() < 0.005, "grab x {}", grab.0);
+    assert_eq!(target.0, 41043);
+    // The bird's exact x, 41043.249, is past the exact point but not past
+    // its whole pixel: the carry starts now, aimed 110 px above Marrow's
+    // exact height.
+    run.to(17358);
+    let (state, _, target) = run.parrot_flight();
+    assert_eq!(state, EnemyState::CarryMarrow as i32);
+    assert_eq!(target.1, 7143, "aimed at 7143.324");
+    assert_eq!(run.parrot(), (41039, 7152));
+    let (x, y, _) = run.marrow();
+    assert_eq!((x, y), (41097, 7249));
+    run.to(17411);
+    assert!(run.parrot().1 > FLIGHT_LINE, "still rising");
+    // On the line from tick 17412 to the carry's end, Marrow, a tick
+    // behind it, 96 px under it.
+    for t in 17412..=17481 {
+        run.to(t);
+        assert_eq!(run.parrot().1, FLIGHT_LINE, "the parrot after tick {t}");
+        if t > 17412 {
+            assert_eq!(run.marrow().1, 7125, "Marrow after tick {t}");
+        }
+    }
+    // Dropped out of Claw's range, he keeps his shot.
+    run.to(17482);
+    let (x, y, _) = run.marrow();
+    assert_eq!((x, y), (40607, 7253));
+    run.to(17485);
+    assert_eq!(run.marrow().2, EnemyState::Fire as i32);
+    run.check(&SECOND_RNG);
+    // The shot hits Claw.
+    run.to(17532);
+    assert_eq!(run.sim.stats().health, 75);
+    run.check(&SECOND_RNG);
+}
+
+#[test]
+fn install_claws_respawn_removes_the_shot_still_flying() {
+    let Some(root) = install() else { return };
+    let level = level(&root, 10);
+    let mut run = Run::new(&level, &routes_file("earlier/level10-original-2.csv"));
+    run.to(18018);
+    assert_eq!(run.sim.stats().lives, 6);
+    run.to(18589);
+    assert_eq!(run.sim.stats().health, 0);
+    run.to(18683);
+    assert_eq!(run.sim.stats().lives, 5);
+    assert!(
+        run.projectiles().contains(&(40674, 7229)),
+        "Marrow's shot flying: {:?}",
+        run.projectiles()
+    );
+    run.to(18684);
+    assert_eq!(run.claw_at(), (40488, 7245));
+    assert!(
+        !run.projectiles().iter().any(|&(_, y)| y == 7229),
+        "the shot is gone: {:?}",
+        run.projectiles()
+    );
+    for t in 18685..=18754 {
+        run.to(t);
+        assert_eq!(run.sim.stats().health, 100, "unhurt after tick {t}");
+    }
+    run.to(18755);
+    assert_eq!(run.sim.stats().health, 80);
+    assert_eq!(run.claw_at(), (40488, 7245));
+    assert_eq!(run.sim.player().expect("Claw").state, 31);
+    run.to(SECOND_RUN_TICKS - 1);
+    assert_eq!(run.sim.stats().lives, 5);
+    run.check(&SECOND_RNG);
 }
 
 #[test]

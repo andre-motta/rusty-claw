@@ -222,6 +222,10 @@ pub struct ParrotData {
     pub after: After,
     /// The wait between two squawks on the patrol.
     pub squawk: Timer,
+    /// The grab point beside Marrow the flight to him aims at, exact (x,
+    /// y): it is kept to the part of a pixel, and the flight takes hold of
+    /// him once its exact x has passed the exact grab x.
+    pub grab: (f64, f64),
 }
 
 fn handler(s: EnemyState) -> Option<Handler> {
@@ -676,9 +680,15 @@ pub fn enter_fly_to_idle(w: &mut World, id: ObjectId) {
 /// True once the flight has passed `x`: moving right at or past it,
 /// moving left past it.
 fn passed(w: &World, id: ObjectId, x: i32) -> bool {
+    passed_exact(w, id, f64::from(x))
+}
+
+/// True once the flight's exact x has passed the exact `x`: moving right
+/// at or past it, moving left below it.
+fn passed_exact(w: &World, id: ObjectId, x: f64) -> bool {
     let vx = data(w, id).map_or(0.0, |d| d.vx);
     let at = exact_x(w, id);
-    (vx > 0.0 && at >= f64::from(x)) || (vx < 0.0 && at < f64::from(x))
+    (vx > 0.0 && at >= x) || (vx < 0.0 && at < x)
 }
 
 /// The flight home: once past the perch, it settles there.
@@ -744,7 +754,9 @@ pub fn perch_tick(w: &mut World, id: ObjectId) {
 // The carry
 
 /// Flies to Marrow: to the point beside him that his whistle named, 97 px
-/// above him, at 300 px/s (across plus down), facing it.
+/// above him, at 300 px/s (across plus down), facing it. The point is
+/// kept exact, to the part of a pixel Marrow stands at across and below
+/// his whole pixel.
 pub fn enter_fly_to_marrow(w: &mut World, id: ObjectId) {
     set_state(w, id, EnemyState::FlyToMarrow);
     set_anim(w, id, FLY_ANIM);
@@ -759,14 +771,18 @@ pub fn enter_fly_to_marrow(w: &mut World, id: ObjectId) {
     set_velocity(w, id, v);
     if let Some(p) = parrot_mut(w, id) {
         p.target = (grab.0.trunc() as i32, grab.1.trunc() as i32);
+        p.grab = grab;
     }
 }
 
-/// The flight to Marrow: once past the grab point it carries him.
+/// The flight to Marrow: once its exact x has passed the exact grab x it
+/// carries him. Coming from the right, it takes hold of him as soon as
+/// it is below the exact point, which can be a tick before it would be
+/// below that point's whole pixel.
 pub fn fly_to_marrow_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
-    let grab = parrot(w, id).map_or(0, |p| p.target.0);
-    if passed(w, id, grab) {
+    let grab = parrot(w, id).map_or(0.0, |p| p.grab.0);
+    if passed_exact(w, id, grab) {
         set_gravity(w, id, 0.0);
         enter_carry(w, id);
     }

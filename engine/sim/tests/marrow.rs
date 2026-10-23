@@ -466,6 +466,51 @@ fn standing_he_creeps_a_part_of_a_pixel_down_and_back() {
     assert_eq!(cycle, [0, 324, 648, 972]);
 }
 
+/// The part of a pixel he stands below his whole pixel after each of the
+/// next `n` ticks, in thousandths.
+fn parts(sim: &mut Sim, id: ObjectId, n: usize) -> Vec<i32> {
+    (0..n)
+        .map(|_| {
+            sim.step(TickInput::default());
+            let d = enemy::data_of(obj(sim, id)).expect("built");
+            (d.carry.1 * 1000.0).round() as i32
+        })
+        .collect()
+}
+
+/// Dropped back onto the floor he stands on the whole pixel; from the end
+/// of his next whistle, while he waits for the parrot, his part of a pixel
+/// creeps again, so the parrot's grab point and the carry's aim take it.
+#[test]
+fn after_a_drop_his_part_of_a_pixel_creeps_again_from_the_whistles_end() {
+    let (mut sim, id) = with_claw(-2000, fight::NONE, 3);
+    sim.with_world(|w| marrow::drop_down(w, id));
+    assert_eq!(parts(&mut sim, id, 8), [0; 8], "on the whole pixel");
+    sim.with_world(|w| {
+        w.objects.get_mut(id).unwrap().health = 75;
+        w.marrow_link_mut().unwrap().phase_health = 100;
+        marrow::enter_wait(w, id);
+    });
+    let mut whistling = Vec::new();
+    let call = loop {
+        let part = parts(&mut sim, id, 1)[0];
+        if link(&sim).parrot_call {
+            break part;
+        }
+        whistling.push(part);
+        assert!(whistling.len() < 100, "no call");
+    };
+    assert!(!whistling.is_empty());
+    assert!(
+        whistling.iter().all(|&p| p == 0),
+        "whistling: {whistling:?}"
+    );
+    // The tick of the whistle's end moves him already.
+    assert_eq!(call, 324);
+    assert_eq!(parts(&mut sim, id, 4), [648, 972, 0, 324]);
+    assert_eq!(state_of(&sim, id), Some(EnemyState::WaitForParrot));
+}
+
 #[test]
 fn below_his_start_height_he_is_put_back_above_it() {
     let (mut sim, id) = with_claw(-2000, fight::NONE, 3);

@@ -434,7 +434,7 @@ fn put_down_at(level: &SimLevel, clock: &str, start: (i32, i32), t0_ms: u64, see
     };
     let mut sim = Sim::new(level.clone(), cfg);
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(start));
+    sim.place_between_ticks(start.0, start.1);
     while sim.tick() * TICK < t0_ms {
         sim.step(TickInput::default());
     }

@@ -393,7 +393,8 @@ pub struct MarrowData {
     /// [`stand_step`]).
     pub stand_fraction: f64,
     /// Standing, his part of a pixel creeps down a tick's fall at a time
-    /// (until a drop down onto the floor stops it).
+    /// (a drop down onto the floor stops it, the end of his next whistle
+    /// starts it again).
     pub creeping: bool,
     /// He was put somewhere by other means than his movement step: his
     /// next standing step starts from the whole pixel.
@@ -560,7 +561,9 @@ fn post_tick(w: &mut World, id: ObjectId) {
 /// 18 ms step), and the step that would take him a whole pixel down puts
 /// him back on the whole pixel; a step after he was put somewhere (built,
 /// reset, dropped back, held back at a ledge) starts from the whole pixel,
-/// and after a drop down onto the floor the part stays 0. The movement
+/// and after a drop down onto the floor the part stays 0 until the end of
+/// his next whistle, where it creeps again while he waits for the parrot
+/// ([`wait_tick`]). The movement
 /// step itself keeps a standing enemy on the whole pixel: the part only
 /// shows where his exact height is read (the parrot's hold on him, his
 /// carry, his body's flight after his death).
@@ -1098,7 +1101,10 @@ pub fn enter_wait(w: &mut World, id: ObjectId) {
 }
 
 /// Waiting for the parrot: when the whistle's animation has ended (once)
-/// he calls the parrot, whistles again and stands still; once the wait is
+/// he calls the parrot, whistles again and stands still, and his part of
+/// a pixel creeps again from there (after a drop down too, see
+/// [`stand_step`]), so the parrot's grab point and the carry's aim take
+/// the part he has crept; once the wait is
 /// over he drops back to the floor ([`drop_down`]), on every tick from
 /// then on while he is still waiting.
 pub fn wait_tick(w: &mut World, id: ObjectId) {
@@ -1115,6 +1121,9 @@ pub fn wait_tick(w: &mut World, id: ObjectId) {
         if let Some(d) = data_mut(w, id) {
             d.vx = 0.0;
             d.vy = 0.0;
+        }
+        if let Some(m) = marrow_data_mut(w, id) {
+            m.creeping = true;
         }
     }
     let now = w.now_ms;

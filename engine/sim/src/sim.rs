@@ -13,7 +13,7 @@ use crate::camera::{Camera, Followed};
 use crate::container::{CollisionEvent, Container};
 use crate::input::{DirectiveKind, InputScript, MenuScreen, ScriptCommand};
 use crate::level::{ObjectSpec, SimLevel};
-use crate::logic::projectile::scream;
+use crate::logic::projectile::{self, scream};
 use crate::logic::{self, BossState, Outbox, World};
 use crate::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags};
 use crate::physics::Platform;
@@ -184,9 +184,11 @@ pub struct Sim {
     /// Claw respawned since the last tick: the death's circles end with
     /// the next tick.
     respawned: bool,
-    /// The next warp between ticks is a placement ([`Sim::place_between_ticks`]),
-    /// which shows no frame of its own.
-    place_only: bool,
+    /// Where [`Sim::place_between_ticks`] puts Claw between this tick and
+    /// the next: a warp's passes there without the warp's frame. It is
+    /// kept apart from the warp's own target, so a placement never takes
+    /// the frame from a later warp.
+    place_at: Option<(i32, i32)>,
     /// [`SimConfig::boss_health`] has been given to the boss.
     boss_health_given: bool,
     /// The frame time the logic calls run with, ms: one tick, or 0 in the
@@ -570,7 +572,7 @@ impl Sim {
             end_life: false,
             give_powerup: None,
             respawned: false,
-            place_only: false,
+            place_at: None,
             boss_health_given: false,
             ended: false,
             frame_ms: TICK_MS,
@@ -803,8 +805,12 @@ impl Sim {
         if std::mem::take(&mut self.respawned) {
             self.out.set_transition(None);
         }
-        if let Some(target) = self.claw.special.warp_to.take() {
-            self.warp_between_ticks(target);
+        // A placement replaces a warp touched in the last tick.
+        let warp = self.claw.special.warp_to.take();
+        if let Some(target) = self.place_at.take() {
+            self.warp_between_ticks(target, false);
+        } else if let Some(target) = warp {
+            self.warp_between_ticks(target, true);
         }
         self.give_boss_health();
         self.input = input;
@@ -917,7 +923,10 @@ impl Sim {
     /// ([`World::reset_boss_on_respawn`]), so Gabriel's start of fight
     /// again and the removal of what goes at a respawn come before any
     /// object runs, and an object so marked still runs in the first pass
-    /// only; a first update pass runs over the objects still awake
+    /// only; then every projectile still about, in flight or asleep, is
+    /// marked for removal the same way ([`projectile::purge`]), so a shot
+    /// fired at the dead Claw does not hit him once he is back; a first
+    /// update pass runs over the objects still awake
     /// around the place of the death, in which the camera's own call jumps
     /// to Claw when he is beyond its snap distance; then the objects now
     /// out of the camera's reach go to sleep, those around Claw wake, and a
@@ -978,6 +987,8 @@ impl Sim {
         // Then the current boss resets, before any object runs again, on
         // the clock of the next tick (inferred, see above).
         self.with_world(|w| w.reset_boss_on_respawn());
+        // Then every projectile goes, before the passes.
+        projectile::purge(&mut self.objects);
         // The camera is not moved here: its own call in the first pass
         // snaps it to Claw where that pass leaves him, when he is beyond
         // its snap distance. The passes run with the keys of the tick that
@@ -1015,9 +1026,10 @@ impl Sim {
     /// call, but Claw's state follows where he now is: falling onto a
     /// floor he lands, so a fall into the warp walks on in the first tick
     /// at the target when a direction is held, while a walk into it stays
-    /// a walk. Last, the warp shows a frame of its own at the target, which
-    /// marks what it draws ([`Sim::mark_drawn`]).
-    fn warp_between_ticks(&mut self, (x, y): (i32, i32)) {
+    /// a walk. Last, when `frame` is set, the warp shows a frame of its own
+    /// at the target, which marks what it draws ([`Sim::mark_drawn`]); a
+    /// placement ([`Sim::place_between_ticks`]) shows none.
+    fn warp_between_ticks(&mut self, (x, y): (i32, i32), frame: bool) {
         let Some(id) = self.player else { return };
         if let Some(o) = self.objects.get_mut(id) {
             o.x = x;
@@ -1034,7 +1046,7 @@ impl Sim {
         runner.list_spawned(objects);
         // Then the warp shows a frame of its own at the target, unless it
         // was only a placement.
-        if !std::mem::take(&mut self.place_only) {
+        if frame {
             self.mark_drawn();
         }
     }
@@ -1050,8 +1062,7 @@ impl Sim {
     /// guard of the fourteenth level, drawn by that frame, would see him a
     /// tick early).
     pub fn place_between_ticks(&mut self, x: i32, y: i32) {
-        self.claw.special.warp_to = Some((x, y));
-        self.place_only = true;
+        self.place_at = Some((x, y));
     }
 
     /// The warp's set-up after it moved Claw (see

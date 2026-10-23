@@ -249,8 +249,9 @@ fn tuning(clock: &str) -> ScriptTuning {
 
 /// The game at a route's time zero: after the level's first tick Claw is
 /// put down at `start` the way the original's runs put him there, between
-/// two ticks as a warp does (the camera jumps to him, and the objects
-/// around him wake and are built before the next tick, so the seagulls
+/// two ticks as a warp does but without the warp's own frame (the camera
+/// jumps to him, and the objects around him wake and are built before the
+/// next tick, so the seagulls
 /// fly from that tick on); he settles, the game idles until the level
 /// clock is `t0_ms`, and the random stream starts from `seed`.
 fn at_time_zero(level: &SimLevel, clock: &str, start: (i32, i32), t0_ms: u64, seed: u32) -> Sim {
@@ -261,7 +262,7 @@ fn at_time_zero(level: &SimLevel, clock: &str, start: (i32, i32), t0_ms: u64, se
     };
     let mut sim = Sim::new(level.clone(), cfg);
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(start));
+    sim.place_between_ticks(start.0, start.1);
     let mut still = 0;
     let mut last = None;
     for _ in 0..40 {
