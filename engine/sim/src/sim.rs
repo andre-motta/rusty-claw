@@ -11,6 +11,7 @@ use claw_frame::{
 use crate::activation::{Activation, ActivationConfig, ActivationMode, Centres};
 use crate::camera::{Camera, Followed};
 use crate::container::{CollisionEvent, Container};
+use crate::input::{DirectiveKind, InputScript, MenuScreen, ScriptCommand};
 use crate::level::{ObjectSpec, SimLevel};
 use crate::logic::projectile::scream;
 use crate::logic::{self, BossState, Outbox, World};
@@ -42,7 +43,7 @@ pub struct SimConfig {
     /// playable version; the movement calibration replays use that.
     pub level_logics: bool,
     /// Whether the time a help screen was up reaches the dynamite fuse
-    /// (see [`Sim::pass_menu_time`]); the original's way by default.
+    /// (see [`Sim::pass_help_return`]); the original's way by default.
     pub fuse_clock: FuseClock,
     /// The play-test aids, both off by default (see [`PlayAids`]). With
     /// both off the game plays exactly as without them.
@@ -193,6 +194,9 @@ pub struct Sim {
     /// (the respawn's and the warp's update passes), ms; `None` the rest
     /// of the time, when it is the start of the current tick.
     held_clock_ms: Option<u64>,
+    /// The help screen's time while the update pass of its return runs
+    /// (see [`Sim::pass_help_return`]), ms; `None` the rest of the time.
+    help_pass_ms: Option<u32>,
     /// The level was won in an earlier tick: play has stopped (see
     /// [`Sim::level_ended`]).
     ended: bool,
@@ -223,8 +227,12 @@ struct Runner<'a> {
     dt_ms: u32,
     /// The game time Claw's movement covers, ms ([`Ctx::move_ms`]): one
     /// tick, also in the respawn's update passes; 0 in his call in the
-    /// settle after a warp.
+    /// settle after a warp and in the update pass of a help screen's
+    /// return.
     move_ms: u32,
+    /// The help screen's time in the update pass of its return, ms; 0 in
+    /// every other call ([`World::help_ms`]).
+    help_ms: u32,
     pulse: bool,
     /// The calls are the first calls of a set-up pass ([`World::set_up`]).
     set_up: bool,
@@ -267,6 +275,7 @@ impl Runner<'_> {
             out: &mut *self.out,
             aids: self.cfg.aids,
             set_up: self.set_up,
+            help_ms: self.help_ms,
         }
     }
 
@@ -562,6 +571,7 @@ impl Sim {
             ended: false,
             frame_ms: TICK_MS,
             held_clock_ms: None,
+            help_pass_ms: None,
             level,
         };
         sim.give_powerup = sim.cfg.start_powerup;
@@ -736,7 +746,12 @@ impl Sim {
                 tick: self.tick,
                 now_ms,
                 dt_ms: self.frame_ms,
-                move_ms: TICK_MS,
+                move_ms: if self.help_pass_ms.is_some() {
+                    0
+                } else {
+                    TICK_MS
+                },
+                help_ms: self.help_pass_ms.unwrap_or(0),
                 pulse: self.pulse_left == 0,
                 set_up: false,
                 player: self.player,
@@ -811,11 +826,7 @@ impl Sim {
         if scream::lock_input(&mut self.out.scream_lock_ms, TICK_MS, &mut self.claw_input) {
             self.latched = Buttons::NONE;
         }
-        self.pulse_left = match self.pulse_left {
-            0 => PULSE_MS,
-            left if left <= TICK_MS => 0,
-            left => left - TICK_MS,
-        };
+        self.count_pulse();
         if let Some(p) = self.give_powerup.take() {
             self.apply_powerup(p);
         }
@@ -1666,33 +1677,140 @@ impl Sim {
         self.give_powerup
     }
 
-    /// Lets `ms` of a help screen's time reach the dynamite fuse, at the
-    /// boundary before the next tick, when play comes back from the help
-    /// screen (with [`SimConfig::fuse_clock`] at its original default).
+    /// Plays directive `kind` of a route at its tick boundary, as the
+    /// game's replay plays it with its switches at their original defaults
+    /// (the bot, the replay tool and the reference tests all play a route
+    /// through this one function):
     ///
-    /// The game time then counts as the game time of the last tick run
-    /// plus `ms`, for the fuse: every lit stick of dynamite whose fuse
-    /// has burnt by then goes off at once, as if it had gone off in the
-    /// last tick before the screen (its blast hurts in the 8th tick after
-    /// the screen, against the 9th after a stick that goes off in a tick).
-    /// The same time reaches Aquatis's fight
-    /// ([`logic::enemy::aquatis::pass_help_time`]), for what of it runs on
-    /// game time. Nothing else sees that time and the game time stays as it
-    /// was; no other object runs and nothing is drawn from the random
-    /// stream. With [`FuseClock::Frozen`] it does nothing, and the pause
-    /// and the in-game menu never call it: their time never reaches play.
+    /// - the return from the help screen (`menu help`) runs its update
+    ///   pass ([`Sim::pass_help_return`], with the keys pressed on it);
+    /// - as play resumes after a pause or a screen, the game's clock is
+    ///   reset ([`Sim::restart_idle_wait`]);
+    /// - after a screen (the help screen or the in-game menu), every key
+    ///   down counts as already pressed ([`Sim::latch_keys`]); the pause
+    ///   screen (`menu pause`) is the pause key's pause and latches
+    ///   nothing, as a `pause` line;
+    /// - a command (`end_life`, `powerup`) takes effect before the next
+    ///   tick ([`Sim::end_life`], [`Sim::give_powerup`]).
+    ///
+    /// Returns true for a command.
+    pub fn play_directive(&mut self, kind: &DirectiveKind) -> bool {
+        match kind {
+            DirectiveKind::Menu {
+                screen: MenuScreen::Pause,
+                ..
+            }
+            | DirectiveKind::Pause { .. } => {
+                self.restart_idle_wait();
+                false
+            }
+            DirectiveKind::Menu {
+                screen,
+                wall_ms,
+                keys,
+            } => {
+                if *screen == MenuScreen::Help {
+                    self.pass_help_return(*wall_ms, keys.len());
+                }
+                self.restart_idle_wait();
+                self.latch_keys();
+                false
+            }
+            DirectiveKind::Command(ScriptCommand::EndLife) => {
+                self.end_life();
+                true
+            }
+            DirectiveKind::Command(ScriptCommand::Powerup(p)) => {
+                self.give_powerup(*p);
+                true
+            }
+        }
+    }
+
+    /// Plays the directives of `script` due at the boundary before tick
+    /// `tick` (see [`Sim::play_directive`]), in the script's order;
+    /// returns how many were commands.
+    pub fn play_directives(&mut self, script: &InputScript, tick: usize) -> usize {
+        script
+            .directives()
+            .iter()
+            .filter(|d| d.tick == tick)
+            .filter(|d| self.play_directive(&d.kind))
+            .count()
+    }
+
+    /// Runs the frame pulse countdown for one frame of 18 ms.
+    fn count_pulse(&mut self) {
+        self.pulse_left = match self.pulse_left {
+            0 => PULSE_MS,
+            left if left <= TICK_MS => 0,
+            left => left - TICK_MS,
+        };
+    }
+
+    /// The return from a help screen that was up for `ms` of wall time
+    /// with no key pressed on it (see [`Sim::pass_help_return`]).
     pub fn pass_menu_time(&mut self, ms: u32) {
+        self.pass_help_return(ms, 0);
+    }
+
+    /// The return from a help screen that was up for `ms` of wall time,
+    /// with `keys` key presses on it, at the boundary before the next tick
+    /// (with [`SimConfig::fuse_clock`] at its original default).
+    ///
+    /// The help screen's frames first run the frame pulse countdown on, so
+    /// the next pulse tick comes as many frames later as the screen ran,
+    /// not as many ticks: one frame per 18 ms of it (rounded up: 167 for
+    /// 3000 ms), and two more for each key pressed on it (433 for 7750 ms
+    /// closed with one key press), as the game's frame counter shows.
+    /// Inferred: that the frames of the key presses count for the pulse as
+    /// the others do (one run of the twelfth level follows it).
+    ///
+    /// Then one update pass runs over the objects in the live list, Claw
+    /// and the camera included, with the game clock at the game time of
+    /// the last tick run plus `ms`, a frame time of 0 and the pulse of the
+    /// last help frame: every object makes the calls and draws of an
+    /// ordinary tick there. A lit stick of dynamite whose fuse has burnt
+    /// by then goes off in its own call, as if it had gone off in the last
+    /// tick before the screen (its blast hurts in the 8th tick after the
+    /// screen, against the 9th after a stick that goes off in a tick). An
+    /// enemy's movement, which covers the game time since its last move,
+    /// covers the screen's time (at most 24 px each way). Claw's movement
+    /// covers no time in that pass ([`Ctx::move_ms`] 0): a Claw in the
+    /// middle of a jump is where the last tick left him. A boss's gem in
+    /// flight catches up the screen's time in one capped step (see
+    /// [`logic::pickup`]), as it did before this pass was modelled.
+    ///
+    /// Then the game clock goes back to the time of the last tick, so the
+    /// next tick reads less time than the pass did: an enemy's movement
+    /// covers a negative time there and goes back by up to 24 px, and a
+    /// timer started in the pass counts as done (see
+    /// [`logic::enemy::Timer::done`]).
+    ///
+    /// Inferred: the pass's frame time of 0 and the help time as the
+    /// recorded wall time (the ninth level's run does not tell them from a
+    /// frame time of 18 ms or from the frames' time, 3006 ms for 3000 ms),
+    /// and Claw keeping still in it when he walks or runs (only a jumping
+    /// Claw has been seen at a help screen's return).
+    ///
+    /// With [`FuseClock::Frozen`] it does nothing, and the pause and the
+    /// in-game menu never call it: their time never reaches play.
+    pub fn pass_help_return(&mut self, ms: u32, keys: usize) {
         if self.cfg.fuse_clock == FuseClock::Frozen || ms == 0 {
             return;
         }
-        let at = self.tick.saturating_sub(1) * u64::from(TICK_MS) + u64::from(ms);
-        let (mut runner, objects, _) = self.parts();
-        {
-            let mut w = runner.world(objects);
-            logic::projectile::pass_fuse_time(&mut w, at);
-            logic::enemy::aquatis::pass_help_time(&mut w, at);
+        let frames = ms.div_ceil(TICK_MS) as usize + 2 * keys;
+        for _ in 0..frames {
+            self.count_pulse();
         }
-        runner.list_spawned(objects);
+        let at = self.tick.saturating_sub(1) * u64::from(TICK_MS) + u64::from(ms);
+        self.frame_ms = 0;
+        self.held_clock_ms = Some(at);
+        self.help_pass_ms = Some(ms);
+        self.update_pass();
+        self.help_pass_ms = None;
+        self.frame_ms = TICK_MS;
+        self.held_clock_ms = None;
     }
 
     /// Moves Claw to (x, y) at once (tools and tests); the move is drawn

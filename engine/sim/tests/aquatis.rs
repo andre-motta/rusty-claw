@@ -925,9 +925,9 @@ fn the_flying_gem_catches_up_a_help_screens_time_in_one_capped_step() {
     step(&mut sim, 12);
     let gem = find(&sim, pickup::END_GEM)[0];
     let (x0, y0) = (obj(&sim, gem).x, obj(&sim, gem).y);
-    let rng = sim.rng_state();
+    // The return's update pass runs every listed object, which may draw;
+    // the gem draws nothing there.
     sim.pass_menu_time(7750);
-    assert_eq!(sim.rng_state(), rng, "no draw");
     let (x1, y1) = (obj(&sim, gem).x, obj(&sim, gem).y);
     let cap = STEP_LIMIT as i32;
     assert!((x1 - x0).abs() <= cap && (x1 - x0).abs() >= cap - 1);

@@ -5,7 +5,7 @@
 //! claw-bot --install PATH --level N --out ROUTE.csv
 //!          [--tuning default|original] [--nodes N] [--budget-min M]
 //!          [--seed S|level] [--hints FILE] [--from-route FILE --from-tick T]
-//!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--threads N]
+//!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--tick-cost PX] [--threads N]
 //!          [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot]
 //!          [--intro any|play|skip] [--carry FILE] [--goal X,Y] [--goal-on-foot]
 //!          [--crabs FILE] [--crab-variants FILE[,FILE...]] [--drift-cost PX] [--quiet]
@@ -45,7 +45,10 @@
 //! since its leading ticks were found with those waypoints. The other
 //! route's help screens and pauses (`@` lines) up to T are played as the
 //! game plays them and kept in the new route; one that ends a life is
-//! refused.
+//! refused, and so is a route recorded with a pause or screen switch other
+//! than the original's (`# pause_input = ...` or `# fuse_clock = ...`
+//! naming another value), since the search plays them the original's
+//! way.
 //! `--start X,Y` plans a segment: Claw is placed at (X, Y) in the
 //! level-start world and the game runs with nothing held until he and the
 //! camera are at rest; the random stream is then set to the seed and the
@@ -59,7 +62,10 @@
 //! its timing shifted by a tick (it dies or ends elsewhere): the found
 //! route then prefers moves with room to spare. It defaults to
 //! 400; 0 turns the check off, and `--no-shadows` keeps the check to the
-//! moves' own timing (no shadow games). `--cache-games N` is how many games the
+//! moves' own timing (no shadow games). `--tick-cost PX` is what each tick
+//! of the route costs the search (1 by default): more makes it prefer the
+//! quicker of two ways, for a stretch whose time is short (a powerup that
+//! must last to its end). `--cache-games N` is how many games the
 //! search keeps in memory (512 by default; a node with its shadow games
 //! counts three): more is faster and takes more memory, and never changes
 //! the route.
@@ -128,7 +134,7 @@ use claw_sim::{Carry, DirectiveKind, InputScript, ScriptHeader, Sim, SimLevel, S
 const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S|level] [--hints FILE] \
 [--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
-[--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot] \
+[--tick-cost PX] [--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot] \
 [--intro any|play|skip] [--carry FILE] [--goal X,Y] [--goal-on-foot] [--crabs FILE] \
 [--crab-variants FILE[,FILE...]] [--drift-cost PX] [--quiet]";
 
@@ -165,6 +171,7 @@ struct Args {
     start: Option<(i32, i32)>,
     land_gap: Option<u64>,
     fragile_cost: i64,
+    tick_cost: i64,
     threads: usize,
     cache_games: usize,
     shadows: bool,
@@ -196,6 +203,7 @@ impl Default for Args {
             start: None,
             land_gap: None,
             fragile_cost: DEFAULT_FRAGILE_COST,
+            tick_cost: SearchConfig::default().tick_cost,
             threads: 1,
             cache_games: SearchConfig::default().cached_sims,
             shadows: true,
@@ -270,6 +278,12 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                 a.fragile_cost = v.parse().map_err(|_| num("fragile cost"))?;
                 if a.fragile_cost < 0 {
                     return Err(num("fragile cost"));
+                }
+            }
+            "--tick-cost" => {
+                a.tick_cost = v.parse().map_err(|_| num("tick cost"))?;
+                if a.tick_cost < 0 {
+                    return Err(num("tick cost"));
                 }
             }
             "--threads" => a.threads = v.parse::<usize>().map_err(|_| num("thread count"))?.max(1),
@@ -450,8 +464,9 @@ struct Prefix {
 /// pauses up to the boundary before tick `t`, for `--from-route`: its
 /// `# level`, `# tuning` and `# seed` lines must match the arguments and
 /// its progress (`# start_...` lines) `carry`, and it may hold no command
-/// (the end of a life) at or before `t`. Its segment start, `# start X,Y`,
-/// is always the continued route's, none when it has none.
+/// (the end of a life) at or before `t`, nor a pause or screen switch
+/// other than the original's ([`original_switches`]). Its segment start,
+/// `# start X,Y`, is always the continued route's, none when it has none.
 fn read_prefix(
     text: &str,
     t: usize,
@@ -469,6 +484,7 @@ fn read_prefix(
     if route::parse_carry(text)?.as_ref() != carry {
         return Err("the route starts with other progress than --carry gives".to_string());
     }
+    original_switches(text)?;
     // The search plays the prefix's help screens and pauses as the game
     // does; a route never ends a life on purpose.
     if let Some(d) = script
@@ -495,6 +511,35 @@ fn read_prefix(
         start: header.start,
         crabs: route::crab_values(text)?,
     })
+}
+
+/// The comment keys of the behaviour switches a game's recording names for
+/// its pauses and screens (`# pause_input = ...`, `# fuse_clock = ...`).
+const SWITCH_KEYS: [&str; 2] = ["pause_input", "fuse_clock"];
+
+/// Checks that route `text` names no pause or screen switch other than the
+/// original's: the search, like the replay tool, plays every pause and
+/// screen the original game's way, so a route recorded another way would
+/// not lead to the game it was recorded in.
+fn original_switches(text: &str) -> Result<(), String> {
+    for (n, line) in text.lines().enumerate() {
+        let Some((k, v)) = line
+            .trim()
+            .strip_prefix('#')
+            .and_then(|r| r.split_once('='))
+        else {
+            continue;
+        };
+        let (k, v) = (k.trim(), v.trim().trim_matches('"'));
+        if SWITCH_KEYS.contains(&k) && v != "original" {
+            return Err(format!(
+                "line {}: the route was recorded with `{k} = {v}`; only the original's \
+                 pauses and screens can be continued",
+                n + 1
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Checks that the header keys a continued route states (level, tuning and
@@ -643,6 +688,7 @@ fn run(a: Args) -> Result<bool, String> {
             TuningName::Original => 0,
         }),
         fragile_cost: a.fragile_cost,
+        tick_cost: a.tick_cost,
         cached_sims: a.cache_games,
         shadows: a.shadows,
         hint_on_foot: a.hints_on_foot,
@@ -861,6 +907,12 @@ mod tests {
         assert!(read_prefix(&other, 1, 8, TuningName::Original, 7, None).is_err());
         let e = read("# start_score = 5\n", 1).unwrap_err();
         assert!(e.contains("start_"), "{e}");
+        // Only the original's pause and screen switches.
+        assert!(read("# pause_input = original\n# fuse_clock = original\n", 4).is_ok());
+        let e = read("# fuse_clock = frozen\n", 4).unwrap_err();
+        assert!(e.contains("fuse_clock = frozen"), "{e}");
+        let e = read("# pause_input = release_all\n", 4).unwrap_err();
+        assert!(e.contains("pause_input = release_all"), "{e}");
     }
 
     #[test]
@@ -920,6 +972,9 @@ mod tests {
         assert_eq!(a.fragile_cost, DEFAULT_FRAGILE_COST);
         assert_eq!(args("--fragile-cost 0").map(|a| a.fragile_cost), Ok(0));
         assert!(args("--fragile-cost -1").is_err());
+        assert_eq!(a.tick_cost, 1);
+        assert_eq!(args("--tick-cost 4").map(|a| a.tick_cost), Ok(4));
+        assert!(args("--tick-cost -1").is_err());
         let s = args("--install /i --level 1 --out r.csv --start 10355,2051").unwrap();
         assert_eq!(s.start, Some((10355, 2051)));
         assert!(args("--start 10").is_err());

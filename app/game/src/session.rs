@@ -62,13 +62,16 @@
 //! nothing in the game itself: play stops and goes on where it stopped,
 //! with the input the ticks after it were recorded with. There are three
 //! exceptions, live and replayed alike: with the fuse clock at its original
-//! default ([`claw_sim::tuning::FuseClock`]) the time the help screen was up
-//! reaches the dynamite fuse at the boundary after it
-//! ([`Sim::pass_menu_time`]), with the original rule for keys (see
+//! default ([`claw_sim::tuning::FuseClock`]) the return from the help
+//! screen runs an update pass with the time it was up at the boundary
+//! after it, which burns the dynamite fuse on, runs every object once more
+//! and moves the next frame pulse by the screen's frames
+//! ([`Sim::pass_help_return`]), with the original rule for keys (see
 //! below) the keys down when a screen closes count as already pressed
-//! ([`Sim::latch_keys`]), and as play resumes the game's clock is reset, so
-//! Claw's idle wait starts again at its long first value
-//! ([`Sim::restart_idle_wait`]).
+//! ([`Sim::latch_keys`]; the pause screen of a `menu pause` line is the
+//! pause key's pause and latches none), and as play resumes the game's
+//! clock is reset, so Claw's idle wait starts again at its long first
+//! value ([`Sim::restart_idle_wait`]).
 //!
 //! # Going on after a pause or a screen
 //!
@@ -322,15 +325,16 @@ impl Directives {
     }
 }
 
-/// The help screen time a pause or menu directive passes to the dynamite
-/// fuse when play goes on after it (see [`Sim::pass_menu_time`]).
-fn menu_time(kind: &DirectiveKind) -> Option<u32> {
+/// The help screen time and the number of keys pressed on it that a
+/// pause or menu directive passes to the help screen's return when play
+/// goes on after it (see [`Sim::pass_help_return`]).
+fn menu_time(kind: &DirectiveKind) -> Option<(u32, usize)> {
     match kind {
         DirectiveKind::Menu {
             screen: MenuScreen::Help,
             wall_ms,
-            ..
-        } => Some(*wall_ms),
+            keys,
+        } => Some((*wall_ms, keys.len())),
         _ => None,
     }
 }
@@ -363,9 +367,9 @@ pub struct Session {
     live_span: Option<LiveSpan>,
     /// A replayed pause or menu in progress: the wall time left, µs.
     hold_us: Option<u64>,
-    /// The help screen time the replayed hold in progress passes to the
-    /// fuse when it ends.
-    hold_menu_ms: Option<u32>,
+    /// The help screen time (and the keys pressed on it) the replayed
+    /// hold in progress passes to the help screen's return when it ends.
+    hold_menu_ms: Option<(u32, usize)>,
     /// The replayed hold in progress is a screen: with the original rule
     /// the keys down when it ends count as already pressed.
     hold_screen: bool,
@@ -874,8 +878,8 @@ impl Session {
                         start: false,
                     });
                 }
-                if let Some(ms) = self.hold_menu_ms.take() {
-                    self.sim.pass_menu_time(ms);
+                if let Some((ms, keys)) = self.hold_menu_ms.take() {
+                    self.sim.pass_help_return(ms, keys);
                 }
                 // Play resumes: the game's clock is reset.
                 self.sim.restart_idle_wait();
@@ -1011,7 +1015,11 @@ impl Session {
                 DirectiveKind::Pause { .. } => Some(Span::Pause),
                 DirectiveKind::Command(_) => None,
             };
-            let screen = matches!(next.kind, DirectiveKind::Menu { .. });
+            // The pause screen is the pause key's pause: it latches no key.
+            let screen = matches!(
+                next.kind,
+                DirectiveKind::Menu { screen, .. } if screen != MenuScreen::Pause
+            );
             d.log.push(next);
             if let Some(us) = hold {
                 self.hold_us = Some(us);
@@ -1168,7 +1176,7 @@ impl Session {
             return;
         };
         if let Span::Menu(MenuScreen::Help) = span.span {
-            self.sim.pass_menu_time(span.wall_ms());
+            self.sim.pass_help_return(span.wall_ms(), span.keys.len());
         }
         // Play resumes after a pause or a screen: the game's clock is reset.
         // A replay being watched plays its own pauses and menus (where the

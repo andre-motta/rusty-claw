@@ -8,7 +8,6 @@
 //! own replay plays them ([`play_directives`]).
 
 use claw_sim::claw_frame::GameEvent;
-use claw_sim::input::{Directive, DirectiveKind, ScriptCommand};
 use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::{Carry, InputScript, Sim, SimConfig};
 
@@ -228,33 +227,15 @@ pub fn route_csv(header: &Header, script: &InputScript) -> String {
 }
 
 /// Plays the directives of `script` due at the boundary before tick
-/// `tick` on `sim`, as the game's replay does: when play comes back from a
-/// help screen, the time it was up reaches the dynamite fuse; when it comes
-/// back from any screen, the keys down count as already pressed (the
-/// game's original rule for keys); and as play resumes after a pause or a
-/// screen, the game's clock is reset. The in-game menu's end of a life
-/// ends it.
+/// `tick` on `sim`, as the game's replay does, through the one function
+/// the replay tool and the reference tests share ([`Sim::play_directive`]):
+/// the return from a help screen runs its update pass, the keys down when
+/// a screen closes count as already pressed (the game's original rule for
+/// keys; the pause screen latches none, as the pause key's pause), as play
+/// resumes after a pause or a screen the game's clock is reset, and a
+/// command takes effect before the tick.
 pub fn play_directives(sim: &mut Sim, script: &InputScript, tick: usize) {
-    for d in script.directives.iter().filter(|d| d.tick == tick) {
-        play_directive(sim, d);
-    }
-}
-
-fn play_directive(sim: &mut Sim, d: &Directive) {
-    match &d.kind {
-        DirectiveKind::Menu {
-            screen, wall_ms, ..
-        } => {
-            if *screen == claw_sim::input::MenuScreen::Help {
-                sim.pass_menu_time(*wall_ms);
-            }
-            sim.restart_idle_wait();
-            sim.latch_keys();
-        }
-        DirectiveKind::Pause { .. } => sim.restart_idle_wait(),
-        DirectiveKind::Command(ScriptCommand::EndLife) => sim.end_life(),
-        DirectiveKind::Command(ScriptCommand::Powerup(p)) => sim.give_powerup(*p),
-    }
+    sim.play_directives(script, tick);
 }
 
 /// Ticks at which the held mask changes (tick 0 counts when anything is

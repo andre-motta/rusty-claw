@@ -1487,7 +1487,17 @@ pub fn spawn_end_gem(w: &mut World, (x, y, z): (i32, i32, i32), target: (i32, i3
 
 /// One tick of the gem: the camera to where it is; once it moves down
 /// below its target's y it lands, otherwise it moves.
+///
+/// Its flight runs on game time: in the update pass of the return from a
+/// help screen (see [`crate::Sim::pass_help_return`]) it catches up in one
+/// step instead the time from the next tick's start to the pass's game
+/// clock (the screen's time less one tick), each way at most
+/// [`super::enemy::motion::STEP_LIMIT`] px, and neither lands nor moves
+/// the camera there; moving down below its target by then, it lands where
+/// it is on the next tick.
 fn gem_tick(w: &mut World, id: ObjectId) {
+    let help = w.help_ms > 0;
+    let since = w.now_ms.saturating_sub(w.tick * u64::from(TICK_MS));
     let Some(o) = w.objects.get_mut(id) else {
         return;
     };
@@ -1497,6 +1507,18 @@ fn gem_tick(w: &mut World, id: ObjectId) {
     let Some(mut g) = data_mut(o).gem else {
         return;
     };
+    if help {
+        let dt = since as f64 * 0.001;
+        let limit = super::enemy::motion::STEP_LIMIT;
+        let cap = |d: f64| d.clamp(-limit, limit);
+        g.pos.0 += cap(g.vel.0 * dt);
+        g.pos.1 += cap((g.vel.1 + 0.5 * END_GEM_GRAVITY * dt) * dt);
+        g.vel.1 += END_GEM_GRAVITY * dt;
+        o.x = g.pos.0.trunc() as i32;
+        o.y = g.pos.1.trunc() as i32;
+        data_mut(o).gem = Some(g);
+        return;
+    }
     let at = (o.x, o.y);
     w.set_camera_override(Some(at));
     if g.vel.1 > 0.0 && g.pos.1 > f64::from(g.target.1) {

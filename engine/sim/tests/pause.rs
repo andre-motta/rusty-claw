@@ -1,8 +1,10 @@
 //! The game clock around screens over play, on synthetic levels: the time
-//! a help screen was up reaches the dynamite fuse once, at the boundary
-//! before the first tick after it, and nothing else; with the fuse clock
-//! frozen it never does. The fuse is lit in the tick a stick is thrown and
-//! goes off 70 ticks later.
+//! a help screen was up reaches the dynamite fuse once, in the update pass
+//! of its return at the boundary before the first tick after it, and the
+//! screen's frames move the next frame pulse; with the fuse clock frozen
+//! neither happens. The fuse is lit in the tick a stick is thrown and goes
+//! off 70 ticks later. On a level with Claw alone the pass changes nothing
+//! a trace shows.
 
 use std::sync::Arc;
 
@@ -101,10 +103,8 @@ fn run(fuse_clock: FuseClock, pass: Option<(u64, u32)>) -> (u64, Option<u64>, u6
         if let Some((k, ms)) = pass
             && sim.tick() == k
         {
-            let rng = sim.rng_state();
             sim.pass_menu_time(ms);
             assert_eq!(sim.tick(), k, "no tick runs");
-            assert_eq!(sim.rng_state(), rng, "nothing is drawn");
         }
         let before = exploding(&sim, stick);
         let n = sim.tick();
@@ -189,4 +189,53 @@ fn help_time_changes_nothing_but_the_fuse() {
     // One that has gone off already is left alone.
     sim.pass_menu_time(1250);
     assert!(exploding(&sim, stick));
+}
+
+#[test]
+fn the_help_screens_frames_move_the_next_frame_pulse() {
+    // The pulse comes every third tick; a help screen of 3000 ms runs 167
+    // frames of 18 ms, two more than a whole number of pulse periods, so
+    // the next pulse comes two ticks earlier than without it, and one of
+    // 3006 ms (167 frames too) the same.
+    let pulses = |ms: Option<u32>| {
+        let mut sim = sim(FuseClock::Original);
+        let mut out = Vec::new();
+        for n in 0..12 {
+            if n == 4
+                && let Some(ms) = ms
+            {
+                sim.pass_menu_time(ms);
+            }
+            sim.step(TickInput::default());
+            if sim.pulse() {
+                out.push(n);
+            }
+        }
+        out
+    };
+    let plain = pulses(None);
+    assert_eq!(plain.windows(2).map(|w| w[1] - w[0]).max(), Some(3));
+    let after = |v: Vec<i32>| v.into_iter().find(|&n| n >= 4).unwrap();
+    let first = after(plain.clone());
+    let moved = |ms| (after(pulses(Some(ms))) - 4).rem_euclid(3);
+    assert_eq!(moved(3000), (first - 4 - 2).rem_euclid(3));
+    assert_eq!(moved(3006), moved(3000));
+    // 54 ms run three frames: a whole period, the pulse as without it.
+    assert_eq!(pulses(Some(54)), plain);
+    // With the fuse clock frozen the help screen leaves the pulse alone.
+    let frozen = {
+        let mut sim = sim(FuseClock::Frozen);
+        let mut out = Vec::new();
+        for n in 0..12 {
+            if n == 4 {
+                sim.pass_menu_time(3000);
+            }
+            sim.step(TickInput::default());
+            if sim.pulse() {
+                out.push(n);
+            }
+        }
+        out
+    };
+    assert_eq!(frozen, plain);
 }

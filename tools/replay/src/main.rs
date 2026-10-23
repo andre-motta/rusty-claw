@@ -36,10 +36,25 @@
 //! starts it. The lines of a save point a recording started from are not
 //! applied.
 //!
-//! The script's `@` directive lines are played at their tick boundaries: a
-//! command (`end_life`, `powerup`) takes effect before its tick, and a pause or a menu
-//! changes nothing in the game (play stops and goes on where it stopped;
-//! its wall time only matters to a game running in real time).
+//! The script's `@` directive lines are played at their tick boundaries,
+//! as the game's replay and the bot play them (one shared function,
+//! `claw_sim::Sim::play_directive`): a command (`end_life`, `powerup`)
+//! takes effect before its tick; the return from a help screen
+//! (`menu help`) runs the update pass of that return with the screen's
+//! time (the dynamite fuse burns on, every object runs once more, and the
+//! next frame pulse comes as many frames later as the help screen ran);
+//! after a help screen or the in-game menu the keys down count as already
+//! pressed until released; a pause (`pause`, or the pause screen
+//! `menu pause`) latches no key; and as play resumes after any of them the
+//! game's clock is reset. A pause or the in-game menu's wall time changes
+//! nothing else in the game.
+//!
+//! A recording names the pause and screen switches the game played it
+//! with (`# fuse_clock = original|frozen`, `# pause_input = original|...`;
+//! the last line of each counts). With `# fuse_clock = frozen` the help
+//! screen's return runs no update pass, as in the game with that switch.
+//! Keys across a pause or a screen are only played the original's way, so
+//! a script with `# pause_input` other than `original` is refused.
 //!
 //! The trace has one row per tick with Claw's position, the fractions
 //! carried to the next tick, his state and physics type, the camera point,
@@ -152,7 +167,7 @@ use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Tolerances, TraceRow};
-use claw_sim::tuning::{PlayAids, TICK_MS};
+use claw_sim::tuning::{FuseClock, PlayAids, TICK_MS};
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel, StartState};
 
 const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FILE.WWD] \
@@ -161,10 +176,17 @@ const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FIL
 [--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]] \
 [--crabs FILE | --crab-variant N] [--expect-complete] \
 [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
+the script's @ lines play as in the game: a help screen's return runs its update pass, a screen latches the keys down, a pause latches none, a command acts before its tick; `# fuse_clock = frozen` runs no help return pass, and `# pause_input` other than original is refused
 --crabs FILE: one entry per line, `crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` or `nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` (STATIONARY 1 or 0, 0 when left out)";
 
 /// The key of the mid-air hit jump fix in a script's comment line.
 const BEHAVIOUR_KEY: &str = "mid_air_hit_fix";
+
+/// The key of the pause input switch in a recording's comment lines.
+const PAUSE_INPUT_KEY: &str = "pause_input";
+
+/// The key of the fuse clock switch in a recording's comment lines.
+const FUSE_CLOCK_KEY: &str = "fuse_clock";
 
 /// Rows of each trace shown before a divergence.
 const CONTEXT_ROWS: usize = 5;
@@ -428,6 +450,47 @@ fn script_behaviour(text: &str) -> Option<bool> {
     })
 }
 
+/// The fuse clock a script's `# fuse_clock = ...` line names (the last
+/// such line counts; the original's without one), after checking that its
+/// `# pause_input = ...` line, if any, names the original's: the replay
+/// plays keys across a pause or a screen only the original's way, so a
+/// recording made another way would not replay as it was played.
+fn script_switches(text: &str) -> Result<FuseClock, String> {
+    let mut fuse = FuseClock::Original;
+    let mut pause: Option<(usize, String)> = None;
+    for (n, line) in text.lines().enumerate() {
+        let Some((k, v)) = line
+            .trim()
+            .strip_prefix('#')
+            .and_then(|r| r.split_once('='))
+        else {
+            continue;
+        };
+        let v = v.trim().trim_matches('"');
+        match k.trim() {
+            FUSE_CLOCK_KEY => {
+                fuse = FuseClock::from_name(v).ok_or_else(|| {
+                    format!(
+                        "line {}: `{FUSE_CLOCK_KEY} = {v}` is neither original nor frozen",
+                        n + 1
+                    )
+                })?;
+            }
+            PAUSE_INPUT_KEY => pause = Some((n + 1, v.to_string())),
+            _ => {}
+        }
+    }
+    if let Some((n, v)) = pause
+        && v != "original"
+    {
+        return Err(format!(
+            "line {n}: the script was recorded with `{PAUSE_INPUT_KEY} = {v}`; the replay \
+             plays keys across a pause or a screen only the original's way"
+        ));
+    }
+    Ok(fuse)
+}
+
 /// The tolerances named on the command line: a preset or a file.
 fn load_tolerances(spec: &str) -> Result<Tolerances, String> {
     if let Some(t) = Tolerances::preset(spec) {
@@ -491,6 +554,8 @@ fn run(args: Args) -> Result<Outcome, String> {
         .mid_air_hit_fix
         .or(script_behaviour(&text))
         .unwrap_or(false);
+    let fuse_clock =
+        script_switches(&text).map_err(|e| format!("{}: {e}", script_path.display()))?;
     if let (Some(flag), Some(key)) = (args.level, header.level)
         && flag != key
     {
@@ -555,6 +620,14 @@ fn run(args: Args) -> Result<Outcome, String> {
         cfg.level_logics = on;
     }
     cfg.tuning.behaviour.fix_double_jump = fix;
+    cfg.fuse_clock = fuse_clock;
+    if fuse_clock != FuseClock::Original {
+        eprintln!(
+            "claw-replay: the script was recorded with `{FUSE_CLOCK_KEY} = {}`: a help screen's \
+             return runs no update pass",
+            fuse_clock.name()
+        );
+    }
     cfg.aids = aids;
     cfg.start_powerup = powerup;
     cfg.boss_health = claw_sim::input::script_boss_health(&text)
@@ -610,11 +683,7 @@ fn run(args: Args) -> Result<Outcome, String> {
     let mut commands = 0;
     for (tick, &input) in script.ticks.iter().enumerate() {
         while let Some(d) = directives.next_if(|d| d.tick <= tick) {
-            if let DirectiveKind::Command(c) = d.kind {
-                match c {
-                    ScriptCommand::EndLife => sim.end_life(),
-                    ScriptCommand::Powerup(p) => sim.give_powerup(p),
-                }
+            if sim.play_directive(&d.kind) {
                 commands += 1;
             }
         }
@@ -844,6 +913,81 @@ mod tests {
         assert!(args("--compare ref.csv").is_err(), "needs a tolerance");
         assert!(args("--tolerance exact").is_err(), "needs a reference");
         assert!(args("--report out.txt").is_err(), "needs a reference");
+    }
+
+    #[test]
+    fn the_fuse_clock_and_pause_input_come_from_the_script() {
+        assert_eq!(
+            script_switches("tick,a,b\n0,0,0\n"),
+            Ok(FuseClock::Original)
+        );
+        assert_eq!(
+            script_switches("# pause_input = original\n# fuse_clock = original\n"),
+            Ok(FuseClock::Original)
+        );
+        assert_eq!(
+            script_switches("# level 9\n# fuse_clock = frozen\ntick,a,b\n0,0,0\n"),
+            Ok(FuseClock::Frozen)
+        );
+        assert_eq!(
+            script_switches("# fuse_clock = frozen\n# fuse_clock = \"original\"\n"),
+            Ok(FuseClock::Original),
+            "the last line counts"
+        );
+        let e = script_switches("# fuse_clock = sometimes\n").unwrap_err();
+        assert!(e.contains("fuse_clock = sometimes"), "{e}");
+        let e = script_switches("# pause_input = release_all\n").unwrap_err();
+        assert!(
+            e.contains("line 1") && e.contains("pause_input = release_all"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_frozen_scripts_help_screen_runs_no_return_pass() {
+        use claw_sim::{SimConfig, TileMap};
+        let ticks: String = (0..12).map(|n| format!("{n},0,0\n")).collect();
+        let text = format!(
+            "# fuse_clock = frozen\n# pause_input = original\n\
+             tick,held_mask,pressed_mask\n{ticks}@4 menu help 3000\n"
+        );
+        let text = text.as_str();
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        // The ticks on which the frame pulse comes, with the script's
+        // directives played as the replay plays them.
+        let pulses = |fuse_clock: FuseClock, script: &InputScript| {
+            let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (300, 880));
+            let cfg = SimConfig {
+                fuse_clock,
+                ..SimConfig::default()
+            };
+            let mut sim = Sim::new(level, cfg);
+            let mut out = Vec::new();
+            for n in 0..12 {
+                sim.play_directives(script, n);
+                sim.step(Default::default());
+                if sim.pulse() {
+                    out.push(n);
+                }
+            }
+            out
+        };
+        let script = InputScript::parse(text).unwrap();
+        let frozen = script_switches(text).unwrap();
+        assert_eq!(frozen, FuseClock::Frozen);
+        let plain = pulses(FuseClock::Original, &InputScript::default());
+        assert_eq!(
+            pulses(frozen, &script),
+            plain,
+            "a frozen fuse clock leaves the pulse as without the screen"
+        );
+        assert_ne!(
+            pulses(FuseClock::Original, &script),
+            plain,
+            "the original's return pass moves the pulse"
+        );
     }
 
     #[test]

@@ -317,16 +317,13 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   original keeps its position as one number that adds 3.24 px a tick
 ///   and lands a hair below a whole pixel (2521.99999...), where this
 ///   build lands on it.
-/// - dyn-fuse-shaft-c18: the original's return from the help screen runs
-///   every object's logic once more, outside any step, with the screen's
-///   4300 ms: the white tiger by the shaft, out of Claw's reach since the
-///   jump, sees its 500 ms out-of-range wait end there and goes idle on row
-///   43; the game's return from the help screen runs no logic but the
-///   dynamite fuses (as the eleventh level's Siren store lists). From
-///   there the random stream differs (the camera's shake in the stick's
-///   blast from row 51 with it), and the tiger, still awake, reaches the
-///   walking Claw and slashes him on row 127, which the original's does
-///   not.
+/// - dyn-fuse-shaft-c18: the return from the help screen runs every
+///   object's logic once more, outside any step, with the screen's 4300
+///   ms (see `Sim::pass_help_return`): the white tiger by the shaft, out
+///   of Claw's reach since the jump, sees its 500 ms out-of-range wait end
+///   there and goes idle on row 43, as in the original. The tiger still
+///   parts from the run at 2592 ms (its x), the random stream at 2628 ms
+///   and Claw at 3258 ms: not looked into here.
 /// - At 60 frames per second the replay plays 18 ms rows: the original's
 ///   timers and draws run on its shorter frames, so the tigers' decisions
 ///   come out otherwise (the lunge that meets Claw on tiger-stand and
@@ -340,16 +337,14 @@ const KNOWN: &[Known] = &[
         "dyn-fuse-shaft-c18",
         "c18",
         &[
-            ("rng", 792),
-            ("883_x", 792),
-            ("883_state", 792),
-            ("cam_x", 936),
-            ("cam_y", 954),
-            ("883_out", 2178),
-            ("state_id", 2304),
-            ("physics_type", 2304),
-            ("health", 2304),
-            ("x", 2322),
+            ("rng", 2628),
+            ("883_x", 2592),
+            ("883_state", 2610),
+            ("cam_x", 3276),
+            ("883_out", 2610),
+            ("state_id", 3258),
+            ("health", 3258),
+            ("x", 3276),
         ],
     ),
     (
@@ -826,8 +821,8 @@ fn obj_at(sim: &Sim, id: ObjectId) -> Option<ObjAt> {
 /// it).
 fn step_row(sim: &mut Sim, r: &Route, ticks: &[TickInput], k: usize) {
     for &(_, ms) in r.helps.iter().filter(|(at, _)| *at == k) {
-        // The return from the help screen: its time reaches the fuse, and
-        // the idle wait starts again.
+        // The return from the help screen: its update pass, and the idle
+        // wait starts again.
         sim.pass_menu_time(ms);
         sim.restart_idle_wait();
     }

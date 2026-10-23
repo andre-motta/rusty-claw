@@ -415,10 +415,11 @@ made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
 life. Replays, `claw-replay` and the benchmark all follow them.
 
-The routes in `tests/acceptance/routes/` finish the first eight levels:
-`level1.csv` to `level8.csv` with the default tuning,
-`level1-original.csv` to `level8-original.csv` with the original game's
-speeds (and `level9-original.csv` the ninth level, see below), `level2-introskip.csv`, `level4-introskip.csv`,
+The routes in `tests/acceptance/routes/` finish the first nine levels:
+`level1.csv` to `level8.csv` with the default tuning (the ninth level has
+no default-tuning route yet), `level1-original.csv` to
+`level9-original.csv` with the original game's speeds (the ninth level's
+way is described below), `level2-introskip.csv`, `level4-introskip.csv`,
 `level6-introskip.csv` and `level8-introskip.csv` with the jump-in that
 skips Raux's, Katherine's, Wolvington's and Gabriel's introductions,
 `level3-boost.csv` with
@@ -466,12 +467,25 @@ top of a jump with the help screen up for three seconds after the throw
 (`@N menu help 3000` lines), so the stick goes off at once beside him, the
 blast stops him in mid-air and a jump pressed on the tick he stands there
 is a fresh jump; the fourth blast is a powder keg's, set off with a pistol
-shot from below the bridge it stands on. Those jumps reach their height
-only with the Catnip PegLeg drops on the deck by the first saw. The bot
-plays a route's help screens and pauses as the game does, and keeps them
-when it carries on from one; `tools/bot/hints/level9-original.txt` lists
-the held buttons of the stretches written by hand (the fight with PegLeg,
-the jump into the warp and the climb). They
+shot from below the bridge it stands on. The dynamite jumps reach their
+height only with the Catnip PegLeg drops on the deck by the first saw.
+When play comes back from a help screen, the game runs every object once
+more at the game time plus the screen's time (a stick whose fuse has burnt
+by then goes off there; Claw, in mid-jump, does not move) and the frame
+pulse moves on by the screen's frames; then the clock goes back, so an
+enemy that pass moved goes back as far in the next tick. A powder keg's
+blast reaches the box of the picture it shows as it goes off, which on
+this level spares a crate beside the keg by the ladders near the start.
+The bot and `claw-replay` play a route's help screens and pauses as the
+game does, through one shared function, and the bot keeps them when it
+carries on from a route (refusing one recorded with another pause or
+screen switch than the original's). `claw-replay` follows a recording's
+`# fuse_clock` line (with `frozen` a help screen's return runs no pass)
+and refuses one recorded with another `pause_input` than the original's.
+`tools/bot/hints/level9-original.txt`
+lists the held buttons of the stretches written by hand (the fight with
+PegLeg, the walk back to the springboard, the jump into the warp and the
+climb). They
 are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and
 keeps the ones that bring Claw closer to the level's end. Its budget counts

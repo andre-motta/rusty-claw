@@ -718,9 +718,13 @@ impl Timer {
         Timer { start: now, len }
     }
 
-    /// True once `len` ms have passed since `start`.
+    /// True once `len` ms have passed since `start`, or when `start` lies
+    /// after `now`: the clock went back after a timer was started in the
+    /// update pass of a help screen's return (see
+    /// [`crate::Sim::pass_help_return`]), and the time since its start, taken
+    /// as an unsigned number, is then larger than any length.
     pub fn done(&self, now: u64) -> bool {
-        now.saturating_sub(self.start) >= self.len
+        now < self.start || now - self.start >= self.len
     }
 }
 
@@ -2196,6 +2200,16 @@ pub fn drop_loot(w: &mut World, id: ObjectId) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_timer_started_after_the_clock_is_done() {
+        let t = Timer::new(27_000, 500);
+        assert!(!t.done(27_000));
+        assert!(!t.done(27_499));
+        assert!(t.done(27_500));
+        // The clock went back after the help screen's return: done at once.
+        assert!(t.done(24_354));
+    }
 
     #[test]
     fn states_round_trip_and_are_fixed() {

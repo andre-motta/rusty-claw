@@ -105,7 +105,7 @@ struct Route {
     store: &'static str,
     rows: usize,
     spans: &'static [Span],
-    helps: &'static [(usize, u32)],
+    helps: &'static [(usize, u32, usize)],
     clock: &'static str,
 }
 
@@ -122,9 +122,9 @@ const T0_MS: u64 = 828;
 /// under him (69), its blast hits him on row 77, he stands in mid air on
 /// row 99 and jumps on 100; a stick thrown in the air (118) and the second
 /// help screen (120) hit him on 128; he stands on 150 and jumps on 151.
-const SKIP_HELPS_C18: [(usize, u32); 2] = [(69, 3200), (120, 4350)];
+const SKIP_HELPS_C18: [(usize, u32, usize); 2] = [(69, 3200, 2), (120, 4350, 2)];
 /// The same at 60 frames per second, with its own rows.
-const SKIP_HELPS_C60: [(usize, u32); 2] = [(69, 3200), (118, 4350)];
+const SKIP_HELPS_C60: [(usize, u32, usize); 2] = [(69, 3200, 2), (118, 4350, 2)];
 
 /// The skip at the 18 ms step with Left released after row `last_left`.
 const fn skip_c18(last_left: usize) -> [Span; 7] {
@@ -238,15 +238,14 @@ type Known = (&'static str, &'static [(&'static str, u64)]);
 /// follows its store exactly in Claw's position, state, health and
 /// ammunition, the stalactites included, to the end; what differs:
 ///
-/// - The random stream from row 69 (1260 ms) and the camera from row 77
-///   (1404 ms), in every store at the 18 ms step. The original's return
-///   from a help screen runs every object's logic once more, outside any
-///   step, and the screen's own frames count down its 33 ms pulse, so the
-///   stick's last draws in the air come in that pass and the enemies'
-///   pulse rolls come one step later from then on; the game's return from
-///   the help screen runs no logic but the dynamite fuses. Nothing on the
-///   route reads those draws but the camera's jolts while a blast holds
-///   Claw, which shake by up to 11 px around the same point.
+/// - At the 18 ms step the stores of the entry window follow to their
+///   end, the random stream and the camera included: the return from a
+///   help screen runs every object's logic once more, outside any step,
+///   and the screen's own frames (two more for each of the two keys
+///   pressed on it) count down the 33 ms pulse, as in the original (see
+///   `Sim::pass_help_return`). `skip-water-skip-c18`, which goes on past
+///   the hidden floor, keeps a difference in the random stream from
+///   14184 ms, not looked into here.
 /// - At 60 frames per second (skip-water-skip, skip-window-2545) the
 ///   stores were found for the original's frames of 16 and 17 ms, and the
 ///   game's 60 fps tuning plays steps of 18 ms. The first blast's attack
@@ -259,10 +258,7 @@ type Known = (&'static str, &'static [(&'static str, u64)]);
 ///   tuning with its own rows, and the same window
 ///   ([`install_water_skip_works_at_both_tunings_and_the_release_decides_the_ending`]).
 const KNOWN: &[Known] = &[
-    ("skip-water-skip-c18", C18_KNOWN),
-    ("skip-window-2546-c18", C18_KNOWN),
-    ("skip-window-2542-c18", C18_KNOWN),
-    ("skip-window-2562-c18", C18_KNOWN),
+    ("skip-water-skip-c18", &[("rng", 14184)]),
     (
         "skip-water-skip",
         &[
@@ -295,9 +291,6 @@ const KNOWN: &[Known] = &[
         ],
     ),
 ];
-
-/// What every store at the 18 ms step leaves (see [`KNOWN`]).
-const C18_KNOWN: &[(&str, u64)] = &[("rng", 1260), ("cam_x", 1404), ("cam_y", 1404)];
 
 fn known(store: &str) -> Vec<(&'static str, u64)> {
     KNOWN
@@ -333,8 +326,8 @@ fn route_ticks(r: &Route) -> Vec<TickInput> {
 }
 
 /// The rows of a store's own copy of a route, (held, pressed) by row, and
-/// its help screens, (row, wall ms).
-type StoreRoute = (Vec<(u32, u32)>, Vec<(usize, u32)>);
+/// its help screens, (row, wall ms, keys pressed on it).
+type StoreRoute = (Vec<(u32, u32)>, Vec<(usize, u32, usize)>);
 
 fn store_route(dir: &Path) -> Option<StoreRoute> {
     let text = std::fs::read_to_string(dir.join("route.csv")).ok()?;
@@ -349,7 +342,11 @@ fn store_route(dir: &Path) -> Option<StoreRoute> {
                 (Some(&"menu"), Some(&"help")),
                 "{l}: only help screens are expected"
             );
-            helps.push((f[0].parse().ok()?, f.get(3)?.parse().ok()?));
+            let keys = f
+                .iter()
+                .find_map(|w| w.strip_prefix("keys="))
+                .map_or(0, |k| k.split(',').filter(|k| !k.is_empty()).count());
+            helps.push((f[0].parse().ok()?, f.get(3)?.parse().ok()?, keys));
         } else if l.starts_with(|c: char| c.is_ascii_digit()) {
             let f: Vec<&str> = l.split(',').collect();
             rows.push((hex(f[1])?, hex(f[2])?));
@@ -597,10 +594,10 @@ fn play_rows(mut sim: Sim, r: &Route, rows: usize) -> (Vec<TraceRow>, Vec<Vec<Op
     let mut trace = Vec::with_capacity(rows);
     let mut objects = vec![Vec::with_capacity(rows); ids.len()];
     for k in 0..rows {
-        for &(_, ms) in r.helps.iter().filter(|(at, _)| *at == k) {
-            // The return from the help screen: its time reaches the fuse,
-            // and the idle wait starts again.
-            sim.pass_menu_time(ms);
+        for &(_, ms, keys) in r.helps.iter().filter(|(at, ..)| *at == k) {
+            // The return from the help screen: its update pass, and the
+            // idle wait starts again.
+            sim.pass_help_return(ms, keys);
             sim.restart_idle_wait();
         }
         sim.step(ticks.get(k).copied().unwrap_or_default());
@@ -933,14 +930,14 @@ fn skip_by_states(level: &SimLevel, clock: &str, release: i32) -> (i32, Vec<usiz
     let mut sim = at_time_zero(level, clock, T0_MS, SEED);
     let mut hits = Vec::new();
     let mut jumps: Vec<usize> = Vec::new();
-    let mut helps: Vec<(usize, u32)> = vec![(69, 3200)];
+    let mut helps: Vec<(usize, u32, usize)> = vec![(69, 3200, 2)];
     let mut throws: Vec<usize> = vec![30];
     let mut stood: Option<usize> = None;
     let mut released: Option<i32> = None;
     let mut last = look(&sim);
     for k in 0..400usize {
-        if let Some(&(_, ms)) = helps.iter().find(|(at, _)| *at == k) {
-            sim.pass_menu_time(ms);
+        if let Some(&(_, ms, keys)) = helps.iter().find(|(at, ..)| *at == k) {
+            sim.pass_help_return(ms, keys);
             sim.restart_idle_wait();
         }
         if stood.take().is_some() {
@@ -987,7 +984,7 @@ fn skip_by_states(level: &SimLevel, clock: &str, release: i32) -> (i32, Vec<usiz
             && last.state == state::JUMP
         {
             throws.push(k + 3);
-            helps.push((k + 5, 4350));
+            helps.push((k + 5, 4350, 2));
         }
         last = now;
         let ending = if now.state == state::DEATH {
