@@ -22,6 +22,13 @@
 //!   fresh jump toward the boss, so that one of them presses jump on the
 //!   first tick in the room.
 //!
+//! In Marrow's fight, while the pit is open between Claw and Marrow and
+//! his parrot patrols the top of the room or sits on its perch, Claw can
+//! only wait for its dive: on his feet the fight's only macro is then
+//! the wait ([`parrot_patrols`]), so the search does not try every walk,
+//! blow and jump about the ledge at every moment of the patrol (he walks
+//! to where he waits while the parrot carries Marrow).
+//!
 //! Held in a bear's hug, Claw cannot move, but each new press of a key
 //! counts towards his escape: the mash ([`Action::Mash`]) presses Up and
 //! Down in turn, a new key every [`MIN_SPACING`] ticks.
@@ -32,7 +39,9 @@
 //! ([`Action::Throw`]), turned either way, the key held from a tap to the
 //! full charge ([`THROW_HOLDS`]).
 
-use claw_sim::object::special;
+use claw_sim::logic::ObjectData;
+use claw_sim::logic::enemy::EnemyState;
+use claw_sim::object::{Object, special};
 use claw_sim::player::attack::LIFT_FEET;
 use claw_sim::player::special::THROW_CHARGE_MS;
 use claw_sim::player::state;
@@ -407,6 +416,7 @@ fn fight_choices(sim: &Sim) -> Vec<Action> {
     let holds = jump_holds(sim);
     let mut out = vec![Action::Wait, Action::Left, Action::Right];
     match phase(sim) {
+        Phase::Ground if parrot_patrols(sim) => out.truncate(1),
         Phase::Ground => {
             out.extend([
                 Action::Short,
@@ -443,6 +453,47 @@ fn fight_choices(sim: &Sim) -> Vec<Action> {
         Phase::Climb | Phase::Swing | Phase::Busy => {}
     }
     out
+}
+
+/// True while Marrow's parrot `o` patrols the top of his room or sits on
+/// its perch.
+pub fn parrot_waits(o: &Object) -> bool {
+    matches!(
+        EnemyState::from_id(o.state),
+        Some(EnemyState::FlyAbout | EnemyState::Idle)
+    )
+}
+
+/// True while Marrow's parrot `o` dives at Claw (its set-up and its
+/// swoop) or flinches from his hit.
+pub fn parrot_dives(o: &Object) -> bool {
+    matches!(
+        EnemyState::from_id(o.state),
+        Some(EnemyState::StrikeSetup | EnemyState::Strike | EnemyState::GenericHit)
+    )
+}
+
+/// The ends of the spike pit between the ledges of Marrow's room, x.
+pub const MARROW_PIT: (i32, i32) = (40640, 40991);
+
+/// True in Marrow's fight while the slabs are open or opening, Claw is
+/// on a ledge across the pit from Marrow, and the parrot patrols or
+/// perches ([`parrot_waits`]): all Claw can do is wait for its dive.
+pub fn parrot_patrols(sim: &Sim) -> bool {
+    let (Some(link), Some(c)) = (sim.marrow_link(), sim.player()) else {
+        return false;
+    };
+    let Some(m) = sim.objects().get(link.marrow) else {
+        return false;
+    };
+    let side = |x: i32| (x > MARROW_PIT.1) as i32 - (x < MARROW_PIT.0) as i32;
+    link.open_request
+        && side(c.x) != 0
+        && side(c.x) != side(m.x)
+        && sim
+            .objects()
+            .all()
+            .any(|(_, o)| matches!(o.data, ObjectData::Parrot(_)) && parrot_waits(o))
 }
 
 /// True when the boss in play is one the search drowns

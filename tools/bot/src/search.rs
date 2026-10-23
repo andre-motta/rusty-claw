@@ -63,6 +63,15 @@
 //! introduction (the normal entry) or to routes that skip it (the jump-in
 //! entry).
 //!
+//! Marrow's fight on the tenth level runs in rounds, and is guided round
+//! by round ([`marrow_guide`]): while the pit is open between Claw and
+//! Marrow, by the parrot's hits (three close the slabs into a bridge) and
+//! how near Claw is to its dive, then by Marrow's health and Claw's
+//! distance to him; a round whose whistle is due counts as the next
+//! one's start. While the parrot patrols, the stretch of the room it is
+//! over and the time make the coarse state, so a wait for its dive is
+//! progress.
+//!
 //! A route can be made to win under several sets of the values the
 //! hermit crabs start with ([`CrabValues`], which the original game does
 //! not fix): [`SearchConfig::crabs`] is the set the route plays under,
@@ -104,7 +113,7 @@ use claw_sim::player::state;
 use claw_sim::tiles::{DEATH, GROUND, SOLID};
 use claw_sim::{Buttons, InputScript, Sim, SimLevel, TickInput};
 
-use crate::actions::{self, Action, Arena, MIN_SPACING};
+use crate::actions::{self, Action, Arena, MARROW_PIT, MIN_SPACING, parrot_dives, parrot_waits};
 use crate::field::{BLOWER_HALF_WIDTH, DistanceField, Grid, Reach, UNREACHABLE};
 
 /// What ends the search.
@@ -634,6 +643,7 @@ pub fn is_boss(logic: &str) -> bool {
         || enemy::katherine::NAMES.contains(&logic)
         || enemy::wolvington::NAMES.contains(&logic)
         || enemy::gabriel::NAMES.contains(&logic)
+        || enemy::marrow::NAMES.contains(&logic)
 }
 
 /// The bosses whose fall the search guides into the water: blows cannot
@@ -806,6 +816,175 @@ fn boss_guarded(sim: &Sim) -> bool {
                 && o.special_flags & special::LIFTABLE == 0
                 && enemy::data_of(o).is_some_and(|d| d.may_lift && !d.dead)
         })
+}
+
+/// Marrow's health in one round of his fight: the round ends with his
+/// whistle, after [`enemy::marrow::PHASE_DAMAGE`] points.
+const MARROW_ROUND_HEALTH: i32 = enemy::marrow::PHASE_DAMAGE;
+
+/// What one point of Marrow's health counts for within a round, px.
+pub const MARROW_HEALTH_PX: u32 = 30;
+
+/// Most Claw's distance to Marrow counts for in Marrow's fight, px.
+pub const MARROW_NEAR_CAP: u32 = 600;
+
+/// What each hit the parrot still needs before it perches counts for, px.
+pub const PARROT_HIT_PX: u32 = 200;
+
+/// Most Claw's distance to the parrot counts for, px.
+pub const PARROT_NEAR_CAP: u32 = 200;
+
+/// The hits that send the parrot to its perch.
+const PARROT_HITS: u32 = 3;
+
+/// What one round of Marrow's fight counts for, px: more than any state
+/// within a round.
+pub const MARROW_ROUND_PX: u32 = MARROW_ROUND_HEALTH as u32 * MARROW_HEALTH_PX
+    + MARROW_NEAR_CAP
+    + PARROT_HITS * PARROT_HIT_PX
+    + PARROT_NEAR_CAP
+    + 50;
+
+/// How far across from Marrow Claw must be for Marrow to lose sight of
+/// him (off the screen), px: waiting for the parrot further away than
+/// this is better, up to half of [`PARROT_NEAR_CAP`].
+const MARROW_SIGHT_X: u32 = 480;
+
+/// The parrot's coarse place on its patrol, in the search's state: the
+/// x shift (128 px stretches of the room).
+const PARROT_WAIT_SHIFT: i32 = 7;
+
+/// What the guide of Marrow's fight ([`marrow_guide`]) reads from the
+/// game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarrowFight {
+    /// Marrow's health.
+    pub health: i32,
+    /// The health from which he counts [`enemy::marrow::PHASE_DAMAGE`]
+    /// before his whistle (0 before the slabs or the parrot first wrote
+    /// it).
+    pub phase_health: i32,
+    /// His round is spent: his whistle is due, he whistles, or the parrot
+    /// flies to him or carries him.
+    pub spent: bool,
+    /// Claw can reach him: the slabs close or are closed, or the two are
+    /// on the same side of the pit.
+    pub met: bool,
+    /// Claw's distance to him, px (across less a sword's reach, plus up or
+    /// down).
+    pub near_marrow: u32,
+    /// The parrot's hits since it last left its perch.
+    pub parrot_hits: u32,
+    /// Claw's distance to the parrot while it dives at him or flinches,
+    /// px (across plus up or down); otherwise how near he waits for its
+    /// next dive, [`PARROT_NEAR_CAP`] less up to half of it for waiting
+    /// out of Marrow's sight.
+    pub near_parrot: u32,
+}
+
+/// The guide of Marrow's fight, past [`FIGHT_BASE`].
+///
+/// The fight runs in rounds of [`MARROW_ROUND_HEALTH`] points of his
+/// health. In each, with the pit open between Claw and him, the parrot
+/// must be hit three times, so it perches and the slabs close into a
+/// bridge; then Claw crosses and hits him until he whistles, and the
+/// parrot carries him across while the pit opens again. So a round is
+/// guided by the parrot's hits and Claw's distance to it while Claw cannot
+/// reach Marrow, then by Marrow's health and Claw's distance to him; a
+/// spent round counts as the start of the next one. Each round left
+/// counts for more than any state within a round, so every step of the
+/// loop is nearer than the one before.
+pub fn marrow_guide(f: &MarrowFight) -> u32 {
+    let round = MARROW_ROUND_HEALTH;
+    let health = f.health.max(0);
+    // The health at which this round ends: his whistle, 25 below the phase
+    // health once the slabs or the parrot wrote it (before that, as if
+    // each round started at a multiple of 25); a spent round counts as the
+    // next one, which ends 25 below his health now.
+    let end = if f.spent {
+        health - round
+    } else if f.phase_health > 0 {
+        f.phase_health - round
+    } else {
+        (health - 1).max(0) / round * round
+    }
+    .max(0);
+    // Rounds after this one, and the health left in it.
+    let later = (end + round - 1) as u32 / round as u32;
+    let left = (health - end).clamp(0, round) as u32;
+    let base = later * MARROW_ROUND_PX;
+    if f.met && !f.spent {
+        return base + left * MARROW_HEALTH_PX + f.near_marrow.min(MARROW_NEAR_CAP);
+    }
+    // The pit is open between them: the parrot's hits, then its flight
+    // home (its hits stay counted until it leaves the perch again).
+    let (hits, near) = if f.spent {
+        (0, f.near_parrot.min(PARROT_NEAR_CAP))
+    } else {
+        (
+            f.parrot_hits.min(PARROT_HITS),
+            f.near_parrot.min(PARROT_NEAR_CAP),
+        )
+    };
+    base + round as u32 * MARROW_HEALTH_PX
+        + MARROW_NEAR_CAP
+        + (PARROT_HITS - hits) * PARROT_HIT_PX
+        + near
+}
+
+/// What Marrow's fight in `sim` is at, while his link is up.
+fn marrow_fight(sim: &Sim) -> Option<MarrowFight> {
+    let link = sim.marrow_link()?;
+    let objects = sim.objects();
+    let m = objects.get(link.marrow)?;
+    let c = sim.player()?;
+    let parrot = objects.all().find_map(|(_, o)| match &o.data {
+        ObjectData::Parrot(d) => Some((o, d)),
+        _ => None,
+    });
+    let parrot_state = parrot.and_then(|(o, _)| EnemyState::from_id(o.state));
+    let health = m.health.max(0);
+    let spent = (link.phase_health > 0 && health <= link.phase_health - MARROW_ROUND_HEALTH)
+        || EnemyState::from_id(m.state) == Some(EnemyState::WaitForParrot)
+        || matches!(
+            parrot_state,
+            Some(EnemyState::FlyToMarrow | EnemyState::CarryMarrow)
+        );
+    let side = |x: i32| {
+        if x < MARROW_PIT.0 {
+            -1
+        } else if x > MARROW_PIT.1 {
+            1
+        } else {
+            0
+        }
+    };
+    Some(MarrowFight {
+        health,
+        phase_health: link.phase_health,
+        spent,
+        met: !link.open_request || (side(c.x) != 0 && side(c.x) == side(m.x)),
+        near_marrow: (m.x - c.x).unsigned_abs().saturating_sub(60) + (m.y - c.y).unsigned_abs(),
+        parrot_hits: parrot.map_or(0, |(_, d)| d.hits.max(0) as u32),
+        // Only a parrot diving at Claw (or flinching from his hit) comes
+        // near: on its patrol it keeps to the top of the room, and Claw
+        // waits for its dive (and for its carry of Marrow to end) far
+        // from Marrow, out of his sight, but under the parrot's patrol,
+        // which it dives from.
+        near_parrot: match parrot {
+            Some((o, _)) if parrot_dives(o) => {
+                (o.x - c.x).unsigned_abs() + (o.y - c.y).unsigned_abs()
+            }
+            Some((_, d)) if (d.enemy.bounds.0..=d.enemy.bounds.1).contains(&c.x) => {
+                PARROT_NEAR_CAP
+                    - (m.x - c.x)
+                        .unsigned_abs()
+                        .saturating_sub(MARROW_SIGHT_X)
+                        .min(PARROT_NEAR_CAP / 2)
+            }
+            _ => PARROT_NEAR_CAP,
+        },
+    })
 }
 
 /// The boss end's guide: the gem's field, besides the door's, which is the
@@ -1185,6 +1364,9 @@ impl Search<'_> {
         match boss_stage(sim) {
             BossStage::Door => DOOR_BASE.saturating_add(here),
             BossStage::Fight => {
+                if let Some(f) = marrow_fight(sim) {
+                    return FIGHT_BASE + marrow_guide(&f);
+                }
                 let (health, bx, by) = boss_in_play(sim).unwrap_or((
                     BOSS_HEALTH_CAP as i32,
                     boss.end.boss.0,
@@ -1838,6 +2020,25 @@ pub fn state_key(sim: &Sim) -> u64 {
                 i64::from(o.y >> 4),
                 i64::from(o.state),
             ]);
+        } else if let ObjectData::Parrot(d) = &o.data {
+            // Marrow's parrot: its hits decide when the bridge closes. On
+            // its patrol or its perch only the stretch of the room it is
+            // over tells a wait for its dive apart (finer, every way Claw
+            // could walk about while it flies would be a state of its
+            // own); diving at him, flinching or carrying, where it is.
+            let (x, y) = if parrot_waits(o) {
+                (o.x >> PARROT_WAIT_SHIFT, 0)
+            } else {
+                (o.x >> 4, o.y >> 4)
+            };
+            k.add(&[
+                14,
+                i64::from(id),
+                i64::from(d.hits),
+                i64::from(o.state),
+                i64::from(x),
+                i64::from(y),
+            ]);
         } else if let Some(d) = enemy::data_of(o) {
             k.add(&[2, i64::from(id), i64::from(d.dead)]);
         } else if let ObjectData::Rope(r) = &o.data {
@@ -1902,6 +2103,19 @@ pub fn state_key(sim: &Sim) -> u64 {
                 i64::from(y >> 3),
                 i64::from(st),
             ]);
+        }
+        if let Some(l) = sim.marrow_link() {
+            k.add(&[
+                15,
+                i64::from(l.open_request),
+                i64::from(l.parrot_call),
+                i64::from(l.phase_health),
+            ]);
+            // Waiting for the parrot's dive (the only move then), the time
+            // tells the waits apart: a wait is progress.
+            if actions::parrot_patrols(sim) {
+                k.add(&[16, (sim.tick() / actions::STEP as u64) as i64]);
+            }
         }
         if matches!(c.state, state::FREEZE | BOSS_END) {
             k.add(&[4, sim.tick() as i64]);
