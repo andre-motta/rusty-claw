@@ -1,0 +1,99 @@
+# Waypoints for the ninth level at the original speeds, from the level's
+# geometry. The route is searched a stretch at a time: each stretch below
+# runs with its waypoints as --hints (with --hints-on-foot) and ends at its
+# goal (--goal X,Y), and the next carries on from it (--from-route,
+# --from-tick at its last tick). Every stretch uses --seed level and
+# --fragile-cost 100.
+#
+# 1. Up the ladders by the start, over the wall, up the planks to the
+#    short ladder and the walk above it, and down on to the long plank:
+#    goal 3050,6343 with --goal-on-foot.
+2200,6407
+2400,5991
+# 2. Over the wall on to the swinging rope, on to the short ladder on
+#    its right and up to the walk with the checkpoint, on to the rope
+#    left of it and up the ladder above it to the high walk: goal
+#    3300,5479.
+3443,6250
+3620,6060
+3450,5911
+3191,5880
+# 3. Right along the high walk, down the narrow gap past the wall's foot
+#    on to the walk below, down the belts to the floor and under the
+#    wall to the checkpoint: goal 4559,7700.
+3900,6683
+# 4. Up the room beyond: the springboard, the low belt, the short walk
+#    on the left, the moving elevators, the short walk on the right, the
+#    belt above it, the ladder at the belt's left end, the walk with the
+#    saws, the ladder at its right end up to the belt above, left along
+#    it and up the short ladder to the pegs (the health on the second)
+#    and into the opening in the room's right wall: goal 5440,5883 with
+#    --goal-on-foot.
+5000,7447
+4680,7319
+4860,7185
+5350,7063
+4750,6935
+4720,6551
+5340,6235
+4870,5979
+5236,5979
+# 5. Into the big room, from rope to rope along the row of four under
+#    its top walk (a block stands on the walk), down the slot right of
+#    the last rope (below the warp at its top) to the floor and under
+#    the wall to the checkpoint: goal 7375,7771 with --goal-on-foot.
+5746,6370
+6194,6370
+6642,6370
+7090,6370
+# 6. Up the shaft between the skull cannons: the low ladder, the low
+#    rope, the ladder on the right, the ladder on the left, the high
+#    rope, the ladder on the right, the short walk in the middle and the
+#    ladder on the left up to the walk at the top: goal 7716,6169 with
+#    --goal-on-foot.
+7908,7513
+7910,7400
+8100,7001
+7716,6809
+7910,6760
+8100,6361
+7908,6425
+# 7. Left for the health on the walk, back right past the hook-handed
+#    pirate on to the wall top (more health), on to the elevator beside
+#    it, down with it and right under the next wall to the super
+#    checkpoint: goal 8721,7767 with --goal-on-foot.
+7524,6169
+8390,6039
+8544,6030
+8560,7703
+# 8. Up the springboards and ropes beyond: the floor's springboard,
+#    the low walk on the right and its springboard, the low rope, the
+#    walk on the left and its springboard, up on to the middle rope:
+#    goal 9230,6450 with --goal-on-foot.
+9476,7383
+9548,7000
+9150,6871
+# 9. Not searched: the ropes and the short walk between them come round
+#    only now and then, and the search does not wait for them. Claw lets
+#    go of the middle rope with a jump to the right, lands on the short
+#    walk with the saw, waits, and jumps on to the rope beyond it. The
+#    stretch is written into the route as these held buttons (masks of
+#    the route file), in ticks counted from the stretch's first tick,
+#    each range inclusive; each wait lies in the waits that work (150
+#    to 162, then 40 to 64).
+#       route ticks 7182 to 7515
+#           0-153 0x0 nothing
+#         154-167 0x2000001 right and jump
+#         168-217 0x2000000 right
+#         218-269 0x0 nothing
+#         270-283 0x2000001 right and jump
+#         284-313 0x2000000 right
+#         314-333 0x0 nothing
+# 10. Off the rope on to the walk beyond and up on to the wall top with
+#    the checkpoint: goal 10578,6615 with --goal-on-foot.
+# 11. The springboard right of the wall top up on to the walk with two
+#    hook-handed pirates and PegLeg, along it and on to the rope beyond:
+#    goal 11574,6290 with --goal-on-foot.
+10900,6231
+11150,6231
+11574,6290
