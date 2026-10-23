@@ -4,7 +4,8 @@
 //! screen's frames move the next frame pulse; with the fuse clock frozen
 //! neither happens. The fuse is lit in the tick a stick is thrown and goes
 //! off 70 ticks later. On a level with Claw alone the pass changes nothing
-//! a trace shows.
+//! a trace shows, and Claw's call in it sees no key pressed: a weapon
+//! switch pressed in the tick before the screen switches once.
 
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use claw_sim::container::CollisionEvent;
 use claw_sim::logic::projectile::{self, Phase, ProjectileSpec};
 use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags, types};
 use claw_sim::tuning::FuseClock;
-use claw_sim::{Sim, SimConfig, SimLevel, TickInput, TileMap};
+use claw_sim::{Buttons, Sim, SimConfig, SimLevel, TickInput, TileMap};
 
 fn frames(n: i32, ms: i32) -> Vec<(i32, i32)> {
     (1..=n).map(|f| (f, ms)).collect()
@@ -238,4 +239,28 @@ fn the_help_screens_frames_move_the_next_frame_pulse() {
         out
     };
     assert_eq!(frozen, plain);
+}
+
+#[test]
+fn a_key_pressed_before_the_help_screen_acts_once() {
+    let weapon = |sim: &Sim| claw_sim::TraceRow::capture(sim, 0, "script").weapon;
+    let switch = TickInput {
+        held: Buttons::TOGGLE,
+        pressed: Buttons::TOGGLE,
+    };
+    let mut sim = sim(FuseClock::Original);
+    let before = weapon(&sim);
+    sim.step(switch);
+    let switched = weapon(&sim);
+    assert_ne!(switched, before, "the press switches the weapon");
+    sim.pass_menu_time(500);
+    assert_eq!(weapon(&sim), switched, "not again in the return's pass");
+    // The last tick's input is left as it was.
+    assert_eq!(sim.claw_input(), switch);
+    sim.latch_keys();
+    sim.step(TickInput {
+        held: Buttons::TOGGLE,
+        pressed: Buttons::NONE,
+    });
+    assert_eq!(weapon(&sim), switched, "held across the screen: latched");
 }

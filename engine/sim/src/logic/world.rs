@@ -320,9 +320,8 @@ pub struct World<'a> {
     pub out: &'a mut Outbox,
     /// The play-test aids ([`crate::sim::SimConfig::aids`]).
     pub aids: PlayAids,
-    /// The call is an object's first, made in a set-up pass between ticks
-    /// (while the level loads, or after a warp moved Claw): the game clock
-    /// still reads the tick before the next one.
+    /// The call is an object's first, made in the set-up pass while the
+    /// level loads, before time zero.
     pub set_up: bool,
     /// The help screen's time, ms, in the update pass of the return from
     /// it (see [`crate::Sim::pass_help_return`]); 0 in every other call, and

@@ -997,8 +997,9 @@ impl Sim {
     /// ([`Sim::settle_after_warp`]): every other object still awake around
     /// the warp runs once more with no game time, the camera jumps to
     /// Claw, the objects by the warp go to sleep and those around his new
-    /// place wake, and those that never ran make their first logic call;
-    /// then Claw's logic runs once more with no game time, with the keys
+    /// place wake, and every object awake then runs once more with no game
+    /// time, those that never ran making their first logic call; then
+    /// Claw's logic runs once more with no game time, with the keys
     /// of the last tick held and nothing pressed. Nothing moves in that
     /// call, but Claw's state follows where he now is: falling onto a
     /// floor he lands, so a fall into the warp walks on in the first tick
@@ -1035,10 +1036,17 @@ impl Sim {
     /// Then the camera jumps to Claw when he is out of its reach
     /// ([`Camera::settle`]), and the activation's leave and enter run
     /// around his new place: the objects by the warp go to sleep before
-    /// the first tick at the target, and those around him wake. Last, the
-    /// objects that never ran make their first logic call in list order,
-    /// as the level's objects do while it loads (a trigger or boss waiting
-    /// there is so ready for Claw's first tick at the target).
+    /// the first tick at the target, and those around him wake. Last, a
+    /// second whole update pass runs over every object in the live list
+    /// but Claw, again with a frame time of 0 and the game clock of the
+    /// tick that touched the warp: the objects that never ran make their
+    /// first logic call in it, starting their waits at that tick's time (a
+    /// trigger or boss waiting there is so ready for Claw's first tick at
+    /// the target), and an enemy the warp woke at the target makes the
+    /// calls of a tick there (his per-tick draws among them) even when it
+    /// was set up long before; an object already awake there runs once
+    /// more too. An object still waiting out a time delay (the glitter
+    /// driver Claw carries in, for one) does not run in either pass.
     fn settle_after_warp(&mut self) {
         self.frame_ms = 0;
         self.held_clock_ms = Some(self.tick.saturating_sub(1) * u64::from(TICK_MS));
@@ -1064,10 +1072,10 @@ impl Sim {
             let (mut runner, objects, activation) = self.parts();
             activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
         }
+        self.activation.enter(&mut self.objects, c);
+        self.pass(false, self.player);
         self.frame_ms = TICK_MS;
         self.held_clock_ms = None;
-        self.activation.enter(&mut self.objects, c);
-        self.set_up_pass();
     }
 
     /// Gives up Claw's life now, before any logic of the tick (see
@@ -1770,7 +1778,11 @@ impl Sim {
     /// and the camera included, with the game clock at the game time of
     /// the last tick run plus `ms`, a frame time of 0 and the pulse of the
     /// last help frame: every object makes the calls and draws of an
-    /// ordinary tick there. A lit stick of dynamite whose fuse has burnt
+    /// ordinary tick there. Claw's call sees the keys of the last tick
+    /// held but none pressed, so a key pressed in the tick before the
+    /// screen (a weapon switch, say) acts once, not again in this pass;
+    /// the next tick's input is the input it is given, under the latch the
+    /// return sets ([`Sim::latch_keys`]). A lit stick of dynamite whose fuse has burnt
     /// by then goes off in its own call, as if it had gone off in the last
     /// tick before the screen (its blast hurts in the 8th tick after the
     /// screen, against the 9th after a stick that goes off in a tick). An
@@ -1794,9 +1806,11 @@ impl Sim {
     /// Claw has been seen at a help screen's return).
     ///
     /// With [`FuseClock::Frozen`] it does nothing, and the pause and the
-    /// in-game menu never call it: their time never reaches play.
+    /// in-game menu never call it: their time never reaches play. After
+    /// the level's end ([`Sim::level_ended`]) it does nothing either: play
+    /// has stopped.
     pub fn pass_help_return(&mut self, ms: u32, keys: usize) {
-        if self.cfg.fuse_clock == FuseClock::Frozen || ms == 0 {
+        if self.cfg.fuse_clock == FuseClock::Frozen || ms == 0 || self.ended {
             return;
         }
         let frames = ms.div_ceil(TICK_MS) as usize + 2 * keys;
@@ -1807,7 +1821,10 @@ impl Sim {
         self.frame_ms = 0;
         self.held_clock_ms = Some(at);
         self.help_pass_ms = Some(ms);
+        let input = self.claw_input;
+        self.claw_input.pressed = Buttons::NONE;
         self.update_pass();
+        self.claw_input = input;
         self.help_pass_ms = None;
         self.frame_ms = TICK_MS;
         self.held_clock_ms = None;

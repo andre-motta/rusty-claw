@@ -1529,11 +1529,11 @@ pub fn build(w: &mut World, id: ObjectId, body: Body, fields: EnemyFields, human
 /// and the whole time since when it went back to sleep at the end of that
 /// tick (built at the edge of its activation window, then dropped to a
 /// floor outside it) and wakes some ticks later. An enemy built in a
-/// set-up pass between ticks takes the time of the tick before the next
-/// one, so its first step in that next tick covers one tick (while the
-/// level loads, before time zero, no time is recorded, which covers one
-/// tick too). A class that builds its enemy without [`build`] calls this
-/// once its data is set.
+/// pass between ticks (a warp's) takes the time of the tick before the
+/// next one, the game time that pass reads, so its first step in that
+/// next tick covers one tick (while the level loads, before time zero, no
+/// time is recorded, which covers one tick too). A class that builds its
+/// enemy without [`build`] calls this once its data is set.
 pub fn start_move_clock(w: &mut World, id: ObjectId) {
     let at = built_at_ms(w);
     if let Some(d) = data_mut(w, id) {

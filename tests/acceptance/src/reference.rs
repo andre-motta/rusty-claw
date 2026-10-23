@@ -544,10 +544,16 @@ fn start_level(
 /// Replays `script` from `sim` (see [`start_game`]) with `driver`, one
 /// trace row per tick, and keeps playing with no button held until the
 /// trace covers `until_ms`. A command directive takes effect before its
-/// tick; a pause or a menu holds play and changes nothing in the game,
-/// except that the time of a help screen reaches the dynamite fuse at the
-/// boundary after it (unless the fuse clock is frozen) and that Claw's
-/// idle wait restarts as play resumes ([`Sim::restart_idle_wait`]). Every
+/// tick; a pause or a menu holds play and plays out as in the game
+/// ([`Sim::play_directive`]): the return from a help screen runs one
+/// update pass over the objects with the screen's time at the boundary
+/// after it (unless the fuse clock is frozen, see
+/// [`Sim::pass_help_return`]), Claw's idle wait restarts as play resumes
+/// ([`Sim::restart_idle_wait`]), and a menu screen latches the keys down
+/// ([`Sim::latch_keys`]). [`Driver::Ticks`] plays the directives at their
+/// ticks' boundaries and leaves the script's pause input switch alone;
+/// [`Driver::Session`] plays the script through the game's own frame loop
+/// with that switch ([`script_switches`]). Every
 /// row's source is `script`, the rows past the route's end included. The
 /// hermit crabs start with the values the route's header gives them
 /// (`# crab ...` lines, see [`CrabValues`]), each crab as it is built.

@@ -43,7 +43,11 @@
 //! with its hotspot 5 px right and 15 px down, that is from 41 px left to
 //! 50 px right of the keg and from 39 px above to 68 px below it, so a
 //! crate whose box starts 55 px right of a keg is out of its reach (see
-//! [`blast_box`]).
+//! [`blast_box`]). The explosion hurts in the collision pass of the tick
+//! whose call made it, as if the keg itself were the blast for that one
+//! pass (the keg stays unhittable through it), and it is gone after its
+//! next call (see [`effect::arm_at_once`]): Claw falling past a keg that
+//! goes off beside him is hurt in that very tick.
 //!
 //! A flying keg moves as the enemies do: each tick its exact position
 //! moves by `(v + g dt / 2) dt` on each axis, at most 24 px, it is drawn at
@@ -572,7 +576,8 @@ pub fn blast_box(w: &World, set: &str, frame: i32, mirrored: bool) -> Option<Rec
 /// Requests the keg's one explosion: an explosion object at the keg plus
 /// [`BLAST_OFFSET`] (mirrored with the keg) that hurts the keg's
 /// [`blast_box`] around the keg, or a square of [`BLAST_RADIUS`] around
-/// itself when the level does not know the keg's picture.
+/// itself when the level does not know the keg's picture. It is armed at
+/// once, for the collision pass of this tick.
 fn blast(w: &mut World, id: ObjectId) {
     let Some(o) = w.objects.get_mut(id) else {
         return;
@@ -606,6 +611,9 @@ fn blast(w: &mut World, id: ObjectId) {
             r.right - dx,
             r.bottom - BLAST_OFFSET.1,
         );
+    }
+    if let Some(b) = blast {
+        effect::arm_at_once(w, b);
     }
     w.shake(BLAST_SHAKE_MS);
     if let Some(o) = w.objects.get_mut(id) {

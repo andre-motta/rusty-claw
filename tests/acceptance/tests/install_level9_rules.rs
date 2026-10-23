@@ -32,6 +32,29 @@
 //! the pass counts as done in the next tick. A first-level route with
 //! three help screens shows it: a soldier takes a new stand pose in the
 //! pass after the third and again in the next tick.
+//!
+//! Three more, on `routes/earlier/level9-original-2.csv`, the route as it
+//! was found under the rules above and before these three (it keeps the
+//! first route's first 201 ticks), and on a first-level route:
+//!
+//! - a powder keg's blast hurts in the collision pass of the tick it goes
+//!   off in: the keg on the bridge high in the shaft, shot with the pistol
+//!   in tick 1499, goes off in tick 1512 and hurts Claw, falling past it,
+//!   by 20 in that tick, at the height he has then;
+//! - the second update pass after a warp runs every listed object but
+//!   Claw, with no game time: hurt a tick earlier, Claw falls past the
+//!   bridge onto a warp below it in tick 1575 and is sent back near the
+//!   level's start, where the hook-handed pirate waiting there, set up
+//!   long before and asleep since, makes his per-tick draws in that pass.
+//!   The route then ends without the level's end, as it did in the
+//!   original game, and the stream stays the original's to the original
+//!   run's last tick, 112 ticks past the route's last row, with nothing
+//!   held. `routes/level9-original.csv`, found again under these rules,
+//!   keeps that route's first 1535 ticks and jumps from the stand after
+//!   the blast a tick earlier;
+//! - Claw's call in the help return's pass sees no key pressed: a weapon
+//!   switch pressed in the tick before a help screen switches once, and a
+//!   key held down across the screen does not count as pressed after it.
 
 use std::path::Path;
 
@@ -303,4 +326,199 @@ fn install_a_timer_started_in_the_help_pass_is_done_at_once() {
     let mut run = Run::new(&level, &three_help_screens(), Some(4_105_512_405));
     run.to(671);
     run.check_rng(&HELP_RNG);
+}
+
+/// The original game's random state after these ticks of the second
+/// earlier route.
+const SECOND_RNG: [(usize, u32); 14] = [
+    (1499, 1_379_831_121),
+    (1510, 3_669_044_829),
+    (1511, 3_817_579_161),
+    (1512, 2_503_100_804),
+    (1513, 3_867_919_270),
+    (1534, 535_067_815),
+    (1535, 2_788_267_004),
+    (1575, 2_342_792_979),
+    (1576, 3_524_982_215),
+    (1577, 2_366_903_483),
+    (1600, 1_933_017_861),
+    (2000, 3_028_658_582),
+    (2424, 1_901_403_666),
+    (2536, 3_786_390_703),
+];
+
+/// Ticks the original run of the second earlier route lasted.
+const SECOND_RUN_TICKS: usize = 2537;
+
+/// Where the powder keg on the bridge high in the shaft stands, and where
+/// the hook-handed pirate near the level's start waits.
+const BRIDGE_KEG: (i32, i32) = (23001, 5587);
+const START_PIRATE: (i32, i32) = (2343, 5996);
+
+#[test]
+fn install_a_kegs_blast_hurts_in_the_tick_it_goes_off() {
+    let Some(root) = install() else { return };
+    let level = level(&root, 9);
+    let mut run = Run::new(&level, &routes_file("earlier/level9-original-2.csv"), None);
+    run.to(1498);
+    let at_keg = |run: &Run| {
+        run.sim
+            .objects()
+            .all()
+            .any(|(_, o)| &*o.logic == "PowderKeg" && (o.x, o.y) == BRIDGE_KEG)
+    };
+    assert!(at_keg(&run), "the keg on the bridge");
+    run.to(1511);
+    assert_eq!(run.claw_at(), (23055, 5662));
+    assert_eq!(run.sim.stats().health, 55);
+    // The blast in tick 1512 hurts Claw in that tick, where he is.
+    run.to(1512);
+    assert_eq!(run.claw_at(), (23055, 5668));
+    assert_eq!(run.sim.stats().health, 35);
+    assert_eq!(run.sim.player().unwrap().state, 31, "hurt");
+    run.to(1513);
+    assert_eq!(run.claw_at(), (23055, 5668));
+    assert_eq!(run.sim.stats().health, 35, "hurt once");
+    run.check_rng(&SECOND_RNG);
+}
+
+#[test]
+fn install_a_warps_second_pass_runs_every_object() {
+    let Some(root) = install() else { return };
+    let level = level(&root, 9);
+    // The route found again keeps the second earlier route's first 1535
+    // ticks.
+    let earlier = InputScript::parse(&routes_file("earlier/level9-original-2.csv")).unwrap();
+    let now = InputScript::parse(&routes_file("level9-original.csv")).unwrap();
+    assert_eq!(earlier.ticks[..1535], now.ticks[..1535]);
+    assert_ne!(earlier.ticks[1535], now.ticks[1535]);
+    let mut run = Run::new(&level, &routes_file("earlier/level9-original-2.csv"), None);
+    run.to(1574);
+    let pirate = run
+        .sim
+        .objects()
+        .all()
+        .find(|(_, o)| (o.x, o.y) == START_PIRATE)
+        .map(|(_, o)| o.is_listed());
+    assert_eq!(pirate, Some(false), "the pirate waits asleep");
+    run.to(1575);
+    assert_eq!(run.claw_at(), (23027, 6188), "on the warp below the bridge");
+    run.to(1576);
+    assert_eq!(run.claw_at(), (2171, 5904), "sent back near the start");
+    let pirate = run
+        .sim
+        .objects()
+        .all()
+        .find(|(_, o)| (o.x, o.y) == START_PIRATE)
+        .map(|(_, o)| o.is_listed());
+    assert_eq!(pirate, Some(true), "the warp woke the pirate");
+    run.check_rng(&SECOND_RNG);
+    run.to(SECOND_RUN_TICKS - 1);
+    assert_eq!(run.claw_at(), (3118, 7251));
+    let stats = run.sim.stats();
+    assert_eq!(
+        (stats.health, stats.score, stats.lives),
+        (35, 28900, 7),
+        "no level end"
+    );
+    run.check_rng(&SECOND_RNG);
+}
+
+/// A first-level route of 300 rows with nothing held but the weapon
+/// switch: pressed for one row in row 40, with the help screen up for
+/// 500 ms before row 41, and pressed in row 120 and held through row 122,
+/// with the help screen up for 500 ms before row 121.
+fn switch_before_help() -> String {
+    let mut text = String::from("# level 1\ntick,held_mask,pressed_mask\n");
+    for t in 0..300 {
+        if t == 41 || t == 121 {
+            text += &format!("@{t} menu help 500\n");
+        }
+        let held = if t == 40 || (120..=122).contains(&t) {
+            0x8
+        } else {
+            0
+        };
+        let pressed = if t == 40 || t == 120 { 0x8 } else { 0 };
+        text += &format!("{t},{held:#x},{pressed:#x}\n");
+    }
+    text
+}
+
+/// The original game's random state after these ticks of
+/// [`switch_before_help`].
+const SWITCH_RNG: [(usize, u32); 8] = [
+    (40, 382_094_739),
+    (41, 3_141_103_828),
+    (60, 4_042_785_042),
+    (119, 4_272_996_913),
+    (121, 1_044_143_152),
+    (123, 1_652_443_699),
+    (200, 3_837_821_437),
+    (299, 1_539_293_145),
+];
+
+#[test]
+fn install_a_key_pressed_before_a_help_screen_acts_once() {
+    let Some(root) = install() else { return };
+    let level = level(&root, 1);
+    let mut run = Run::new(&level, &switch_before_help(), Some(4_105_512_405));
+    let weapon = |run: &Run| claw_sim::TraceRow::capture(&run.sim, 0, "script").weapon;
+    run.to(39);
+    assert_eq!(weapon(&run), "pistol");
+    run.to(40);
+    assert_eq!(weapon(&run), "magic", "the press switches");
+    // The help return's pass does not switch again.
+    run.directives();
+    assert_eq!(weapon(&run), "magic");
+    run.to(41);
+    assert_eq!(weapon(&run), "magic");
+    run.to(119);
+    assert_eq!(weapon(&run), "magic");
+    run.to(120);
+    assert_eq!(weapon(&run), "dynamite");
+    // Held across the screen, the key is latched after it.
+    for t in 121..=123 {
+        run.to(t);
+        assert_eq!(weapon(&run), "dynamite", "tick {t}");
+    }
+    run.to(299);
+    assert_eq!(weapon(&run), "dynamite");
+    run.check_rng(&SWITCH_RNG);
+}
+
+#[test]
+fn install_the_route_found_again_ends_the_level_and_play_stays_stopped() {
+    let Some(root) = install() else { return };
+    let level = level(&root, 9);
+    let text = routes_file("level9-original.csv");
+    let script = InputScript::parse(&text).unwrap();
+    let seed = script.header.seed.expect("the route names its seed");
+    let mut sim = Sim::new(level, route::sim_config(TuningName::Original, seed));
+    let mut end = None;
+    for (t, &input) in script.ticks.iter().enumerate() {
+        sim.play_directives(&script, t);
+        sim.step(input);
+        if sim.level_ended() {
+            end = Some(t);
+            break;
+        }
+    }
+    assert_eq!(end, Some(2249), "the level's end");
+    assert_eq!(sim.stats().health, 35);
+    // A help screen after the level's end runs no pass: nothing moves and
+    // the stream and the pulse stay as they were.
+    let objects = |sim: &Sim| {
+        sim.objects()
+            .all()
+            .map(|(_, o)| (o.serial, o.x, o.y, o.state, o.frame))
+            .collect::<Vec<_>>()
+    };
+    let (rng, pulse, before) = (sim.rng_state(), sim.pulse(), objects(&sim));
+    sim.pass_menu_time(3000);
+    assert_eq!(sim.rng_state(), rng);
+    assert_eq!(objects(&sim), before);
+    sim.step(TickInput::default());
+    assert_eq!(sim.pulse(), pulse);
+    assert_eq!(objects(&sim), before);
 }

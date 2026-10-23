@@ -311,11 +311,10 @@ const ROUTES: [Route; 10] = [
 /// The other objects of the room (the lava hands, the geysers and their
 /// sparks, Claw's shots) make no draw on those passes. The replay moves
 /// Claw between the ticks as a warp does, and a warp already runs every
-/// awake object once more with no game time, so the first pass's draws
-/// are the warp's own and only the second pass's are made here; Claw held
-/// for the gem is only moved, so both passes' draws are made here. The
-/// stream so goes on from the same state as the run's and is compared on
-/// the rows that follow too.
+/// awake object twice more with no game time, so both passes' draws are
+/// the warp's own; Claw held for the gem is only moved, so both passes'
+/// draws are made here. The stream so goes on from the same state as the
+/// run's and is compared on the rows that follow too.
 fn teleport_draws(sim: &mut Sim, passes: usize) {
     let pulse = sim.pulse();
     let drawing: Vec<ObjectId> = sim
@@ -768,7 +767,6 @@ fn set_up_after(sim: &mut Sim, r: &Route, k: usize) {
             teleport_draws(sim, 2);
         } else {
             sim.with_world(|w| w.claw.special.warp_to = Some(to));
-            teleport_draws(sim, 1);
         }
     }
 }
@@ -1249,8 +1247,11 @@ struct Look {
     pieces: Vec<(i32, i32)>,
     balls: Vec<(i32, i32)>,
     gem: Option<(i32, i32)>,
-    /// The delayed lava mouth of the corridor: its state and attack box.
+    /// The delayed lava mouth of the corridor while it is awake: its state
+    /// and attack box.
     mouth: Option<(i32, claw_sim::object::Rect)>,
+    /// Its attack box, awake or asleep.
+    mouth_box: Option<claw_sim::object::Rect>,
     ended: bool,
 }
 
@@ -1282,14 +1283,13 @@ fn watch(level: &SimLevel, store: &str, clock: &str, rows: usize) -> Vec<Look> {
             _ => None,
         });
         let o = id.and_then(|i| sim.objects().get(i));
-        let mouth = sim
-            .objects()
-            .all()
-            .find(|(_, o)| {
-                &*o.logic == mouth::NAMES[0] && (o.editor.0, o.editor.1) == DELAYED_MOUTH
-            })
+        let delayed = sim.objects().all().find(|(_, o)| {
+            &*o.logic == mouth::NAMES[0] && (o.editor.0, o.editor.1) == DELAYED_MOUTH
+        });
+        let mouth = delayed
             .filter(|(_, o)| o.is_listed())
             .map(|(_, o)| (o.state, o.attack_rect));
+        let mouth_box = delayed.map(|(_, o)| o.attack_rect);
         out.push(Look {
             claw: (c.x, c.y, c.state),
             claw_health: sim.claw().stats.health,
@@ -1312,6 +1312,7 @@ fn watch(level: &SimLevel, store: &str, clock: &str, rows: usize) -> Vec<Look> {
                 .find(|(_, o)| &*o.logic == pickup::END_GEM)
                 .map(|(_, o)| (o.x, o.y)),
             mouth,
+            mouth_box,
             ended: sim
                 .last_events()
                 .iter()
@@ -1465,11 +1466,13 @@ fn install_omar_the_end_life_in_the_freeze_brings_claw_back_free_at_full_health(
         }
         // The corridor's delayed mouth, put to sleep mid-drip as the camera
         // panned to Omar, wakes with Claw: it waits its 500 ms again
-        // holding the drop box it showed when it went to sleep.
+        // holding the drop box of its last call, made in the tick it went
+        // to sleep in.
         let slept = (t..t + 97)
             .find(|&k| rows[k].mouth.is_none())
             .expect("the mouth sleeps under the pan");
-        let held = rows[slept - 1].mouth.expect("awake before").1;
+        assert!(rows[slept - 1].mouth.is_some(), "awake before");
+        let held = rows[slept].mouth_box.expect("the mouth");
         assert!(held.is_set(), "{store}: a drop's box");
         for (k, l) in rows.iter().enumerate().take(t + 124).skip(t + 97) {
             assert_eq!(l.mouth, Some((mouth::state::IDLE, held)), "{store} {k}");

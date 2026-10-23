@@ -417,10 +417,9 @@ fn run(w: &mut World, id: ObjectId) {
     post_tick(w, id, no_time);
 }
 
-/// True while Claw's respawn runs between two ticks: the respawn's update
-/// passes, which run with a frame time of 0 ([`World::dt_ms`]) and take no
-/// game time (her call never runs in the warp's set-up, the other call
-/// with no frame time). In those calls she makes her pre-tick's draws and
+/// True while an update pass runs between two ticks with a frame time of
+/// 0 ([`World::dt_ms`]), taking no game time: Claw's respawn's two passes
+/// and a warp's. In those calls she makes her pre-tick's draws and
 /// her decisions (the states of [`decides`] and a scheduled call), but
 /// nothing that takes time happens: a strike, a flinch, a block, a step
 /// back or a landing does not go on and she does not move. So a strike

@@ -684,8 +684,9 @@ fn start_at(sim: &mut Sim, at: (i32, i32), t0_ms: u64, seed: u32, catnip_ms: Opt
 /// replay makes those calls and holds those objects for the room's first
 /// tick when Claw is about to go through the door. The effects already
 /// running (the Catnip glitter) have no call then, which the build does
-/// itself: once set up they are out of the first-call state, so the
-/// door's set-up pass leaves them alone, and they are not held.
+/// itself: the shedding glitter waits out its time delay in the door's
+/// passes, which take no game time, so they leave it alone, and it is not
+/// held.
 fn through_the_door(sim: &mut Sim) {
     let Some(target) = sim.claw().special.warp_to else {
         return;

@@ -113,10 +113,16 @@
 #          282-295  0x1 jump
 #          296-298  0x0 nothing
 #          299-300  0x1000040 left and pistol
-#          301-335  0x0 nothing
-#          336-349  0x1 jump
-#          350-368  0x0 nothing
+#          301-334  0x0 nothing
+#          335-348  0x1 jump
+#          349-368  0x0 nothing
+#    The keg's blast hurts Claw in the tick it goes off (route tick
+#    1512), while he falls past it; the stand after the hurt is route
+#    tick 1534, and the jump onto the bridge is pressed in the tick after
+#    it, before he falls away (one tick later he drops past the bridge
+#    onto a warp that sends him back near the level's start).
 # 6. From the bridge out through the gap in the shaft's left wall, up
 #    the ledges beyond it, back right above the shaft, up the ladder on
 #    its right and right to the end-of-level gem: the level's end, no goal
-#    and no waypoints, searched from route tick 1569.
+#    and no waypoints, searched from route tick 1569 (searched again
+#    once the keg's blast hurt in its own tick).
