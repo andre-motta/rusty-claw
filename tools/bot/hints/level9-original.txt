@@ -1,0 +1,104 @@
+# Waypoints for the ninth level at the original speeds, from the level's
+# geometry. The route is searched a stretch at a time: each searched
+# stretch below runs with its waypoints as --hints (with --hints-on-foot)
+# and ends at its goal (--goal X,Y), and the next carries on from it
+# (--from-route, --from-tick at its last tick). Every stretch uses --seed
+# level and --fragile-cost 100.
+#
+# The route takes the warp high above the start, which puts Claw at the
+# foot of the shaft below the end of the level, and climbs the shaft in
+# mid-air: no jump of his own reaches its first floor (the bridge with the
+# two powder kegs). Three times he throws a stick of dynamite near the top
+# of a jump and the help screen is up for three seconds at the boundary
+# after the throw (the route's `@N menu help 3000` lines): the screen's
+# time burns the fuse, so the stick goes off at once beside him, its blast
+# stops him in mid-air, he stands there for a tick and a jump pressed then
+# is a fresh jump from that height. A new game carries three sticks, one
+# short of the bridge, so the fourth blast is a powder keg's: from below
+# the bridge, at the top of a jump, Claw shoots the keg at its left end
+# with the pistol, its blast stops him in mid-air too, and the jump from
+# there lands him on the bridge. Each of those jumps reaches its height
+# only with Catnip, which PegLeg on the deck by the first saw drops: the
+# stretches from taking it to the keg's blast fit in its fifteen seconds.
+#
+# 1. Up the ladders by the start, over the wall and down on to the deck
+#    left of the saw: goal 2300,7244 with --goal-on-foot.
+1880,7244
+1600,6924
+2000,6795
+# 2. Not searched: past the saw to PegLeg, a crouching stab, two blows
+#    and the Catnip he drops. Found by trying moves on copies of the game
+#    (the search does not fight on a level without a boss); written into
+#    the route as these held buttons (masks of the route file), in ticks
+#    counted from the stretch's first tick, each range inclusive.
+#       route ticks 550 to 703
+#            0-13   0x2000001 right and jump
+#           14-19   0x2000000 right
+#           20-33   0x2000001 right and jump
+#           34-39   0x2000000 right
+#           40-53   0x2000001 right and jump
+#           54-59   0x2000000 right
+#           60-64   0x2000001 right and jump
+#           65-70   0x2000000 right
+#           71-72   0x8000000 down
+#           73-74   0x8000002 down and attack
+#           75-78   0x8000000 down
+#           79-92   0x2000001 right and jump
+#           93-98   0x2000000 right
+#           99-112  0x2000001 right and jump
+#          113-118  0x2000000 right
+#          119-123  0x1 jump
+#          124-129  0x0 nothing
+#          130-131  0x1000002 left and attack
+#          132-133  0x1000000 left
+#          134-147  0x1000001 left and jump
+#          148-153  0x1000000 left
+# 3. Back left along the deck, up the springboard to the swinging rope and
+#    on to the low plank below the ladder: goal 2150,6412 with
+#    --goal-on-foot.
+2200,6800
+# 4. Not searched: up the ladder to the high plank, left along it and a
+#    jump off its end into the warp, which puts Claw at the foot of the
+#    shaft. The warp lies out of the search's reach in its coarse graph
+#    (only this jump touches it), and the Catnip leaves no time to spare.
+#       route ticks 1046 to 1199
+#            0-13   0x2000001 right and jump
+#           14-27   0x5000001 left, up and jump
+#           28-55   0x4000001 up and jump
+#           56-70   0x4000000 up
+#           71-84   0x1000000 left
+#           85-93   0x1000001 left and jump
+#           94-153  0x1000000 left
+# 5. Not searched: the climb up the shaft. Two springboards, a moving
+#    elevator under the shaft, a jump from it, the three sticks with the
+#    help screen (before route ticks 1353, 1402 and 1451, each `@` line of
+#    the route), the jump and pistol shot at the keg, and the jump on to
+#    the bridge. The stand after each blast lasts one tick, so each jump
+#    is pressed on it.
+#       route ticks 1200 to 1568
+#            0-28   0x0 nothing
+#           29-88   0x2000000 right
+#           89-94   0x0 nothing
+#           95-134  0x2000000 right
+#          135-136  0x0 nothing
+#          137-150  0x1 jump
+#          151-152  0x100 dynamite
+#          153-183  0x0 nothing
+#          184-197  0x1 jump
+#          198-199  0x0 nothing
+#          200-201  0x100 dynamite
+#          202-232  0x0 nothing
+#          233-246  0x1 jump
+#          247-248  0x2000000 right
+#          249-250  0x100 dynamite
+#          251-281  0x0 nothing
+#          282-295  0x1 jump
+#          296-298  0x0 nothing
+#          299-300  0x1000040 left and pistol
+#          301-335  0x0 nothing
+#          336-349  0x1 jump
+#          350-368  0x0 nothing
+# 6. From the bridge out through the gap in the shaft's left wall, up
+#    the ledges beyond it, back right above the shaft, up the ladder on
+#    its right and right to the end-of-level gem: the level's end, no goal
+#    and no waypoints.

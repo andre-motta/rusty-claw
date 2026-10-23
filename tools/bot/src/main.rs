@@ -42,7 +42,10 @@
 //! the ticks missing. The other route's `# level`, `# tuning` and
 //! `# seed` lines, when it has them, must match the arguments. Without
 //! `--hints`, the new route's header names the other route's hints file,
-//! since its leading ticks were found with those waypoints.
+//! since its leading ticks were found with those waypoints. The other
+//! route's help screens and pauses (`@` lines) up to T are played as the
+//! game plays them and kept in the new route; one that ends a life is
+//! refused.
 //! `--start X,Y` plans a segment: Claw is placed at (X, Y) in the
 //! level-start world and the game runs with nothing held until he and the
 //! camera are at rest; the random stream is then set to the seed and the
@@ -120,7 +123,7 @@ use claw_bot::route::{self, Header, TuningName};
 use claw_bot::search::Intro;
 use claw_bot::{Goal, SearchConfig, search_report_with};
 use claw_sim::logic::enemy::crab::CrabValues;
-use claw_sim::{Carry, InputScript, ScriptHeader, Sim, SimLevel, StartState};
+use claw_sim::{Carry, DirectiveKind, InputScript, ScriptHeader, Sim, SimLevel, StartState};
 
 const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--tuning default|original] [--nodes N] [--budget-min M] [--seed S|level] [--hints FILE] \
@@ -357,17 +360,21 @@ fn read_crabs(path: &Path) -> Result<CrabValues, String> {
     CrabValues::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Plays the ticks of `prefix` on `sim`, the crabs given their `crabs`
-/// values; an error when Claw loses a life in them.
+/// Plays the ticks of `prefix` on `sim` with its help screens and pauses
+/// (see [`route::play_directives`]), the crabs given their `crabs`
+/// values; an error when Claw loses a life in them. The directives due
+/// after its last tick, before the search's first, are played too.
 fn play_prefix(sim: &mut Sim, prefix: &InputScript, crabs: &CrabValues) -> Result<(), String> {
     let lives = sim.stats().lives;
     for (i, &input) in prefix.ticks.iter().enumerate() {
+        route::play_directives(sim, prefix, i);
         sim.step(input);
         crabs.apply(sim);
         if sim.stats().lives < lives || claw_bot::search::dying(sim) {
             return Err(format!("Claw dies at tick {i} of the route continued"));
         }
     }
+    route::play_directives(sim, prefix, prefix.ticks.len());
     Ok(())
 }
 
@@ -439,11 +446,12 @@ struct Prefix {
     crabs: (CrabValues, Vec<CrabValues>),
 }
 
-/// The first `t` ticks of the route `text`, for `--from-route`: its
+/// The first `t` ticks of the route `text`, with its help screens and
+/// pauses up to the boundary before tick `t`, for `--from-route`: its
 /// `# level`, `# tuning` and `# seed` lines must match the arguments and
-/// its progress (`# start_...` lines) `carry`, and it may hold no directive
-/// at or before `t`. Its segment start, `# start X,Y`, is always the
-/// continued route's, none when it has none.
+/// its progress (`# start_...` lines) `carry`, and it may hold no command
+/// (the end of a life) at or before `t`. Its segment start, `# start X,Y`,
+/// is always the continued route's, none when it has none.
 fn read_prefix(
     text: &str,
     t: usize,
@@ -461,16 +469,26 @@ fn read_prefix(
     if route::parse_carry(text)?.as_ref() != carry {
         return Err("the route starts with other progress than --carry gives".to_string());
     }
-    // The search plays the prefix as plain ticks, so a directive inside
-    // it would make the continued route play differently.
-    if let Some(d) = script.directives.iter().find(|d| d.tick <= t) {
+    // The search plays the prefix's help screens and pauses as the game
+    // does; a route never ends a life on purpose.
+    if let Some(d) = script
+        .directives
+        .iter()
+        .find(|d| d.tick <= t && matches!(d.kind, DirectiveKind::Command(_)))
+    {
         return Err(format!(
-            "the route has a directive at tick {}, at or before the continue point {t}; only plain ticks can be continued",
+            "the route gives a command at tick {}, at or before the continue point {t}",
             d.tick
         ));
     }
     let mut ticks = InputScript::default();
     ticks.ticks = script.ticks[..t].to_vec();
+    ticks.directives = script
+        .directives
+        .iter()
+        .filter(|d| d.tick <= t)
+        .cloned()
+        .collect();
     Ok(Prefix {
         script: ticks,
         hints: header.hints,
@@ -843,6 +861,40 @@ mod tests {
         assert!(read_prefix(&other, 1, 8, TuningName::Original, 7, None).is_err());
         let e = read("# start_score = 5\n", 1).unwrap_err();
         assert!(e.contains("start_"), "{e}");
+    }
+
+    #[test]
+    fn a_continued_route_keeps_the_help_screens_and_pauses_before_its_continue_point() {
+        let mut text =
+            String::from("# level 9\n# tuning original\n# seed 7\ntick,held_mask,pressed_mask\n");
+        for t in 0..10 {
+            if t == 3 {
+                text.push_str("@3 menu help 3000\n");
+            }
+            if t == 6 {
+                text.push_str("@6 pause 400\n");
+            }
+            text.push_str(&format!("{t},0x0,0x0\n"));
+        }
+        let read = |text: &str, t| read_prefix(text, t, 9, TuningName::Original, 7, None);
+        // Those up to the boundary before the continue point come along;
+        // one at the continue point itself is due before the search's
+        // first tick.
+        let ticks = |p: &Prefix| {
+            p.script
+                .directives
+                .iter()
+                .map(|d| d.tick)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ticks(&read(&text, 2).unwrap()), Vec::<usize>::new());
+        assert_eq!(ticks(&read(&text, 3).unwrap()), [3]);
+        assert_eq!(ticks(&read(&text, 10).unwrap()), [3, 6]);
+        // A route never ends a life on purpose.
+        let ended = text.replace("@6 pause 400", "@6 command end_life");
+        assert!(read(&ended, 5).is_ok());
+        let e = read(&ended, 6).unwrap_err();
+        assert!(e.contains("command at tick 6"), "{e}");
     }
 
     #[test]

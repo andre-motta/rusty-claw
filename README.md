@@ -418,7 +418,7 @@ life. Replays, `claw-replay` and the benchmark all follow them.
 The routes in `tests/acceptance/routes/` finish the first eight levels:
 `level1.csv` to `level8.csv` with the default tuning,
 `level1-original.csv` to `level8-original.csv` with the original game's
-speeds, `level2-introskip.csv`, `level4-introskip.csv`,
+speeds (and `level9-original.csv` the ninth level, see below), `level2-introskip.csv`, `level4-introskip.csv`,
 `level6-introskip.csv` and `level8-introskip.csv` with the jump-in that
 skips Raux's, Katherine's, Wolvington's and Gabriel's introductions,
 `level3-boost.csv` with
@@ -458,7 +458,20 @@ while it lasts its jump-in, a short hop, lands Claw on the dock and a
 jump from there lands him on the deck; the routes that sit through
 the introduction get up with a dynamite boost (written into them by hand,
 as the third level's is; `tools/bot/hints/level8-original.txt` lists the
-held buttons). They
+held buttons).
+`level9-original.csv` takes the warp high above the ninth level's start,
+which puts Claw at the foot of the shaft below the level's end, and climbs
+the shaft in mid-air: three times it throws a stick of dynamite near the
+top of a jump with the help screen up for three seconds after the throw
+(`@N menu help 3000` lines), so the stick goes off at once beside him, the
+blast stops him in mid-air and a jump pressed on the tick he stands there
+is a fresh jump; the fourth blast is a powder keg's, set off with a pistol
+shot from below the bridge it stands on. Those jumps reach their height
+only with the Catnip PegLeg drops on the deck by the first saw. The bot
+plays a route's help screens and pauses as the game does, and keeps them
+when it carries on from one; `tools/bot/hints/level9-original.txt` lists
+the held buttons of the stretches written by hand (the fight with PegLeg,
+the jump into the warp and the climb). They
 are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and
 keeps the ones that bring Claw closer to the level's end. Its budget counts

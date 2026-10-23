@@ -24,8 +24,10 @@
 //!   steps on it, so he stands on it and then falls through);
 //! - up: only within a jump's reach above support in the same column, or
 //!   on a ladder, or within a jump's reach and Claw's height below one
-//!   (he catches a ladder with his body, so a jump from the floor reaches
-//!   a ladder that ends higher than his feet can), or in a springboard's
+//!   above support somewhere within a jump's width (he catches a ladder
+//!   with his body, so a jump from the floor, or from a rope beside the
+//!   ladder, reaches a ladder that ends higher than his feet can, as in
+//!   the ninth level's shaft between the skull cannons), or in a springboard's
 //!   or a blower's throw, or within Claw's height above a throw and below
 //!   a ladder (he catches it at the top of the throw);
 //! - sideways: only within a jump's reach above support somewhere within
@@ -725,7 +727,7 @@ impl Grid {
                     || self.climb[b]
                     || below.is_some_and(|i| self.climb[i])
                     || (self.to_ladder[b] <= self.body_cells
-                        && (self.air[b] <= self.reach_cells + self.body_cells || self.lifted[b])));
+                        && (self.env[b] <= self.reach_cells + self.body_cells || self.lifted[b])));
             let mut relax = |a: usize, cost: u32, heap: &mut BinaryHeap<Reverse<(u32, usize)>>| {
                 if !self.open[a] {
                     return;
@@ -1021,6 +1023,38 @@ mod tests {
         let g = Grid::build(&ladder_level(18), reach);
         let f = g.field_to(30 * 16, 4 * 16 + 8, 16);
         assert_eq!(f.at(21 * 16 + 8, feet), UNREACHABLE);
+    }
+
+    #[test]
+    fn a_jump_from_a_rope_beside_a_ladder_catches_it_with_claws_body() {
+        // A pit 480 px wide with a ladder over its right half, its foot
+        // 376 px above the floor: out of reach from the floor, but a jump
+        // from a rope beside it, whose end swings 120 px above the
+        // floor's feet, catches it with Claw's body (above the jump's
+        // reach from the top of the swing).
+        let feet = 38 * 16 + 8;
+        let level = |objects: Vec<ObjectSpec>| {
+            let mut rows = vec![".".repeat(50); 39];
+            for row in rows.iter_mut().take(15).skip(11) {
+                row.replace_range(32..33, "H");
+            }
+            let mut floor = "#".repeat(10);
+            floor.push_str(&"x".repeat(30));
+            floor.push_str(&"#".repeat(10));
+            rows.push(floor);
+            let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+            let mut level = SimLevel::synthetic(TileMap::from_ascii(16, &rows), (40, 40));
+            level.objects = objects;
+            level
+        };
+        let field = |level: &SimLevel| {
+            Grid::build(level, Reach::default())
+                .field_to(32 * 16 + 8, 11 * 16 + 8, 16)
+                .at(5 * 16, feet)
+        };
+        assert_eq!(field(&level(Vec::new())), UNREACHABLE);
+        let rope = ObjectSpec::at("AniRope", 22 * 16, feet - 120 - 87 - ROPE_FEET, 0);
+        assert_ne!(field(&level(vec![rope])), UNREACHABLE);
     }
 
     /// 16 px tiles: floor on both sides of a death pit 480 px wide (feet

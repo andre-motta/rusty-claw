@@ -1,7 +1,14 @@
 //! Route files: the input script with its header lines, the ROUTE.json
 //! report, playing a route back and its timing margin.
+//!
+//! A route may hold help screens and pauses between two ticks (`@` lines,
+//! as a recorded game holds them): a stretch written by hand that throws a
+//! stick of dynamite and opens the help screen while it burns, so that it
+//! goes off at Claw's side in mid-air. They are played here as the game's
+//! own replay plays them ([`play_directives`]).
 
 use claw_sim::claw_frame::GameEvent;
+use claw_sim::input::{Directive, DirectiveKind, ScriptCommand};
 use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::{Carry, InputScript, Sim, SimConfig};
 
@@ -220,6 +227,36 @@ pub fn route_csv(header: &Header, script: &InputScript) -> String {
     format!("{}{}", header.lines(), script.to_csv())
 }
 
+/// Plays the directives of `script` due at the boundary before tick
+/// `tick` on `sim`, as the game's replay does: when play comes back from a
+/// help screen, the time it was up reaches the dynamite fuse; when it comes
+/// back from any screen, the keys down count as already pressed (the
+/// game's original rule for keys); and as play resumes after a pause or a
+/// screen, the game's clock is reset. The in-game menu's end of a life
+/// ends it.
+pub fn play_directives(sim: &mut Sim, script: &InputScript, tick: usize) {
+    for d in script.directives.iter().filter(|d| d.tick == tick) {
+        play_directive(sim, d);
+    }
+}
+
+fn play_directive(sim: &mut Sim, d: &Directive) {
+    match &d.kind {
+        DirectiveKind::Menu {
+            screen, wall_ms, ..
+        } => {
+            if *screen == claw_sim::input::MenuScreen::Help {
+                sim.pass_menu_time(*wall_ms);
+            }
+            sim.restart_idle_wait();
+            sim.latch_keys();
+        }
+        DirectiveKind::Pause { .. } => sim.restart_idle_wait(),
+        DirectiveKind::Command(ScriptCommand::EndLife) => sim.end_life(),
+        DirectiveKind::Command(ScriptCommand::Powerup(p)) => sim.give_powerup(*p),
+    }
+}
+
 /// Ticks at which the held mask changes (tick 0 counts when anything is
 /// held from the start).
 pub fn changes(script: &InputScript) -> Vec<usize> {
@@ -278,6 +315,7 @@ pub fn play_with(start: &Sim, script: &InputScript, goal: &Goal, crabs: &CrabVal
     };
     let lives = sim.stats().lives;
     for (i, &t) in script.ticks.iter().enumerate() {
+        play_directives(&mut sim, script, i);
         let health = sim.stats().health;
         sim.step(t);
         crabs.apply(&mut sim);
@@ -305,7 +343,8 @@ pub fn play_with(start: &Sim, script: &InputScript, goal: &Goal, crabs: &CrabVal
 }
 
 /// How much the route's timing can slip: sampled changes of the held
-/// mask, each played one tick early and one tick late on its own.
+/// mask, each played one tick early and one tick late on its own (the
+/// route's help screens and pauses staying where they are).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Margin {
     /// Changes sampled.
@@ -350,8 +389,12 @@ pub fn margin_with(
         // A tick late: the old mask runs through c.
         let mut late = held.clone();
         late[c] = held[c - 1];
-        let early_won = play_with(start, &InputScript::from_held(&early), goal, crabs).won();
-        let late_won = play_with(start, &InputScript::from_held(&late), goal, crabs).won();
+        let shifted = |held: &[u32]| InputScript {
+            directives: script.directives.clone(),
+            ..InputScript::from_held(held)
+        };
+        let early_won = play_with(start, &shifted(&early), goal, crabs).won();
+        let late_won = play_with(start, &shifted(&late), goal, crabs).won();
         m.early_wins += usize::from(early_won);
         m.late_wins += usize::from(late_won);
         if !early_won || !late_won {
