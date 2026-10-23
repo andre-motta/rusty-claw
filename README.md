@@ -479,7 +479,10 @@ this level spares a crate beside the keg by the ladders near the start.
 The bot and `claw-replay` play a route's help screens and pauses as the
 game does, through one shared function, and the bot keeps them when it
 carries on from a route (refusing one recorded with another pause or
-screen switch than the original's); `tools/bot/hints/level9-original.txt`
+screen switch than the original's). `claw-replay` follows a recording's
+`# fuse_clock` line (with `frozen` a help screen's return runs no pass)
+and refuses one recorded with another `pause_input` than the original's.
+`tools/bot/hints/level9-original.txt`
 lists the held buttons of the stretches written by hand (the fight with
 PegLeg, the walk back to the springboard, the jump into the warp and the
 climb). They
