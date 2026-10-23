@@ -686,6 +686,31 @@ fn losing_all_health_falls_out_of_view_then_respawns() {
 }
 
 #[test]
+fn the_respawn_shows_a_frame_of_its_own_at_the_checkpoint() {
+    let mut sim = sim_of(&[]);
+    let start = {
+        let o = sim.player().unwrap();
+        (o.x, o.y)
+    };
+    sim.step(hold(RIGHT));
+    sim.step(hold(RIGHT));
+    let e = enemy(&mut sim, 150);
+    step(&mut sim);
+    sim.with_world(|w| w.destroy(e));
+    run_until(&mut sim, TickInput::default(), 200, Sim::respawn_pending);
+    // The last frame before the respawn did not draw Claw: he had fallen
+    // out of view.
+    assert!(!sim.player().unwrap().drawn_last_frame);
+    // The respawn's own frame, before any tick runs, draws him where it
+    // put him, so what the next tick's logic sees as shown is decided
+    // there.
+    assert!(sim.respawn_now());
+    let o = sim.player().unwrap();
+    assert_eq!((o.x, o.y), start);
+    assert!(o.drawn_last_frame, "shown by the respawn's frame");
+}
+
+#[test]
 fn death_on_a_death_tile_respawns_at_the_last_checkpoint() {
     let mut sim = sim_of(&[("Checkpoint", 1210, 899)]);
     let events = run_until(&mut sim, hold(RIGHT), 200, |s| {

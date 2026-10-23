@@ -474,6 +474,13 @@ pub fn parrot_dives(o: &Object) -> bool {
 }
 
 /// The ends of the spike pit between the ledges of Marrow's room, x.
+///
+/// These are the retail tenth level's: the bot's wait for the parrot's
+/// dives in Marrow's fight ([`parrot_patrols`]) is tuned to that room. On
+/// a community custom level whose Marrow room has its pit elsewhere, the
+/// wait does not tell the sides apart, so the search there should not
+/// count on it: it still plays the fight, but may try every move under
+/// the parrot's patrol or wait where a move was needed.
 pub const MARROW_PIT: (i32, i32) = (40640, 40991);
 
 /// True in Marrow's fight while the slabs are open or opening, Claw is

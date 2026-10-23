@@ -566,29 +566,24 @@ known.lives = 119717
 # level, and the game starts from the route's lines (rule 27), so health
 # differs from the first step and the game's Claw takes a potion at
 # 44316 ms that the original's leaves. On its own way from there the game
-# keeps Claw's place equal to the original's until 140076 ms (137592 ms
-# before the third level's latest rules, where the falling death after
-# the life lost at 136728 ms drifted by a pixel) and its pistol
-# ammunition until 197928 ms; it loses a later life a little earlier than
-# before (148284 ms, 151362 ms before those rules). The route loses five
-# lives in the original; the bot found it again from 100 health and these
-# rules, and the original has not played that yet.
+# keeps Claw's place equal to the original's until 186678 ms, through the
+# respawns after every life it loses, and its height, score, lives,
+# ammunition and events to the trace's end (140076 ms before the
+# respawn showed a frame of its own, when an enemy by the checkpoint saw
+# Claw a tick late after a respawn; 137592 ms before the third level's
+# latest rules, where the falling death after the life lost at 136728 ms
+# drifted by a pixel). The route loses five lives in the original; the
+# bot found it again from 100 health and these rules, and the original
+# has not played that yet.
 [[compare]]
 reference = "level2/pair-original"
 clock = "c18"
 tolerance = "exact"
 known.health = 18
 known.rng = 44316
-known.y = 140526
-known.state_id = 140076
-known.physics_type = 140076
-known.x = 140094
-known.cam_x = 140094
-known.cam_y = 140526
-known.score = 140778
-known.lives = 148284
-known.events = 148284
-known.pistol = 197928
+known.state_id = 186678
+known.x = 186696
+known.cam_x = 186696
 
 # A route written down from a recording of a fast run, from Claw placed by
 # the boss room's door, at 60 frames per second: both games run Raux's

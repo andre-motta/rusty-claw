@@ -43,3 +43,7 @@
 #    level's end, no goal and no waypoints, with --intro play and
 #    --tick-cost 0 (the fight waits on the parrot's dives, so the time
 #    is not counted against it).
+# 13b. Searched again the same way from route tick 13940 (the route's
+#    first 13940 ticks kept): with an enemy's move past the top or bottom
+#    of its range kept on it, the parrot's carries of Marrow, and so its
+#    dives, come out otherwise from there.

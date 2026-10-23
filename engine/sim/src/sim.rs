@@ -184,6 +184,9 @@ pub struct Sim {
     /// Claw respawned since the last tick: the death's circles end with
     /// the next tick.
     respawned: bool,
+    /// The next warp between ticks is a placement ([`Sim::place_between_ticks`]),
+    /// which shows no frame of its own.
+    place_only: bool,
     /// [`SimConfig::boss_health`] has been given to the boss.
     boss_health_given: bool,
     /// The frame time the logic calls run with, ms: one tick, or 0 in the
@@ -567,6 +570,7 @@ impl Sim {
             end_life: false,
             give_powerup: None,
             respawned: false,
+            place_only: false,
             boss_health_given: false,
             ended: false,
             frame_ms: TICK_MS,
@@ -931,7 +935,12 @@ impl Sim {
     /// Home makes Home's draws in the second and can start its strike
     /// there); one the respawn wakes runs once; one near the place of the
     /// death only, about to go to sleep, still runs in the first pass (a
-    /// crate there makes its roll).
+    /// crate there makes its roll). Once the passes are over, the respawn
+    /// shows a frame of its own at the camera point they left, which marks
+    /// what it draws ([`Sim::mark_drawn`]): Marrow, put back by the
+    /// checkpoint of his arena, sees Claw in the first tick after the
+    /// respawn when that frame draws him, even though the last frame before
+    /// the death did not.
     ///
     /// Inferred: the clock standing still in the passes. An enemy by the
     /// place of the death whose timer runs out at the end of that tick
@@ -989,6 +998,8 @@ impl Sim {
         self.respawned = true;
         // The clock is reset once the passes are over.
         self.restart_idle_wait();
+        // Then the respawn shows a frame of its own at the respawned place.
+        self.mark_drawn();
     }
 
     /// The warp Claw touched in the last tick, between that tick and the
@@ -1004,7 +1015,8 @@ impl Sim {
     /// call, but Claw's state follows where he now is: falling onto a
     /// floor he lands, so a fall into the warp walks on in the first tick
     /// at the target when a direction is held, while a walk into it stays
-    /// a walk.
+    /// a walk. Last, the warp shows a frame of its own at the target, which
+    /// marks what it draws ([`Sim::mark_drawn`]).
     fn warp_between_ticks(&mut self, (x, y): (i32, i32)) {
         let Some(id) = self.player else { return };
         if let Some(o) = self.objects.get_mut(id) {
@@ -1020,6 +1032,26 @@ impl Sim {
         runner.move_ms = 0;
         runner.with_claw(objects, id, player::tick);
         runner.list_spawned(objects);
+        // Then the warp shows a frame of its own at the target, unless it
+        // was only a placement.
+        if !std::mem::take(&mut self.place_only) {
+            self.mark_drawn();
+        }
+    }
+
+    /// Puts Claw at (`x`, `y`) between this tick and the next the way a
+    /// warp does ([`Sim::warp_between_ticks`]: the passes, the camera's
+    /// jump and his own call there), but without the frame a warp shows
+    /// of its own afterwards, so what each object counts as shown stays
+    /// what the last tick's frame drew. This is how a recorded run of the
+    /// original game that starts from a point of a level (Claw put there
+    /// by the game's teleport command) is set up: such runs follow the
+    /// game with Claw placed this way and not with a warp's frame (a tiger
+    /// guard of the fourteenth level, drawn by that frame, would see him a
+    /// tick early).
+    pub fn place_between_ticks(&mut self, x: i32, y: i32) {
+        self.claw.special.warp_to = Some((x, y));
+        self.place_only = true;
     }
 
     /// The warp's set-up after it moved Claw (see
@@ -1240,14 +1272,33 @@ impl Sim {
     /// The end of a tick's frame, for each object in the live list: a jump
     /// is reported once, in the snapshot of the tick it happens in (or the
     /// next one, for moves made between ticks); and the frame shown after
-    /// the tick draws the object ([`Object::drawn_last_frame`]) when it is
-    /// not hidden and its draw box overlaps the logic view at the camera
-    /// point the tick ended with. The game shows one frame per tick, after
-    /// the tick's logic, so this is what that frame draws, worked out here
-    /// without the renderer. Objects out of the live list keep what they
-    /// had; the respawn and the warp between ticks show no frame of their
-    /// own.
+    /// the tick marks what it draws ([`Sim::mark_drawn`]). The game shows
+    /// one frame per tick, after the tick's logic, so this is what that
+    /// frame draws, worked out here without the renderer. The respawn and
+    /// the warp between ticks also show a frame of their own once their
+    /// passes are over, which sets the same marks.
     fn end_frame(&mut self) {
+        for id in self.objects.listed() {
+            if let Some(o) = self.objects.get_mut(id) {
+                o.teleported = false;
+            }
+        }
+        self.mark_drawn();
+    }
+
+    /// The marks of a frame shown now: it draws an object of the live list
+    /// ([`Object::drawn_last_frame`]) when the object is not hidden and its
+    /// draw box overlaps the logic view at the current camera point.
+    /// Objects out of the live list keep what they had. Only the marks are
+    /// set; nothing else of a frame happens here.
+    ///
+    /// Besides a tick's end, the respawn and the warp between ticks show
+    /// such a frame after their passes, at the camera point the passes
+    /// left, so an enemy that must be on screen to see Claw (Marrow by the
+    /// checkpoint of his arena, a soldier by a checkpoint) decides that
+    /// from the respawned place in the first tick after it, not from the
+    /// last frame before the death.
+    fn mark_drawn(&mut self) {
         let v = &self.cfg.view;
         let view = PlaneView::new(
             self.level.plane(),
@@ -1261,7 +1312,6 @@ impl Sim {
             };
             let drawn = o.draw_flags & draw_flags::HIDDEN == 0 && self.level.in_view(o, &view);
             if let Some(o) = self.objects.get_mut(id) {
-                o.teleported = false;
                 o.drawn_last_frame = drawn;
             }
         }
