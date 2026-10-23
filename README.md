@@ -473,9 +473,17 @@ When play comes back from a help screen, the game runs every object once
 more at the game time plus the screen's time (a stick whose fuse has burnt
 by then goes off there; Claw, in mid-jump, does not move) and the frame
 pulse moves on by the screen's frames; then the clock goes back, so an
-enemy that pass moved goes back as far in the next tick. A powder keg's
+enemy that pass moved goes back as far in the next tick; Claw's own call
+in that pass sees no key pressed, so a key pressed just before the screen
+acts once. A powder keg's
 blast reaches the box of the picture it shows as it goes off, which on
-this level spares a crate beside the keg by the ladders near the start.
+this level spares a crate beside the keg by the ladders near the start,
+and it hurts in the tick the keg goes off, so Claw falling past the keg
+on the bridge is hurt there at once and jumps on to the bridge from the
+stand that follows (a tick later he would drop past it on to a warp that
+sends him back near the start). After a warp moves Claw, the game runs
+every other object once more with no game time, so an enemy the warp
+wakes where it puts him makes the calls of a tick there.
 The bot and `claw-replay` play a route's help screens and pauses as the
 game does, through one shared function, and the bot keeps them when it
 carries on from a route (refusing one recorded with another pause or
