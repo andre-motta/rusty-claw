@@ -245,6 +245,9 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
         d.last_move_ms = Some(w.now_ms);
         return None;
     }
+    // The step brings the exact position in line with the whole pixels
+    // again (see [`super::pre_tick`]).
+    d.range_from = None;
     d.stepped = true;
     let (x0, y0, entry, ride) = {
         let o = obj(w, id);
