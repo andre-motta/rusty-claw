@@ -67,7 +67,7 @@ use claw_game::Session;
 use claw_game::load::{LevelBundle, settle_at};
 use claw_game::session::{script_behaviour, script_switches};
 use claw_game::settings::LevelChoice;
-use claw_sim::input::{DirectiveKind, MenuScreen, ScriptCommand, ScriptTuning};
+use claw_sim::input::{DirectiveKind, ScriptTuning};
 use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::player::progress::parse_start_lines;
 use claw_sim::rng::Rng;
@@ -593,21 +593,7 @@ fn replay_ticks(
     let mut rows = Vec::with_capacity(ticks);
     for tick in 0..ticks {
         while let Some(d) = directives.next_if(|d| d.tick <= tick) {
-            match &d.kind {
-                DirectiveKind::Command(ScriptCommand::EndLife) => sim.end_life(),
-                DirectiveKind::Menu {
-                    screen: MenuScreen::Help,
-                    wall_ms,
-                    ..
-                } => {
-                    sim.pass_menu_time(*wall_ms);
-                    sim.restart_idle_wait();
-                }
-                DirectiveKind::Pause { .. } | DirectiveKind::Menu { .. } => {
-                    sim.restart_idle_wait();
-                }
-                _ => {}
-            }
+            sim.play_directive(&d.kind);
         }
         sim.step(script.ticks.get(tick).copied().unwrap_or_default());
         crabs.apply(&mut sim);

@@ -176,12 +176,16 @@ fn step_seconds(d: &mut EnemyData, now: u64) -> f64 {
 /// which falls by the same clock): the game clock's reading now less its
 /// reading then, none in the same moment. Both start the clock when they
 /// are built; a mover with no time recorded yet covers one tick. Records
-/// `now` in `last_ms`.
+/// `now` in `last_ms`, also when it is earlier.
+///
+/// The difference is signed: in the first tick after the update pass of a
+/// help screen's return the clock reads less than it did in that pass
+/// (see [`crate::Sim::pass_help_return`]), so the step covers a negative
+/// time and the move goes back, held by the same [`STEP_LIMIT`] as a
+/// forward one: an enemy the pass moved 24 px moves 24 px back.
 pub fn step_seconds_since(last_ms: &mut Option<u64>, now: u64) -> f64 {
-    let last = last_ms.replace(now);
-    let since = last.map_or(0, |t| now.saturating_sub(t));
-    match last {
-        Some(_) if since == 0 => 0.0,
+    match last_ms.replace(now) {
+        Some(last) if last == now => 0.0,
         Some(last) => clock_seconds(now) - clock_seconds(last),
         None => f64::from(TICK_MS) * 0.001,
     }
@@ -646,6 +650,31 @@ mod tests {
         // The next tick covers one tick again, and a gap all of it.
         assert_eq!(step_seconds(&mut d, 1036), reading(1036) - reading(1018));
         assert_eq!(step_seconds(&mut d, 1136), reading(1136) - reading(1036));
+    }
+
+    #[test]
+    fn a_step_after_the_clock_went_back_covers_a_negative_time() {
+        // The help screen's return ran a step 3000 ms after the last tick;
+        // the next tick reads the clock of the tick after that last one.
+        let reading = |ms: u64| (ms + 18) as f64 * 0.001;
+        let mut d = EnemyData::default();
+        step_seconds(&mut d, 24_336);
+        assert_eq!(
+            step_seconds(&mut d, 27_336),
+            reading(27_336) - reading(24_336)
+        );
+        let back = step_seconds(&mut d, 24_354);
+        assert_eq!(back, reading(24_354) - reading(27_336));
+        assert!(back < 0.0);
+        // The time is set back with it: the next tick covers one tick.
+        assert_eq!(d.last_move_ms, Some(24_354));
+        assert_eq!(
+            step_seconds(&mut d, 24_372),
+            reading(24_372) - reading(24_354)
+        );
+        // The move goes back by the same 24 px limit as a forward one.
+        let mut v = -100.0;
+        assert_eq!(axis_step_for(&mut v, 0.0, back), 24.0);
     }
 
     #[test]

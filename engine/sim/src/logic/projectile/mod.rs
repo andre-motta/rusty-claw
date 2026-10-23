@@ -55,7 +55,10 @@
 //!   lit at the game time of the tick Claw throws it in, and it goes off
 //!   in the first later tick whose game time is 1250 ms or more after that:
 //!   70 ticks after the throw. Time spent on the help screen can burn it
-//!   down between two ticks (see [`pass_fuse_time`]).
+//!   down between two ticks: the update pass of the help screen's return
+//!   runs at the game time plus the screen's time (see
+//!   [`crate::Sim::pass_help_return`]), and a stick whose fuse has burnt by
+//!   then goes off in its call there.
 //! - A cannonball (fired by the cannons) flies straight at its cannon's
 //!   speed, 500 px/s, without gravity, turning its picture and boxes to
 //!   face left when it flies left. It is an enemy shot dealing 10: it
@@ -853,34 +856,6 @@ fn dynamite_tick(w: &mut World, id: ObjectId, mut d: ProjectileData) {
     shed_sparkles(w, id, &d);
     motion::integrate(w, id, &mut d);
     store(w, id, d);
-}
-
-/// Burns the fuse of every lit stick of dynamite to game time `now_ms`
-/// between two ticks, for the return from the help screen (see
-/// [`crate::Sim::pass_menu_time`]): a stick whose fuse has burnt by then
-/// goes off at once, as it would have in the tick before, and its
-/// explosion goes on from the next tick. Nothing else of the sticks runs.
-pub fn pass_fuse_time(w: &mut World, now_ms: u64) {
-    let due: Vec<ObjectId> = w
-        .objects
-        .all()
-        .filter(|(_, o)| o.is_listed() && o.flags & flags::DESTROY == 0)
-        .filter_map(|(id, o)| {
-            let d = data(o)?;
-            let burnt = d.class == Some(Class::Dynamite)
-                && d.phase == Phase::Flying
-                && d.fuse_ms > 0
-                && now_ms.saturating_sub(d.fuse_start_ms) >= u64::from(d.fuse_ms);
-            burnt.then_some(id)
-        })
-        .collect();
-    for id in due {
-        let Some((mut d, _)) = load(w, id) else {
-            continue;
-        };
-        explode(w, id, &mut d, Class::Dynamite);
-        store(w, id, d);
-    }
 }
 
 fn rat_bomb_tick(w: &mut World, id: ObjectId, mut d: ProjectileData) {

@@ -301,16 +301,18 @@ impl PlayAids {
 }
 
 /// Whether the time a help screen was up reaches the dynamite fuse (see
-/// [`crate::Sim::pass_menu_time`]).
+/// [`crate::Sim::pass_help_return`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum FuseClock {
-    /// As in the original: when play comes back from the help screen, a
-    /// lit stick of dynamite whose fuse has burnt by the game time plus
-    /// the time help was up goes off at once. The pause and the in-game
-    /// menu freeze the fuse.
+    /// As in the original: when play comes back from the help screen, an
+    /// update pass runs at the game time plus the time help was up, so a
+    /// lit stick of dynamite whose fuse has burnt by then goes off at
+    /// once, and the next frame pulse moves by the screen's frames. The
+    /// pause and the in-game menu freeze the fuse.
     #[default]
     Original,
-    /// Every screen freezes the fuse, help included.
+    /// Every screen freezes the fuse, help included: the help screen's
+    /// return runs no pass and leaves the frame pulse as it was.
     Frozen,
 }
 

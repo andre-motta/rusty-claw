@@ -36,9 +36,14 @@
 //!
 //! Exploding plays the blast sound and the keg's explosion animation; when
 //! the animation reaches its blast frame the keg requests one explosion
-//! (damage 20) centred on the blast and a screen shake of
-//! [`BLAST_SHAKE_MS`], and it is removed when the animation ends. A keg
-//! explodes only once.
+//! (damage 20) and a screen shake of [`BLAST_SHAKE_MS`], and it is removed
+//! when the animation ends. A keg explodes only once. The explosion hurts
+//! the frame box of the picture the keg shows at that moment, around the
+//! keg (mirrored with it): for the kegs' usual explosion picture, 92 x 109
+//! with its hotspot 5 px right and 15 px down, that is from 41 px left to
+//! 50 px right of the keg and from 39 px above to 68 px below it, so a
+//! crate whose box starts 55 px right of a keg is out of its reach (see
+//! [`blast_box`]).
 //!
 //! A flying keg moves as the enemies do: each tick its exact position
 //! moves by `(v + g dt / 2) dt` on each axis, at most 24 px, it is drawn at
@@ -551,13 +556,30 @@ fn exploding(w: &mut World, id: ObjectId) {
     }
 }
 
-/// Requests the keg's one explosion.
+/// The box a keg's blast hurts, relative to the keg: the frame box of
+/// the picture it shows at the blast (`frame` of `set`), its left and
+/// right edges negated and swapped when the keg is `mirrored`. `None`
+/// when the level does not know that frame.
+pub fn blast_box(w: &World, set: &str, frame: i32, mirrored: bool) -> Option<Rect> {
+    let r = w.frame_box(set, frame)?;
+    Some(if mirrored {
+        Rect::new(-r.right, r.top, -r.left, r.bottom)
+    } else {
+        r
+    })
+}
+
+/// Requests the keg's one explosion: an explosion object at the keg plus
+/// [`BLAST_OFFSET`] (mirrored with the keg) that hurts the keg's
+/// [`blast_box`] around the keg, or a square of [`BLAST_RADIUS`] around
+/// itself when the level does not know the keg's picture.
 fn blast(w: &mut World, id: ObjectId) {
     let Some(o) = w.objects.get_mut(id) else {
         return;
     };
     let mirrored = o.draw_flags & draw_flags::MIRROR != 0;
     let (x, y, damage) = (o.x, o.y, o.damage);
+    let (set, frame) = (o.image_set.clone(), o.frame);
     let d = data_mut(o);
     if d.blasted {
         return;
@@ -573,7 +595,18 @@ fn blast(w: &mut World, id: ObjectId) {
         radius: BLAST_RADIUS,
         source: Some(id),
     };
+    let reach = blast_box(w, &set, frame, mirrored);
     let blast = effect::spawn(w, kind, x + dx, y + BLAST_OFFSET.1);
+    if let (Some(b), Some(r)) = (blast, reach)
+        && let Some(e) = w.objects.get_mut(b)
+    {
+        e.attack_rect = Rect::new(
+            r.left - dx,
+            r.top - BLAST_OFFSET.1,
+            r.right - dx,
+            r.bottom - BLAST_OFFSET.1,
+        );
+    }
     w.shake(BLAST_SHAKE_MS);
     if let Some(o) = w.objects.get_mut(id) {
         data_mut(o).blast = blast;

@@ -123,13 +123,14 @@ const STORES: [(&str, &[&str]); 9] = [
 // The routes
 
 /// A route: where Claw is put down (at the height he settles at), the
-/// keys held per row, its help screens (row, ms), whether it ends the
+/// keys held per row, its help screens (row, ms, keys pressed on it),
+/// whether it ends the
 /// level, and whether it starts from the pocket's start lines.
 #[derive(Debug, Clone, Default)]
 struct Route {
     start: (i32, i32),
     held: Vec<u32>,
-    helps: Vec<(usize, u32)>,
+    helps: Vec<(usize, u32, usize)>,
     completes: bool,
     pocket: bool,
 }
@@ -194,13 +195,13 @@ fn route(store: &str) -> Route {
             .hold(RIGHT, 15, 51)
             .hold(JUMP, 32, 53),
         "boss-lift-help-c18" => Route {
-            helps: vec![(106, 7750)],
+            helps: vec![(106, 7750, 1)],
             completes: true,
             ..lift_c18(300)
         },
         "boss-lift-drop-c18" => lift_c18(450),
         "boss-lift-help" => Route {
-            helps: vec![(97, 7750)],
+            helps: vec![(97, 7750, 1)],
             completes: true,
             ..Route::new((37656, 3799), 300)
                 .hold(RIGHT, 15, 51)
@@ -688,8 +689,8 @@ fn play(level: &SimLevel, r: &Route, clock: &str, ticks: usize) -> Played {
     let mut room = Vec::new();
     let mut completed = false;
     for k in 0..ticks {
-        for &(_, ms) in r.helps.iter().filter(|(at, _)| *at == k) {
-            sim.pass_menu_time(ms);
+        for &(_, ms, keys) in r.helps.iter().filter(|(at, ..)| *at == k) {
+            sim.pass_help_return(ms, keys);
         }
         sim.step(input.get(k).copied().unwrap_or_default());
         completed |= sim
@@ -839,9 +840,9 @@ fn new_divergences(
 }
 
 /// The store's own copy of its route: (held, pressed) by row, and its help
-/// screens (row, ms).
+/// screens (row, ms, keys pressed on it).
 #[allow(clippy::type_complexity)]
-fn store_route(dir: &Path) -> Option<(Vec<(u32, u32)>, Vec<(usize, u32)>)> {
+fn store_route(dir: &Path) -> Option<(Vec<(u32, u32)>, Vec<(usize, u32, usize)>)> {
     let text = std::fs::read_to_string(dir.join("route.csv")).ok()?;
     let hex = |s: &str| u32::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok();
     let mut rows = Vec::new();
@@ -854,7 +855,11 @@ fn store_route(dir: &Path) -> Option<(Vec<(u32, u32)>, Vec<(usize, u32)>)> {
                 (Some(&"menu"), Some(&"help")),
                 "{l}: only help screens are expected"
             );
-            helps.push((f[0].parse().ok()?, f.get(3)?.parse().ok()?));
+            let keys = f
+                .iter()
+                .find_map(|w| w.strip_prefix("keys="))
+                .map_or(0, |k| k.split(',').filter(|k| !k.is_empty()).count());
+            helps.push((f[0].parse().ok()?, f.get(3)?.parse().ok()?, keys));
         } else if l.starts_with(|c: char| c.is_ascii_digit()) {
             let f: Vec<&str> = l.split(',').collect();
             rows.push((hex(f[1])?, hex(f[2])?));
@@ -995,8 +1000,8 @@ fn watch(level: &SimLevel, store: &str, clock: &str, rows: usize) -> Vec<Look> {
     let mut out = Vec::new();
     let mut ids: Vec<Option<ObjectId>> = watched().iter().map(|&w| find(&sim, w)).collect();
     for k in 0..rows {
-        for &(_, ms) in r.helps.iter().filter(|(at, _)| *at == k) {
-            sim.pass_menu_time(ms);
+        for &(_, ms, keys) in r.helps.iter().filter(|(at, ..)| *at == k) {
+            sim.pass_help_return(ms, keys);
         }
         sim.step(input.get(k).copied().unwrap_or_default());
         for (i, &w) in watched().iter().enumerate() {

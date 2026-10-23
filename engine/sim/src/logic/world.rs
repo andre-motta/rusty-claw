@@ -324,6 +324,10 @@ pub struct World<'a> {
     /// (while the level loads, or after a warp moved Claw): the game clock
     /// still reads the tick before the next one.
     pub set_up: bool,
+    /// The help screen's time, ms, in the update pass of the return from
+    /// it (see [`crate::Sim::pass_help_return`]); 0 in every other call, and
+    /// in the calls Claw's own logic makes.
+    pub help_ms: u32,
 }
 
 impl World<'_> {

@@ -222,14 +222,13 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   controls read, which the lockout empties; the replay's trace shows
 ///   the keys it was given, which the lockout leaves as they are (it is
 ///   applied where they reach Claw).
-/// - siren-screens: the original's return from the help screen runs every
-///   object's logic once more, outside any step, and in that pass the
-///   Siren's song ends 14 rows before its time is over (she goes home on
-///   row 120, not 134); the game's return from the help screen runs no
-///   logic but the dynamite fuses. From her early going home on, her
-///   draws come earlier (the random stream at row 120), her next song
-///   comes 39 rows earlier and so does the next lockout (row 308 against
-///   347).
+/// - siren-screens: the return from the help screen runs every object's
+///   logic once more, outside any step (see `Sim::pass_help_return`), and
+///   in that pass the Siren's song ends 14 rows before its time is over
+///   (she goes home on row 120, not 134), as in the original. The random
+///   stream still parts from the run's at 2916 ms (row 161), and from
+///   there her state (4914 ms) and her next lockout (5562 ms): not looked
+///   into here.
 /// - siren-stand at 60 frames per second: the random stream is stepped a
 ///   different number of times at the two clocks (every enemy's roll comes
 ///   every third step, and the original's steps are shorter there), so her
@@ -246,8 +245,8 @@ const KNOWN: &[Known] = &[
         "siren-screens",
         "c18",
         &[
-            ("rng", 2178),
-            ("siren_state", 2178),
+            ("rng", 2916),
+            ("siren_state", 4914),
             ("lock", 5562),
             ("dazed", 5562),
         ],

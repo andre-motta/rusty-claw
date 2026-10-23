@@ -36,10 +36,18 @@
 //! starts it. The lines of a save point a recording started from are not
 //! applied.
 //!
-//! The script's `@` directive lines are played at their tick boundaries: a
-//! command (`end_life`, `powerup`) takes effect before its tick, and a pause or a menu
-//! changes nothing in the game (play stops and goes on where it stopped;
-//! its wall time only matters to a game running in real time).
+//! The script's `@` directive lines are played at their tick boundaries,
+//! as the game's replay and the bot play them (one shared function,
+//! `claw_sim::Sim::play_directive`): a command (`end_life`, `powerup`)
+//! takes effect before its tick; the return from a help screen
+//! (`menu help`) runs the update pass of that return with the screen's
+//! time (the dynamite fuse burns on, every object runs once more, and the
+//! next frame pulse comes as many frames later as the help screen ran);
+//! after a help screen or the in-game menu the keys down count as already
+//! pressed until released; a pause (`pause`, or the pause screen
+//! `menu pause`) latches no key; and as play resumes after any of them the
+//! game's clock is reset. A pause or the in-game menu's wall time changes
+//! nothing else in the game.
 //!
 //! The trace has one row per tick with Claw's position, the fractions
 //! carried to the next tick, his state and physics type, the camera point,
@@ -161,6 +169,7 @@ const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FIL
 [--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]] \
 [--crabs FILE | --crab-variant N] [--expect-complete] \
 [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
+the script's @ lines play as in the game: a help screen's return runs its update pass, a screen latches the keys down, a pause latches none, a command acts before its tick
 --crabs FILE: one entry per line, `crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` or `nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` (STATIONARY 1 or 0, 0 when left out)";
 
 /// The key of the mid-air hit jump fix in a script's comment line.
@@ -610,11 +619,7 @@ fn run(args: Args) -> Result<Outcome, String> {
     let mut commands = 0;
     for (tick, &input) in script.ticks.iter().enumerate() {
         while let Some(d) = directives.next_if(|d| d.tick <= tick) {
-            if let DirectiveKind::Command(c) = d.kind {
-                match c {
-                    ScriptCommand::EndLife => sim.end_life(),
-                    ScriptCommand::Powerup(p) => sim.give_powerup(p),
-                }
+            if sim.play_directive(&d.kind) {
                 commands += 1;
             }
         }

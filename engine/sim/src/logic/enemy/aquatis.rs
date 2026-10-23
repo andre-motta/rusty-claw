@@ -182,9 +182,10 @@
 //!   when it is built, 3 in the original's run and 9 in the replay's), and
 //!   that count matters only once the first stick has been taken, which
 //!   that route never does.
-//! - The gem's flight runs on game time: the return from a help screen
-//!   catches up the screen's time in one step of the flying gem (each way
-//!   at most [`super::motion::STEP_LIMIT`] px, see [`pass_help_time`]),
+//! - The gem's flight runs on game time: the update pass of the return
+//!   from a help screen (see [`crate::Sim::pass_help_return`]) catches up
+//!   the screen's time in one step of the flying gem (each way at most
+//!   [`super::motion::STEP_LIMIT`] px, see [`crate::logic::pickup`]),
 //!   which, moving down by then, lands where it is on the next tick. This
 //!   holds for every boss's gem, as it does in the original.
 //!
@@ -1172,46 +1173,6 @@ pub fn stalactite_hit(w: &mut World, id: ObjectId, attacker: ObjectId) {
 /// `id` attacked `victim`.
 pub fn on_attack(w: &mut World, id: ObjectId, victim: ObjectId) {
     super::on_attack(w, id, victim);
-}
-
-// ----------------------------------------------------------------------
-// The help screen
-
-/// Play comes back from the help screen at game time `now_ms` between two
-/// ticks (see [`crate::Sim::pass_menu_time`]): a flying boss gem catches
-/// up the screen's time in one step, at most
-/// [`super::motion::STEP_LIMIT`] px each way, as its flight runs on game
-/// time (see the module documentation). Draws nothing.
-pub fn pass_help_time(w: &mut World, now_ms: u64) {
-    let since = now_ms.saturating_sub(w.now_ms);
-    if since == 0 {
-        return;
-    }
-    let dt = since as f64 * 0.001;
-    let gems: Vec<ObjectId> = w
-        .objects
-        .all()
-        .filter(|(_, o)| &*o.logic == pickup::END_GEM && o.state == pickup::state::IDLE)
-        .map(|(id, _)| id)
-        .collect();
-    let cap = |d: f64| d.clamp(-super::motion::STEP_LIMIT, super::motion::STEP_LIMIT);
-    for id in gems {
-        let Some(o) = w.objects.get_mut(id) else {
-            continue;
-        };
-        let ObjectData::Pickup(p) = &mut o.data else {
-            continue;
-        };
-        let Some(g) = p.gem.as_mut() else {
-            continue;
-        };
-        let g_y = pickup::END_GEM_GRAVITY;
-        g.pos.0 += cap(g.vel.0 * dt);
-        g.pos.1 += cap((g.vel.1 + 0.5 * g_y * dt) * dt);
-        g.vel.1 += g_y * dt;
-        o.x = g.pos.0.trunc() as i32;
-        o.y = g.pos.1.trunc() as i32;
-    }
 }
 
 /// His own sounds and lines, for tests and tools that check them against
