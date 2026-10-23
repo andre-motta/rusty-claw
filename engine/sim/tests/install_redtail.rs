@@ -3,11 +3,11 @@
 //! routes, and the fight's main outcomes checked on their own.
 //!
 //! Each route puts Claw down after the level's first tick, the way the
-//! original's runs put him there (between two ticks, as a warp does), at
-//! the height he settles at, left of the boss room's warp; waits until
-//! the level clock reaches the time the original's run started at; and
-//! starts the shared random stream from the run's state, once. Then, by
-//! route:
+//! original's runs put him there (between two ticks, as a warp does but
+//! without the warp's own frame), at the height he settles at, left of the
+//! boss room's warp; waits until the level clock reaches the time the
+//! original's run started at; and starts the shared random stream from the
+//! run's state, once. Then, by route:
 //!
 //! - the normal entry: Right from row 15 walks Claw into the warp; he
 //!   stands on the sand where it puts him through the introduction and
@@ -459,7 +459,7 @@ fn t0_ms(clock: &str) -> u64 {
 fn at_time_zero(level: &SimLevel, clock: &str, r: &Route) -> Sim {
     let mut sim = Sim::new(level.clone(), config(clock, r));
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(WARP_WALK));
+    sim.place_between_ticks(WARP_WALK.0, WARP_WALK.1);
     while sim.tick() * TICK < t0_ms(clock) {
         sim.step(TickInput::default());
     }

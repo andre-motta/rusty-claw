@@ -12,6 +12,7 @@ use claw_frame::{
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::ObjectData;
 use claw_sim::logic::effect::EffectKind;
+use claw_sim::logic::projectile;
 use claw_sim::object::{LogicKind, Object, ObjectId, Rect, draw_flags, flags, special, types};
 use claw_sim::player::death::{CLOSE_MS, powerup, ticks_of};
 use claw_sim::player::hit::PickupFields;
@@ -708,6 +709,39 @@ fn the_respawn_shows_a_frame_of_its_own_at_the_checkpoint() {
     let o = sim.player().unwrap();
     assert_eq!((o.x, o.y), start);
     assert!(o.drawn_last_frame, "shown by the respawn's frame");
+}
+
+#[test]
+fn the_respawn_removes_every_projectile_before_its_passes() {
+    let mut sim = sim_of(&[]);
+    // A shot still flying when Claw dies, and an object that is no shot,
+    // both out of his way.
+    let marked = |sim: &mut Sim, special: u32| {
+        let (x, y) = {
+            let o = sim.player().unwrap();
+            (o.x + 200, o.y - 150)
+        };
+        let mut o = Object::new(0, x, y, 10, Arc::from("Shot"), LogicKind::Inert);
+        o.flags = flags::WORLD;
+        o.special_flags = special;
+        sim.spawn(o)
+    };
+    let shot = marked(&mut sim, projectile::RESPAWN_PURGE);
+    let other = marked(&mut sim, 0);
+    let e = enemy(&mut sim, 150);
+    step(&mut sim);
+    sim.with_world(|w| w.destroy(e));
+    run_until(&mut sim, TickInput::default(), 200, Sim::respawn_pending);
+    assert!(
+        sim.objects().get(shot).is_some(),
+        "flying until the respawn"
+    );
+    assert!(sim.respawn_now());
+    assert!(
+        sim.objects().get(shot).is_none(),
+        "gone before the next tick"
+    );
+    assert!(sim.objects().get(other).is_some(), "only projectiles go");
 }
 
 #[test]

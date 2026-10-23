@@ -6,13 +6,13 @@
 //! pairs, high then low, and rolls the full length of a forward roll, past
 //! Claw. Each route puts Claw down at a fixed point of the level after its
 //! first tick, the way the original's runs put him there (between two
-//! ticks, as a warp does), waits until the level clock reaches the time
-//! the original's run started at, and starts the shared random stream from
-//! the run's state, once. Claw lands in reach of the enemy, which engages
-//! him before that time with the original's own draws, which the replay
-//! does not have; at time zero the enemy is put where the original's run
-//! shows it, in the same state and with the same timers ([`align`]). The
-//! routes:
+//! ticks, as a warp does but without the warp's own frame), waits until
+//! the level clock reaches the time the original's run started at, and
+//! starts the shared random stream from the run's state, once. Claw lands
+//! in reach of the enemy, which engages him before that time with the
+//! original's own draws, which the replay does not have; at time zero the
+//! enemy is put where the original's run shows it, in the same state and
+//! with the same timers ([`align`]). The routes:
 //!
 //! - beside the hook-handed pirate on the floor at 7246, his back to the
 //!   wall: Claw put down 136 px to his left taps Right on rows 320 and 321
@@ -486,7 +486,7 @@ fn at_time_zero(level: &SimLevel, clock: &str, r: &Route, t0_ms: u64, seed: u32)
     };
     let mut sim = Sim::new(level.clone(), cfg);
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(r.start));
+    sim.place_between_ticks(r.start.0, r.start.1);
     while sim.tick() * TICK < t0_ms {
         sim.step(TickInput::default());
     }

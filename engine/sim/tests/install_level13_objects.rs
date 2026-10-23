@@ -494,7 +494,7 @@ fn config(clock: &str, seed: u32) -> SimConfig {
 fn at_time_zero(level: &SimLevel, clock: &str, r: &Route, t0_ms: u64, seed: u32) -> Sim {
     let mut sim = Sim::new(level.clone(), config(clock, seed));
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(r.start));
+    sim.place_between_ticks(r.start.0, r.start.1);
     while sim.tick() * TICK < t0_ms {
         sim.step(TickInput::default());
         put_in_step(&mut sim, r, clock, t0_ms);

@@ -636,7 +636,7 @@ fn at_time_zero(level: &SimLevel, clock: &str, r: &Route, t0_ms: u64, seed: u32)
     };
     let mut sim = Sim::new(level.clone(), cfg);
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(r.start));
+    sim.place_between_ticks(r.start.0, r.start.1);
     while sim.tick() * TICK < t0_ms {
         sim.step(TickInput::default());
     }

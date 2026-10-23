@@ -412,11 +412,11 @@ fn at_time_zero(level: &SimLevel, clock: &str, start: (i32, i32), t0_ms: u64, se
         {
             w.objects.unlink(id);
         }
-        w.claw.special.warp_to = Some(start);
         for _ in 0..level_start_draws() {
             w.rng.next_u15();
         }
     });
+    sim.place_between_ticks(start.0, start.1);
     while sim.tick() * TICK < t0_ms {
         sim.step(TickInput::default());
     }

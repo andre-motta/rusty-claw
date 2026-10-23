@@ -2,15 +2,15 @@
 //! against the original's runs of the same short routes.
 //!
 //! Each route puts Claw down at the store's start point after the level's
-//! first tick, between two ticks as a warp does, lets him settle, waits
-//! until the level clock reaches the store's time zero and starts the
-//! shared random stream from the store's state there, once (the store's
-//! time zero rule, `teleport`; a store with another rule fails). It is
-//! then played tick by tick and compared with every reference trace of
-//! the clock: at the 18 ms step with the original's speeds Claw's
-//! position, state and health exactly (the other columns are reported),
-//! at 60 frames per second with the default tuning within the feel
-//! tolerances. The routes:
+//! first tick, between two ticks as a warp does but without the warp's own
+//! frame, lets him settle, waits until the level clock reaches the store's
+//! time zero and starts the shared random stream from the store's state
+//! there, once (the store's time zero rule, `teleport`; a store with
+//! another rule fails). It is then played tick by tick and compared with
+//! every reference trace of the clock: at the 18 ms step with the
+//! original's speeds Claw's position, state and health exactly (the other
+//! columns are reported), at 60 frames per second with the default tuning
+//! within the feel tolerances. The routes:
 //!
 //! - `crab-lift`: Claw lands 77 px left of the crab at 12337, hiding in
 //!   its shell, walks up to it, lifts it, carries it left and throws it:
@@ -515,11 +515,11 @@ fn at_time_zero(level: &SimLevel, clock: &str, m: &Meta) -> Sim {
         {
             w.objects.unlink(id);
         }
-        w.claw.special.warp_to = Some(start);
         for _ in 0..level_start_draws() {
             w.rng.next_u15();
         }
     });
+    sim.place_between_ticks(start.0, start.1);
     while sim.tick() * TICK < m.t0_ms {
         sim.step(TickInput::default());
     }

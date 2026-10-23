@@ -3,13 +3,13 @@
 //!
 //! Each route puts Claw down left of the Siren on the floor at 8559 after
 //! the level's first tick, the way the original's runs put him there
-//! (between two ticks, as a warp does), waits until the level clock
-//! reaches the time the original's run started at, and starts the shared
-//! random stream from the run's state, once. She was built on the
-//! original's first tick and her wait at home started then, with a draw
-//! the replay does not have: at time zero her wait is put where the run
-//! shows it ([`align`]). The routes, Claw put down 139 px to her left
-//! unless said otherwise:
+//! (between two ticks, as a warp does but without the warp's own frame),
+//! waits until the level clock reaches the time the original's run started
+//! at, and starts the shared random stream from the run's state, once. She
+//! was built on the original's first tick and her wait at home started
+//! then, with a draw the replay does not have: at time zero her wait is
+//! put where the run shows it ([`align`]). The routes, Claw put down 139
+//! px to her left unless said otherwise:
 //!
 //! - siren-stand: he stands; her songs' screams lock him three times;
 //! - siren-jump: he holds Jump from row 30: a jump, and a jump again on
@@ -451,7 +451,7 @@ fn at_time_zero(level: &SimLevel, clock: &str, r: &Route, t0_ms: u64, seed: u32)
     };
     let mut sim = Sim::new(level.clone(), cfg);
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(r.start));
+    sim.place_between_ticks(r.start.0, r.start.1);
     while sim.tick() * TICK < t0_ms {
         sim.step(TickInput::default());
     }

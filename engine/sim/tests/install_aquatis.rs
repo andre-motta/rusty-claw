@@ -4,10 +4,11 @@
 //! checked on their own.
 //!
 //! Each route puts Claw down after the level's first tick, the way the
-//! original's runs put him there (between two ticks, as a warp does), at
-//! the height he settles at, waits until the level clock reaches the time
-//! the original's run started at, and starts the shared random stream
-//! from the run's state, once. Then, by route:
+//! original's runs put him there (between two ticks, as a warp does but
+//! without the warp's own frame), at the height he settles at, waits until
+//! the level clock reaches the time the original's run started at, and
+//! starts the shared random stream from the run's state, once. Then, by
+//! route:
 //!
 //! - the normal entry: Right from row 15 walks Claw from under the boss
 //!   room's door into it; he stands through the introduction and after it
@@ -630,7 +631,7 @@ fn at_time_zero(level: &SimLevel, clock: &str, r: &Route) -> Sim {
         Sim::new(level.clone(), config(clock))
     };
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(r.start));
+    sim.place_between_ticks(r.start.0, r.start.1);
     while sim.tick() * TICK < t0_ms(clock) {
         sim.step(TickInput::default());
     }

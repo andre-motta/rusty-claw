@@ -4,13 +4,14 @@
 //!
 //! Each route puts Claw down on the hidden floor of the passage at 36000,
 //! after the level's first tick, the way the original's runs put him there
-//! (between two ticks, as a warp does), at the height he settles at
-//! (3799), waits until the level clock reaches the time the original's
-//! run started at, and starts the shared random stream from the run's
-//! state, once. Right held from row 15 walks him along the passage under
-//! the three tentacles: the first two strike at him and miss (he is far
-//! below their reach), and the third grabs him on row 309, lifts him out
-//! of the water on row 327 and squeezes him; then, by route:
+//! (between two ticks, as a warp does but without the warp's own frame),
+//! at the height he settles at (3799), waits until the level clock reaches
+//! the time the original's run started at, and starts the shared random
+//! stream from the run's state, once. Right held from row 15 walks him
+//! along the passage under the three tentacles: the first two strike at
+//! him and miss (he is far below their reach), and the third grabs him on
+//! row 309, lifts him out of the water on row 327 and squeezes him; then,
+//! by route:
 //!
 //! - the walk: no other key; the squeeze takes one health every 12 rows
 //!   (14 in all) and lets him go on row 494, when its 3000 ms are over;
@@ -286,7 +287,7 @@ fn at_time_zero(level: &SimLevel, r: &Route) -> Sim {
     };
     let mut sim = Sim::new(level.clone(), cfg);
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(r.start));
+    sim.place_between_ticks(r.start.0, r.start.1);
     while sim.tick() * TICK < T0_MS {
         sim.step(TickInput::default());
     }

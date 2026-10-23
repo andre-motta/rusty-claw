@@ -3,11 +3,11 @@
 //!
 //! Each route puts Claw down on the floor of the first fish pool (x 4067
 //! to 4450) after the level's first tick, the way the original's runs put
-//! him there (between two ticks, as a warp does), waits until the level
-//! clock reaches the time the original's run started at, and starts the
-//! shared random stream from the run's state, once. The Mercat by the
-//! start room's opening is put in step there ([`put_in_step`]). The
-//! routes:
+//! him there (between two ticks, as a warp does but without the warp's own
+//! frame), waits until the level clock reaches the time the original's run
+//! started at, and starts the shared random stream from the run's state,
+//! once. The Mercat by the start room's opening is put in step there
+//! ([`put_in_step`]). The routes:
 //!
 //! - Left on rows 15 to 39 walks Claw to the pool's left wall, and Down
 //!   and Left from row 40 to row 649 keep him crouched there. The fish's
@@ -325,7 +325,7 @@ fn at_time_zero(level: &SimLevel, clock: &str, t0_ms: u64, seed: u32) -> Sim {
     };
     let mut sim = Sim::new(level.clone(), cfg);
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(START));
+    sim.place_between_ticks(START.0, START.1);
     while sim.tick() * TICK < t0_ms {
         sim.step(TickInput::default());
     }
@@ -750,7 +750,7 @@ fn settle(level: &SimLevel, at: (i32, i32)) -> (i32, i32) {
     };
     let mut sim = Sim::new(level.clone(), cfg);
     sim.step(TickInput::default());
-    sim.with_world(|w| w.claw.special.warp_to = Some(at));
+    sim.place_between_ticks(at.0, at.1);
     for _ in 0..200 {
         sim.step(TickInput::default());
         let c = sim.player().expect("Claw");
