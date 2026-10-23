@@ -1,0 +1,45 @@
+# Waypoints for the tenth level with the default tuning, from the level's
+# geometry. The route is searched a stretch at a time: each searched
+# stretch below runs with its waypoints as --hints (with --hints-on-foot)
+# and ends at its goal (--goal X,Y with --goal-on-foot), and the next
+# carries on from it (--from-route, --from-tick at its last tick). Every
+# stretch uses --seed level and --fragile-cost 100.
+#
+# The stretches, their goals and their waypoints are those of the route
+# at the original speeds (level10-original.txt): the long way through the
+# level, checkpoint to checkpoint, into the boss room's door.
+#
+# 1. Over the cliffs by the start to the first checkpoint: no waypoints,
+#    goal 4342,7200.
+# 2. Down the shaft, over the spikes on the two ropes and the three
+#    elevators, past the last rope to the first super checkpoint: no
+#    waypoints, goal 6939,9120.
+# 3. To the checkpoint: no waypoints, goal 9364,9320.
+# 4. To the checkpoint: no waypoints, goal 11498,9440.
+# 5. To the checkpoint: no jump crosses the spike pit left of it, so up
+#    the ladder on the ledge before the pit, right through the room above
+#    and down its far end: goal 15036,8740.
+14200,8650 foot
+14200,8300
+14700,8290
+15050,8290
+# 6. To the checkpoint: up the column of toggling pegs, one peg at a time,
+#    and the ladder above them: goal 17928,7720.
+17824,8782 foot
+17764,8698 foot
+17824,8614 foot
+17764,8530 foot
+17824,8446 foot
+17764,8362 foot
+17760,8150
+# 7. To the checkpoint: no waypoints, goal 20285,7140.
+# 8. To the second super checkpoint: no waypoints, goal 22679,8030.
+# 9. Over the spikes on the ropes and up the pegs to the checkpoint: no
+#    waypoints, goal 24249,6880.
+# 10. To the checkpoint: no waypoints, goal 27056,6370.
+# 11. To the checkpoint: no waypoints, goal 30018,7949.
+# 12. To the boss room's door: no waypoints, goal 32340,7757.
+# 13. Through the door, Marrow's introduction, his fight and his gem: the
+#    level's end, no goal and no waypoints, with --intro play and
+#    --tick-cost 0 (the fight waits on the parrot's dives, so the time
+#    is not counted against it).

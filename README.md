@@ -415,21 +415,22 @@ made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
 life. Replays, `claw-replay` and the benchmark all follow them.
 
-The routes in `tests/acceptance/routes/` finish the first nine levels:
-`level1.csv` to `level8.csv` with the default tuning (the ninth level has
-no default-tuning route yet), `level1-original.csv` to
-`level9-original.csv` with the original game's speeds (the ninth level's
-way is described below), `level2-introskip.csv`, `level4-introskip.csv`,
-`level6-introskip.csv` and `level8-introskip.csv` with the jump-in that
-skips Raux's, Katherine's, Wolvington's and Gabriel's introductions,
+The routes in `tests/acceptance/routes/` finish the first ten levels:
+`level1.csv` to `level8.csv` and `level10.csv` with the default tuning
+(the ninth level has no default-tuning route yet), `level1-original.csv`
+to `level10-original.csv` with the original game's speeds (the ninth
+level's way is described below), `level2-introskip.csv`,
+`level4-introskip.csv`, `level6-introskip.csv`, `level8-introskip.csv` and
+`level10-introskip.csv` with the jump-in that skips Raux's, Katherine's,
+Wolvington's, Gabriel's and Marrow's introductions,
 `level3-boost.csv` with
 the dynamite boost on to the rock pillar past the third level's first save
 point (`level5-original.csv` and `level4-original.level5.csv` use one too,
 on to the block past the fifth level's last stack of pegs), and
 `level1-original.level2.csv`, `level2-original.level3.csv`,
 `level3-original.level4.csv`, `level4-original.level5.csv`,
-`level5-original.level6.csv`, `level6-original.level7.csv` and
-`level7-original.level8.csv`, the next
+`level5-original.level6.csv`, `level6-original.level7.csv`,
+`level7-original.level8.csv` and `level9-original.level10.csv`, the next
 level of the game the route before starts, which begin with the progress
 that game carries in (their
 `# start_score = ...` lines, which replays, `claw-replay` and the
@@ -490,6 +491,26 @@ carries on from a route (refusing one recorded with another pause or
 screen switch than the original's). `claw-replay` follows a recording's
 `# fuse_clock` line (with `frozen` a help screen's return runs no pass)
 and refuses one recorded with another `pause_input` than the original's.
+The tenth level's routes take the long way, checkpoint to checkpoint:
+past the spike pit no jump crosses before the fifth checkpoint they climb
+the ladder to the room above it, and before the sixth they climb a
+column of toggling pegs. In Marrow's room the routes that sit through
+the introduction play his whole fight: in each round, with the pit open
+between Claw and Marrow, Claw waits for the parrot's dives out of
+Marrow's sight and hits it three times, so it perches and the slabs
+close into a bridge; he crosses and hits Marrow until Marrow whistles
+and the parrot carries him across while the pit opens again. The bot is
+guided round by round (the parrot's hits, then Marrow's health, each
+round counting for more than any state within it), waits through the
+parrot's patrol without trying every move under it, and is searched
+with `--tick-cost 0`, so the waits for the dives cost nothing.
+`level10-introskip.csv` jumps in, then crosses the open pit as the
+original's players do: a stick of dynamite thrown in the air, a jump off
+the ledge's edge into its blast, and a fresh jump pressed on the one
+tick Claw stands in mid-air after the blast's hit, which lands him on
+Marrow's ledge; Marrow, who never fights after the jump-in, falls to
+Claw's sword there. `tools/bot/hints/level10-original.txt` lists that
+crossing's held buttons.
 `tools/bot/hints/level9-original.txt`
 lists the held buttons of the stretches written by hand (the fight with
 PegLeg, the walk back to the springboard, the jump into the warp and the
