@@ -48,7 +48,10 @@
 //!    since the last one, as in a respawn's update passes, covers none and
 //!    moves nothing.
 //! 4. The new position is clamped to the patrol limits: a walker that
-//!    would cross a limit stops exactly on it.
+//!    would cross a limit stops exactly on it. Up and down, for an enemy
+//!    in the air, a move past a limit also takes its speed from the
+//!    energy of the move to the limit and adds no `a dt` (see
+//!    [`bounded_axis_step`]), so one driven against a limit stays on it.
 //! 5. The object moves there through the tiles and platforms. When the
 //!    tiles stop it short, the carried fraction is dropped, and when they
 //!    stop it up or down its vertical speed is the one the move it made
@@ -139,6 +142,41 @@ pub fn axis_step_for(v: &mut f64, a: f64, dt: f64) -> f64 {
         *v += a * dt;
         d
     }
+}
+
+/// The moving vertical axis of the movement step: from the exact height
+/// `from`, a move of [`axis_step_for`] within the limits `min` and `max`.
+/// When the new height `p` passes a limit, the object is put on that limit
+/// and its speed is the one the energy of the move to the limit gives,
+/// `sign(v) * sqrt(max(0, v^2 + 2 a (limit - p)))` (negative when `v` is
+/// 0), with no `a dt` added; `v` is the speed before the step, or the
+/// speed after the 24 px cap when that applied, and it is kept as it is
+/// when there is no acceleration. Only a move that stays between the
+/// limits adds `a dt` to the speed.
+///
+/// So an object driven against a limit by its speed, with gravity pulling
+/// it away, stays on the limit: `limit - p` is the overshoot of the step,
+/// and the speed towards the limit even grows. The parrot carrying Marrow
+/// in a high arc reaches the top of its range, its flight line, and stays
+/// on it to the end of the carry, Marrow hanging under it.
+fn bounded_axis_step(v: &mut f64, a: f64, dt: f64, from: f64, (min, max): (i32, i32)) -> f64 {
+    let before = *v;
+    let capped = ((before + 0.5 * a * dt) * dt).abs() > STEP_LIMIT;
+    let p = from + axis_step_for(v, a, dt);
+    let limit = if p > f64::from(max) {
+        f64::from(max)
+    } else if p < f64::from(min) {
+        f64::from(min)
+    } else {
+        return p;
+    };
+    let base = if capped { *v } else { before };
+    *v = if a == 0.0 {
+        base
+    } else {
+        speed_after(base, a, limit - p)
+    };
+    limit
 }
 
 /// `p` kept between the limits `min` and `max`.
@@ -273,11 +311,9 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
         let y = y0 + ride.1;
         (f64::from(y), y)
     } else {
-        let ay = d.ay;
-        let py = clamp_to(
-            f64::from(y0) + d.carry.1 + f64::from(ride.1) + axis_step_for(&mut d.vy, ay, dt),
-            d.bounds_y,
-        );
+        let (ay, limits) = (d.ay, d.bounds_y);
+        let from = f64::from(y0) + d.carry.1 + f64::from(ride.1);
+        let py = bounded_axis_step(&mut d.vy, ay, dt, from, limits);
         (py, py.trunc() as i32)
     };
     {
@@ -751,6 +787,69 @@ mod tests {
             assert!(!ledge_column(floor, GROUND));
         }
         assert!(!ledge_column(CLEAR, CLEAR));
+    }
+
+    #[test]
+    fn a_move_past_a_limit_keeps_the_energy_speed_without_acceleration() {
+        let dt = 0.018;
+        // Rising at 67 px/s against gravity 200 from 0.5 px under the top
+        // limit 7029: the move overshoots, the object is put on the limit
+        // and its speed is the energy speed of the move to it, with no
+        // gravity added, so it stays rising.
+        let mut v = -67.0;
+        let p = bounded_axis_step(&mut v, 200.0, dt, 7029.5, (7029, 7287));
+        assert_eq!(p, 7029.0);
+        let moved = (-67.0 + 0.5 * 200.0 * dt) * dt;
+        let over = 7029.0 - (7029.5 + moved);
+        assert_eq!(v, -(67.0f64 * 67.0 + 2.0 * 200.0 * over).sqrt());
+        assert!(v < -67.0);
+        // Pinned there, it stays on the limit step after step and its
+        // speed towards it grows.
+        let mut from = p;
+        for _ in 0..80 {
+            let before = v;
+            from = bounded_axis_step(&mut v, 200.0, dt, from, (7029, 7287));
+            assert_eq!(from, 7029.0);
+            assert!(v < before);
+        }
+        // A move that stays between the limits adds a dt as before.
+        let mut v = -67.0;
+        let p = bounded_axis_step(&mut v, 200.0, dt, 7100.0, (7029, 7287));
+        assert_eq!(p, 7100.0 + moved);
+        assert_eq!(v, -67.0 + 200.0 * dt);
+        // Past the bottom limit, falling: on the limit, the speed the
+        // energy of the move to it gives.
+        let mut v = 300.0;
+        let p = bounded_axis_step(&mut v, 200.0, dt, 7284.0, (7029, 7287));
+        assert_eq!(p, 7287.0);
+        let moved = (300.0 + 0.5 * 200.0 * dt) * dt;
+        assert_eq!(
+            v,
+            (300.0f64 * 300.0 + 2.0 * 200.0 * (7287.0 - (7284.0 + moved))).sqrt()
+        );
+        // With no acceleration the speed is kept.
+        let mut v = -100.0;
+        assert_eq!(
+            bounded_axis_step(&mut v, 0.0, dt, 7030.0, (7029, 7287)),
+            7029.0
+        );
+        assert_eq!(v, -100.0);
+        // With no speed the energy speed points up.
+        let mut v = 0.0;
+        assert_eq!(
+            bounded_axis_step(&mut v, 200.0, dt, 7287.0, (7029, 7287)),
+            7287.0
+        );
+        assert!(v <= 0.0);
+        // After the 24 px cap, the energy speed of the capped move is the
+        // base of the limit's.
+        let mut v = 2000.0;
+        let mut capped = 2000.0;
+        let d = axis_step_for(&mut capped, 200.0, dt);
+        assert_eq!(d, STEP_LIMIT);
+        let p = bounded_axis_step(&mut v, 200.0, dt, 7270.0, (7029, 7287));
+        assert_eq!(p, 7287.0);
+        assert_eq!(v, speed_after(capped, 200.0, 7287.0 - (7270.0 + d)));
     }
 
     #[test]
