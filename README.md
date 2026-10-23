@@ -491,6 +491,10 @@ carries on from a route (refusing one recorded with another pause or
 screen switch than the original's). `claw-replay` follows a recording's
 `# fuse_clock` line (with `frozen` a help screen's return runs no pass)
 and refuses one recorded with another `pause_input` than the original's.
+`tools/bot/hints/level9-original.txt`
+lists the held buttons of the stretches written by hand (the fight with
+PegLeg, the walk back to the springboard, the jump into the warp and the
+climb).
 The tenth level's routes take the long way, checkpoint to checkpoint:
 past the spike pit no jump crosses before the fifth checkpoint they climb
 the ladder to the room above it, and before the sixth they climb a
@@ -503,7 +507,21 @@ and the parrot carries him across while the pit opens again. The bot is
 guided round by round (the parrot's hits, then Marrow's health, each
 round counting for more than any state within it), waits through the
 parrot's patrol without trying every move under it, and is searched
-with `--tick-cost 0`, so the waits for the dives cost nothing.
+with `--tick-cost 0`, so the waits for the dives cost nothing. Which
+ledge Claw waits on is told by the ends of the pit of the retail level's
+room (`MARROW_PIT` in `tools/bot/src/actions.rs`), so that wait is tuned
+to this room and does not carry over to a community custom level's.
+An enemy's move up or down that would take it past the top or bottom
+of its range puts it there and keeps the speed the move's energy gives,
+with no gravity added, so the parrot carrying Marrow high across the
+room stays on its flight line to the carry's end, with Marrow hanging
+under it, level with Claw's ledge. After a death the game shows a frame
+of its own at the checkpoint once the respawn's passes are over (a warp
+does too), so an enemy that must be on screen to see Claw, as Marrow
+put back on his ledge must, sees him in the first tick after the
+respawn. With both, `level10-original.csv` was searched again from the
+end of Marrow's first carry (tick 14799) and `level10.csv` from tick
+13940, where their games first change.
 `level10-introskip.csv` jumps in, then crosses the open pit as the
 original's players do: a stick of dynamite thrown in the air, a jump off
 the ledge's edge into its blast, and a fresh jump pressed on the one
@@ -511,10 +529,7 @@ tick Claw stands in mid-air after the blast's hit, which lands him on
 Marrow's ledge; Marrow, who never fights after the jump-in, falls to
 Claw's sword there. `tools/bot/hints/level10-original.txt` lists that
 crossing's held buttons.
-`tools/bot/hints/level9-original.txt`
-lists the held buttons of the stretches written by hand (the fight with
-PegLeg, the walk back to the springboard, the jump into the warp and the
-climb). They
+The routes
 are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and
 keeps the ones that bring Claw closer to the level's end. Its budget counts

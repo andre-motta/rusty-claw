@@ -42,6 +42,11 @@
 #    level's end, no goal and no waypoints, with --intro play and
 #    --tick-cost 0 (the fight waits on the parrot's dives, so the time
 #    is not counted against it).
+# 13b. Searched again the same way from route tick 14799, the end of
+#    Marrow's first carry (the route's first 14799 ticks kept): with an
+#    enemy's move past the top or bottom of its range kept on it, the
+#    parrot ends that carry on its flight line, and its later dives come
+#    at other times than the earlier route counted on.
 #
 # level10-introskip.csv: stretches 1 to 12 as above, then:
 # 13s. Not searched: the walk into the door, the jump-in that skips
