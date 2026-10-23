@@ -29,8 +29,8 @@
 //!   ticks past the route's last row, with nothing held.
 //!
 //! The next three are pinned on `routes/earlier/level10-original-2.csv`,
-//! played from the level's start; `routes/level10-original.csv`, found
-//! again under them, keeps its first 17358 ticks:
+//! played from the level's start; `routes/earlier/level10-original-3.csv`,
+//! found again under them, keeps its first 17358 ticks:
 //!
 //! - the parrot keeps the point beside Marrow where it takes hold of him
 //!   exact, to the part of a pixel, and takes hold of him once its exact
@@ -52,6 +52,23 @@
 //!   original game, and the stream stays the original's to the original
 //!   run's last tick, 112 ticks past the route's last row, with nothing
 //!   held.
+//!
+//! The sixth is pinned on `routes/earlier/level10-original-3.csv`, played
+//! from the level's start; `routes/level10-original.csv`, found again
+//! under it, keeps its first 17483 ticks:
+//!
+//! - an enemy's range boxes are centred on its exact position, which only
+//!   its own movement step brings in line with where it is drawn, and the
+//!   parrot's drop of Marrow moves only where he is drawn: the third carry
+//!   ends in tick 17482 with Marrow dropped at (40607, 7253) and his exact
+//!   position still (40607.334, 7125.475), where he hung. In tick 17483
+//!   his outermost box is [40107, 41107) across and [7105, 7145) down, so
+//!   Claw at (41106, 7237), a pixel inside the box built where Marrow
+//!   landed, is in none: Marrow shoots, and his shot hits Claw in tick
+//!   17542. Claw dies in tick 18103 and loses a life in tick 18197, and
+//!   the route ends without the level's end, as it did in the original
+//!   game, and the stream stays the original's to the original run's last
+//!   tick, 112 ticks past the route's last row, with nothing held.
 
 use std::path::Path;
 
@@ -121,6 +138,33 @@ const SECOND_RNG: [(usize, u32); 19] = [
 
 /// Ticks the original run of the second earlier route lasted.
 const SECOND_RUN_TICKS: usize = 18763;
+
+/// The original game's random state after these ticks of the third
+/// earlier route.
+const THIRD_RNG: [(usize, u32); 16] = [
+    (17482, 3_491_473_489),
+    (17483, 1_695_505_300),
+    (17484, 3_264_603_822),
+    (17485, 1_035_281_081),
+    (17541, 529_053_023),
+    (17542, 2_946_070_151),
+    (18102, 2_634_399_624),
+    (18103, 3_030_989_516),
+    (18196, 1_926_441_405),
+    (18197, 396_584_337),
+    (18198, 3_876_216_379),
+    (18386, 2_886_365_648),
+    (18387, 2_179_900_056),
+    (18851, 1_208_009_541),
+    (18852, 3_127_800_807),
+    (18964, 4_169_230_240),
+];
+
+/// Ticks the original run of the third earlier route lasted.
+const THIRD_RUN_TICKS: usize = 18965;
+
+/// A range box: left, top, right, bottom.
+type RangeBox = (i64, i64, i64, i64);
 
 /// The parrot's flight line: the top of its range, y.
 const FLIGHT_LINE: i32 = 7029;
@@ -196,6 +240,17 @@ impl Run {
                 assert_eq!(self.rng[t], want, "random state after tick {t}");
             }
         }
+    }
+
+    /// Marrow's range data: the exact position his boxes are kept at
+    /// after a drop, his range mode, and his outermost box from that
+    /// position.
+    fn marrow_range(&self) -> (Option<(f64, f64)>, u8, Option<RangeBox>) {
+        let link = self.sim.marrow_link().expect("Marrow's link");
+        let o = self.sim.objects().get(link.marrow).expect("Marrow");
+        let d = enemy::data_of(o).expect("Marrow's data");
+        let outer = d.range_from.map(|at| enemy::range_box(d, 0, at));
+        (d.range_from, d.mode, outer)
     }
 
     /// Marrow: (x, y, state).
@@ -276,8 +331,66 @@ fn install_the_route_found_again_keeps_the_second_earlier_routes_start() {
         return;
     }
     let earlier = InputScript::parse(&routes_file("earlier/level10-original-2.csv")).unwrap();
-    let now = InputScript::parse(&routes_file("level10-original.csv")).unwrap();
+    let now = InputScript::parse(&routes_file("earlier/level10-original-3.csv")).unwrap();
     assert_eq!(earlier.ticks[..17358], now.ticks[..17358]);
+}
+
+#[test]
+fn install_the_route_found_again_keeps_the_third_earlier_routes_start() {
+    if install().is_none() {
+        return;
+    }
+    let earlier = InputScript::parse(&routes_file("earlier/level10-original-3.csv")).unwrap();
+    let now = InputScript::parse(&routes_file("level10-original.csv")).unwrap();
+    assert_eq!(earlier.ticks[..17483], now.ticks[..17483]);
+}
+
+#[test]
+fn install_marrow_dropped_keeps_his_range_boxes_where_he_hung() {
+    let Some(root) = install() else { return };
+    let level = level(&root, 10);
+    let mut run = Run::new(&level, &routes_file("earlier/level10-original-3.csv"));
+    run.to(17481);
+    assert_eq!(run.marrow().1, 7125, "hanging under the parrot");
+    assert_eq!(run.marrow_range().0, None);
+    // The drop moves where he is drawn; his exact position stays where he
+    // hung.
+    run.to(17482);
+    let (x, y, _) = run.marrow();
+    assert_eq!((x, y), (40607, 7253));
+    let (kept, _, outer) = run.marrow_range();
+    let (kx, ky) = kept.expect("kept until his next movement step");
+    assert!((kx - 40607.334).abs() < 0.0005, "x {kx}");
+    assert!((ky - 7125.475).abs() < 0.0005, "y {ky}");
+    assert_eq!(outer, Some((40107, 7105, 41107, 7145)));
+    assert_eq!(run.claw_at(), (41106, 7237));
+    // Claw is in none of the boxes built from there (a pixel inside the
+    // outermost built where Marrow landed): off screen, mode 6, and he
+    // shoots; his movement step brings his exact position to the ledge.
+    run.to(17483);
+    let (kept, mode, _) = run.marrow_range();
+    assert_eq!(kept, None);
+    assert_eq!(mode, 6);
+    assert_eq!(run.marrow().2, EnemyState::Fire as i32);
+    run.to(17484);
+    assert_eq!(run.marrow().2, EnemyState::Fire as i32);
+    run.check(&THIRD_RNG);
+    // His shot hits Claw.
+    run.to(17541);
+    assert_eq!(run.sim.stats().health, 95);
+    run.to(17542);
+    assert_eq!(run.sim.stats().health, 75);
+    run.to(18103);
+    assert_eq!(run.sim.stats().health, 0);
+    run.to(18196);
+    assert_eq!(run.sim.stats().lives, 7);
+    run.to(18197);
+    assert_eq!(run.sim.stats().lives, 6);
+    run.check(&THIRD_RNG);
+    run.to(THIRD_RUN_TICKS - 1);
+    assert_eq!(run.sim.stats().health, 20);
+    assert_eq!(run.sim.stats().lives, 6);
+    run.check(&THIRD_RNG);
 }
 
 #[test]

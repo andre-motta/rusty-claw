@@ -52,6 +52,12 @@
 #    parrot's grab point kept exact, that carry starts a tick earlier, the
 #    bird stays on its flight line and Marrow, dropped out of Claw's reach,
 #    keeps his shot, which hit Claw on the earlier route.
+# 13d. Searched again the same way from route tick 17483, the step after
+#    Marrow's third landing (the route's first 17483 ticks kept): with his
+#    range boxes kept at the height he hung from until his next movement
+#    step, Claw, a pixel inside the outermost box built where Marrow
+#    landed, is in none of the boxes built from that height, so Marrow
+#    shoots instead of running at him.
 #
 # level10-introskip.csv: stretches 1 to 12 as above, then:
 # 13s. Not searched: the walk into the door, the jump-in that skips
