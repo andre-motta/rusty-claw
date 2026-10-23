@@ -1130,3 +1130,50 @@ known.lives = 13350
 reference = "level9/bot-original"
 clock = "c18"
 tolerance = "exact"
+
+# The bot's route of the tenth level (original speeds), one 18 ms step per
+# frame, Marrow's fight with his parrot and the trap floor included. Every
+# repeat wins the level and is equal on every compared row, the random
+# stream included.
+[[compare]]
+reference = "level10/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The tenth level's jump-in route (original speeds): the jump into Marrow's
+# room that skips his introduction, then the fight; equal on every row.
+[[compare]]
+reference = "level10/introskip-original"
+clock = "c18"
+tolerance = "exact"
+
+# The tenth level of a game that started with the ninth level's route
+# (`level9-original.csv`, its help screens included), entered through the
+# end-of-level screen with the progress the ninth level carries: equal on
+# every row.
+[[compare]]
+reference = "level10/pair-original"
+clock = "c18"
+tolerance = "exact"
+
+# The bot's route of the tenth level (default tuning) at 60 frames per
+# second. It leaves the feel tolerance at 1184 ms in Claw's height (the
+# default tuning's movement, as on the earlier levels), then the runs go
+# different ways.
+[[compare]]
+reference = "level10/bot"
+clock = "c60"
+tolerance = "feel"
+known.y = 1184
+known.cam_y = 1184
+known.score = 1317
+known.health = 2367
+known.physics_type = 2367
+known.state_id = 2367
+known.x = 2500
+known.cam_x = 2500
+known.events = 19728
+known.magic = 32517
+known.dynamite = 33867
+known.lives = 115050
+known.boss_fight = 210950
