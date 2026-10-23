@@ -5,7 +5,8 @@
 //! way to the boss room's door.
 
 use claw_bot::search::{
-    DOOR_BASE, FIGHT_BASE, MARROW_NEAR_CAP, MarrowFight, PARROT_NEAR_CAP, marrow_guide,
+    DOOR_BASE, FIGHT_BASE, MARROW_BOX_CLEAR, MARROW_NEAR_CAP, MarrowFight, PARROT_NEAR_CAP,
+    marrow_guide, near_box_edge,
 };
 
 /// How far a blow on Marrow can leave him from Claw, px: his flinch
@@ -180,4 +181,36 @@ fn after_the_intro_skip_every_blow_on_marrow_is_progress() {
         }
         last = Some(g);
     }
+}
+
+/// Claw one pixel inside the right edge of Marrow's outermost box built
+/// where he landed, and far below the box built at the height he hung
+/// from: on the first box's edge, clear of the second's.
+#[test]
+fn a_pixel_inside_a_range_box_is_on_its_edge() {
+    let landed = (40107, 7233, 41107, 7273);
+    let kept = (40107, 7105, 41107, 7145);
+    let claw = (41106, 7237);
+    assert!(near_box_edge(landed, claw, MARROW_BOX_CLEAR));
+    assert!(!near_box_edge(kept, claw, MARROW_BOX_CLEAR));
+    // Clear inside and clear outside, across and down.
+    assert!(!near_box_edge(landed, (40607, 7253), MARROW_BOX_CLEAR));
+    assert!(!near_box_edge(
+        landed,
+        (41107 + MARROW_BOX_CLEAR, 7253),
+        MARROW_BOX_CLEAR
+    ));
+    assert!(near_box_edge(
+        landed,
+        (41107 + MARROW_BOX_CLEAR - 1, 7253),
+        MARROW_BOX_CLEAR
+    ));
+    assert!(near_box_edge(landed, (40600, 7273), MARROW_BOX_CLEAR));
+    assert!(!near_box_edge(
+        landed,
+        (40600, 7273 + MARROW_BOX_CLEAR),
+        MARROW_BOX_CLEAR
+    ));
+    // Beside a corner, past the edge's length.
+    assert!(!near_box_edge(landed, (41200, 7273), MARROW_BOX_CLEAR));
 }

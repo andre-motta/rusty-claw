@@ -223,8 +223,11 @@ pub struct ParrotData {
     /// The wait between two squawks on the patrol.
     pub squawk: Timer,
     /// The grab point beside Marrow the flight to him aims at, exact (x,
-    /// y): it is kept to the part of a pixel, and the flight takes hold of
-    /// him once its exact x has passed the exact grab x.
+    /// y), kept to the part of a pixel. Once the flight has set out
+    /// (its velocity aimed at the exact point), only the x is read: the
+    /// flight takes hold of him once its exact x has passed the exact
+    /// grab x. The y is kept for completeness; the target holds the
+    /// point in whole pixels.
     pub grab: (f64, f64),
 }
 
@@ -687,7 +690,12 @@ fn passed(w: &World, id: ObjectId, x: i32) -> bool {
 /// at or past it, moving left below it.
 fn passed_exact(w: &World, id: ObjectId, x: f64) -> bool {
     let vx = data(w, id).map_or(0.0, |d| d.vx);
-    let at = exact_x(w, id);
+    past(vx, exact_x(w, id), x)
+}
+
+/// True when a flight at `vx` px/s whose exact x is `at` has passed `x`:
+/// moving right at or past it, moving left below it.
+fn past(vx: f64, at: f64, x: f64) -> bool {
     (vx > 0.0 && at >= x) || (vx < 0.0 && at < x)
 }
 
@@ -778,7 +786,9 @@ pub fn enter_fly_to_marrow(w: &mut World, id: ObjectId) {
 /// The flight to Marrow: once its exact x has passed the exact grab x it
 /// carries him. Coming from the right, it takes hold of him as soon as
 /// it is below the exact point, which can be a tick before it would be
-/// below that point's whole pixel.
+/// below that point's whole pixel; coming from the left, only once it is
+/// at or past the exact point, which can be a tick after it reaches the
+/// whole pixel.
 pub fn fly_to_marrow_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     let grab = parrot(w, id).map_or(0.0, |p| p.grab.0);
@@ -872,6 +882,24 @@ mod tests {
         assert_eq!(HITS_HOME, 3);
         // Its depth sorts it after Marrow.
         const { assert!(Z > marrow::SORTED_Z) };
+    }
+
+    /// The grab point's part of a pixel moves the grab a tick either way:
+    /// earlier coming from the right, later coming from the left.
+    #[test]
+    fn the_exact_grab_point_can_come_a_tick_earlier_or_later() {
+        let grab = 41043.44;
+        // From the right: at 41043.249 the bird is below the exact point
+        // but not yet below its whole pixel.
+        assert!(past(-300.0, 41043.249, grab));
+        assert!(!past(-300.0, 41043.249, grab.trunc()));
+        // From the left: at 41043.3 the bird has reached the whole pixel
+        // but not yet the exact point; a tick on, it has.
+        assert!(!past(300.0, 41043.3, grab));
+        assert!(past(300.0, 41043.3, grab.trunc()));
+        assert!(past(300.0, 41043.3 + 300.0 * 0.018, grab));
+        // Standing still, never.
+        assert!(!past(0.0, grab, grab));
     }
 
     #[test]

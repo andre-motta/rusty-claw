@@ -1135,7 +1135,11 @@ pub fn wait_tick(w: &mut World, id: ObjectId) {
 /// The end of a wait for the parrot, by its time or by the end of the
 /// parrot's carry: gravity again, no longer Safe, free, 32 px up and down
 /// onto the floor below, standing, the parrot call clear, the phase health
-/// from his health, and Home.
+/// from his health, and Home. The drop moves only where he is drawn: until
+/// his next movement step his range boxes and the side he sees Claw on
+/// stay centred on his exact position from before it (his exact x, and
+/// the height he hung or stood at with its part of a pixel), see
+/// [`super::pre_tick`].
 pub fn drop_down(w: &mut World, id: ObjectId) {
     if let Some(d) = data_mut(w, id) {
         d.ay = GRAVITY;
@@ -1143,9 +1147,15 @@ pub fn drop_down(w: &mut World, id: ObjectId) {
     }
     obj_mut(w, id).flags &= !flags::SAFE;
     let across = super::exact_x(w, id);
+    let height = super::exact_y(w, id);
     super::drop_to_floor(w, id);
     keep_across(w, id, across);
     placed(w, id, false);
+    // The drop moves only where he is drawn: until his next movement step
+    // his range boxes stay centred on the exact position he dropped from.
+    if let Some(d) = data_mut(w, id) {
+        d.range_from = Some((across, height));
+    }
     let health = obj(w, id).health;
     if let Some(l) = w.marrow_link_mut() {
         l.parrot_call = false;

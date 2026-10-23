@@ -47,3 +47,10 @@
 #    first 13940 ticks kept): with an enemy's move past the top or bottom
 #    of its range kept on it, the parrot's carries of Marrow, and so its
 #    dives, come out otherwise from there.
+# 13c. Searched again the same way from route tick 14860, before the end
+#    of Marrow's second carry (the route's first 14860 ticks kept): with
+#    his range boxes kept at the height he hung from until his next
+#    movement step, Claw, on the edge of the outermost box built from that
+#    height as Marrow landed, sent Marrow running at him; the search keeps
+#    Claw clear of the edges of the boxes built from either height on each
+#    landing.

@@ -70,7 +70,12 @@
 //! distance to him; a round whose whistle is due counts as the next
 //! one's start. While the parrot patrols, the stretch of the room it is
 //! over and the time make the coarse state, so a wait for its dive is
-//! progress.
+//! progress. When Marrow lands from the parrot's carry, the step after
+//! decides what he does by where Claw is in his range boxes, built at
+//! the height he hung from; a child that leaves Claw within
+//! [`MARROW_BOX_CLEAR`] px of an edge of those boxes, or of the boxes
+//! built where Marrow landed, is dropped ([`on_marrow_box_edge`]): a
+//! pixel there decides the landing's outcome.
 //!
 //! A route can be made to win under several sets of the values the
 //! hermit crabs start with ([`CrabValues`], which the original game does
@@ -423,6 +428,9 @@ pub struct SearchStats {
     /// Children dropped because they entered a boss room the other way
     /// (see [`SearchConfig::intro`]).
     pub entries_pruned: u32,
+    /// Children dropped because they left Claw on an edge of Marrow's
+    /// range boxes as he landed (see [`on_marrow_box_edge`]).
+    pub box_edges_pruned: u32,
     /// Children dropped because Claw died in a game under further crab
     /// values, or it did not meet the goal there (see
     /// [`search_report_with`]).
@@ -1053,6 +1061,9 @@ enum Outcome {
     TooClose,
     /// A boss room was entered the other way (see [`SearchConfig::intro`]).
     WrongEntry,
+    /// Claw was left on an edge of Marrow's range boxes as he landed (see
+    /// [`on_marrow_box_edge`]).
+    BoxEdge,
     /// Claw died in a game under further crab values, or the goal was met
     /// while it was not met there (see [`search_report_with`]).
     VariantLost,
@@ -1176,6 +1187,10 @@ impl Search<'_> {
                     }
                     Outcome::WrongEntry => {
                         self.stats.entries_pruned += 1;
+                        continue;
+                    }
+                    Outcome::BoxEdge => {
+                        self.stats.box_edges_pruned += 1;
                         continue;
                     }
                     Outcome::VariantLost => {
@@ -1590,6 +1605,55 @@ fn near(sim: &Sim, x: i32, y: i32, r: i32) -> bool {
     })
 }
 
+/// How far Claw is kept from an edge of Marrow's range boxes as he
+/// lands, px (see [`on_marrow_box_edge`]).
+pub const MARROW_BOX_CLEAR: i64 = 8;
+
+/// True when Marrow has just been dropped onto a ledge (his range boxes
+/// still at the height he hung from until his next movement step) and
+/// Claw stands within [`MARROW_BOX_CLEAR`] px of an edge of one of his
+/// range boxes, built from that height or from where he landed: the
+/// step after the landing tests Claw against those boxes before Claw
+/// moves, and a pixel either way there decides whether Marrow shoots or
+/// runs at him.
+pub fn on_marrow_box_edge(sim: &Sim) -> bool {
+    let Some(link) = sim.marrow_link() else {
+        return false;
+    };
+    let Some(m) = sim.objects().get(link.marrow) else {
+        return false;
+    };
+    let Some(d) = enemy::data_of(m) else {
+        return false;
+    };
+    let Some(kept) = d.range_from else {
+        return false;
+    };
+    let Some(c) = sim.player() else {
+        return false;
+    };
+    let claw = (i64::from(c.x), i64::from(c.y));
+    let landed = (f64::from(m.x), f64::from(m.y));
+    [kept, landed].into_iter().any(|centre| {
+        (0..5).any(|i| near_box_edge(enemy::range_box(d, i, centre), claw, MARROW_BOX_CLEAR))
+    })
+}
+
+/// True when `point` lies within `margin` of an edge of `rect` (left,
+/// top, right, bottom; the right and bottom edges outside it): on either
+/// side of the edge, along the edge's length widened by `margin`.
+pub fn near_box_edge(
+    (left, top, right, bottom): (i64, i64, i64, i64),
+    (x, y): (i64, i64),
+    margin: i64,
+) -> bool {
+    let across = x > left - margin && x < right + margin;
+    let down = y > top - margin && y < bottom + margin;
+    let near_x = (x - left).abs() < margin || (x - right).abs() < margin;
+    let near_y = (y - top).abs() < margin || (y - bottom).abs() < margin;
+    (near_x && down) || (near_y && across)
+}
+
 /// True when Claw is dying or dead.
 pub fn dying(sim: &Sim) -> bool {
     sim.player()
@@ -1687,6 +1751,10 @@ fn play(
         }
         if died || dying(&sim) || sim.stats().lives < lives {
             outcome = Outcome::Dead;
+            break;
+        }
+        if on_marrow_box_edge(&sim) {
+            outcome = Outcome::BoxEdge;
             break;
         }
         if from.intro != Intro::Any {

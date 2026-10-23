@@ -524,8 +524,9 @@ end of Marrow's first carry (tick 14799) and `level10.csv` from tick
 13940, where their games first change.
 The parrot keeps the point beside Marrow where it takes hold of him to
 the part of a pixel, and takes hold of him once it has flown past that
-exact point, so on some carries it grabs him a tick earlier than a whole
-pixel would let it. Standing, Marrow's height creeps a part of a pixel
+exact point, so on some carries it grabs him a tick earlier or a tick
+later than a whole pixel would let it (earlier when it comes from the
+right, later when it comes from the left). Standing, Marrow's height creeps a part of a pixel
 down a tick and back; a drop onto the floor stops it, and the end of his
 next whistle starts it again, so the parrot's flight and the carry aim
 at where he really stands. When Claw comes back after a death, every
@@ -533,6 +534,20 @@ shot still flying is removed before anything runs, so a shot fired at
 the dead Claw never hits him after the respawn. With these,
 `level10-original.csv` was searched again from Marrow's third carry
 (tick 17358); the other tenth-level routes play as before.
+An enemy tests how far away Claw is with range boxes centred on its
+exact position, which only its own movement step brings in line with
+where it is drawn. When the parrot drops Marrow onto a ledge (and when
+his wait for the parrot runs out), the drop moves only where he is
+drawn, so in the step after a carry his boxes are still at the height
+he hung from: Claw standing inside them measured from the ledge can be
+out of them, and Marrow shoots instead of running at him. The search
+keeps Claw clear of the edges of the boxes built from either height as
+Marrow lands (`MARROW_BOX_CLEAR` in `tools/bot/src/search.rs`), since a
+pixel there decides what Marrow does. With this, `level10-original.csv`
+was searched again from the step after Marrow's third landing (tick
+17483) and `level10.csv` from tick 14860, before his second landing;
+`level10-introskip.csv` and `level9-original.level10.csv` play as
+before.
 `level10-introskip.csv` jumps in, then crosses the open pit as the
 original's players do: a stick of dynamite thrown in the air, a jump off
 the ledge's edge into its blast, and a fresh jump pressed on the one

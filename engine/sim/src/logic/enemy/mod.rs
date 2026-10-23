@@ -835,6 +835,12 @@ pub struct EnemyFields {
     /// Where the last movement step left the object; a move made by
     /// anything else drops the carried fraction.
     pub moved_to: Option<(i32, i32)>,
+    /// The exact position a move of the whole pixels by other code left
+    /// behind (Marrow's drop to the ledge), kept until the next movement
+    /// step: until then the pre-tick centres the range boxes and the side
+    /// test on it, not on where the enemy is drawn (see [`pre_tick`]).
+    /// `None` otherwise.
+    pub range_from: Option<(f64, f64)>,
     /// The tile result of the last movement step (the bits of
     /// [`crate::physics::res`]); a step that does not run keeps it.
     pub last_result: u32,
@@ -940,6 +946,7 @@ impl Default for EnemyFields {
             target_y: 0,
             carry: (0.0, 0.0),
             moved_to: None,
+            range_from: None,
             last_result: 0,
             last_move_ms: None,
             stepped: false,
@@ -1269,6 +1276,16 @@ pub fn exact_x(w: &World, id: ObjectId) -> f64 {
         .filter(|d| d.moved_to == Some((o.x, o.y)))
         .map_or(0.0, |d| d.carry.0);
     f64::from(o.x) + carry
+}
+
+/// The enemy's exact height: its y plus the fraction its last movement
+/// step carried, unless something else has moved it since.
+pub fn exact_y(w: &World, id: ObjectId) -> f64 {
+    let o = obj(w, id);
+    let carry = data(w, id)
+        .filter(|d| d.moved_to == Some((o.x, o.y)))
+        .map_or(0.0, |d| d.carry.1);
+    f64::from(o.y) + carry
 }
 
 /// The enemy's data.
@@ -1783,11 +1800,17 @@ pub fn pulse_roll(w: &mut World) -> i32 {
 /// is ever below.
 pub fn pre_tick(w: &mut World, id: ObjectId, class: &Class) {
     let roll = pulse_roll(w);
-    let (ex, ey) = {
-        let o = obj(w, id);
-        (o.x, o.y)
+    // The boxes and the side test are centred on the exact position, which
+    // only the enemy's own movement step brings in line with where it is
+    // drawn: after a move of the whole pixels by other code they stay
+    // where the move left the exact position until that step.
+    let (exact, centre) = match data(w, id).and_then(|d| d.range_from) {
+        Some((x, y)) => (x, (x, y)),
+        None => {
+            let o = obj(w, id);
+            (exact_x(w, id), (f64::from(o.x), f64::from(o.y)))
+        }
     };
-    let exact = exact_x(w, id);
     let claw = w.claw_object().map(|c| (c.x, c.y));
     let invisible = claw_invisible(w);
     // A hidden enemy is not drawn, so it is never on screen.
@@ -1798,7 +1821,7 @@ pub fn pre_tick(w: &mut World, id: ObjectId, class: &Class) {
     if let Some((cx, cy)) = claw {
         d.claw_right = f64::from(cx) >= exact;
         if !invisible {
-            d.mode = range_mode(d, (ex, ey), (cx, cy), screen, now);
+            d.mode = range_mode_at(d, centre, (cx, cy), screen, now);
         }
     }
     if class.human {
@@ -1873,23 +1896,37 @@ pub const MIRRORED: u32 = 0x2;
 ///
 /// Box `i` is centred on the enemy with the half sizes in
 /// [`EnemyFields::ranges`], cut across to the patrol limits widened by box
-/// 3's half width; its right and bottom edges are outside it.
+/// 3's half width; its right and bottom edges are outside it. The enemy is
+/// at the whole pixel `(ex, ey)` here; see [`range_mode_at`] for an exact
+/// position.
 pub fn range_mode(
     d: &mut EnemyFields,
     (ex, ey): (i32, i32),
+    claw: (i32, i32),
+    screen: bool,
+    now: u64,
+) -> u8 {
+    range_mode_at(d, (f64::from(ex), f64::from(ey)), claw, screen, now)
+}
+
+/// The range mode ([`range_mode`]) of an enemy whose exact position is
+/// `(x, y)`: box `i` is centred there with the half sizes `(hw, hh)` in
+/// [`EnemyFields::ranges`], cut across to the patrol limits widened by
+/// box 3's half width (`lo`, `hi`), and cut to whole pixels toward zero:
+/// left `trunc(max(x - hw, lo))`, right `trunc(min(x + hw, hi))`, top
+/// `trunc(y) - hh`, bottom `trunc(y) + hh` (see [`range_box`]). Claw is
+/// tested by where he is drawn.
+pub fn range_mode_at(
+    d: &mut EnemyFields,
+    (ex, ey): (f64, f64),
     (cx, cy): (i32, i32),
     screen: bool,
     now: u64,
 ) -> u8 {
-    let reach = i64::from(d.ranges[3].0);
-    let lo = i64::from(d.bounds.0) - reach;
-    let hi = i64::from(d.bounds.1) + reach;
-    let (ex, ey, cx, cy) = (i64::from(ex), i64::from(ey), i64::from(cx), i64::from(cy));
+    let (cx, cy) = (i64::from(cx), i64::from(cy));
     for i in (0..5).rev() {
-        let (hw, hh) = (i64::from(d.ranges[i].0), i64::from(d.ranges[i].1));
-        let left = (ex - hw).max(lo);
-        let right = (ex + hw).min(hi);
-        if cx >= left && cx < right && cy >= ey - hh && cy < ey + hh {
+        let (left, top, right, bottom) = range_box(d, i, (ex, ey));
+        if cx >= left && cx < right && cy >= top && cy < bottom {
             d.miss_since = None;
             return i as u8;
         }
@@ -1904,6 +1941,20 @@ pub fn range_mode(
     } else {
         d.mode
     }
+}
+
+/// Range box `i` (0 the outermost, 4 the innermost) of an enemy whose
+/// exact position is `(x, y)`, as (left, top, right, bottom); see
+/// [`range_mode_at`]. The right and bottom edges are outside it.
+pub fn range_box(d: &EnemyFields, i: usize, (x, y): (f64, f64)) -> (i64, i64, i64, i64) {
+    let reach = i64::from(d.ranges[3].0);
+    let lo = (i64::from(d.bounds.0) - reach) as f64;
+    let hi = (i64::from(d.bounds.1) + reach) as f64;
+    let (hw, hh) = (f64::from(d.ranges[i].0), i64::from(d.ranges[i].1));
+    let left = (x - hw).max(lo).trunc() as i64;
+    let right = (x + hw).min(hi).trunc() as i64;
+    let y = y.trunc() as i64;
+    (left, y - hh, right, y + hh)
 }
 
 /// The post-tick: the scheduled call, then the movement step.
@@ -2264,6 +2315,36 @@ mod tests {
         assert_eq!(range_mode(&mut d, (100, 100), (200, 100), false, 0), 6);
         assert_eq!(range_mode(&mut d, (100, 100), (0, 60), false, 0), 4);
         assert_eq!(range_mode(&mut d, (100, 100), (0, 140), false, 0), 6);
+    }
+
+    /// Marrow dropped onto the ledge, his exact position still at the
+    /// height he hung from: the boxes are cut from it to whole pixels
+    /// toward zero, so Claw one pixel inside box 0 measured from the
+    /// ledge is in no box.
+    #[test]
+    fn range_boxes_come_from_the_exact_position() {
+        let mut d = EnemyFields {
+            ranges: [(500, 20), (400, 20), (300, 20), (200, 20), (60, 20)],
+            ..EnemyFields::default()
+        };
+        d.bounds = UNBOUNDED;
+        let kept = (40607.334, 7125.475);
+        assert_eq!(range_box(&d, 0, kept), (40107, 7105, 41107, 7145));
+        assert_eq!(
+            range_box(&d, 0, (40607.334, 7253.0)),
+            (40107, 7233, 41107, 7273)
+        );
+        assert_eq!(range_mode_at(&mut d, kept, (41106, 7237), false, 0), 6);
+        assert_eq!(
+            range_mode_at(&mut d, (40607.334, 7253.0), (41106, 7237), false, 0),
+            0
+        );
+        // The truncation goes toward zero: a box edge left of 0 is not
+        // floored.
+        assert_eq!(range_box(&d, 4, (10.5, 30.5)).0, -49);
+        // Cut to the patrol limits widened by box 3's half width.
+        d.bounds = (40000, 40800);
+        assert_eq!(range_box(&d, 0, kept), (40107, 7105, 41000, 7145));
     }
 
     #[test]
