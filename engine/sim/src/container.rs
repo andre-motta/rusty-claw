@@ -71,6 +71,8 @@ pub struct Container {
     live: usize,
     head: Option<ObjectId>,
     next_serial: u32,
+    /// Update passes finished ([`Container::finish_pass`]).
+    passes: u64,
 }
 
 /// True when `a` and `b` name the same slot: the same object, or an
@@ -281,9 +283,17 @@ impl Container {
         obj
     }
 
+    /// The number of update passes finished so far: calls made in the same
+    /// pass see the same number, and a call in any later pass a greater
+    /// one.
+    pub fn passes(&self) -> u64 {
+        self.passes
+    }
+
     /// Runs the end of an update pass: destroys the objects in `destroy`
-    /// (in order) and re-sorts those in `resort`. `notify` is called for
-    /// objects that asked for one last call in the destroying state.
+    /// (in order) and re-sorts those in `resort`, and counts the pass
+    /// ([`Container::passes`]). `notify` is called for objects that asked
+    /// for one last call in the destroying state.
     pub fn finish_pass(
         &mut self,
         destroy: &[ObjectId],
@@ -306,6 +316,7 @@ impl Container {
                 self.insert(id);
             }
         }
+        self.passes += 1;
     }
 
     /// Exchanges the object stored under `id` with `other`, leaving the

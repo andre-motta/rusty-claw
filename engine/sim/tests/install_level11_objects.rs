@@ -43,8 +43,8 @@ use std::path::{Path, PathBuf};
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_frame::{AudioCue, GameEvent};
 use claw_sim::input::ScriptTuning;
-use claw_sim::logic::enemy::{self, EnemyState, mercat, siren};
-use claw_sim::logic::{ObjectData, break_plank, laser};
+use claw_sim::logic::enemy::{self, EnemyState, siren};
+use claw_sim::logic::{break_plank, laser};
 use claw_sim::object::ObjectId;
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Tolerances, TraceRow};
@@ -147,8 +147,12 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// Mercat by the start room's opening and the fish of the first pool
 /// included. What the original's runs did before their time zero, which
 /// the replay does not play the same way, is put in step there instead
-/// ([`wake_laser_a_tick_earlier`], [`put_siren_in_step`],
-/// [`put_start_mercat_in_step`]).
+/// ([`put_siren_in_step`]). The laser beside the put-down point and the
+/// Mercat by the start room's opening need nothing: the original's runs
+/// put Claw down with the game's own teleport, which runs every awake
+/// object's logic once more at the game time of the tick it comes in, and
+/// the replay's warp does the same in its second pass, waking the laser
+/// there and giving the Mercat his first idle pose there.
 const KNOWN: &[Known] = &[];
 
 fn known(store: &str, clock: &str) -> Vec<(&'static str, u64)> {
@@ -259,29 +263,11 @@ fn at_time_zero(level: &SimLevel, clock: &str, r: &Route, t0_ms: u64, seed: u32)
         sim.step(TickInput::default());
     }
     if r.store.starts_with("laser-") {
-        wake_laser_a_tick_earlier(&mut sim);
         put_siren_in_step(&mut sim, clock);
     }
-    if r.store == "belt-left" {
-        put_start_mercat_in_step(&mut sim);
-    }
+
     sim.with_world(|w| *w.rng = Rng::new(seed));
     sim
-}
-
-/// The original's runs put Claw down inside the level's first tick, and
-/// the laser beside him woke in that tick; the replay puts him down
-/// between the first two ticks, and the laser wakes a tick later. Its
-/// wait is moved back to the tick the original's run started it on.
-fn wake_laser_a_tick_earlier(sim: &mut Sim) {
-    let id = find(sim, "Laser", LASER);
-    sim.with_world(|w| {
-        if let Some(o) = w.objects.get_mut(id)
-            && let ObjectData::Laser(d) = &mut o.data
-        {
-            d.start_ms -= TICK;
-        }
-    });
 }
 
 /// Where the Siren beside the laser stands.
@@ -317,29 +303,6 @@ fn put_siren_in_step(sim: &mut Sim, clock: &str) {
             d.out_of_range = false;
             d.miss_since = None;
             d.deferred = None;
-        }
-    });
-}
-
-/// Where the Mercat by the start room's opening stands.
-const START_MERCAT: (i32, i32) = (3935, 1753);
-
-/// Puts the Mercat by the start room's opening where the original's run
-/// of belt-left shows him at time zero. He is built in the level's first
-/// tick in both games; the original's run then puts Claw down with the
-/// game's own teleport, which runs every awake object's logic once more
-/// at that tick's time, and in that call he takes his first idle pose
-/// (its draw comes right after his build's, before any other object's,
-/// and his next pose comes 1000 ms later, a row earlier than the
-/// replay's). The replay's warp runs only the first calls of the objects
-/// it wakes, so his first pose comes in its second tick. His pose's wait
-/// is put where the run shows it.
-fn put_start_mercat_in_step(sim: &mut Sim) {
-    let id = find(sim, mercat::NAMES[0], START_MERCAT);
-    sim.with_world(|w| {
-        assert_eq!(enemy::state(w, id), Some(EnemyState::Idle));
-        if let Some(m) = mercat::mercat_data_mut(w, id) {
-            m.wait = enemy::Timer::new(0, mercat::POSE_MS);
         }
     });
 }

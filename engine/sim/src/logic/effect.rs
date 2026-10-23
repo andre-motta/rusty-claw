@@ -20,14 +20,17 @@
 //!
 //! Once set up, a hit burst, a sparkle and a splash are in
 //! [`state::PLAYING`] and the glitter driver in [`state::SHEDDING`]: none
-//! of them is in the first-call state any more, so a pass that runs only
-//! the objects not set up yet (a warp's set-up) leaves them alone, and
-//! the glitter driver sheds only in the game's own passes.
+//! of them is in the first-call state any more, so the level load's
+//! set-up pass leaves them alone. The shedding glitter driver waits 15 ms
+//! between calls, so a pass between ticks that takes no game time (a
+//! warp's) passes it over, and it sheds only in the game's own ticks.
 //!
 //! An explosion asked for through [`EffectKind::Explosion`] draws nothing:
 //! it hurts everything in its square that the level's own shots can hurt,
-//! once, in the first collision pass after its first logic call, never
-//! hurts the object it stands for, and then removes itself. Thrown
+//! once, in the first collision pass after its first logic call (or, for
+//! a powder keg's, after the keg's call that made it: see
+//! [`arm_at_once`]), never hurts the object it stands for, and then
+//! removes itself. Thrown
 //! dynamite and the rat's bombs do not use it: they turn into their own
 //! explosion.
 
@@ -108,6 +111,10 @@ pub struct EffectData {
     /// An explosion made its owner unhittable for its collision pass and
     /// must undo that.
     pub shielded_owner: bool,
+    /// The update pass ([`crate::Container::passes`]) an explosion was
+    /// armed in by the call that made it ([`arm_at_once`]): a call of its
+    /// own later in that pass leaves it armed.
+    pub armed_in_pass: Option<u64>,
 }
 
 /// What effect to show.
@@ -486,24 +493,48 @@ fn flare_tick(w: &mut World, id: ObjectId) {
     }
 }
 
+/// Arms explosion `id` for the collision pass that follows this update
+/// pass: it becomes harmful and makes its owner unhittable for that pass
+/// (when it was not already).
+fn arm(w: &mut World, id: ObjectId) {
+    let owner = effect_data(w, id).and_then(|d| d.owner);
+    let mut shielded = false;
+    if let Some(src) = owner
+        && let Some(s) = w.objects.get_mut(src)
+        && s.flags & flags::SAFE == 0
+    {
+        s.flags |= flags::SAFE;
+        shielded = true;
+    }
+    if let Some(o) = w.objects.get_mut(id) {
+        o.flags &= !flags::HARMLESS;
+        let d = data_mut(o);
+        d.armed = true;
+        d.shielded_owner = shielded;
+    }
+}
+
+/// Arms explosion `id` in the call that made it, so it hurts in the
+/// collision pass of the same tick (a powder keg's blast: the keg itself
+/// is the blast in the call whose animation event sets it off). A call of
+/// the explosion's own later in the same update pass leaves it armed; its
+/// first call in a later pass removes it.
+pub fn arm_at_once(w: &mut World, id: ObjectId) {
+    arm(w, id);
+    let pass = w.objects.passes();
+    if let Some(o) = w.objects.get_mut(id) {
+        data_mut(o).armed_in_pass = Some(pass);
+    }
+}
+
 fn explosion_tick(w: &mut World, id: ObjectId) {
     let Some(d) = effect_data(w, id) else { return };
+    if d.armed_in_pass == Some(w.objects.passes()) {
+        return;
+    }
     if !d.armed {
         // Armed for the collision pass that follows this update pass.
-        let mut shielded = false;
-        if let Some(src) = d.owner
-            && let Some(s) = w.objects.get_mut(src)
-            && s.flags & flags::SAFE == 0
-        {
-            s.flags |= flags::SAFE;
-            shielded = true;
-        }
-        if let Some(o) = w.objects.get_mut(id) {
-            o.flags &= !flags::HARMLESS;
-            let d = data_mut(o);
-            d.armed = true;
-            d.shielded_owner = shielded;
-        }
+        arm(w, id);
         return;
     }
     if d.shielded_owner

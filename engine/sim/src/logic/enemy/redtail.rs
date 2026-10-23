@@ -625,7 +625,7 @@ pub fn tick(w: &mut World, id: ObjectId) {
             w.redtail_link_mut().redtail = None;
         }
     }
-    // Built by a warp's set-up between two ticks, he is the current boss
+    // Built by a warp's pass between two ticks, he is the current boss
     // from his first logic call on: a boss health set-up made between
     // two ticks reaches him after that tick, which shows his own health.
     if raw != engine_state::DESTROYING

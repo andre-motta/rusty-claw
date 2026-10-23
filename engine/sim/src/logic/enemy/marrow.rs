@@ -50,8 +50,8 @@
 //! # Boss stage
 //!
 //! His level's door and stager ([`STAGE`]) are the shared stage pieces and
-//! run already. The room is built with the door's warp: the warp's set-up
-//! makes the first calls of the room's objects (Marrow, the parrot and
+//! run already. The room is built with the door's warp: the warp's second
+//! pass makes the first calls of the room's objects (Marrow, the parrot and
 //! the slabs are built there), so on Claw's first tick in the room Marrow
 //! idles (Claw is out of his range and he is off screen), the slabs start
 //! to open and the phase health reads 0, as the original shows it at the

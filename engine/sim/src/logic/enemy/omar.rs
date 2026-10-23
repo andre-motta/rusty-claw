@@ -27,7 +27,7 @@
 //!
 //! # The rules
 //!
-//! - Built (by the warp's set-up, or as Claw comes near): the current
+//! - Built (by the warp's passes, or as Claw comes near): the current
 //!   boss; [`HEALTH`] health and [`DAMAGE`] (times the difficulty
 //!   factors); his hit and movement box [`BODY_RECT`]; a contact box of
 //!   3 x 3 px around his position ([`CONTACT_RECT`]) that costs a Claw who

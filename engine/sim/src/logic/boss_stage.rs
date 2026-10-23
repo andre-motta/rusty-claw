@@ -12,7 +12,8 @@
 //! record's (speed x, speed y), a warp taken in a jump turning into a fall.
 //! The move ends with the warp's own set-up, in no game time (see
 //! [`crate::Sim::step`]): the camera jumps to Claw and the objects around
-//! him wake and run their first call, so the stager next to the target is
+//! him wake and run once (their first call, for those never run), so the
+//! stager next to the target is
 //! armed before Claw's first tick there. A placed BossWarp at depth 0 is
 //! drawn at depth 1000.
 //!

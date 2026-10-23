@@ -159,9 +159,9 @@ fn start_at(sim: &mut Sim, at: (i32, i32), t0_ms: u64, seed: u32, catnip_ms: Opt
 /// to sleep after that first tick, so the guards by the door would draw
 /// their tick's rolls in it). The replay holds those for one call when
 /// Claw is about to go through the door. The effects already running (the
-/// Catnip glitter) have no call in the door's set-up, which the build does
-/// itself: once set up they are out of the first-call state, so that pass
-/// leaves them alone, and they are not held.
+/// Catnip glitter) have no call in the door's passes, which the build does
+/// itself: the shedding glitter waits out its time delay in those passes,
+/// which take no game time, so they leave it alone, and it is not held.
 fn through_the_door(sim: &mut Sim) {
     let Some(target) = sim.claw().special.warp_to else {
         return;

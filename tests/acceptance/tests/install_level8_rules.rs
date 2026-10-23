@@ -13,9 +13,10 @@
 //!
 //! - an effect leaves its first-call state once its first call has set it
 //!   up: Catnip's glitter driver, which Claw carries through the warp
-//!   into Gabriel's room, is then not run again by the warp's set-up
-//!   pass, and it sheds its two sparkles (four draws) only in the first
-//!   tick in the room. Claw touches the door in tick 15571 of the first
+//!   into Gabriel's room, is then not run again by the warp's passes,
+//!   which take no game time while it waits out its time delay, and it
+//!   sheds its two sparkles (four draws) only in the first tick in the
+//!   room. Claw touches the door in tick 15571 of the first
 //!   route and in tick 15581 of the jump-in route;
 //! - a pirate Gabriel called in keeps his fight's mode for good: Claw
 //!   dies in tick 17048 of the first route while the pirate Gabriel called

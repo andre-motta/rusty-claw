@@ -97,17 +97,22 @@ fn find(sim: &Sim, logic: &str) -> ObjectId {
 /// each wakes in a tick, as on the eleventh level.
 const FAR: i32 = 5000;
 
-/// Puts Claw down at `x` and returns the tick count after the tick in
-/// which the laser was set up (C): the ticks after it count from 1.
+/// Puts Claw down at `x` with a warp and returns the tick count after the
+/// tick whose game time the laser was set up at (C): the ticks after it
+/// count from 1. The warp's second pass wakes the laser and makes its
+/// first call between two ticks, at the game time of the tick that
+/// touched the warp, so that tick is the one it waits from, as if it had
+/// woken in it.
 fn set_up(sim: &mut Sim, id: ObjectId, x: i32) -> u64 {
     sim.step(TickInput::default());
     assert_eq!(sim.objects().get(id).unwrap().state, 0, "asleep");
     sim.with_world(|w| w.claw.special.warp_to = Some((x, STAND_Y)));
     for _ in 0..10 {
-        if sim.objects().get(id).unwrap().state == laser_state::IDLE {
-            return sim.tick();
-        }
+        let touched = sim.tick();
         sim.step(TickInput::default());
+        if sim.objects().get(id).unwrap().state == laser_state::IDLE {
+            return touched;
+        }
     }
     panic!("the laser never ran");
 }
@@ -144,7 +149,7 @@ fn a_cycle_is_159_ticks_dangerous_for_75_from_the_84th() {
     assert!(!o.attack_rect.is_set(), "harmless after its set-up");
     assert_eq!(laser::data_of(o).map(|d| d.wait_ms), Some(1500));
     let rng = sim.rng_state();
-    let mut ticks = vec![(0, look(&sim, id))];
+    let mut ticks = vec![(sim.tick() - c, look(&sim, id))];
     for _ in 0..600 {
         sim.step(TickInput::default());
         ticks.push((sim.tick() - c, look(&sim, id)));
