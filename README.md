@@ -522,6 +522,17 @@ put back on his ledge must, sees him in the first tick after the
 respawn. With both, `level10-original.csv` was searched again from the
 end of Marrow's first carry (tick 14799) and `level10.csv` from tick
 13940, where their games first change.
+The parrot keeps the point beside Marrow where it takes hold of him to
+the part of a pixel, and takes hold of him once it has flown past that
+exact point, so on some carries it grabs him a tick earlier than a whole
+pixel would let it. Standing, Marrow's height creeps a part of a pixel
+down a tick and back; a drop onto the floor stops it, and the end of his
+next whistle starts it again, so the parrot's flight and the carry aim
+at where he really stands. When Claw comes back after a death, every
+shot still flying is removed before anything runs, so a shot fired at
+the dead Claw never hits him after the respawn. With these,
+`level10-original.csv` was searched again from Marrow's third carry
+(tick 17358); the other tenth-level routes play as before.
 `level10-introskip.csv` jumps in, then crosses the open pit as the
 original's players do: a stick of dynamite thrown in the air, a jump off
 the ledge's edge into its blast, and a fresh jump pressed on the one
