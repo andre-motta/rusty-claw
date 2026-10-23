@@ -15,8 +15,12 @@
 //! - the level is won (the level complete event), Claw never dies, and no
 //!   tick moves him further than walking, running, falling or riding can
 //!   (nothing moves him but the input), except the boss room's door, which
-//!   takes him into the room, and a rope's grab, which hangs him from its
-//!   end;
+//!   takes him into the room, a rope's grab, which hangs him from its end,
+//!   and a warp, which puts him at its destination;
+//! - the help screens and pauses a route holds between two ticks (`@`
+//!   lines: a stick of dynamite set off at Claw's side in mid-air by the
+//!   time the help screen is up) play as the game plays them, stepped and
+//!   replayed alike;
 //! - on a level that ends with a boss, the boss is defeated before the
 //!   level is won, and the boss's introduction plays (the fight flag goes
 //!   0, 1, 2) unless the route is an intro-skip route (`introskip` in its
@@ -63,6 +67,7 @@ use claw_game::session::{LevelRecording, Session, script_behaviour};
 use claw_game::settings::{LevelChoice, Settings, UserDirs};
 use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::logic::world_boss::fight;
+use claw_sim::player::hit::PickupFields;
 use claw_sim::player::state;
 use claw_sim::trace::TraceRow;
 use claw_sim::{InputScript, Sim, SimConfig, StartState, Tuning};
@@ -82,7 +87,7 @@ const MAX_STEP_PX: i32 = 48;
 /// level's set-up (six on the first level, four on the second, eight on
 /// the third, four on the fourth, six on the fifth, ten on the sixth,
 /// four on the seventh, six on the eighth).
-const LEVEL_SEEDS: [(u32, u32); 8] = [
+const LEVEL_SEEDS: [(u32, u32); 9] = [
     (1, 4_105_512_405),
     (2, 1_617_999_171),
     (3, 714_107_639),
@@ -91,6 +96,7 @@ const LEVEL_SEEDS: [(u32, u32); 8] = [
     (6, 2_731_780_393),
     (7, 1_617_999_171),
     (8, 4_105_512_405),
+    (9, 1_617_999_171),
 ];
 
 /// The route header keys.
@@ -181,18 +187,53 @@ fn too_close(script: &InputScript) -> Vec<usize> {
     out
 }
 
-/// Steps `script` from `start` with the crabs starting with `crabs`,
-/// returning the player and the digest before every tick and after the
-/// last.
+/// Steps `script` from `start` with the crabs starting with `crabs`, its
+/// help screens and pauses played as the game plays them, returning the
+/// player (which holds them, for its replays) and the digest before every
+/// tick and after the last.
 fn step_through(start: &Sim, script: &InputScript, crabs: &CrabValues) -> (Player, Vec<u64>) {
     let mut p = Player::with_crabs(start.clone(), crabs.clone());
     let mut digests = Vec::with_capacity(script.ticks.len() + 1);
-    for t in &script.ticks {
+    for (i, t) in script.ticks.iter().enumerate() {
+        between_ticks(&mut p, script, i);
         digests.push(digest(&p.sim));
         p.step(t.held.0);
     }
     digests.push(digest(&p.sim));
     (p, digests)
+}
+
+/// Plays the directives of `script` due before tick `i` on `p`'s game and
+/// notes them in `p`.
+fn between_ticks(p: &mut Player, script: &InputScript, i: usize) {
+    route::play_directives(&mut p.sim, script, i);
+    p.directives
+        .extend(script.directives.iter().filter(|d| d.tick == i).cloned());
+}
+
+/// A warp: where it is and where it puts Claw.
+type Warp = ((i32, i32), (i32, i32));
+
+/// The warps of the level in `sim` (a warp touched is gone, so they are
+/// read before play).
+fn warps(sim: &Sim) -> Vec<Warp> {
+    sim.objects()
+        .all()
+        .filter(|(_, o)| matches!(o.image_set.as_str(), "GAME_WARP" | "GAME_VERTWARP"))
+        .map(|(_, o)| ((o.x, o.y), PickupFields::of(o).target))
+        .filter(|&(_, to)| to.0 > 0 && to.1 > 0)
+        .collect()
+}
+
+/// True when Claw went from `from` to `to` through one of `warps`: from
+/// beside it to its destination.
+fn through_a_warp(warps: &[Warp], from: (i32, i32), to: (i32, i32)) -> bool {
+    warps.iter().any(|&(at, dest)| {
+        (from.0 - at.0).abs() <= 128
+            && (from.1 - at.1).abs() <= 160
+            && (to.0 - dest.0).abs() <= MAX_STEP_PX
+            && (to.1 - dest.1).abs() <= MAX_STEP_PX
+    })
 }
 
 /// `cfg` with the tuning and the fix the route's header names.
@@ -297,6 +338,7 @@ fn install_routes_win_the_same_way_every_time() {
         // No tick moves Claw further than input can, but the door into the
         // boss room; and what happens in the boss room.
         let mut q = Player::with_crabs(start.clone(), crabs.clone());
+        let level_warps = warps(&start);
         let mut at = q.at();
         let mut boss = BossRun {
             flags: vec![q.sim.boss().fight()],
@@ -304,13 +346,17 @@ fn install_routes_win_the_same_way_every_time() {
         };
         for (i, t) in script.ticks.iter().enumerate() {
             let swinging = |sim: &Sim| sim.player().is_some_and(|o| o.state == state::SWING);
+            between_ticks(&mut q, &script, i);
             let was_swinging = swinging(&q.sim);
             q.step(t.held.0);
             let now = q.at();
             let moved = (now.0 - at.0).abs().max((now.1 - at.1).abs());
             let grabbed = !was_swinging && swinging(&q.sim);
             assert!(
-                moved <= MAX_STEP_PX || through_the_door(end.as_ref(), at, now) || grabbed,
+                moved <= MAX_STEP_PX
+                    || through_the_door(end.as_ref(), at, now)
+                    || grabbed
+                    || through_a_warp(&level_warps, at, now),
                 "{name}: Claw moved {moved} px in tick {i}, from {at:?} to {now:?}"
             );
             at = now;

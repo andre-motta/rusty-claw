@@ -1,99 +1,104 @@
 # Waypoints for the ninth level at the original speeds, from the level's
-# geometry. The route is searched a stretch at a time: each stretch below
-# runs with its waypoints as --hints (with --hints-on-foot) and ends at its
-# goal (--goal X,Y), and the next carries on from it (--from-route,
-# --from-tick at its last tick). Every stretch uses --seed level and
-# --fragile-cost 100.
+# geometry. The route is searched a stretch at a time: each searched
+# stretch below runs with its waypoints as --hints (with --hints-on-foot)
+# and ends at its goal (--goal X,Y), and the next carries on from it
+# (--from-route, --from-tick at its last tick). Every stretch uses --seed
+# level and --fragile-cost 100.
 #
-# 1. Up the ladders by the start, over the wall, up the planks to the
-#    short ladder and the walk above it, and down on to the long plank:
-#    goal 3050,6343 with --goal-on-foot.
-2200,6407
-2400,5991
-# 2. Over the wall on to the swinging rope, on to the short ladder on
-#    its right and up to the walk with the checkpoint, on to the rope
-#    left of it and up the ladder above it to the high walk: goal
-#    3300,5479.
-3443,6250
-3620,6060
-3450,5911
-3191,5880
-# 3. Right along the high walk, down the narrow gap past the wall's foot
-#    on to the walk below, down the belts to the floor and under the
-#    wall to the checkpoint: goal 4559,7700.
-3900,6683
-# 4. Up the room beyond: the springboard, the low belt, the short walk
-#    on the left, the moving elevators, the short walk on the right, the
-#    belt above it, the ladder at the belt's left end, the walk with the
-#    saws, the ladder at its right end up to the belt above, left along
-#    it and up the short ladder to the pegs (the health on the second)
-#    and into the opening in the room's right wall: goal 5440,5883 with
+# The route takes the warp high above the start, which puts Claw at the
+# foot of the shaft below the end of the level, and climbs the shaft in
+# mid-air: no jump of his own reaches its first floor (the bridge with the
+# two powder kegs). Three times he throws a stick of dynamite near the top
+# of a jump and the help screen is up for three seconds at the boundary
+# after the throw (the route's `@N menu help 3000` lines): the screen's
+# time burns the fuse, so the stick goes off at once beside him, its blast
+# stops him in mid-air, he stands there for a tick and a jump pressed then
+# is a fresh jump from that height. A new game carries three sticks, one
+# short of the bridge, so the fourth blast is a powder keg's: from below
+# the bridge, at the top of a jump, Claw shoots the keg at its left end
+# with the pistol, its blast stops him in mid-air too, and the jump from
+# there lands him on the bridge. Each of those jumps reaches its height
+# only with Catnip, which PegLeg on the deck by the first saw drops: the
+# stretches from taking it to the keg's blast fit in its fifteen seconds.
+#
+# 1. Up the ladders by the start, over the wall and down on to the deck
+#    left of the saw: goal 2300,7244 with --goal-on-foot.
+1880,7244
+1600,6924
+2000,6795
+# 2. Not searched: past the saw to PegLeg, a crouching stab, two blows
+#    and the Catnip he drops. Found by trying moves on copies of the game
+#    (the search does not fight on a level without a boss); written into
+#    the route as these held buttons (masks of the route file), in ticks
+#    counted from the stretch's first tick, each range inclusive.
+#       route ticks 550 to 703
+#            0-13   0x2000001 right and jump
+#           14-19   0x2000000 right
+#           20-33   0x2000001 right and jump
+#           34-39   0x2000000 right
+#           40-53   0x2000001 right and jump
+#           54-59   0x2000000 right
+#           60-64   0x2000001 right and jump
+#           65-70   0x2000000 right
+#           71-72   0x8000000 down
+#           73-74   0x8000002 down and attack
+#           75-78   0x8000000 down
+#           79-92   0x2000001 right and jump
+#           93-98   0x2000000 right
+#           99-112  0x2000001 right and jump
+#          113-118  0x2000000 right
+#          119-123  0x1 jump
+#          124-129  0x0 nothing
+#          130-131  0x1000002 left and attack
+#          132-133  0x1000000 left
+#          134-147  0x1000001 left and jump
+#          148-153  0x1000000 left
+# 3. Back left along the deck, up the springboard to the swinging rope and
+#    on to the low plank below the ladder: goal 2150,6412 with
 #    --goal-on-foot.
-5000,7447
-4680,7319
-4860,7185
-5350,7063
-4750,6935
-4720,6551
-5340,6235
-4870,5979
-5236,5979
-# 5. Into the big room, from rope to rope along the row of four under
-#    its top walk (a block stands on the walk), down the slot right of
-#    the last rope (below the warp at its top) to the floor and under
-#    the wall to the checkpoint: goal 7375,7771 with --goal-on-foot.
-5746,6370
-6194,6370
-6642,6370
-7090,6370
-# 6. Up the shaft between the skull cannons: the low ladder, the low
-#    rope, the ladder on the right, the ladder on the left, the high
-#    rope, the ladder on the right, the short walk in the middle and the
-#    ladder on the left up to the walk at the top: goal 7716,6169 with
-#    --goal-on-foot.
-7908,7513
-7910,7400
-8100,7001
-7716,6809
-7910,6760
-8100,6361
-7908,6425
-# 7. Left for the health on the walk, back right past the hook-handed
-#    pirate on to the wall top (more health), on to the elevator beside
-#    it, down with it and right under the next wall to the super
-#    checkpoint: goal 8721,7767 with --goal-on-foot.
-7524,6169
-8390,6039
-8544,6030
-8560,7703
-# 8. Up the springboards and ropes beyond: the floor's springboard,
-#    the low walk on the right and its springboard, the low rope, the
-#    walk on the left and its springboard, up on to the middle rope:
-#    goal 9230,6450 with --goal-on-foot.
-9476,7383
-9548,7000
-9150,6871
-# 9. Not searched: the ropes and the short walk between them come round
-#    only now and then, and the search does not wait for them. Claw lets
-#    go of the middle rope with a jump to the right, lands on the short
-#    walk with the saw, waits, and jumps on to the rope beyond it. The
-#    stretch is written into the route as these held buttons (masks of
-#    the route file), in ticks counted from the stretch's first tick,
-#    each range inclusive; each wait lies in the waits that work (150
-#    to 162, then 40 to 64).
-#       route ticks 7182 to 7515
-#           0-153 0x0 nothing
-#         154-167 0x2000001 right and jump
-#         168-217 0x2000000 right
-#         218-269 0x0 nothing
-#         270-283 0x2000001 right and jump
-#         284-313 0x2000000 right
-#         314-333 0x0 nothing
-# 10. Off the rope on to the walk beyond and up on to the wall top with
-#    the checkpoint: goal 10578,6615 with --goal-on-foot.
-# 11. The springboard right of the wall top up on to the walk with two
-#    hook-handed pirates and PegLeg, along it and on to the rope beyond:
-#    goal 11574,6290 with --goal-on-foot.
-10900,6231
-11150,6231
-11574,6290
+2200,6800
+# 4. Not searched: up the ladder to the high plank, left along it and a
+#    jump off its end into the warp, which puts Claw at the foot of the
+#    shaft. The warp lies out of the search's reach in its coarse graph
+#    (only this jump touches it), and the Catnip leaves no time to spare.
+#       route ticks 1046 to 1199
+#            0-13   0x2000001 right and jump
+#           14-27   0x5000001 left, up and jump
+#           28-55   0x4000001 up and jump
+#           56-70   0x4000000 up
+#           71-84   0x1000000 left
+#           85-93   0x1000001 left and jump
+#           94-153  0x1000000 left
+# 5. Not searched: the climb up the shaft. Two springboards, a moving
+#    elevator under the shaft, a jump from it, the three sticks with the
+#    help screen (before route ticks 1353, 1402 and 1451, each `@` line of
+#    the route), the jump and pistol shot at the keg, and the jump on to
+#    the bridge. The stand after each blast lasts one tick, so each jump
+#    is pressed on it.
+#       route ticks 1200 to 1568
+#            0-28   0x0 nothing
+#           29-88   0x2000000 right
+#           89-94   0x0 nothing
+#           95-134  0x2000000 right
+#          135-136  0x0 nothing
+#          137-150  0x1 jump
+#          151-152  0x100 dynamite
+#          153-183  0x0 nothing
+#          184-197  0x1 jump
+#          198-199  0x0 nothing
+#          200-201  0x100 dynamite
+#          202-232  0x0 nothing
+#          233-246  0x1 jump
+#          247-248  0x2000000 right
+#          249-250  0x100 dynamite
+#          251-281  0x0 nothing
+#          282-295  0x1 jump
+#          296-298  0x0 nothing
+#          299-300  0x1000040 left and pistol
+#          301-335  0x0 nothing
+#          336-349  0x1 jump
+#          350-368  0x0 nothing
+# 6. From the bridge out through the gap in the shaft's left wall, up
+#    the ledges beyond it, back right above the shaft, up the ladder on
+#    its right and right to the end-of-level gem: the level's end, no goal
+#    and no waypoints.
