@@ -34,7 +34,9 @@
 //! rises, a rising jump loses its hold and he falls, an attack under way
 //! runs to its end; he can be hit and killed. The input itself
 //! ([`claw_frame::TickInput`]), routes and recordings keep the raw keys;
-//! the lockout is applied from them. Pause, the help screen and the menus
+//! the lockout is applied from them. The trace ([`crate::trace`]) writes
+//! what the game's controls saw instead: nothing held on a locked tick
+//! ([`crate::Sim::input_locked`]). Pause, the help screen and the menus
 //! are not locked, and as no tick runs while they are up the counter
 //! stands still; the tick that resumes play is a whole tick and lowers it
 //! as any other. The respawn's passes between two ticks do not lower it.

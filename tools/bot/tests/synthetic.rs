@@ -12,6 +12,7 @@ use claw_sim::level::{ImageFrames, ObjectSpec};
 use claw_sim::logic::break_plank::{self, FALLBACK_MOVE_RECT};
 use claw_sim::logic::enemy;
 use claw_sim::logic::enemy::crab::CrabValues;
+use claw_sim::logic::laser;
 use claw_sim::logic::world_boss::fight;
 use claw_sim::tiles::{CLEAR, Descriptor, GROUND};
 use claw_sim::{InputScript, Sim, SimConfig, SimLevel, TickInput, TileMap};
@@ -458,9 +459,20 @@ fn the_full_jump_of_each_tuning_reaches_the_full_height() {
 /// The coarse states of a game of level `number` in which Claw stands
 /// still beside `object`, one after each of `waits` waits of the bot.
 fn keys_while_waiting(number: u32, object: ObjectSpec, waits: usize) -> Vec<u64> {
+    keys_while_waiting_in(number, object, waits, |_| {})
+}
+
+/// [`keys_while_waiting`] on the level as `prepare` leaves it.
+fn keys_while_waiting_in(
+    number: u32,
+    object: ObjectSpec,
+    waits: usize,
+    prepare: impl FnOnce(&mut SimLevel),
+) -> Vec<u64> {
     let mut l = level(&room(12, 6), (200, 250));
     l.number = number;
     l.objects = vec![object];
+    prepare(&mut l);
     let mut s = sim(l);
     for _ in 0..30 {
         s.step(Default::default());
@@ -486,20 +498,58 @@ fn a_wait_for_a_stepping_stone_is_progress() {
     }
 }
 
+/// An eleventh-level laser at `x` with a wait of `wait_ms`, and the
+/// level with its pass: 25 pictures of 50 ms, a 76-tick pass.
+fn laser(x: i32, wait_ms: i32) -> (ObjectSpec, impl FnOnce(&mut SimLevel)) {
+    let mut spec = ObjectSpec::at("Laser", x, 220, 0);
+    spec.image_set = laser::IMAGE_SET.into();
+    spec.frame = -1;
+    spec.record[laser::WAIT_FIELD] = wait_ms;
+    let prepare = |l: &mut SimLevel| {
+        let pairs: Vec<(i32, i32)> = (1..=25).map(|i| (i, 50)).collect();
+        l.animations.insert(
+            laser::ANIM.into(),
+            Arc::new(Animation::once(laser::ANIM, &pairs)),
+        );
+        l.images
+            .insert(laser::IMAGE_SET.into(), ImageFrames::range(1, 25));
+    };
+    (spec, prepare)
+}
+
 #[test]
 fn a_wait_beside_a_laser_is_progress_and_far_from_it_is_not() {
     // Claw stands at x 200 on a floor whose top is at y 320. Beside an
     // eleventh-level laser each wait is a state of its own, through its
     // wait and its pass: the moment its beam stops comes nearer.
-    let keys = keys_while_waiting(11, ObjectSpec::at("Laser", 380, 220, 0), 30);
+    let (spec, prepare) = laser(380, 1500);
+    let keys = keys_while_waiting_in(11, spec, 30, prepare);
     for w in keys.windows(2) {
         assert_ne!(w[0], w[1]);
     }
     // The same laser out of reach: every wait is the same state.
-    let keys = keys_while_waiting(11, ObjectSpec::at("Laser", 700, 220, 0), 4);
+    let (spec, prepare) = laser(700, 1500);
+    let keys = keys_while_waiting_in(11, spec, 4, prepare);
     for w in keys.windows(2) {
         assert_eq!(w[0], w[1]);
     }
+}
+
+#[test]
+fn a_wait_beside_a_laser_counts_only_its_time_in_its_cycle() {
+    // A laser with a wait of 1458 ms: a cycle of 156 ticks (81 waiting,
+    // then its pass), so 26 waits of the bot (6 ticks each) bring it back
+    // to the same moment of its cycle, and the coarse state with it.
+    let period = laser::period_ticks(1458) as usize;
+    assert_eq!(period, 156);
+    let step = actions::Action::Wait.masks().len();
+    assert_eq!(period % step, 0, "a cycle is a whole number of waits");
+    let cycle = period / step;
+    let (spec, prepare) = laser(380, 1458);
+    let keys = keys_while_waiting_in(11, spec, 3 * cycle, prepare);
+    assert_eq!(keys[cycle..2 * cycle], keys[2 * cycle..]);
+    let distinct: std::collections::BTreeSet<u64> = keys.iter().copied().collect();
+    assert_eq!(distinct.len(), cycle);
 }
 
 #[test]
@@ -511,6 +561,14 @@ fn a_wait_for_a_toggle_peg_is_progress() {
     let keys = keys_while_waiting(11, ObjectSpec::at("TogglePeg", 400, 300, 0), 30);
     for w in keys.windows(2) {
         assert_ne!(w[0], w[1]);
+    }
+    // A peg set up out for good never moves: every wait beside it is the
+    // same state.
+    let mut stopped = ObjectSpec::at("TogglePeg", 400, 300, 0);
+    stopped.record[17] = 1;
+    let keys = keys_while_waiting(11, stopped, 30);
+    for w in keys.windows(2) {
+        assert_eq!(w[0], w[1]);
     }
 }
 

@@ -417,7 +417,7 @@ life. Replays, `claw-replay` and the benchmark all follow them.
 
 The routes in `tests/acceptance/routes/` finish the first eleven levels:
 `level1.csv` to `level8.csv` and `level10.csv` with the default tuning
-(the ninth level has no default-tuning route yet), `level1-original.csv`
+(the ninth and eleventh levels have no default-tuning route yet), `level1-original.csv`
 to `level11-original.csv` with the original game's speeds (the ninth
 and eleventh levels' ways are described below), `level2-introskip.csv`,
 `level4-introskip.csv`, `level6-introskip.csv`, `level8-introskip.csv` and
@@ -618,6 +618,12 @@ how they were played). A route can be played on two clocks:
   original speeds and the same random state: every column must be equal;
 - `c60`, 60 frames per second, compared with the default tuning within the
   small differences in position and timing that `feel.toml` allows.
+
+A trace's `held` column is the keys held as the game's controls saw them,
+as the original's traces record them: while a Siren's scream has taken
+Claw's controls it is 0, though the route still holds its keys (the route
+and the replay keep them, so a key held to the lockout's end acts on the
+first free tick).
 
 ```sh
 # replay the route with the store's tuning and random state, compare with

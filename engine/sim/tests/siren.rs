@@ -5,9 +5,10 @@
 //! before the next), the scream (3.6 px a tick, gone after 85 ticks, no
 //! damage), and the lockout through the input path: set (not added) by
 //! each scream, 111 locked ticks after the last, the keys still held
-//! counting as pressed on the next, the latch emptied, the dazed picture,
-//! frozen while no tick runs (pause, help, menu) and kept through a
-//! death and the respawn, and Claw still hurt while locked.
+//! counting as pressed on the next, the latch emptied, the trace showing
+//! no key held on a locked tick, the dazed picture, frozen while no tick
+//! runs (pause, help, menu) and kept through a death and the respawn, and
+//! Claw still hurt while locked.
 
 mod common;
 
@@ -24,6 +25,7 @@ use claw_sim::object::{LogicKind, ObjectId, types};
 use claw_sim::player::attack::kind as attack_kind;
 use claw_sim::player::state;
 use claw_sim::rng::Rng;
+use claw_sim::trace::TraceRow;
 use claw_sim::{Buttons, GameLogic, Sim, SimConfig, SimLevel};
 use common::*;
 
@@ -333,6 +335,33 @@ fn the_lockout_takes_the_keys_for_111_ticks() {
     assert!(sim.player().unwrap().x > x0);
     // The raw input is left as it was given.
     assert_eq!(sim.input(), hold(RIGHT));
+}
+
+#[test]
+fn the_trace_shows_no_key_held_on_a_locked_tick() {
+    let mut sim = standing();
+    // The tick a scream touches Claw keeps its keys.
+    sim.step(hold(RIGHT));
+    screamed(&mut sim);
+    assert!(!sim.input_locked());
+    let row = TraceRow::capture(&sim, 0, "script");
+    assert_eq!((row.held, row.pressed), (RIGHT, 0));
+    // Locked: the trace writes nothing held, the tick's input is raw.
+    for k in 1..=scream::LOCK_TICKS {
+        let input = if k == 1 { press(JUMP) } else { hold(JUMP) };
+        sim.step(input);
+        assert!(sim.input_locked(), "tick {k}");
+        assert_eq!(sim.input(), input);
+        let row = TraceRow::capture(&sim, u64::from(k), "script");
+        assert_eq!(row.held, 0, "tick {k}");
+        // The pressed column stays the tick's input.
+        assert_eq!(row.pressed, input.pressed.0, "tick {k}");
+    }
+    // The tick the lockout runs out in is free: held as given.
+    sim.step(hold(JUMP));
+    assert!(!sim.input_locked());
+    let row = TraceRow::capture(&sim, 112, "script");
+    assert_eq!((row.held, row.pressed), (JUMP, 0));
 }
 
 #[test]

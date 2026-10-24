@@ -9,7 +9,10 @@
 //! happened. The `rng` column is the state of the shared random stream
 //! after the tick, in decimal. `boss_fight` is the boss fight flag (0, 1
 //! or 2) and `boss_health` the current boss's health, empty while there is
-//! no current boss.
+//! no current boss. `held` is the keys held as the game's controls saw
+//! them: on a tick whose keys a Siren's scream lockout took away it is 0,
+//! though the tick's input (and the route) still hold them; `pressed` is
+//! the tick's input as given.
 //!
 //! A reference trace of the same route, in the same trace format, has one
 //! row per logic step of the run it records: `tick` is the step index,
@@ -59,7 +62,9 @@ pub struct TraceRow {
     pub cam_x: i32,
     /// Camera point.
     pub cam_y: i32,
-    /// Buttons held this tick.
+    /// Buttons held this tick, as the game's controls saw them: 0 on a
+    /// tick whose keys a Siren's scream lockout took away
+    /// ([`Sim::input_locked`]), the tick's held keys otherwise.
     pub held: u32,
     /// Buttons pressed this tick.
     pub pressed: u32,
@@ -145,7 +150,7 @@ impl TraceRow {
             physics_type,
             cam_x,
             cam_y,
-            held: input.held.0,
+            held: if sim.input_locked() { 0 } else { input.held.0 },
             pressed: input.pressed.0,
             source: source.to_string(),
             activation: sim.config().activation.mode.name(),
