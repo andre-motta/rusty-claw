@@ -87,8 +87,8 @@ const MAX_STEP_PX: i32 = 48;
 /// level's set-up (six on the first level, four on the second, eight on
 /// the third, four on the fourth, six on the fifth, ten on the sixth,
 /// four on the seventh, six on the eighth, four on the ninth, seven on
-/// the tenth, two on the eleventh).
-const LEVEL_SEEDS: [(u32, u32); 11] = [
+/// the tenth, two on the eleventh, four on the twelfth).
+const LEVEL_SEEDS: [(u32, u32); 12] = [
     (1, 4_105_512_405),
     (2, 1_617_999_171),
     (3, 714_107_639),
@@ -100,6 +100,7 @@ const LEVEL_SEEDS: [(u32, u32); 11] = [
     (9, 1_617_999_171),
     (10, 2_979_184_964),
     (11, 1_980_168_385),
+    (12, 1_617_999_171),
 ];
 
 /// The route header keys.

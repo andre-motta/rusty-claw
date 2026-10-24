@@ -31,7 +31,9 @@
 //!
 //! Held in a bear's hug, Claw cannot move, but each new press of a key
 //! counts towards his escape: the mash ([`Action::Mash`]) presses Up and
-//! Down in turn, a new key every [`MIN_SPACING`] ticks.
+//! Down in turn, a new key every [`MIN_SPACING`] ticks. A tentacle's
+//! squeeze beside Aquatis holds him the same way, inside the boss fight,
+//! so the fight's macros offer the mash too.
 //!
 //! A boss the search drowns adds the lift to the fight's macros: on his
 //! feet near the boss, Claw presses Lift ([`Action::Lift`]); carrying
@@ -450,6 +452,8 @@ fn fight_choices(sim: &Sim) -> Vec<Action> {
                 }
             }
         }
+        // A tentacle beside Aquatis holds Claw as a bear's hug does.
+        Phase::Busy if held(sim) => out.push(Action::Mash),
         Phase::Climb | Phase::Swing | Phase::Busy => {}
     }
     out
@@ -614,7 +618,7 @@ pub fn choices(sim: &Sim) -> Vec<Action> {
     out
 }
 
-/// True while a bear holds Claw in its hug.
+/// True while a bear holds Claw in its hug or a tentacle squeezes him.
 pub fn held(sim: &Sim) -> bool {
     sim.player().is_some_and(|o| o.state == state::BEARHUG)
 }

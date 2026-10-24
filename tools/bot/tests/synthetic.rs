@@ -796,3 +796,63 @@ fn a_move_that_dies_in_a_further_game_is_dropped() {
     let again = search_report_with(&start, &[], goal, &cfg()).expect("a route");
     assert_eq!(again.script.ticks, plain.script.ticks);
 }
+
+#[test]
+fn a_wait_for_a_stalactite_to_fall_out_of_the_way_is_progress() {
+    // A twelfth-level stalactite hanging 340 px to the right of where
+    // Claw is put down, set off by Claw in its trigger rectangle: while it
+    // falls each wait of Claw beside it is another state, and once it has
+    // crumbled and gone, every wait is the same.
+    use claw_sim::logic::stalactite;
+    let mut spec = ObjectSpec::at(stalactite::NAMES[0], 540, 400, 1010);
+    for (field, value) in stalactite::TRIGGER_FIELDS
+        .into_iter()
+        .zip([100, 0, 300, 1000])
+    {
+        spec.record[field] = value;
+    }
+    let mut l = level(&room(12, 16), (700, 800));
+    l.number = 12;
+    l.objects = vec![spec];
+    let mut s = sim(l);
+    for _ in 0..30 {
+        s.step(TickInput::default());
+    }
+    s.teleport_player(200, 850);
+    // Claw lands before the waits are counted: from then on only the
+    // stalactite moves.
+    for _ in 0..18 {
+        s.step(TickInput::default());
+    }
+    assert!(claw_bot::search::on_foot(&s), "Claw stands on the floor");
+    let mut keys = Vec::new();
+    for _ in 0..16 {
+        for _ in actions::Action::Wait.masks() {
+            s.step(TickInput::default());
+        }
+        keys.push(claw_bot::search::state_key(&s));
+    }
+    assert_ne!(keys[0], keys[1], "falling");
+    assert_ne!(keys[1], keys[2], "falling");
+    assert_eq!(keys[14], keys[15], "gone");
+}
+
+#[test]
+fn the_moments_of_a_long_landing_are_other_states() {
+    // After a long fall Claw stands on the spot for a while, and no key
+    // does anything: a move made in the landing ends in it where it began,
+    // so the time tells those states apart.
+    let mut s = sim(level(&room(12, 6), (200, 250)));
+    for _ in 0..30 {
+        s.step(TickInput::default());
+    }
+    let land = claw_sim::player::state::LAND;
+    s.set_player_state(land);
+    let first = claw_bot::search::state_key(&s);
+    for _ in 0..actions::STEP {
+        s.step(TickInput::default());
+    }
+    s.set_player_state(land);
+    assert_eq!(s.player().map(|o| o.state), Some(land));
+    assert_ne!(first, claw_bot::search::state_key(&s));
+}

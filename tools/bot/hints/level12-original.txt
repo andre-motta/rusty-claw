@@ -1,0 +1,173 @@
+# Waypoints for the twelfth level at the original speeds, from the level's
+# geometry. The route is searched a stretch at a time: each searched
+# stretch below runs with its waypoints as --hints (with --hints-on-foot)
+# and ends at its goal (--goal X,Y with --goal-on-foot), and the next
+# carries on from it (--from-route, --from-tick at its last tick). Every
+# stretch uses --seed level and --fragile-cost 100.
+#
+# The route takes the long way through the undersea caves, checkpoint to
+# checkpoint, up to the boss room's door high above the water, and sits
+# through Aquatis's introduction. The coarse graph of the search counts
+# some climbs as easy that need a springboard rock, a column of toggle or
+# crumbling pegs or an elevator, so those stretches lead the search along
+# with waypoints. Stretches 1 to 5 were searched before the search told a
+# stalactite's fall apart in its state, and 1 to 20 before it told the
+# moments of a long landing apart; the later stretches with both.
+#
+# 1. Down the first shaft to the ledge at the water's edge: no waypoints,
+#    goal 3300,3600.
+# 2. Over the toggle peg above the water to the ledge with the springboard
+#    rock: no waypoints, goal 3950,3600.
+# 3. Onto the rock, which throws Claw up to the first toggle peg, and up
+#    the column of toggle pegs to the block above it: goal 4104,2573.
+3850,3577 foot
+3850,3200 foot
+3906,3132
+3938,3025
+3851,2939
+3810,2835
+3904,2724
+3904,2623
+# 4. Over the block, down through the room with Mercat and the narrow
+#    shaft to the checkpoint: goal 5171,3596.
+4680,2700
+5064,2830
+# 5. Over the toggle pegs above the water, onto the rock, which throws
+#    Claw up the shaft, and up two toggle pegs: goal 6113,3018.
+5503,3582
+5800,3600
+5952,3577
+5987,3154
+# 6. Not searched: the last peg is out for only a few ticks once Claw is
+#    on it, and a stalactite hangs over the left edge of the block above,
+#    in the way of any jump onto it. A step right sets the stalactite off,
+#    a jump right meets it as it falls (route tick 2135), and a fresh jump
+#    pressed on the one tick Claw stands in mid-air after the hit lands
+#    him on the block. Held buttons (masks of the route file), in ticks
+#    counted from the stretch's first tick, each range inclusive:
+#       route ticks 2119 to 2185
+#            0-1    0x2000000 right
+#            2-15   0x2000001 right and jump
+#           16-38   0x2000000 right (the stand after the hit is tick 38)
+#           39-52   0x2000001 right and jump
+#           53-66   0x2000000 right
+# 7. Along the block past the floor spikes and down the shaft beyond it
+#    to the checkpoint: goal 7496,3595.
+6856,3010
+7300,3010
+# 8. Onto the rock, up the toggle pegs and onto the elevator sliding
+#    under the block, and up onto the block: goal 8650,2511.
+8317,3577 foot
+8353,2778
+8400,2642
+# 9. To the checkpoint: no waypoints, goal 9576,2507.
+# 10. To the first super checkpoint: no waypoints, goal 11519,3144.
+# 11. Down to the ledge before the rock below the big room: no
+#    waypoints, goal 13009,3607.
+# 12. Onto the rock, which throws Claw up onto the floor of the room, and
+#    over the two elevators that ride round a square to the ledge above
+#    them and on to the checkpoint: goal 14863,2957.
+13450,3339
+13860,3167
+13950,3083
+# 13. To the checkpoint: no waypoints, goal 17572,2634.
+# 14. To the checkpoint: no waypoints, goal 19021,2504.
+# 15. To the checkpoint: no waypoints, goal 20709,2442.
+# 16. To the checkpoint: no waypoints, goal 23410,2443.
+# 17. To the checkpoint: no waypoints, goal 24633,2440.
+# 18. The checkpoint beyond lies across water no jump crosses, so the
+#    route climbs the shaft beside this one on its crumbling pegs to the
+#    corridor above, and drops down the far shaft to it. Up the pegs:
+#    goal 25152,1775.
+24957,2477
+25089,2410
+25151,2287
+25149,2162
+25012,2095
+24959,1965
+25023,1838
+# 19. Not searched: the stalactites Claw set off on his way up fall on
+#    him on this peg (route tick 9528), and the peg crumbles under him
+#    while he reels, so he stands for one tick in mid-air; a fresh jump
+#    pressed on that tick lands him on the peg above:
+#       route ticks 9531 to 9570
+#            0-19   0x0 nothing (the stand after the hit is tick 19)
+#           20-33   0x1 jump
+#           34-39   0x0 nothing
+# 20. Up the rest of the pegs, right along the corridor and down the far
+#    shaft to the checkpoint: goal 26237,3595.
+25025,1520
+24960,1392
+25089,1330
+25700,1250
+26150,2000
+# 21. To the checkpoint: no waypoints, goal 29492,3596.
+# 22. To the second super checkpoint: no waypoints, goal 31537,3596.
+# 23. Up the shaft of sliding elevators to the checkpoint: no waypoints,
+#    goal 32623,2058.
+# 24. Up the next one to the checkpoint: no waypoints, goal 34418,2058.
+# 25. Up the column of toggle pegs to the boss room's door: goal
+#    36300,2071.
+35648,3451
+35712,3324
+35648,3195
+35585,3002
+35710,2938
+35776,2747
+35648,2682
+35584,2490
+35712,2427
+35776,2235
+35648,2170
+35711,2042
+# 26. Not searched: right into the door (Claw is in the room at tick 22)
+#    and nothing through Aquatis's introduction, until Claw is free again:
+#       route ticks 15411 to 16170
+#            0-22   0x2000000 right
+#           23-759  0x0 nothing
+# 27. Past the three tentacles to the toggle peg beside Aquatis: goal
+#    37790,3586, no waypoints.
+# 28. Not searched: Aquatis can only be hurt by the five stalactites over
+#    his head, but he can be lifted. Claw walks off the peg's edge, drops
+#    straight down beside him and steers into his body, whose touch
+#    stops him in mid-air at the height of Aquatis's feet; Lift pressed
+#    on the tick after he stands there picks Aquatis up, and Aquatis
+#    drops at once into the water and dies. A help screen of 7750 ms,
+#    twelve ticks after his death (before route tick 16466), turns the gem
+#    rising from him into the pickup on Claw, which ends the level:
+#       route ticks 16352 to 16467
+#            0-35   0x0 nothing
+#           36-55   0x2000000 right, off the peg's edge
+#           56-63   0x0 nothing
+#           64-66   0x2000000 right (Aquatis's touch at tick 66)
+#           67-88   0x0 nothing (the stand after it is tick 88)
+#           89-90   0x20 lift
+#           91-115  0x0 nothing (Aquatis dies at tick 102)
+#
+# level12-introskip.csv: stretches 1 to 25 as above, then:
+# 26s. Not searched: right into the door and the jump-in that skips
+#    Aquatis's introduction (jump pressed on Claw's first tick in the
+#    room, so Aquatis stays in his start-up pose and never punches):
+#       route ticks 15411 to 15450
+#            0-21   0x2000000 right
+#           22-35   0x2000001 right and jump
+#           36-39   0x2000000 right
+# 27s. Past the tentacles to the peg beside Aquatis: goal 37790,3586, no
+#    waypoints.
+# 28s. Not searched: the same lift as 28:
+#       route ticks 15612 to 15694
+#            0-3    0x0 nothing
+#            4-22   0x2000000 right, off the peg's edge
+#           23-30   0x0 nothing
+#           31-33   0x2000000 right (Aquatis's touch at tick 33)
+#           34-55   0x0 nothing (the stand after it is tick 55)
+#           56-57   0x20 lift
+#           58-82   0x0 nothing (Aquatis dies at tick 69; the help
+#                       screen comes before route tick 15693)
+#
+# level11-original.level12.csv: the same rows as level12-original.csv,
+# with --carry naming the progress level11-original.csv ends with (its
+# `# start_score = ...` lines: 83 health, 19 pistol shots, one stick of
+# dynamite, the dynamite selected), and the weapon key pressed with right
+# on route ticks 2 and 3, so Claw carries the pistol the route fires (at
+# route ticks 4762 and 12081); they win the level from that start as well.
