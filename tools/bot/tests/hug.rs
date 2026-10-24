@@ -191,3 +191,21 @@ fn mashing_frees_claw_long_before_the_hug_runs_out() {
         "lost {lost_mashing} mashing, {lost_waiting} waiting"
     );
 }
+
+#[test]
+fn an_enemy_worn_down_is_another_state() {
+    // The same game but for the bear's health: a blow or a shot that hurts
+    // it without killing it is progress for the search.
+    let (sim, id) = start();
+    let mut hurt = sim.clone();
+    hurt.with_world(|w| {
+        if let Some(o) = w.objects.get_mut(id) {
+            o.health -= 5;
+        }
+    });
+    assert!(hurt.objects().get(id).is_some_and(|o| o.health > 0));
+    assert_ne!(
+        claw_bot::search::state_key(&sim),
+        claw_bot::search::state_key(&hurt)
+    );
+}

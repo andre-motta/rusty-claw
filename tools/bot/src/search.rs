@@ -77,6 +77,17 @@
 //! built where Marrow landed, is dropped ([`on_marrow_box_edge`]): a
 //! pixel there decides the landing's outcome.
 //!
+//! On the eleventh level, a Siren's scream that touches Claw takes his
+//! controls for two seconds ([`actions::locked`]): no key acts until the
+//! lockout has run down, so the time is part of the coarse state while it
+//! runs, and only the wait and the walks are tried. Near a toggle peg
+//! ([`TOGGLE_NEAR`]), where the peg is in its cycle, to a tenth of a
+//! second, is part of the coarse state too: its picture stays the same
+//! for most of a second out or in the wall, and a jump lands on it only
+//! when it is timed to that cycle. Beside a laser ([`LASER_NEAR`]),
+//! whether its beam hurts, its picture and the time are part of it, as
+//! beside a goo vent, so a wait for the beam to stop is progress.
+//!
 //! A route can be made to win under several sets of the values the
 //! hermit crabs start with ([`CrabValues`], which the original game does
 //! not fix): [`SearchConfig::crabs`] is the set the route plays under,
@@ -109,7 +120,7 @@ use claw_sim::logic::enemy::EnemyState;
 use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::logic::world_boss::fight;
 use claw_sim::logic::{
-    ObjectData, boss_stage, enemy, floor_spike, goo_vent, path_elevator, pickup, platform,
+    ObjectData, boss_stage, enemy, floor_spike, goo_vent, laser, path_elevator, pickup, platform,
     springboard,
 };
 use claw_sim::object::special;
@@ -759,6 +770,16 @@ pub fn boss_stage(sim: &Sim) -> BossStage {
 /// How finely the search tells apart the moments of a floor spike's
 /// cycle, ms.
 pub const SPIKE_STEP_MS: i64 = 100;
+
+/// How near a toggle peg, across and up or down, Claw must be for a wait
+/// for its cycle to count as progress, px: a jump's width and more, so a
+/// jump timed to land on it as it slides out is tried at every moment of
+/// its cycle.
+pub const TOGGLE_NEAR: (u32, u32) = (400, 300);
+
+/// How near a laser, across and up or down, Claw must be for a wait for
+/// its beam to stop to count as progress, px: its box and a run up to it.
+pub const LASER_NEAR: (u32, u32) = (250, 150);
 
 /// How near a goo vent, across and up or down, Claw must be for a wait
 /// beside it to count as progress, px.
@@ -2024,8 +2045,10 @@ pub fn state_key(sim: &Sim) -> u64 {
     }
     // Struck, or in another state that takes no steering, Claw waits for
     // it to end: a wait through it is progress, so the time tells the
-    // states apart (they end soon, so this never grows far).
-    if actions::phase(sim) == actions::Phase::Busy {
+    // states apart (they end soon, so this never grows far). A Siren's
+    // scream that has taken his controls is such a state too, whatever
+    // he is doing when it touches him.
+    if actions::phase(sim) == actions::Phase::Busy || actions::locked(sim) {
         k.add(&[
             6,
             i64::from(c.frame),
@@ -2080,13 +2103,32 @@ pub fn state_key(sim: &Sim) -> u64 {
             // so Claw back where he stood with the row broken behind him
             // is another state.
             k.add(&[9, i64::from(id), i64::from(o.state)]);
-        } else if o.type_flags & platform::PLATFORM != 0 {
+        } else if o.type_flags & platform::PLATFORM != 0
+            || matches!(&o.data, ObjectData::Platform(d) if d.period > 0)
+        {
+            // A wait near a toggle peg for the moment of its cycle that a
+            // jump onto it needs is progress: where it is in its cycle, to
+            // a tenth of a second (its picture alone stays the same for
+            // most of a second, out or in the wall). A peg in the wall is
+            // no platform until it slides out again, but counts here all
+            // the same.
+            let into = match &o.data {
+                ObjectData::Platform(d)
+                    if d.period > 0
+                        && o.x.abs_diff(c.x) <= TOGGLE_NEAR.0
+                        && o.y.abs_diff(c.y) <= TOGGLE_NEAR.1 =>
+                {
+                    (clock - i64::from(d.phase)).rem_euclid(i64::from(d.period)) / SPIKE_STEP_MS
+                }
+                _ => 0,
+            };
             k.add(&[
                 1,
                 i64::from(id),
                 i64::from(o.x >> 4),
                 i64::from(o.y >> 4),
                 i64::from(o.state),
+                into,
             ]);
         } else if let ObjectData::Parrot(d) = &o.data {
             // Marrow's parrot: its hits decide when the bridge closes. On
@@ -2108,7 +2150,12 @@ pub fn state_key(sim: &Sim) -> u64 {
                 i64::from(y),
             ]);
         } else if let Some(d) = enemy::data_of(o) {
-            k.add(&[2, i64::from(id), i64::from(d.dead)]);
+            // An enemy's health too: a shot or a blow that hurts without
+            // killing is progress, so an enemy that takes several (one
+            // that parries some of them, as the eleventh level's Mercat
+            // does Claw's pistol shots) can be worn down from where Claw
+            // stands.
+            k.add(&[2, i64::from(id), i64::from(d.dead), i64::from(o.health)]);
         } else if let ObjectData::Rope(r) = &o.data {
             // Where the rope is in its swing decides where a grab or a
             // release takes Claw.
@@ -2135,6 +2182,19 @@ pub fn state_key(sim: &Sim) -> u64 {
                     11,
                     i64::from(id),
                     i64::from(goo_vent::dangerous(o)),
+                    i64::from(o.frame),
+                    (sim.tick() / actions::STEP as u64) as i64,
+                ]);
+            }
+        } else if let ObjectData::Laser(_) = &o.data {
+            // A wait beside a laser for its beam to stop is progress, as
+            // beside a goo vent: whether it hurts, its picture and the
+            // time.
+            if o.x.abs_diff(c.x) <= LASER_NEAR.0 && o.y.abs_diff(c.y) <= LASER_NEAR.1 {
+                k.add(&[
+                    17,
+                    i64::from(id),
+                    i64::from(laser::dangerous(o)),
                     i64::from(o.frame),
                     (sim.tick() / actions::STEP as u64) as i64,
                 ]);
