@@ -519,10 +519,23 @@ pub fn boss_in_reach(sim: &Sim) -> bool {
         && ((b.y + b.move_rect.bottom) - (c.y + c.move_rect.bottom)).abs() <= 2 * LIFT_FEET
 }
 
-/// The actions worth trying in `sim`, in a fixed order.
+/// True while a Siren's scream has taken Claw's controls: nothing he
+/// presses acts until the lockout has run down, and the keys still held
+/// then count as pressed.
+pub fn locked(sim: &Sim) -> bool {
+    sim.scream_lock_ms() > 0
+}
+
+/// The actions worth trying in `sim`, in a fixed order. While a scream
+/// has taken Claw's controls ([`locked`]) only the wait and the walks are
+/// worth trying: no key acts until the lockout ends, and a walk held
+/// through its end walks on at once.
 pub fn choices(sim: &Sim) -> Vec<Action> {
     let holds = jump_holds(sim);
     let mut out = vec![Action::Wait, Action::Left, Action::Right];
+    if locked(sim) {
+        return out;
+    }
     match phase(sim) {
         Phase::Ground => {
             for dir in [1i8, -1, 0] {

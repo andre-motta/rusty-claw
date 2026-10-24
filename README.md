@@ -415,11 +415,11 @@ made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
 life. Replays, `claw-replay` and the benchmark all follow them.
 
-The routes in `tests/acceptance/routes/` finish the first ten levels:
+The routes in `tests/acceptance/routes/` finish the first eleven levels:
 `level1.csv` to `level8.csv` and `level10.csv` with the default tuning
 (the ninth level has no default-tuning route yet), `level1-original.csv`
-to `level10-original.csv` with the original game's speeds (the ninth
-level's way is described below), `level2-introskip.csv`,
+to `level11-original.csv` with the original game's speeds (the ninth
+and eleventh levels' ways are described below), `level2-introskip.csv`,
 `level4-introskip.csv`, `level6-introskip.csv`, `level8-introskip.csv` and
 `level10-introskip.csv` with the jump-in that skips Raux's, Katherine's,
 Wolvington's, Gabriel's and Marrow's introductions,
@@ -430,7 +430,8 @@ on to the block past the fifth level's last stack of pegs), and
 `level1-original.level2.csv`, `level2-original.level3.csv`,
 `level3-original.level4.csv`, `level4-original.level5.csv`,
 `level5-original.level6.csv`, `level6-original.level7.csv`,
-`level7-original.level8.csv` and `level9-original.level10.csv`, the next
+`level7-original.level8.csv`, `level9-original.level10.csv` and
+`level10-original.level11.csv`, the next
 level of the game the route before starts, which begin with the progress
 that game carries in (their
 `# start_score = ...` lines, which replays, `claw-replay` and the
@@ -555,6 +556,35 @@ tick Claw stands in mid-air after the blast's hit, which lands him on
 Marrow's ledge; Marrow, who never fights after the jump-in, falls to
 Claw's sword there. `tools/bot/hints/level10-original.txt` lists that
 crossing's held buttons.
+The eleventh level's map piece lies in a pocket just below the start
+room, sealed off from it, so its routes go round the whole level: right
+along the upper caves to the first super checkpoint, down the shaft on
+the level's right edge, back left through the lower caves past the
+second super checkpoint, and up the ladder at x 3100 to the ledge under
+the pocket, one jump from the map piece. The bot is led along most of
+the way with waypoints, since its coarse graph counts some gaps as
+crossable that no jump crosses. Three crossings are written into
+`level11-original.csv` by hand: the gap of 192 px between two pillars
+in the lower caves (Mercat stands on the far one) and the climb from the
+top of a ladder to the ladder at x 3100, which ends higher than a jump
+reaches, are each made with a stick of dynamite thrown near the top of a
+jump with the help screen up for three seconds after the throw, so the
+blast stops Claw in mid-air and a jump pressed on the tick he stands
+there is a fresh jump; and the row of toggle pegs left of the checkpoint
+at x 8497, which come out one after another in a wave, is crossed after
+a wait on the checkpoint's ledge, so Claw is on the last peg early
+enough in its time out to jump up to the pillar beyond.
+`level10-original.level11.csv` plays the same rows from the progress
+`level10-original.csv` ends with. `tools/bot/hints/level11-original.txt`
+lists the waypoints and the hand-written stretches' held buttons.
+A Siren's scream takes Claw's controls for two seconds: while it does,
+the bot tries only the wait and the walks, and counts the time as part of
+the state, so a wait through the lockout is progress. Near a toggle peg
+it counts where the peg is in its cycle, to a tenth of a second, and
+beside a laser whether the beam hurts and the time, so a wait for a peg
+to come out or a beam to stop is progress too; and it counts each
+enemy's health, so shots that wear down an enemy that parries some of
+them are progress.
 The routes
 are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and

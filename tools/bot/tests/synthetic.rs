@@ -455,11 +455,11 @@ fn the_full_jump_of_each_tuning_reaches_the_full_height() {
     }
 }
 
-/// The coarse states of a game in which Claw stands still beside `object`,
-/// one after each of `waits` waits of the bot.
-fn keys_while_waiting(object: ObjectSpec, waits: usize) -> Vec<u64> {
+/// The coarse states of a game of level `number` in which Claw stands
+/// still beside `object`, one after each of `waits` waits of the bot.
+fn keys_while_waiting(number: u32, object: ObjectSpec, waits: usize) -> Vec<u64> {
     let mut l = level(&room(12, 6), (200, 250));
-    l.number = 4;
+    l.number = number;
     l.objects = vec![object];
     let mut s = sim(l);
     for _ in 0..30 {
@@ -480,7 +480,35 @@ fn a_wait_for_a_stepping_stone_is_progress() {
     // A stone that keeps to the clock, up for its first 1.5 s: each wait
     // of Claw beside it brings the stone's sink nearer, so none is the
     // same state as the one before.
-    let keys = keys_while_waiting(ObjectSpec::at("SteppingStone2", 400, 300, 0), 10);
+    let keys = keys_while_waiting(4, ObjectSpec::at("SteppingStone2", 400, 300, 0), 10);
+    for w in keys.windows(2) {
+        assert_ne!(w[0], w[1]);
+    }
+}
+
+#[test]
+fn a_wait_beside_a_laser_is_progress_and_far_from_it_is_not() {
+    // Claw stands at x 200 on a floor whose top is at y 320. Beside an
+    // eleventh-level laser each wait is a state of its own, through its
+    // wait and its pass: the moment its beam stops comes nearer.
+    let keys = keys_while_waiting(11, ObjectSpec::at("Laser", 380, 220, 0), 30);
+    for w in keys.windows(2) {
+        assert_ne!(w[0], w[1]);
+    }
+    // The same laser out of reach: every wait is the same state.
+    let keys = keys_while_waiting(11, ObjectSpec::at("Laser", 700, 220, 0), 4);
+    for w in keys.windows(2) {
+        assert_eq!(w[0], w[1]);
+    }
+}
+
+#[test]
+fn a_wait_for_a_toggle_peg_is_progress() {
+    // An eleventh-level toggle peg out for 1.5 s and in the wall for 1.5 s:
+    // its picture stays the same for most of each half, but a jump onto
+    // it lands only at some moments of its cycle, so each wait of Claw
+    // near it, out or in, is another state, through a whole cycle.
+    let keys = keys_while_waiting(11, ObjectSpec::at("TogglePeg", 400, 300, 0), 30);
     for w in keys.windows(2) {
         assert_ne!(w[0], w[1]);
     }
@@ -593,7 +621,7 @@ fn a_wait_over_a_blower_or_beside_a_goo_vent_is_progress_and_far_from_them_is_no
         ObjectSpec::at("GroundBlower", 200, 230, 0),
         ObjectSpec::at("GooVent", 330, 300, 0),
     ] {
-        let keys = keys_while_waiting(object.clone(), 10);
+        let keys = keys_while_waiting(4, object.clone(), 10);
         for w in keys.windows(2) {
             assert_ne!(w[0], w[1], "{}", object.logic);
         }
@@ -603,7 +631,7 @@ fn a_wait_over_a_blower_or_beside_a_goo_vent_is_progress_and_far_from_them_is_no
         ObjectSpec::at("GroundBlower", 600, 230, 0),
         ObjectSpec::at("GooVent", 700, 300, 0),
     ] {
-        let keys = keys_while_waiting(object.clone(), 4);
+        let keys = keys_while_waiting(4, object.clone(), 4);
         for w in keys.windows(2) {
             assert_eq!(w[0], w[1], "{}", object.logic);
         }
