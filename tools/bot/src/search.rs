@@ -89,6 +89,13 @@
 //! and its time in its cycle are part of it, as beside a goo vent, so a
 //! wait for the beam to stop is progress.
 //!
+//! On the twelfth level, where each stalactite near Claw is (hanging,
+//! falling and how far down, or gone after its crumble) is part of the
+//! coarse state, so a wait for one he set off to fall out of his way is
+//! progress; and so is the time through the landing after a long fall,
+//! which holds him on the spot (every move made in it ends where it
+//! began). Aquatis is the boss whose gem ends the level.
+//!
 //! A route can be made to win under several sets of the values the
 //! hermit crabs start with ([`CrabValues`], which the original game does
 //! not fix): [`SearchConfig::crabs`] is the set the route plays under,
@@ -664,6 +671,7 @@ pub fn is_boss(logic: &str) -> bool {
         || enemy::wolvington::NAMES.contains(&logic)
         || enemy::gabriel::NAMES.contains(&logic)
         || enemy::marrow::NAMES.contains(&logic)
+        || enemy::aquatis::NAMES.contains(&logic)
 }
 
 /// The bosses whose fall the search guides into the water: blows cannot
@@ -2054,8 +2062,11 @@ pub fn state_key(sim: &Sim) -> u64 {
     // it to end: a wait through it is progress, so the time tells the
     // states apart (they end soon, so this never grows far). A Siren's
     // scream that has taken his controls is such a state too, whatever
-    // he is doing when it touches him.
-    if actions::phase(sim) == actions::Phase::Busy || actions::locked(sim) {
+    // he is doing when it touches him, and so is the landing after a long
+    // fall, which holds him on the spot for a while (the twelfth level's
+    // shafts are deep): every move made in it ends in it, where it began.
+    if actions::phase(sim) == actions::Phase::Busy || actions::locked(sim) || c.state == state::LAND
+    {
         k.add(&[
             6,
             i64::from(c.frame),
@@ -2213,6 +2224,13 @@ pub fn state_key(sim: &Sim) -> u64 {
                     into,
                 ]);
             }
+        } else if let ObjectData::Stalactite(_) = &o.data {
+            // A stalactite hanging over the way hurts whoever jumps
+            // through it; one Claw has set off falls, crumbles and is gone
+            // until he loses a life. Whether it hangs, falls (and how far
+            // down it is) or has gone tells apart a wait for it to fall
+            // out of the way, which is progress.
+            k.add(&[18, i64::from(id), i64::from(o.state), i64::from(o.y >> 4)]);
         } else if let ObjectData::FloorSpike(d) = &o.data {
             // A wait for a spike to sink is progress: where the spike is
             // in its cycle, to a tenth of a second.
