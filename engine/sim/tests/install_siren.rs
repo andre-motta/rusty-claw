@@ -217,11 +217,6 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// columns: `lock` (the lockout), `siren_x`, `siren_y`, `siren_state`,
 /// `siren_health` and `dazed` (Claw shows his dazed picture).
 ///
-/// - The held keys (siren-jump, siren-walk, siren-duck, siren-air, from
-///   the first locked row): the original's trace shows the keys its
-///   controls read, which the lockout empties; the replay's trace shows
-///   the keys it was given, which the lockout leaves as they are (it is
-///   applied where they reach Claw).
 /// - siren-screens: the return from the help screen runs every object's
 ///   logic once more, outside any step (see `Sim::pass_help_return`), and
 ///   in that pass the Siren's song ends 14 rows before its time is over
@@ -237,10 +232,6 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   run's 6050); the first lockout is within the slack.
 const KNOWN: &[Known] = &[
     ("siren-stand", "c60", &[("lock", 5652)]),
-    ("siren-jump", "c18", &[("held", 1188)]),
-    ("siren-walk", "c18", &[("held", 1908)]),
-    ("siren-duck", "c18", &[("held", 1170)]),
-    ("siren-air", "c18", &[("held", 1188)]),
     (
         "siren-screens",
         "c18",
