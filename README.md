@@ -587,7 +587,8 @@ it counts where the peg is in its cycle, to a tenth of a second, and
 beside a laser whether the beam hurts and the time, so a wait for a peg
 to come out or a beam to stop is progress too; and it counts each
 enemy's health, so shots that wear down an enemy that parries some of
-them are progress.
+them are progress (outside a boss room, where the boss's own health is
+the progress and the pirates a boss calls in would split the states).
 The twelfth level's routes take the long way through the undersea
 caves, checkpoint to checkpoint, to the boss room's door high above the
 water. The bot is led with waypoints up the climbs its coarse graph

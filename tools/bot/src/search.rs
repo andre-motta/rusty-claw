@@ -2076,6 +2076,7 @@ pub fn state_key(sim: &Sim) -> u64 {
     let objects = sim.objects();
     const TICK: i64 = claw_sim::tuning::TICK_MS as i64;
     let clock = sim.tick() as i64 * TICK;
+    let in_boss_room = boss_stage(sim) != BossStage::Door;
     for id in objects.listed() {
         let Some(o) = objects.get(id) else { continue };
         if o.x.abs_diff(c.x) > 700 || o.y.abs_diff(c.y) > 500 {
@@ -2175,8 +2176,12 @@ pub fn state_key(sim: &Sim) -> u64 {
             // killing is progress, so an enemy that takes several (one
             // that parries some of them, as the eleventh level's Mercat
             // does Claw's pistol shots) can be worn down from where Claw
-            // stands.
-            k.add(&[2, i64::from(id), i64::from(d.dead), i64::from(o.health)]);
+            // stands. Not in a boss room, though: there the boss's own
+            // health is the progress (keyed below), and the pirates a boss
+            // calls in, hit over and over, would split every state into
+            // many and spend the search's nodes.
+            let health = if in_boss_room { 0 } else { o.health };
+            k.add(&[2, i64::from(id), i64::from(d.dead), i64::from(health)]);
         } else if let ObjectData::Rope(r) = &o.data {
             // Where the rope is in its swing decides where a grab or a
             // release takes Claw.
