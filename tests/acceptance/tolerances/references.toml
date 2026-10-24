@@ -1173,6 +1173,32 @@ reference = "level11/pair-original"
 clock = "c18"
 tolerance = "exact"
 
+# The bot's route of the twelfth level (original speeds), one 18 ms step
+# per frame: past the stalactites, the shakes and the tentacles to
+# Aquatis, through his introduction, then the lift kill that drops him into
+# the water and a help screen that hands Claw the gem. Every repeat wins the
+# level and is equal on every compared row, the random stream included.
+[[compare]]
+reference = "level12/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The twelfth level's jump-in route (original speeds): the jump into
+# Aquatis's room that skips his introduction, then the same kill; equal on
+# every row.
+[[compare]]
+reference = "level12/introskip-original"
+clock = "c18"
+tolerance = "exact"
+
+# The twelfth level of a game that started with the eleventh level's route
+# (`level11-original.csv`), entered through the end-of-level screen with the
+# progress the eleventh level carries: equal on every row.
+[[compare]]
+reference = "level12/pair-original"
+clock = "c18"
+tolerance = "exact"
+
 # The bot's route of the tenth level (default tuning) at 60 frames per
 # second. It leaves the feel tolerance at 1184 ms in Claw's height (the
 # default tuning's movement, as on the earlier levels), then the runs go
@@ -1194,3 +1220,23 @@ known.magic = 32517
 known.dynamite = 33867
 known.lives = 115050
 known.boss_fight = 210950
+
+# The bot's route of the twelfth level (default tuning) at 60 frames per
+# second. It leaves the feel tolerance at 1167 ms in the score (the default
+# tuning's movement, as on the earlier levels), then the runs go different
+# ways.
+[[compare]]
+reference = "level12/bot"
+clock = "c60"
+tolerance = "feel"
+known.score = 1167
+known.health = 1800
+known.physics_type = 1800
+known.state_id = 1800
+known.y = 1867
+known.cam_y = 1867
+known.x = 2167
+known.cam_x = 2167
+known.magic = 10000
+known.events = 15500
+known.lives = 15500
