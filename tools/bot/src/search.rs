@@ -82,11 +82,12 @@
 //! lockout has run down, so the time is part of the coarse state while it
 //! runs, and only the wait and the walks are tried. Near a toggle peg
 //! ([`TOGGLE_NEAR`]), where the peg is in its cycle, to a tenth of a
-//! second, is part of the coarse state too: its picture stays the same
-//! for most of a second out or in the wall, and a jump lands on it only
-//! when it is timed to that cycle. Beside a laser ([`LASER_NEAR`]),
-//! whether its beam hurts, its picture and the time are part of it, as
-//! beside a goo vent, so a wait for the beam to stop is progress.
+//! second, is part of the coarse state too (unless the peg is out for
+//! good): its picture stays the same for most of a second out or in the
+//! wall, and a jump lands on it only when it is timed to that cycle.
+//! Beside a laser ([`LASER_NEAR`]), whether its beam hurts, its picture
+//! and its time in its cycle are part of it, as beside a goo vent, so a
+//! wait for the beam to stop is progress.
 //!
 //! A route can be made to win under several sets of the values the
 //! hermit crabs start with ([`CrabValues`], which the original game does
@@ -2007,13 +2008,19 @@ fn played_on(
 /// The coarse state of a game the search treats as one: Claw's position to
 /// 8 px, his state, facing, running and attacking, his health to 10
 /// points, and the platforms (position to 16 px and state) and enemies
-/// (alive or not) within about a screen of him, and whether each piece of
-/// a breaking plank row near him is whole, waiting or crumbling. Springboards and stepping
-/// stones count with where they are in their cycles (state and frame, the
-/// time while a springboard runs the spring Claw set off, and
-/// a stone that keeps to the clock its time in its cycle to a tenth of a
-/// second), so a wait on a springboard for its throw, or beside a stone
-/// for it to come up, is progress.
+/// (alive or not, and their health) within about a screen of him, and
+/// whether each piece of a breaking plank row near him is whole, waiting
+/// or crumbling. Springboards and stepping stones count with where they
+/// are in their cycles (state and frame, the time while a springboard
+/// runs the spring Claw set off, and a stone that keeps to the clock its
+/// time in its cycle to a tenth of a second), so a wait on a springboard
+/// for its throw, or beside a stone for it to come up, is progress. So do
+/// a toggle peg near him that is not out for good (its time in its cycle,
+/// to a tenth of a second), a laser beside him (whether it hurts, its
+/// picture, and its time in its cycle to a wait of the bot), a goo vent
+/// or a blower's nozzle beside him, and the floor spikes. While a Siren's
+/// scream has taken Claw's controls, or he is in a state that takes no
+/// steering, the time counts too, so a wait through it is progress.
 ///
 /// The flight of a throw counts apart from an ordinary jump or fall
 /// through the same place.
@@ -2056,7 +2063,8 @@ pub fn state_key(sim: &Sim) -> u64 {
         ]);
     }
     let objects = sim.objects();
-    let clock = sim.tick() as i64 * i64::from(claw_sim::tuning::TICK_MS);
+    const TICK: i64 = claw_sim::tuning::TICK_MS as i64;
+    let clock = sim.tick() as i64 * TICK;
     for id in objects.listed() {
         let Some(o) = objects.get(id) else { continue };
         if o.x.abs_diff(c.x) > 700 || o.y.abs_diff(c.y) > 500 {
@@ -2111,10 +2119,12 @@ pub fn state_key(sim: &Sim) -> u64 {
             // a tenth of a second (its picture alone stays the same for
             // most of a second, out or in the wall). A peg in the wall is
             // no platform until it slides out again, but counts here all
-            // the same.
+            // the same. A peg out for good never moves: a wait beside it
+            // is no progress.
             let into = match &o.data {
                 ObjectData::Platform(d)
                     if d.period > 0
+                        && o.state != platform::state::STOPPED
                         && o.x.abs_diff(c.x) <= TOGGLE_NEAR.0
                         && o.y.abs_diff(c.y) <= TOGGLE_NEAR.1 =>
                 {
@@ -2186,17 +2196,21 @@ pub fn state_key(sim: &Sim) -> u64 {
                     (sim.tick() / actions::STEP as u64) as i64,
                 ]);
             }
-        } else if let ObjectData::Laser(_) = &o.data {
+        } else if let ObjectData::Laser(d) = &o.data {
             // A wait beside a laser for its beam to stop is progress, as
             // beside a goo vent: whether it hurts, its picture and the
-            // time.
+            // time since its wait started, modulo its cycle, to a wait of
+            // the bot (a wait past a whole cycle is no progress).
             if o.x.abs_diff(c.x) <= LASER_NEAR.0 && o.y.abs_diff(c.y) <= LASER_NEAR.1 {
+                let cycle = i64::from(laser::period_ticks(d.wait_ms).max(1)) * TICK;
+                let into =
+                    (clock - d.start_ms as i64).rem_euclid(cycle) / (actions::STEP as i64 * TICK);
                 k.add(&[
                     17,
                     i64::from(id),
                     i64::from(laser::dangerous(o)),
                     i64::from(o.frame),
-                    (sim.tick() / actions::STEP as u64) as i64,
+                    into,
                 ]);
             }
         } else if let ObjectData::FloorSpike(d) = &o.data {

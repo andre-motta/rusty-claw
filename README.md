@@ -417,7 +417,7 @@ life. Replays, `claw-replay` and the benchmark all follow them.
 
 The routes in `tests/acceptance/routes/` finish the first eleven levels:
 `level1.csv` to `level8.csv` and `level10.csv` with the default tuning
-(the ninth level has no default-tuning route yet), `level1-original.csv`
+(the ninth and eleventh levels have no default-tuning route yet), `level1-original.csv`
 to `level11-original.csv` with the original game's speeds (the ninth
 and eleventh levels' ways are described below), `level2-introskip.csv`,
 `level4-introskip.csv`, `level6-introskip.csv`, `level8-introskip.csv` and
