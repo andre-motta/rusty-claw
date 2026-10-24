@@ -1,0 +1,164 @@
+# Waypoints for the eleventh level at the original speeds, from the level's
+# geometry. The route is searched a stretch at a time: each searched
+# stretch below runs with its waypoints as --hints (with --hints-on-foot)
+# and ends at its goal (--goal X,Y with --goal-on-foot), and the next
+# carries on from it (--from-route, --from-tick at its last tick). Every
+# stretch uses --seed level and --fragile-cost 100.
+#
+# The map piece lies in a pocket just below the start room, sealed off
+# from it, so the route goes round the whole level: right along the upper
+# caves to the first super checkpoint, down the shaft on the level's right
+# edge, back left through the lower caves past the second super
+# checkpoint, and up the ladder at x 3100 to the ledge under the pocket.
+# The coarse graph of the search counts some gaps as crossable that no
+# jump crosses (and a narrow hole into the warp pocket by the sixth
+# checkpoint as open), so most stretches lead the search along the way
+# with waypoints. Three crossings no plain jump makes are written by hand:
+# each throws a stick of dynamite near the top of a jump with the help
+# screen up for three seconds after the throw (the route's
+# `@N menu help 3000` lines), so the stick goes off at once beside Claw,
+# the blast stops him in mid-air, and a jump pressed on the one tick he
+# stands there is a fresh jump; or it waits for the toggle pegs' cycle.
+#
+# 1. From the start to the first checkpoint: no waypoints, goal 4818,1352.
+# 2. To the checkpoint: no waypoints, goal 6588,1352.
+# 3. To the checkpoint: onto the block over the deep pool, up the
+#    staircase of toggle pegs on its right, over the block above the pool
+#    and down the column of toggle pegs beyond it: goal 9010,1417.
+7780,1231 foot
+8002,1372 foot
+8066,1278 foot
+8002,1180 foot
+8065,1087 foot
+8256,1103 foot
+8448,1065 foot
+8513,1384 foot
+8694,1576 foot
+8795,1479 foot
+# 4. To the checkpoint: no waypoints, goal 10098,1416.
+# 5. To the checkpoint: no waypoints, goal 11601,1356.
+# 6. To the checkpoint: no waypoints, goal 12527,1483.
+# 7. To the checkpoint: up the ladder to the top of the block around the
+#    warp pocket and onto the hanging ladder past it (the pocket's hole is
+#    too narrow to jump into): goal 14675,1291.
+13120,1330 foot
+13824,1300 foot
+# 8. Down to the platform and the block, then up the chain of hanging
+#    ladders over the block with Mercat and on to it: goal 15975,979 (the
+#    block past the gap, before the laser and the Siren).
+15100,1487 foot
+15520,1423 foot
+15512,1250 foot
+15320,1180 foot
+15128,940 foot
+15320,740 foot
+15512,800 foot
+15700,979 foot
+# 9. Past the laser and the Siren, down the ladder, over the toggle peg
+#    and up the next ladder to the block with Mercat, and down to the
+#    first super checkpoint: goal 17168,1417.
+16230,1180 foot
+16450,1278 foot
+16678,1180 foot
+16800,979 foot
+# 10. Down the shaft on the level's right edge and up the column of
+#    toggle pegs to the checkpoint: goal 16088,4299.
+16664,4823 foot
+16557,4748 foot
+16663,4644 foot
+16556,4563 foot
+16661,4474 foot
+16555,4383 foot
+# 11. Up the column of toggle pegs to the checkpoint: goal 15268,3721.
+15821,4299 foot
+15745,4247 foot
+15817,4147 foot
+15748,4103 foot
+15749,3982 foot
+15814,3937 foot
+15813,3813 foot
+15746,3769 foot
+# 12. Left over the row of toggle pegs above the fish pool and up the
+#    pillars to the one before the widest gap: goal 13472,3415.
+14900,3666 foot
+14650,3700 foot
+14392,3665 foot
+14176,3671 foot
+13984,3671 foot
+13792,3607 foot
+13664,3479 foot
+# 13. Not searched: the pillar with Mercat lies 192 px beyond, farther
+#    than any jump. A jump left off the pillar's edge, a stick of
+#    dynamite with the help screen near its top (before route tick 7449),
+#    and a fresh jump left from the stand after the blast, which lands
+#    on Mercat's pillar. Held buttons (masks of the route file), in ticks
+#    counted from the stretch's first tick, each range inclusive:
+#       route ticks 7429 to 7513
+#            0-1    0x0 nothing
+#            2-3    0x1000000 left
+#            4-17   0x1000001 left and jump
+#           18-19   0x1000100 left and dynamite
+#           20-50   0x0 nothing (the stand after the blast is tick 50)
+#           51-64   0x1000001 left and jump
+#           65-84   0x1000000 left
+# 14. Up the pillars to the checkpoint: goal 12240,3144.
+13100,3473 foot
+12960,3345 foot
+12768,3217 foot
+# 15. To the second super checkpoint: no waypoints, goal 10897,3912.
+# 16. To the checkpoint: no waypoints, goal 9800,3147.
+# 17. To the checkpoint: no waypoints, goal 8497,2761.
+# 18. Not searched as one: the row of toggle pegs left of the checkpoint
+#    runs in a wave, each peg out a moment after the one before it, and
+#    the jump from the last peg up to the first pillar beyond needs Claw
+#    on that peg early in its time out. The stretch waits 152 ticks on
+#    the checkpoint's ledge, plays the moves a search to the third peg
+#    (goal 7767,2707 from route tick 9391) found, and then hops by hand to
+#    the last peg and up to the pillar:
+#       route ticks 9391 to 9864
+#            0-151  0x0 nothing
+#          152-370  the searched moves to the third peg
+#          371-382  0x0 nothing
+#          383-398  0x1000000 left
+#          399-412  0x1000001 left and jump, to the last peg
+#          413-439  0x1000000 left
+#          440-453  0x1000001 left and jump, to the pillar
+#          454-473  0x1000000 left
+# 19. Over the pillars to the checkpoint: goal 6127,2377.
+7200,2583 foot
+7072,2519 foot
+6944,2519 foot
+6816,2583 foot
+6688,2455 foot
+6560,2519 foot
+# 20. To the checkpoint: no waypoints, goal 4791,2376.
+# 21. Over the toggle pegs, along the floor and up the ladders to the top
+#    of the ladder below the one at x 3100: goal 2916,1899.
+4550,2405 foot
+4354,2301 foot
+4162,2301 foot
+4012,2437 foot
+3850,2373 foot
+3180,2130 foot
+2924,2000 foot
+# 22. Not searched: the ladder at x 3100 ends higher than a jump from
+#    below reaches. A jump right from the top of the ladder, a stick of
+#    dynamite with the help screen near its top (before route tick
+#    11787), and a fresh jump right with Up from the stand after the
+#    blast, which catches the ladder; then up it to the ledge:
+#       route ticks 11767 to 11891
+#            0-1    0x0 nothing
+#            2-15   0x2000001 right and jump
+#           16-17   0x2000000 right
+#           18-19   0x100 dynamite
+#           20-50   0x0 nothing (the stand after the blast is tick 50)
+#           51-64   0x6000001 right, up and jump
+#           65-104  0x6000000 right and up
+#          105-124  0x4000000 up
+# 23. Along the ledge and the jump into the map piece's pocket: the
+#    level's end, no goal and no waypoints.
+#
+# level10-original.level11.csv: the same rows, with --carry naming the
+# progress level10-original.csv ends with (its `# start_score = ...`
+# lines: 75 health, 7 pistol shots, 8 sticks of dynamite); they win the
+# level from that start as well.
