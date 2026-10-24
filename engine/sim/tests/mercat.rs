@@ -1,6 +1,7 @@
 //! Mercat on a synthetic floor with the eleventh level's animation
 //! timings: how he is built (idle, going by sight, the eleventh level's
-//! health), going Home and its wait, his decisions (the throw at a Claw in
+//! health), going Home and its wait, his decisions (his own charge in
+//! modes 0 to 2 only on a roll below 20, the throw at a Claw in
 //! sight at any distance, the stab chosen within 150 px and replaced by the
 //! throw on the same tick with the busy flag left set, the stab out of
 //! sight, pacing out of range with the hop chance back at 90), the throw
@@ -133,7 +134,11 @@ fn arena(number: u32) -> SimLevel {
 /// The arena on level `number` with Claw put `dx` px from Mercat on the
 /// first tick, tough enough to take any number of bolts.
 fn with_claw(number: u32, seed: u32, dx: i32) -> (Sim, ObjectId) {
-    let level = arena(number);
+    with_claw_in(arena(number), seed, dx)
+}
+
+/// [`with_claw`] in `level`.
+fn with_claw_in(level: SimLevel, seed: u32, dx: i32) -> (Sim, ObjectId) {
     let (w, h) = (level.map.width() as u32, level.map.height() as u32);
     let mut sim = Sim::new(
         level,
@@ -339,6 +344,68 @@ fn he_throws_at_a_claw_in_sight_at_any_distance() {
         mdata(&sim, id).enemy.vx,
         -f64::from(mercat::FAST_ADVANCE_SPEED)
     );
+}
+
+#[test]
+fn near_he_charges_by_himself_only_on_a_low_roll() {
+    // Off screen he cannot see Claw. Below 20 he says an advance line and
+    // charges by mode; on a higher roll he stays Home, says nothing, and
+    // the shared Home draws again and sends him in by the same mode. Two
+    // draws either way.
+    let mut level = arena(11);
+    for line in mercat::ADVANCE_LINES {
+        level.sounds.insert(line.to_string(), Some(1000));
+    }
+    for (mode, charge, speed) in [
+        (0, EnemyState::FastAdvance, mercat::FAST_ADVANCE_SPEED),
+        (1, EnemyState::FastAdvance, mercat::FAST_ADVANCE_SPEED),
+        (2, EnemyState::Advance, mercat::ADVANCE_SPEED),
+    ] {
+        for roll in [0, 19, 20, 36, 100] {
+            let (mut sim, id) = with_claw_in(level.clone(), 3, -450);
+            sim.step(TickInput::default());
+            ready(&mut sim, id);
+            let start = stream_drawing(101, roll);
+            let mut want = start.clone();
+            want.below(101);
+            want.below(if roll < 20 { 3 } else { 421 });
+            let (spoke, mid) = sim.with_world(|w| {
+                if let Some(m) = mercat::mercat_data_mut(w, id) {
+                    m.enemy.mode = mode;
+                }
+                *w.rng = start.clone();
+                mercat::home_tick(w, id);
+                (logic::sound::enemy_is_speaking(w, id), w.rng.state())
+            });
+            let at = format!("mode {mode} roll {roll}");
+            assert_eq!(mid, want.state(), "{at}");
+            assert_eq!(spoke, roll < 20, "{at}");
+            assert_eq!(state_of(&sim, id), Some(charge), "{at}");
+            assert_eq!(mdata(&sim, id).enemy.vx, -f64::from(speed), "{at}");
+        }
+    }
+}
+
+#[test]
+fn in_sight_with_the_bolt_cooling_a_high_roll_keeps_him_home() {
+    let (mut sim, id) = with_claw(11, 3, -160);
+    sim.step(TickInput::default());
+    assert_eq!(mdata(&sim, id).enemy.mode, 2);
+    for (roll, after) in [(36, EnemyState::Home), (5, EnemyState::Advance)] {
+        ready(&mut sim, id);
+        sim.with_world(|w| {
+            let now = w.now_ms;
+            if let Some(m) = mercat::mercat_data_mut(w, id) {
+                m.cooldown = enemy::Timer::new(now, 1000);
+            }
+            *w.rng = stream_drawing(101, roll);
+            mercat::home_tick(w, id);
+        });
+        // The throw's entry stops him and, the bolt cooling, leaves him in
+        // the state the roll chose.
+        assert_eq!(state_of(&sim, id), Some(after), "roll {roll}");
+        assert_eq!(mdata(&sim, id).enemy.vx, 0.0);
+    }
 }
 
 #[test]

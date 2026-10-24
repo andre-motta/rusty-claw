@@ -619,6 +619,12 @@ how they were played). A route can be played on two clocks:
 - `c60`, 60 frames per second, compared with the default tuning within the
   small differences in position and timing that `feel.toml` allows.
 
+A trace's `held` column is the keys held as the game's controls saw them,
+as the original's traces record them: while a Siren's scream has taken
+Claw's controls it is 0, though the route still holds its keys (the route
+and the replay keep them, so a key held to the lockout's end acts on the
+first free tick).
+
 ```sh
 # replay the route with the store's tuning and random state, compare with
 # every reference trace, print the first divergence and a per-column table

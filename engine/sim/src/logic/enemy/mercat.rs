@@ -38,16 +38,19 @@
 //! - Going Home: stopped, his decision pose, and a wait of 1000 ms plus a
 //!   draw of 0..=1000.
 //! - Home: he faces Claw; nothing more while the wait runs. Then, by
-//!   mode: 0 and 1, a fifth of the time one of his three advance lines and
-//!   a run at Claw; 2, the same with a walk; 3 and 4, the stab when the
-//!   stab's own 100 ms wait is over; 5 and 6, his hop chance back to 90
-//!   and pacing. Then, whatever that did: with Claw in sight, the throw
+//!   mode: 0 and 1, a draw of 0..101, and only below 20 one of his three
+//!   advance lines and a run at Claw; 2, the same with a walk; on a
+//!   higher draw he stays Home; 3 and 4, the stab when the stab's own
+//!   100 ms wait is over; 5 and 6, his hop chance back to 90 and pacing.
+//!   Then, whatever that did: with Claw in sight, the throw
 //!   ([`enter_fire`]: stopped; while the bolt's cooldown runs nothing
-//!   more, so he stands in the state just chosen; otherwise he faces Claw
-//!   and raises the trident), and out of sight the shared human Home at
-//!   his own speeds when he is still Home. A stab chosen with Claw in
-//!   sight is so replaced by the throw on the same tick, and the busy flag
-//!   it set stays set until a hit, a parry or a throw's landing frees him.
+//!   more, so he stands in the state just chosen, Home after a high draw;
+//!   otherwise he faces Claw and raises the trident), and out of sight the
+//!   shared human Home at his own speeds when he is still Home, which
+//!   draws again and sends him in by mode after a high draw. A stab chosen
+//!   with Claw in sight is so replaced by the throw on the same tick, and
+//!   the busy flag it set stays set until a hit, a parry or a throw's
+//!   landing frees him.
 //! - Fire: on the tick the throw shows its picture 203 (its tenth), the
 //!   bolt's sound and the bolt's cooldown ([`bolt_cooldown_ms`]); the bolt
 //!   leaves on the same tick ([`crate::logic::projectile::trident`]) and
@@ -223,7 +226,8 @@ pub const HOME_WAIT_SPREAD: u32 = 1001;
 pub const STAB_RANGE: i32 = 150;
 /// The wait the stab starts before the next one, ms.
 pub const STAB_WAIT_MS: u64 = 100;
-/// Chance in 101 of an advance line at a decision in modes 0 to 2.
+/// Chance in 101 of an advance line, and of his own charge, at a decision
+/// in modes 0 to 2.
 pub const ADVANCE_LINE_CHANCE: i32 = 20;
 /// His idle time before pacing may start, ms.
 pub const IDLE_MS: u64 = 2000;
@@ -536,12 +540,14 @@ pub fn home_tick(w: &mut World, id: ObjectId) {
     }
     match data(w, id).map_or(6, |d| d.mode) {
         0 | 1 => {
-            advance_line(w, id);
-            redtail_pirate::enter_fast_advance_at(w, id, SPEEDS);
+            if advance_line(w, id) {
+                redtail_pirate::enter_fast_advance_at(w, id, SPEEDS);
+            }
         }
         2 => {
-            advance_line(w, id);
-            redtail_pirate::enter_advance_at(w, id, SPEEDS);
+            if advance_line(w, id) {
+                redtail_pirate::enter_advance_at(w, id, SPEEDS);
+            }
         }
         3 | 4 => {
             if mercat_data(w, id).is_some_and(|m| m.stab_wait.done(now)) {
@@ -565,13 +571,16 @@ pub fn home_tick(w: &mut World, id: ObjectId) {
     }
 }
 
-/// A fifth of the time one of his three advance lines. Draws: one of
-/// 0..101, then one of 0..3 below 20.
-fn advance_line(w: &mut World, id: ObjectId) {
-    if rand(w, 101) < ADVANCE_LINE_CHANCE {
-        let line = ADVANCE_LINES[rand(w, 3) as usize];
-        say(w, id, line);
+/// A fifth of the time one of his three advance lines; true when he said
+/// one, which is when he charges by himself. Draws: one of 0..101, then
+/// one of 0..3 below 20.
+fn advance_line(w: &mut World, id: ObjectId) -> bool {
+    if rand(w, 101) >= ADVANCE_LINE_CHANCE {
+        return false;
     }
+    let line = ADVANCE_LINES[rand(w, 3) as usize];
+    say(w, id, line);
+    true
 }
 
 /// The shared human Home at his speeds: nothing unless still Home;

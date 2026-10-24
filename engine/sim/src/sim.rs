@@ -155,6 +155,9 @@ pub struct Sim {
     /// The input Claw's logic sees this tick: [`Sim::input`] without the
     /// latched keys.
     claw_input: TickInput,
+    /// True when a scream's lockout took this tick's keys from Claw (see
+    /// [`Sim::input_locked`]).
+    input_locked: bool,
     /// The frame pulse countdown, ms (see [`PULSE_MS`]).
     pulse_left: u32,
     /// The state the level's set-up left the random stream in, before
@@ -559,6 +562,7 @@ impl Sim {
             input: TickInput::default(),
             latched: Buttons(u32::MAX),
             claw_input: TickInput::default(),
+            input_locked: false,
             pulse_left: PULSE_START_MS,
             set_up_rng: LEVEL_LOAD_SEED,
             events: Vec::new(),
@@ -833,7 +837,9 @@ impl Sim {
         // A scream's lockout takes the keys from Claw while it runs, and a
         // locked tick empties the latch: keys held when it runs out count
         // as pressed then.
-        if scream::lock_input(&mut self.out.scream_lock_ms, TICK_MS, &mut self.claw_input) {
+        self.input_locked =
+            scream::lock_input(&mut self.out.scream_lock_ms, TICK_MS, &mut self.claw_input);
+        if self.input_locked {
             self.latched = Buttons::NONE;
         }
         self.count_pulse();
@@ -1615,6 +1621,15 @@ impl Sim {
     /// the latched keys (see [`Sim::latch_keys`]).
     pub fn claw_input(&self) -> TickInput {
         self.claw_input
+    }
+
+    /// True when a Siren's scream lockout took the last tick's keys from
+    /// Claw: his logic saw nothing held and nothing pressed, whatever
+    /// [`Sim::input`] holds (see [`crate::logic::projectile::scream`]).
+    /// The tick a scream touches him keeps its keys, and so does the tick
+    /// the lockout runs out in.
+    pub fn input_locked(&self) -> bool {
+        self.input_locked
     }
 
     /// Every key down at the next tick counts as already pressed: it is
