@@ -415,14 +415,16 @@ made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
 life. Replays, `claw-replay` and the benchmark all follow them.
 
-The routes in `tests/acceptance/routes/` finish the first eleven levels:
-`level1.csv` to `level8.csv` and `level10.csv` with the default tuning
-(the ninth and eleventh levels have no default-tuning route yet), `level1-original.csv`
-to `level11-original.csv` with the original game's speeds (the ninth
-and eleventh levels' ways are described below), `level2-introskip.csv`,
-`level4-introskip.csv`, `level6-introskip.csv`, `level8-introskip.csv` and
-`level10-introskip.csv` with the jump-in that skips Raux's, Katherine's,
-Wolvington's, Gabriel's and Marrow's introductions,
+The routes in `tests/acceptance/routes/` finish the first twelve levels:
+`level1.csv` to `level8.csv`, `level10.csv` and `level12.csv` with the
+default tuning (the ninth and eleventh levels have no default-tuning
+route yet), `level1-original.csv` to `level12-original.csv` with the
+original game's speeds (the ninth, eleventh and twelfth levels' ways are
+described below), `level2-introskip.csv`,
+`level4-introskip.csv`, `level6-introskip.csv`, `level8-introskip.csv`,
+`level10-introskip.csv` and `level12-introskip.csv` with the jump-in
+that skips Raux's, Katherine's, Wolvington's, Gabriel's, Marrow's and
+Aquatis's introductions,
 `level3-boost.csv` with
 the dynamite boost on to the rock pillar past the third level's first save
 point (`level5-original.csv` and `level4-original.level5.csv` use one too,
@@ -430,8 +432,9 @@ on to the block past the fifth level's last stack of pegs), and
 `level1-original.level2.csv`, `level2-original.level3.csv`,
 `level3-original.level4.csv`, `level4-original.level5.csv`,
 `level5-original.level6.csv`, `level6-original.level7.csv`,
-`level7-original.level8.csv`, `level9-original.level10.csv` and
-`level10-original.level11.csv`, the next
+`level7-original.level8.csv`, `level9-original.level10.csv`,
+`level10-original.level11.csv` and `level11-original.level12.csv`, the
+next
 level of the game the route before starts, which begin with the progress
 that game carries in (their
 `# start_score = ...` lines, which replays, `claw-replay` and the
@@ -585,6 +588,36 @@ beside a laser whether the beam hurts and the time, so a wait for a peg
 to come out or a beam to stop is progress too; and it counts each
 enemy's health, so shots that wear down an enemy that parries some of
 them are progress.
+The twelfth level's routes take the long way through the undersea
+caves, checkpoint to checkpoint, to the boss room's door high above the
+water. The bot is led with waypoints up the climbs its coarse graph
+counts as easy: the springboard rocks, the columns of toggle and
+crumbling pegs and the elevators. Two climbs are written into the routes
+by hand, each a fresh jump pressed on the one tick Claw stands in mid-air
+after a falling stalactite hits him: onto the block beyond the shaft
+past the first checkpoint, where a stalactite hangs over the block's
+edge in the way of any jump, and from a crumbling peg that gives way
+under him in the shaft of crumbling pegs before the checkpoint at
+x 26237. No blow of Claw's
+hurts Aquatis, only the stalactites over his head do, but Aquatis can be
+lifted: the routes walk off the toggle peg beside him, drop past him and
+steer into his body, whose touch stops Claw in mid-air at the height of
+Aquatis's feet; Lift pressed on the next tick picks Aquatis up, and he
+drops at once into the water and dies. A help screen of 7.75 seconds
+twelve ticks later (an `@N menu help 7750` line) makes the gem rising
+from him the pickup on Claw, which ends the level.
+`level12-introskip.csv` jumps in instead of sitting through the
+introduction, so Aquatis stays in his start-up pose and never punches;
+`level11-original.level12.csv` plays `level12-original.csv`'s rows from
+the progress `level11-original.csv` ends with, pressing the weapon key
+with its first step so that Claw carries the pistol the route fires,
+not the dynamite that game ends with. `tools/bot/hints/level12-original.txt`
+lists the waypoints and the hand-written stretches' held buttons.
+The bot counts where each stalactite near Claw is (hanging, falling and
+how far down, or gone), so a wait for one he set off to fall out of the
+way is progress, and it counts the time through the landing after a
+long fall, which holds Claw on the spot for a while; held by a tentacle
+beside Aquatis, it mashes its way out as in a bear's hug.
 The routes
 are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and
