@@ -1082,8 +1082,11 @@ impl Sim {
     /// game with Claw placed this way and not with a warp's frame (a tiger
     /// guard of the fourteenth level, drawn by that frame, would see him a
     /// tick early).
+    ///
+    /// The run then counts as started by a teleport ([`Sim::claw_placed`]).
     pub fn place_between_ticks(&mut self, x: i32, y: i32) {
         self.place_at = Some((x, y));
+        self.out.claw_placed = true;
     }
 
     /// The warp's set-up after it moved Claw (see
@@ -1512,6 +1515,17 @@ impl Sim {
         self.out.redtail()
     }
 
+    /// True once Claw has been put at a point of the level by a tool or a
+    /// test ([`Sim::teleport_player`], [`Sim::place_between_ticks`]): the
+    /// run counts as started by a teleport rather than played from the
+    /// level's start, which decides where RedTail's blow count starts when
+    /// he is built (see [`crate::logic::enemy::redtail`]). A run played
+    /// from the level's start, a later level of a game included, keeps it
+    /// false.
+    pub fn claw_placed(&self) -> bool {
+        self.out.claw_placed()
+    }
+
     /// How the Chameleons' shared phase frame is drawn now (see
     /// [`crate::logic::enemy::chameleon::PhaseFrame`]).
     pub fn chameleon_frame(&self) -> crate::logic::enemy::chameleon::PhaseFrame {
@@ -1922,9 +1936,11 @@ impl Sim {
     }
 
     /// Moves Claw to (x, y) at once (tools and tests); the move is drawn
-    /// without interpolation.
+    /// without interpolation. The run then counts as started by a
+    /// teleport ([`Sim::claw_placed`]).
     pub fn teleport_player(&mut self, x: i32, y: i32) {
         let Some(id) = self.player else { return };
+        self.out.claw_placed = true;
         if let Some(o) = self.objects.get_mut(id) {
             o.x = x;
             o.y = y;
