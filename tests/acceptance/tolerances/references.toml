@@ -1199,6 +1199,33 @@ reference = "level12/pair-original"
 clock = "c18"
 tolerance = "exact"
 
+# The bot's route of the thirteenth level (original speeds), one 18 ms step
+# per frame: past the Chameleons, the water rocks and the bear sailors,
+# through RedTail's introduction, then the fight under his wind and stakes
+# to the gem. Every repeat wins the level and is equal on every compared
+# row, the random stream included.
+[[compare]]
+reference = "level13/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The thirteenth level's jump-in route (original speeds): the jump into
+# RedTail's room that skips his introduction, then the fight; equal on
+# every row.
+[[compare]]
+reference = "level13/introskip-original"
+clock = "c18"
+tolerance = "exact"
+
+# The thirteenth level of a game that started with the twelfth level's route
+# (`level12-original.csv`, its help screen included), entered through the
+# end-of-level screen with the progress the twelfth level carries: equal on
+# every row.
+[[compare]]
+reference = "level13/pair-original"
+clock = "c18"
+tolerance = "exact"
+
 # The bot's route of the tenth level (default tuning) at 60 frames per
 # second. It leaves the feel tolerance at 1184 ms in Claw's height (the
 # default tuning's movement, as on the earlier levels), then the runs go
@@ -1240,3 +1267,23 @@ known.cam_x = 2167
 known.magic = 10000
 known.events = 15500
 known.lives = 15500
+
+# The bot's route of the thirteenth level (default tuning) at 60 frames per
+# second. It leaves the feel tolerance at 1250 ms in Claw's height (the
+# default tuning's movement, as on the earlier levels), then the runs go
+# different ways.
+[[compare]]
+reference = "level13/bot"
+clock = "c60"
+tolerance = "feel"
+known.y = 1250
+known.cam_y = 1250
+known.physics_type = 2384
+known.state_id = 2384
+known.score = 3600
+known.x = 3834
+known.cam_x = 3834
+known.health = 5600
+known.events = 9617
+known.lives = 9617
+known.pistol = 79384
