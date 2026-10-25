@@ -324,6 +324,90 @@ fn a_platform_that_stops_carries_no_one() {
     assert_eq!(sim.objects().get(lift).unwrap().x, 906);
 }
 
+fn still_platform(w: &mut World, id: ObjectId) {
+    let o = w.objects.get_mut(id).unwrap();
+    o.type_flags = 0x80;
+    o.hit_rect = Rect::new(-32, -8, 32, 8);
+}
+
+fn rider(w: &mut World, id: ObjectId) {
+    let (x, y) = {
+        let o = w.objects.get(id).unwrap();
+        (o.x, o.y)
+    };
+    if w.objects.get(id).unwrap().object_below.is_some() {
+        w.physics(id, x, y, crate::physics::opt::PLATFORMS);
+    }
+}
+
+#[test]
+fn a_rider_keeps_a_platform_that_no_longer_updates() {
+    install(GameLogic::Platform, still_platform);
+    install(GameLogic::Officer, rider);
+    let mut sim = Sim::new(
+        level(&[("Elevator", 900, 700, 10), ("Officer", 900, 631, 20)]),
+        SimConfig::default(),
+    );
+    let (lift, officer) = (find(&sim, "Elevator")[0], find(&sim, "Officer")[0]);
+    // The officer stands on the platform's surface (y 692), and the
+    // platform leaves the objects that update.
+    sim.with_world(|w| {
+        let o = w.objects.get_mut(officer).unwrap();
+        o.move_rect = Rect::new(-20, -60, 20, 60);
+        o.physics_type = ptype::STAND;
+        o.flags |= crate::object::flags::ON_ELEVATOR;
+        o.object_below = Some(lift);
+        w.objects.unlink(lift);
+    });
+    idle(&mut sim, 5);
+    let o = sim.objects().get(officer).unwrap();
+    assert_eq!((o.physics_type, o.y), (ptype::STAND, 631));
+    assert!(crate::sim::platforms(sim.objects()).is_empty());
+}
+
+// ------------------------------------------- the ledge guard and a teleport
+
+/// An enemy guarded against stepping off ledges that teleports, on its
+/// first call, from x 1000 to x 650, where its left edge hangs over the
+/// gap left of the floor.
+fn teleporter(w: &mut World, id: ObjectId) {
+    if w.objects.get(id).unwrap().data.enemy().is_none() {
+        let o = w.objects.get_mut(id).unwrap();
+        o.move_rect = Rect::new(-20, -60, 20, 60);
+        o.physics_type = ptype::STAND;
+        o.data = ObjectData::Enemy(enemy::EnemyData::from(enemy::EnemyFields {
+            bounds: (600, 1600),
+            ledge_guard: true,
+            teleport_to: Some(650),
+            ..enemy::EnemyFields::default()
+        }));
+    }
+    enemy::motion::integrate(w, id);
+}
+
+#[test]
+fn a_teleport_is_not_a_step_for_the_ledge_guard() {
+    install(GameLogic::Officer, teleporter);
+    // The floor starts at x 640.
+    let mut rows = vec![".".repeat(200); 15];
+    for _ in 0..2 {
+        rows.push(format!("{}{}", ".".repeat(10), "#".repeat(190)));
+    }
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let mut l = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (1000, 600));
+    let mut spec = ObjectSpec::at("Officer", 1000, 899, 20);
+    spec.record[0] = 1000;
+    l.objects.push(spec);
+    let sim = Sim::new(l, SimConfig::default());
+    let officer = find(&sim, "Officer")[0];
+    // Standing still where the teleport put it, it made no step: its
+    // patrol range is the one it had, though no floor is under its left
+    // edge.
+    let o = sim.objects().get(officer).unwrap();
+    assert_eq!((o.x, o.y), (650, 899));
+    assert_eq!(o.data.enemy().unwrap().bounds, (600, 1600));
+}
+
 // --------------------------------------------------------------- hitting
 
 fn hitter(w: &mut World, id: ObjectId) {

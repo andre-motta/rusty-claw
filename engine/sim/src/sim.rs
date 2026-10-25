@@ -509,19 +509,34 @@ pub(crate) fn platforms(objects: &Container) -> Vec<Platform> {
     let mut cur = objects.head();
     while let Some(id) = cur {
         let Some(o) = objects.get(id) else { break };
-        if o.type_flags & 0x80 != 0 && o.hit_rect.is_set() {
-            out.push(Platform {
-                id,
-                x: o.x,
-                y: o.y,
-                hit_rect: o.hit_rect,
-                move_x: o.platform_move.0,
-                move_y: o.platform_move.1,
-            });
-        }
+        out.extend(platform_of(id, o));
         cur = o.next;
     }
     out
+}
+
+/// Object `id` as a platform, when it is one with a surface.
+fn platform_of(id: ObjectId, o: &Object) -> Option<Platform> {
+    (o.type_flags & 0x80 != 0 && o.hit_rect.is_set()).then_some(Platform {
+        id,
+        x: o.x,
+        y: o.y,
+        hit_rect: o.hit_rect,
+        move_x: o.platform_move.0,
+        move_y: o.platform_move.1,
+    })
+}
+
+/// The platform object `below` (what a mover stands on) when it is not
+/// among `listed`: a platform that no longer updates still carries the
+/// object standing on it (see [`crate::physics::Collider::below`]).
+pub(crate) fn unlisted_below(
+    objects: &Container,
+    below: Option<ObjectId>,
+    listed: &[Platform],
+) -> Option<Platform> {
+    let id = below.filter(|b| !listed.iter().any(|p| p.id == *b))?;
+    platform_of(id, objects.get(id)?)
 }
 
 fn unset_if_empty(r: Rect) -> Rect {
