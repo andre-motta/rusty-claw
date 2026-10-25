@@ -15,11 +15,29 @@
 //! He has [`HEALTH`] health, each damaging blow costing him what Claw's
 //! blow deals ([`BLOW_DAMAGE`] for the plain sword). Claw's blows are
 //! counted: every third counted blow that finds him free makes him leap
-//! to the other level instead, unhurt. The count starts at
-//! [`HIT_COUNTER_START`] on the first arena step, as in the original game;
-//! a count of 1 at the start means the second counted blow after an intro
-//! skip already sends him away. Matching the original here is a stand-in
-//! decision.
+//! to the other level instead, unhurt (or, standing on the other level
+//! from Claw, only go home). The fight's start-up sets the count to 0 when
+//! the staged introduction ends, so after the normal introduction the
+//! third blow is the first to send him away. An intro skip leaves out that
+//! start-up, and then the count is where it stood when he was built:
+//!
+//! - In a run played from the level's start (a direct start, or the level
+//!   reached from the one before it in a game) it already stands at
+//!   [`HIT_COUNTER_LEVEL_START`], past the limit, so the first blow that
+//!   finds him free after the skip sends him away without damage and
+//!   starts the count again from 0, as the original game's runs from the
+//!   level's start show.
+//! - In a run started by a teleport ([`crate::Sim::claw_placed`]: a tool
+//!   or a test put Claw at a point of the level before RedTail was built)
+//!   it stands at [`HIT_COUNTER_START`], so the second counted blow after
+//!   the skip is the first to send him away, as measured runs started
+//!   that way show.
+//!
+//! How the original starts the count after a restart of the level, or a
+//! death before his first logic call, is not measured; here those follow
+//! the rule above unchanged (a run that was never teleported counts as
+//! played from the level's start). Matching the original here is a
+//! stand-in decision.
 //!
 //! What his helpers share with him lives in the RedTail link
 //! ([`RedTailLink`], reached through [`World::redtail_link`] and
@@ -36,8 +54,10 @@
 //!   call on (built by a warp between two ticks, he keeps his own health
 //!   through the tick that follows it); his body box [`BODY_RECT`] for
 //!   moving and touching, [`HIT_RECT`] for being hit;
-//!   [`HEALTH`] health and [`DAMAGE`] (times the difficulty factors); the
-//!   range boxes [`RANGES`]; no patrol limits until his first landing;
+//!   [`HEALTH`] health and [`DAMAGE`] (times the difficulty factors); his
+//!   blow count at [`HIT_COUNTER_LEVEL_START`], or at
+//!   [`HIT_COUNTER_START`] in a run started by a teleport; the range boxes
+//!   [`RANGES`]; no patrol limits until his first landing;
 //!   never liftable; going by sight; always active. He drops onto the
 //!   ledge and waits in `Startup`, his idle pose playing, his body still
 //!   hurting a Claw who touches it.
@@ -208,9 +228,14 @@ pub const BLOW_DAMAGE: i32 = 5;
 /// What touching him, his kick and his slide cost Claw, before the
 /// difficulty factor.
 pub const DAMAGE: i32 = 10;
-/// The count of Claw's blows on the first arena step (see the module
-/// documentation).
+/// The count of Claw's blows when he is built in a run started by a
+/// teleport (see the module documentation).
 pub const HIT_COUNTER_START: u32 = 1;
+/// The count of Claw's blows when he is built in a run played from the
+/// level's start: any count of 2 or more makes the next counted blow a
+/// third one; this is the original game's own count there (see the module
+/// documentation).
+pub const HIT_COUNTER_LEVEL_START: u32 = 382;
 /// Every this many counted blows that find him free, he leaps away.
 pub const ESCAPE_EVERY: u32 = 3;
 /// His speed running at Claw, px/s.
@@ -432,7 +457,8 @@ pub const DEATH_ATTACK: u8 = 6;
 pub struct RedTailData {
     /// The data every enemy keeps.
     pub enemy: EnemyData,
-    /// The count of Claw's blows (see [`HIT_COUNTER_START`]).
+    /// The count of Claw's blows (see [`HIT_COUNTER_START`] and
+    /// [`HIT_COUNTER_LEVEL_START`]).
     pub hits: u32,
     /// The attack he makes once a run or a jump is over: 0 Home, 1 the
     /// wind, 2 the gun, 3 the knives, 4 the slide, 5 the kick, 6 his death.
@@ -796,6 +822,14 @@ pub fn construct(w: &mut World, id: ObjectId) {
             enemy,
             ..RedTailData::default()
         });
+    }
+    let hits = if w.out.claw_placed() {
+        HIT_COUNTER_START
+    } else {
+        HIT_COUNTER_LEVEL_START
+    };
+    if let Some(d) = redtail_mut(w, id) {
+        d.hits = hits;
     }
     w.redtail_link_mut().redtail = Some(id);
     set_state(w, id, EnemyState::Startup);

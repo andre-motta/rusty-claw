@@ -637,12 +637,15 @@ of the shaft's three ways up as that way comes out (the pegs keep the
 level's clock, so `level13-original.csv` waits a few seconds on a quiet
 ledge on its way there to meet the way its climb fits). RedTail takes 5 of
 his 100 health from each blow, and blows that find him free send him
-leaping to the other level of his arena instead: every third once his
-introduction has played, and the second and every third after it when
-the jump-in skipped it;
+leaping to the other level of his arena instead (or, when he already
+stands on the other level from Claw, only home): every third once his
+introduction has played; when the jump-in skipped it, in a game played
+from the level's start the first and every third after it, and in a run
+started by a teleport the second and every third after it;
 `level13-original.csv` and `level13.csv` sit through his introduction
-and beat him on the sand, `level13-introskip.csv` jumps in and beats him
-on his ledge, from which he jumps down to die on the sand, and each
+and beat him on the sand, `level13-introskip.csv` jumps in with a slash that
+reaches him on his ledge and only sends him home, and beats him on the
+sand once he has leapt down to it, and each
 takes the gem that rises from him once he has said his last line.
 `level12-original.level13.csv` plays `level13-original.csv`'s rows from
 the progress `level12-original.csv` ends with.

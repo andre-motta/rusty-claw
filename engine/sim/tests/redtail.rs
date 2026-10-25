@@ -181,7 +181,9 @@ fn with_helpers() -> Vec<ObjectSpec> {
     ]
 }
 
-/// The arena awake everywhere, Claw put at `claw` on the first tick.
+/// The arena awake everywhere, Claw put at `claw` on the first tick. The
+/// level's set-up builds RedTail before Claw is put there, so his count
+/// starts as in a run played from the level's start.
 fn arena_sim(more: Vec<ObjectSpec>, claw: (i32, i32), seed: u32) -> Sim {
     let level = arena(more);
     let (w, h) = (level.map.width() as u32, level.map.height() as u32);
@@ -309,6 +311,17 @@ fn hit_by(sim: &mut Sim, kind: u32) -> ObjectId {
     })
 }
 
+/// Gives him the count a run started by a teleport builds him with, so
+/// that the next blow is not a third one.
+fn teleported_count(sim: &mut Sim) {
+    let id = boss(sim);
+    sim.with_world(|w| {
+        if let Some(ObjectData::RedTail(d)) = w.objects.get_mut(id).map(|o| &mut o.data) {
+            d.hits = redtail::HIT_COUNTER_START;
+        }
+    });
+}
+
 /// Puts him on the sand at `x`, standing, free and at Home.
 fn on_sand(sim: &mut Sim, x: i32) {
     let id = boss(sim);
@@ -327,7 +340,7 @@ fn on_sand(sim: &mut Sim, x: i32) {
 // Building and waiting
 
 #[test]
-fn he_is_built_on_the_ledge_as_the_current_boss_waiting_with_his_count_at_one() {
+fn he_is_built_on_the_ledge_as_the_current_boss_waiting_with_his_count_past_its_limit() {
     let mut sim = arena_sim(with_helpers(), SAND_FAR, 7);
     let id = boss(&sim);
     assert_eq!(sim.boss().current(), Some(id));
@@ -342,13 +355,71 @@ fn he_is_built_on_the_ledge_as_the_current_boss_waiting_with_his_count_at_one() 
     assert_eq!(o.type_flags, types::ENEMY);
     assert_eq!(o.hit_type_flags, redtail::HIT_MASK);
     assert_ne!(o.flags & flags::ALWAYS_ACTIVE, 0);
-    assert_eq!(rd(&sim).hits, redtail::HIT_COUNTER_START);
+    assert_eq!(rd(&sim).hits, redtail::HIT_COUNTER_LEVEL_START);
     step(&mut sim, 400);
     let o = obj(&sim, id);
     assert_eq!(st(&sim), Some(EnemyState::Startup));
     assert_eq!(pos(&sim), (AT.0, LEDGE_Y));
     assert_eq!(o.special_flags & special::LIFTABLE, 0, "never liftable");
     assert_eq!(o.attack_rect, redtail::BODY_RECT, "his body hurts");
+}
+
+#[test]
+fn played_from_the_level_start_his_first_free_blow_after_a_skip_sends_him_home_unhurt() {
+    // Claw at the level's own start point on the sand, never teleported.
+    let level = arena(with_helpers());
+    let (w, h) = (level.map.width() as u32, level.map.height() as u32);
+    let mut sim = Sim::new(
+        level,
+        SimConfig {
+            seed: 7,
+            activation: ActivationConfig::widened((2 * w, 2 * h)),
+            ..SimConfig::default()
+        },
+    );
+    sim.step(TickInput::default());
+    assert!(!sim.claw_placed());
+    let id = boss(&sim);
+    assert_eq!(st(&sim), Some(EnemyState::Startup));
+    assert_eq!(rd(&sim).hits, redtail::HIT_COUNTER_LEVEL_START);
+    step(&mut sim, 30);
+    // The first counted blow, his introduction skipped: no damage, the
+    // count back to 0; Claw below on the sand, he only goes home.
+    let before = sim.rng_state();
+    blow(&mut sim, 5);
+    assert_eq!((obj(&sim, id).health, rd(&sim).hits), (redtail::HEALTH, 0));
+    assert_eq!(sim.rng_state(), before, "the blow draws nothing");
+    assert_eq!(st(&sim), Some(EnemyState::Startup));
+    step(&mut sim, 1);
+    assert_eq!(st(&sim), Some(EnemyState::Home));
+    assert_eq!(pos(&sim), (AT.0, LEDGE_Y));
+}
+
+#[test]
+fn in_a_run_started_by_a_teleport_his_count_starts_at_one() {
+    // Claw starts far off inside the wall, out of reach of RedTail's
+    // activation, and is put on the sand before the first tick: RedTail is
+    // built once he is near, his count at 1.
+    let mut level = arena(with_helpers());
+    level.start = (2000, 500);
+    let mut sim = Sim::new(
+        level,
+        SimConfig {
+            seed: 7,
+            ..SimConfig::default()
+        },
+    );
+    assert!(
+        find(&sim, redtail::NAMES[0])
+            .iter()
+            .all(|&id| !matches!(obj(&sim, id).data, ObjectData::RedTail(_))),
+        "not built yet"
+    );
+    sim.teleport_player(SAND_FAR.0, SAND_FAR.1);
+    assert!(sim.claw_placed());
+    step(&mut sim, 3);
+    assert_eq!(st(&sim), Some(EnemyState::Startup));
+    assert_eq!(rd(&sim).hits, redtail::HIT_COUNTER_START);
 }
 
 #[test]
@@ -735,6 +806,7 @@ fn dying_on_the_ledge_he_jumps_down_falls_says_his_line_and_the_gem_rises() {
             o.health = 5;
         }
     });
+    teleported_count(&mut sim);
     blow(&mut sim, 5);
     assert_eq!(obj(&sim, id).health, 0);
     assert_eq!(st(&sim), Some(EnemyState::JumpDown));
@@ -797,6 +869,7 @@ fn a_damaging_blow_in_the_death_jump_leaves_him_fighting_until_the_next_one() {
             o.health = 5;
         }
     });
+    teleported_count(&mut sim);
     blow(&mut sim, 5);
     assert_eq!(st(&sim), Some(EnemyState::JumpDown));
     // After the blow's cooldown, another (not the third counted) blow in

@@ -13,6 +13,11 @@
 //! starts it from the tick of the request. The current point is what the
 //! view centres on.
 //!
+//! A look down or up ends, and a scripted point is let go, with a return
+//! to following that makes the follow move in the same call, before any
+//! of the follow state's own tests: the camera moves once even while
+//! Claw falls after a death ([`Camera::tick_for`]).
+//!
 //! A warp's set-up takes no game time ([`Camera::settle`]): the camera
 //! only jumps to Claw when he is out of its reach, and moves no further.
 //!
@@ -102,6 +107,10 @@ impl Camera {
         self.shake_until_ms = self.shake_until_ms.max(now_ms + ms);
     }
 
+    /// A call that starts in the follow state: Claw's death fall holds
+    /// the camera still, his crouch or look up (once his look delay is
+    /// over) starts the look down or the look up; otherwise the follow
+    /// move ([`Camera::follow_move`]).
     fn follow(&mut self, claw: &Followed, point: Option<(i32, i32)>, t: &CameraTuning, dt: u32) {
         self.state = state::FOLLOW;
         if claw.state == claw_state::DEATH_FALL {
@@ -117,6 +126,29 @@ impl Camera {
             self.look(claw, -t.look_offset, t, dt);
             return;
         }
+        self.follow_move(claw, point, t, dt);
+    }
+
+    /// The return to following from a look or a scripted point: the
+    /// camera is in the follow state again and makes the follow move at
+    /// once, without the tests a call in the follow state starts with, so
+    /// it moves once even while Claw falls after a death, crouches or
+    /// looks up. The next call starts in the follow state and makes them.
+    fn return_to_follow(&mut self, claw: &Followed, t: &CameraTuning, dt: u32) {
+        self.state = state::FOLLOW;
+        self.follow_move(claw, None, t, dt);
+    }
+
+    /// The follow move: towards the scripted point if any, else Claw;
+    /// a jump when the target is out of reach, then a step at the speed
+    /// of what Claw is doing.
+    fn follow_move(
+        &mut self,
+        claw: &Followed,
+        point: Option<(i32, i32)>,
+        t: &CameraTuning,
+        dt: u32,
+    ) {
         self.target = point.unwrap_or((claw.x, claw.y));
         let (dx, dy) = (
             self.target.0 - self.current.0,
@@ -188,6 +220,12 @@ impl Camera {
 
     /// One logic call with a frame time of `dt` ms (see [`Camera::tick`]):
     /// the step towards the target and the shake's countdown count it.
+    ///
+    /// A call in the look down or look up state whose look has ended, and
+    /// a call in the scripted point state with no point left, return to
+    /// following and make the follow move in that call, without the death
+    /// fall, crouch and look up tests a call in the follow state starts
+    /// with.
     pub fn tick_for(
         &mut self,
         claw: Option<&Followed>,
@@ -217,14 +255,14 @@ impl Camera {
                 if claw.state == claw_state::CROUCH && claw.look_down_time == 0 {
                     self.look(claw, t.look_offset, t, dt);
                 } else {
-                    self.follow(claw, point, t, dt);
+                    self.return_to_follow(claw, t, dt);
                 }
             }
             state::LOOK_UP => {
                 if claw.state == claw_state::LOOK_UP && claw.look_down_time == 0 {
                     self.look(claw, -t.look_offset, t, dt);
                 } else {
-                    self.follow(claw, point, t, dt);
+                    self.return_to_follow(claw, t, dt);
                 }
             }
             state::POINT => match point {
@@ -235,7 +273,7 @@ impl Camera {
                         approach(self.current.1, p.1, t.point_speed, dt),
                     );
                 }
-                None => self.follow(claw, point, t, dt),
+                None => self.return_to_follow(claw, t, dt),
             },
             _ => {}
         }
@@ -339,5 +377,52 @@ mod tests {
             run(&mut cam, &c);
         }
         assert_eq!(cam.current, (1000, 1272));
+    }
+
+    fn run_with(cam: &mut Camera, c: &Followed, point: Option<(i32, i32)>) {
+        cam.tick(
+            Some(c),
+            point,
+            &CameraTuning::default(),
+            &mut Rng::default(),
+            0,
+        );
+    }
+
+    #[test]
+    fn letting_a_point_go_moves_once_even_over_a_death_fall() {
+        let mut cam = Camera::default();
+        run(&mut cam, &claw(37212, 2081));
+        for _ in 0..200 {
+            run_with(&mut cam, &claw(37212, 2081), Some((37470, 1889)));
+        }
+        assert_eq!((cam.state, cam.current), (state::POINT, (37470, 1889)));
+        let mut dying = claw(37212, 2081);
+        dying.state = claw_state::DEATH_FALL;
+        dying.physics_type = ptype::FALL;
+        run_with(&mut cam, &dying, None);
+        assert_eq!((cam.state, cam.current), (state::FOLLOW, (37398, 1961)));
+        // From the follow state the death fall holds it still.
+        run(&mut cam, &dying);
+        assert_eq!(cam.current, (37398, 1961));
+    }
+
+    #[test]
+    fn ending_a_look_moves_once_before_the_follow_tests() {
+        let mut cam = Camera::default();
+        run(&mut cam, &claw(1000, 1000));
+        let mut c = claw(1000, 1000);
+        c.state = claw_state::CROUCH;
+        for _ in 0..10 {
+            run(&mut cam, &c);
+        }
+        assert_eq!((cam.state, cam.current), (state::LOOK_DOWN, (1000, 1040)));
+        // Straight from the crouch to looking up: the return moves towards
+        // Claw first; the next call starts the look up.
+        c.state = claw_state::LOOK_UP;
+        run(&mut cam, &c);
+        assert_eq!((cam.state, cam.current), (state::FOLLOW, (1000, 1031)));
+        run(&mut cam, &c);
+        assert_eq!((cam.state, cam.current), (state::LOOK_UP, (1000, 1027)));
     }
 }

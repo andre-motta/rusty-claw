@@ -77,6 +77,10 @@ pub struct Outbox {
     /// How the Chameleons' shared phase frame is drawn (see
     /// [`crate::logic::enemy::chameleon`]).
     pub(crate) chameleon: PhaseFrame,
+    /// Claw has been put at a point of the level by a tool or a test
+    /// ([`crate::Sim::teleport_player`], [`crate::Sim::place_between_ticks`]):
+    /// the run did not start at the level's start.
+    pub(crate) claw_placed: bool,
     falling: Vec<ObjectId>,
     removed_bodies: Vec<RemovedBody>,
 }
@@ -184,6 +188,13 @@ impl Outbox {
     /// The RedTail link (see [`World::redtail_link`]).
     pub fn redtail(&self) -> &RedTailLink {
         &self.redtail
+    }
+
+    /// Claw has been put at a point of the level by a tool or a test, so
+    /// the run did not start at the level's start (see
+    /// [`crate::Sim::claw_placed`]).
+    pub fn claw_placed(&self) -> bool {
+        self.claw_placed
     }
 
     /// How the Chameleons' shared phase frame is drawn (see
