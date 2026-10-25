@@ -105,6 +105,26 @@
 //! health left until another blow brings it: the guide counts him as a
 //! point of health away from his death then.
 //!
+//! On the fourteenth level Omar is the boss whose gem ends the level, and
+//! his fight is guided as he is fought ([`omar_guide`]). In its first
+//! phase he stands on a ledge inside a turning ring that only the sword
+//! shot of the element opposite the ring's hurts: Claw fetches that sword
+//! (the swords by the boss room stay where they are and can be taken
+//! again), goes down to the floor between Omar's two ledges and shoots
+//! him through the ring's gap; each good shot moves Omar to the other
+//! ledge and turns the ring to the other element, so the next shot needs
+//! the other sword. In the second phase he stands at one end of the hall
+//! above, and only blows hurt him. The guide counts the shots and blows
+//! left, then the way: to the sword the next shot needs, to the floor
+//! between the ledges once Claw holds it, or to Omar's end of the hall.
+//! While Claw holds that sword on the floor, where the ring's gap is in
+//! its turn is part of the coarse state, so a wait for the gap is
+//! progress, and so is a shot of Claw's in flight. Each step of the fight
+//! (the sword in hand with Claw on his feet, each good shot, each blow)
+//! starts a fresh segment, as a waypoint does ([`omar_step`]). Struck
+//! down in the hall he falls where he stood, so while the bot waits for
+//! his gem the time is part of the coarse state.
+//!
 //! A route can be made to win under several sets of the values the
 //! hermit crabs start with ([`CrabValues`], which the original game does
 //! not fix): [`SearchConfig::crabs`] is the set the route plays under,
@@ -509,6 +529,10 @@ pub struct SearchFailure {
     /// What the search did (boxed: the failure stays small to pass
     /// back).
     pub stats: Box<SearchStats>,
+    /// The moves from the start to the root of the segment the search
+    /// was in when it stopped (none before a segment was ever started): a
+    /// long search can be carried on from there.
+    pub reached: Option<InputScript>,
 }
 
 impl std::fmt::Display for SearchFailure {
@@ -548,6 +572,7 @@ pub fn search_report_with(
     let fail = |reason: String| SearchFailure {
         reason,
         stats: Box::default(),
+        reached: None,
     };
     // Keep the start mask held until it has lasted the spacing, so the
     // first change the search makes is far enough from the last one
@@ -592,9 +617,16 @@ pub fn search_report_with(
         Goal::LevelComplete => match (end_object(start), boss_end(start)) {
             (Some(at), _) => pickup_field(at),
             (None, Some(end)) => {
+                let omar = start
+                    .level()
+                    .objects
+                    .iter()
+                    .any(|o| enemy::omar::NAMES.contains(&&*o.logic))
+                    .then(|| OmarWays::new(start, &grid, end.boss, pickup_field));
                 boss = Some(BossGoal {
                     end,
                     gem: pickup_field(end.gem),
+                    omar,
                 });
                 // The door is entered by touching it.
                 let (x, y) = end.door;
@@ -682,6 +714,7 @@ pub fn is_boss(logic: &str) -> bool {
         || enemy::marrow::NAMES.contains(&logic)
         || enemy::aquatis::NAMES.contains(&logic)
         || enemy::redtail::NAMES.contains(&logic)
+        || enemy::omar::NAMES.contains(&logic)
 }
 
 /// The bosses whose fall the search guides into the water: blows cannot
@@ -826,9 +859,240 @@ pub const BOSS_HEALTH_CAP: u32 = 200;
 pub const WATER_CAP: u32 = 1500;
 
 /// The distance of the fight's start, px: any state on the way to the
-/// door is guided as at least this far.
-pub const DOOR_BASE: u32 =
-    FIGHT_BASE + BOSS_HEALTH_CAP * BOSS_HEALTH_PX + BOSS_NEAR_CAP + WATER_CAP;
+/// door is guided as at least this far (past the most of any boss's
+/// guide, Omar's included).
+pub const DOOR_BASE: u32 = FIGHT_BASE
+    + max_u32(
+        BOSS_HEALTH_CAP * BOSS_HEALTH_PX + BOSS_NEAR_CAP + WATER_CAP,
+        OMAR_GUIDE_MAX + 1,
+    );
+
+/// The larger of two numbers, in a constant.
+const fn max_u32(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
+/// What each blow of the second phase of Omar's fight still needed counts
+/// for, px: more than the way to him, since each blow sends him to the
+/// other end of the hall.
+pub const OMAR_BLOW_PX: u32 = OMAR_WAY_CAP + 100;
+
+/// The blows that end the second phase of Omar's fight.
+pub const OMAR_BLOWS: u32 = (enemy::omar::HEALTH / enemy::omar::BLOW_DAMAGE) as u32;
+
+/// Most a way in Omar's fight counts for (to a sword, to the floor between
+/// his ledges, to his end of the hall), px: the arena's ways are long.
+pub const OMAR_WAY_CAP: u32 = 3000;
+
+/// What the second phase of Omar's fight counts for in the first, px:
+/// more than any state of the second.
+pub const OMAR_PHASE_PX: u32 = OMAR_BLOWS * OMAR_BLOW_PX + OMAR_WAY_CAP + 100;
+
+/// What each good shot of the first phase still needed counts for, px:
+/// more than the way to a sword and on to the floor.
+pub const OMAR_SHOT_PX: u32 = 2 * OMAR_WAY_CAP + 100;
+
+/// The good shots that end the first phase of Omar's fight.
+pub const OMAR_SHOTS: u32 = (enemy::omar::HEALTH / enemy::omar::ELEMENT_DAMAGE) as u32;
+
+/// The most of Omar's guide ([`omar_guide`]), px.
+pub const OMAR_GUIDE_MAX: u32 = OMAR_PHASE_PX + OMAR_SHOTS * OMAR_SHOT_PX + 2 * OMAR_WAY_CAP;
+
+/// How far across from the middle between Omar's two ledges the floor he
+/// is shot from reaches, px (the floor between the lava pits).
+pub const OMAR_FLOOR_HALF: i32 = 130;
+
+/// How near the floor between Omar's ledges, across and up or down, Claw
+/// must be for the ring's turn to count in the coarse state, px.
+pub const OMAR_RING_NEAR: (u32, u32) = (500, 300);
+
+/// How finely the coarse state tells apart where the gap in Omar's ring
+/// is in its turn, degrees.
+pub const OMAR_RING_STEP: f64 = 22.5;
+
+/// Where Omar's fight is, for its guide ([`omar_guide`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OmarFight {
+    /// His ring is up: only the opposite element's sword shot hurts him.
+    pub ring: bool,
+    /// His health.
+    pub health: i32,
+    /// Claw holds the sword whose shot hurts him now.
+    pub armed: bool,
+    /// The way to the floor between his ledges, px.
+    pub to_floor: u32,
+    /// The way to the sword whose shot hurts him now, px.
+    pub to_sword: u32,
+    /// The way to where he stands in the hall (or where his move takes
+    /// him), px.
+    pub to_hall: u32,
+}
+
+/// The guide of Omar's fight, past [`FIGHT_BASE`].
+///
+/// The first phase counts for more than any state of the second, and
+/// each good shot it still needs for more than the way to a sword and on
+/// to the floor between his ledges: so the shots left, then the way to
+/// the sword the next one needs, or with that sword in hand the way to
+/// the floor. In the second phase, the blows left and the way to him.
+pub fn omar_guide(f: &OmarFight) -> u32 {
+    let health = f.health.clamp(0, enemy::omar::HEALTH) as u32;
+    if !f.ring {
+        let blows = health
+            .div_ceil(enemy::omar::BLOW_DAMAGE as u32)
+            .min(OMAR_BLOWS);
+        return blows * OMAR_BLOW_PX + f.to_hall.min(OMAR_WAY_CAP);
+    }
+    let damage = enemy::omar::ELEMENT_DAMAGE as u32;
+    let shots = health.div_ceil(damage).min(OMAR_SHOTS);
+    // With the sword in hand, any way to the floor is nearer than the
+    // sword itself.
+    let way = if f.armed {
+        f.to_floor.min(OMAR_WAY_CAP - 1)
+    } else {
+        OMAR_WAY_CAP + f.to_sword.min(OMAR_WAY_CAP)
+    };
+    OMAR_PHASE_PX + shots * OMAR_SHOT_PX + way
+}
+
+/// The image sets of the sword pickups whose shots hurt Omar through his
+/// ring of fire and his ring of ice.
+pub const OMAR_SWORDS: [&str; 2] = ["GAME_POWERUPS_ICESWORD", "GAME_POWERUPS_FIRESWORD"];
+
+/// The logic names of the sword shots that hurt Omar in his ring.
+pub const OMAR_SHOTS_LOGICS: [&str; 2] = ["IceBullet", "FireBullet"];
+
+/// The powerup whose sword shot hurts Omar through a ring of ice (`true`)
+/// or of fire.
+pub fn omar_sword(ice: bool) -> u32 {
+    if ice {
+        claw_sim::player::death::powerup::FIRE_SWORD
+    } else {
+        claw_sim::player::death::powerup::ICE_SWORD
+    }
+}
+
+/// Omar's data, when the boss in play is Omar.
+fn omar_of(sim: &Sim) -> Option<(&claw_sim::object::Object, &enemy::omar::OmarData)> {
+    let o = sim.boss().current().and_then(|id| sim.objects().get(id))?;
+    match &o.data {
+        ObjectData::Omar(d) => Some((o, d)),
+        _ => None,
+    }
+}
+
+/// True while Omar is the boss in play: his fight takes Claw about the
+/// arena (to the swords, down to his ledges, up to the hall), so every
+/// move of the level is worth trying in it.
+pub fn omar_in_play(sim: &Sim) -> bool {
+    omar_of(sim).is_some()
+}
+
+/// How far Omar's fight in `sim` has come, in steps that each start a
+/// fresh segment of the search, as a waypoint does: each good shot of the
+/// first phase and each blow of the second, and, in the first, Claw on his
+/// feet with the sword the next shot needs (0 when Omar is not in play).
+pub fn omar_step(sim: &Sim) -> u32 {
+    let Some((o, d)) = omar_of(sim) else {
+        return 0;
+    };
+    let health = o.health.clamp(0, enemy::omar::HEALTH) as u32;
+    if d.phase == 0 {
+        let blows = enemy::omar::BLOW_DAMAGE as u32;
+        return 2 * OMAR_SHOTS + 1 + (enemy::omar::HEALTH as u32 - health) / blows;
+    }
+    let shots = enemy::omar::ELEMENT_DAMAGE as u32;
+    let done = OMAR_SHOTS - health.div_ceil(shots).min(OMAR_SHOTS);
+    2 * done + u32::from(omar_armed(sim, d) && on_foot(sim))
+}
+
+/// True when Claw holds the sword whose shot hurts Omar through his ring
+/// now (see [`omar_sword`]).
+fn omar_armed(sim: &Sim, d: &enemy::omar::OmarData) -> bool {
+    let s = sim.stats();
+    s.powerup_ms > 0 && s.powerup_kind == omar_sword(d.ice)
+}
+
+/// The ways of Omar's fight: to each sword whose shot hurts him (through
+/// a ring of fire, then of ice), to the floor between his ledges, and to
+/// each end of the hall (right, then left).
+struct OmarWays {
+    swords: [Option<DistanceField>; 2],
+    floor: DistanceField,
+    hall: [DistanceField; 2],
+}
+
+impl OmarWays {
+    /// The ways in the level of `sim` around Omar at `boss`;
+    /// `pickup_field` walks to a pickup.
+    fn new(
+        sim: &Sim,
+        grid: &Grid,
+        boss: (i32, i32),
+        pickup_field: impl Fn((i32, i32)) -> DistanceField,
+    ) -> OmarWays {
+        use enemy::omar::{HALL, HALL_LEFT, HOME, LEDGE_LEFT};
+        // The sword of each kind nearest him: the level may hold others
+        // far away.
+        let nearest = |set: &str| {
+            sim.level()
+                .objects
+                .iter()
+                .filter(|o| o.image_set == set)
+                .map(|o| (o.record[5], o.record[6]))
+                .min_by_key(|&(x, y)| (x - boss.0).unsigned_abs() + (y - boss.1).unsigned_abs())
+        };
+        let swords = OMAR_SWORDS.map(|set| nearest(set).map(&pickup_field));
+        // His feet stand on the ledges' tops: the floor between them is at
+        // that height.
+        let body_bottom = enemy::omar::BODY_RECT.bottom;
+        let mid = (HOME.0 + LEDGE_LEFT.0) / 2;
+        let top = HOME.1 + body_bottom;
+        let floor = grid.field_to_box(
+            mid - OMAR_FLOOR_HALF,
+            top - 24,
+            mid + OMAR_FLOOR_HALF,
+            top + 8,
+        );
+        let hall = [HALL, HALL_LEFT].map(|(x, y)| {
+            let top = y + body_bottom;
+            grid.field_to_box(x - 160, top - 24, x + 160, top + 8)
+        });
+        OmarWays {
+            swords,
+            floor,
+            hall,
+        }
+    }
+
+    /// Where Omar's fight in `sim` is, for [`omar_guide`].
+    fn fight(&self, sim: &Sim) -> Option<OmarFight> {
+        let (o, d) = omar_of(sim)?;
+        let c = sim.player()?;
+        let feet = c.y + c.move_rect.bottom - 2;
+        let at = |f: &DistanceField| f.at(c.x, feet);
+        // His place, or where his move takes him.
+        let place = if d.target != d.place {
+            d.target
+        } else {
+            (o.x, o.y)
+        };
+        let hall = if place.0 >= (enemy::omar::HALL.0 + enemy::omar::HALL_LEFT.0) / 2 {
+            &self.hall[0]
+        } else {
+            &self.hall[1]
+        };
+        let sword = &self.swords[usize::from(d.ice)];
+        Some(OmarFight {
+            ring: d.phase != 0,
+            health: o.health,
+            armed: omar_armed(sim, d),
+            to_floor: at(&self.floor),
+            to_sword: sword.as_ref().map_or(UNREACHABLE, at),
+            to_hall: at(hall),
+        })
+    }
+}
 
 /// The boss in play, its health and where it is.
 fn boss_in_play(sim: &Sim) -> Option<(i32, i32, i32)> {
@@ -1060,6 +1324,8 @@ fn marrow_fight(sim: &Sim) -> Option<MarrowFight> {
 struct BossGoal {
     end: BossEnd,
     gem: DistanceField,
+    /// Omar's ways, when the boss is Omar.
+    omar: Option<OmarWays>,
 }
 
 /// Where the level's end object is: the map piece or gem placed in the
@@ -1232,6 +1498,8 @@ impl Search<'_> {
                 actions::choices(&parent.main)
             };
             let stage = self.boss.as_ref().map(|_| boss_stage(&parent.main));
+            // Omar's fight moves on a step past the segment's root.
+            let root_step = omar_step(&self.root_sim.main);
             let children = self.play_children(&parent, &node, &choices);
             self.keep(id, parent);
             for child in children {
@@ -1320,8 +1588,10 @@ impl Search<'_> {
                 }
                 let ahead = self.nodes[self.root as usize].h.saturating_sub(h);
                 let hint = child.hint && self.targets[self.target].point.is_some();
-                // A boss level's next stage starts a fresh segment.
-                let staged = stage.is_some_and(|s| boss_stage(&child.worlds.main) > s);
+                // A boss level's next stage starts a fresh segment, and so
+                // does each step of Omar's fight.
+                let staged = stage.is_some_and(|s| boss_stage(&child.worlds.main) > s)
+                    || omar_step(&child.worlds.main) > root_step;
                 // A segment starts only where the further games are with
                 // the route's own: a root they strayed from would leave them
                 // to follow moves made for another place.
@@ -1441,6 +1711,9 @@ impl Search<'_> {
             BossStage::Fight => {
                 if let Some(f) = marrow_fight(sim) {
                     return FIGHT_BASE + marrow_guide(&f);
+                }
+                if let Some(f) = boss.omar.as_ref().and_then(|w| w.fight(sim)) {
+                    return FIGHT_BASE + omar_guide(&f);
                 }
                 let (health, bx, by) = boss_in_play(sim).unwrap_or((
                     BOSS_HEALTH_CAP as i32,
@@ -1637,6 +1910,33 @@ impl Search<'_> {
         SearchFailure {
             reason: reason.to_string(),
             stats: Box::new(self.stats.clone()),
+            reached: (self.stats.segments > 0).then(|| self.script_to(self.root)),
+        }
+    }
+
+    /// The moves from the start to node `id`, the lead included.
+    fn script_to(&self, id: u32) -> InputScript {
+        let mut chain = Vec::new();
+        let mut cur = id;
+        while let Some(p) = self.nodes[cur as usize].parent {
+            chain.push(self.nodes[cur as usize].action.expect("action"));
+            cur = p;
+        }
+        let mut prev = self.cfg.start_held;
+        let ticks = self
+            .lead
+            .iter()
+            .copied()
+            .chain(chain.iter().rev().flat_map(|a| a.masks()))
+            .map(|h| {
+                let t = input(h, prev);
+                prev = h;
+                t
+            })
+            .collect();
+        InputScript {
+            ticks,
+            ..InputScript::default()
         }
     }
 
@@ -2317,6 +2617,36 @@ pub fn state_key(sim: &Sim) -> u64 {
             // tells the waits apart: a wait is progress.
             if actions::parrot_patrols(sim) {
                 k.add(&[16, (sim.tick() / actions::STEP as u64) as i64]);
+            }
+        }
+        // Omar's fight: the sword Claw holds decides what a shot does to
+        // him; holding the one that hurts him near the floor between his
+        // ledges, where the gap in his ring is in its turn tells a wait
+        // for it apart, and so does a shot of Claw's in flight.
+        if let Some((o, d)) = omar_of(sim) {
+            let s = sim.stats();
+            let kind = if s.powerup_ms > 0 { s.powerup_kind } else { 0 };
+            k.add(&[19, i64::from(kind), i64::from(d.phase), i64::from(d.ice)]);
+            // Struck down, he falls where he stood until his gem comes,
+            // and the bot only waits: the time tells the waits apart.
+            if o.health <= 0 {
+                k.add(&[22, (sim.tick() / actions::STEP as u64) as i64]);
+            }
+            let mid = (enemy::omar::HOME.0 + enemy::omar::LEDGE_LEFT.0) / 2;
+            if d.phase != 0
+                && omar_armed(sim, d)
+                && c.x.abs_diff(mid) <= OMAR_RING_NEAR.0
+                && c.y.abs_diff(enemy::omar::HOME.1) <= OMAR_RING_NEAR.1
+            {
+                let turn = d.spins[0].angle.rem_euclid(360.0);
+                k.add(&[20, (turn / OMAR_RING_STEP) as i64]);
+                for id in objects.listed() {
+                    if let Some(o) = objects.get(id)
+                        && OMAR_SHOTS_LOGICS.contains(&&*o.logic)
+                    {
+                        k.add(&[21, i64::from(o.x >> 4), i64::from(o.y >> 4)]);
+                    }
+                }
             }
         }
         if matches!(c.state, state::FREEZE | BOSS_END) {

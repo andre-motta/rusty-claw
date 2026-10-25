@@ -8,8 +8,9 @@
 //! own replay plays them ([`play_directives`]).
 
 use claw_sim::claw_frame::GameEvent;
+use claw_sim::input::ScriptCommand;
 use claw_sim::logic::enemy::crab::CrabValues;
-use claw_sim::{Carry, InputScript, Sim, SimConfig};
+use claw_sim::{Carry, DirectiveKind, InputScript, Sim, SimConfig};
 
 use crate::actions::MIN_SPACING;
 use crate::search::{Goal, SearchStats, dying};
@@ -280,6 +281,65 @@ impl Played {
     }
 }
 
+/// The end life commands of `script` due at the boundary before tick
+/// `tick`: the lives the route gives up there on purpose (the End Life
+/// technique).
+pub fn lives_ended_at(script: &InputScript, tick: usize) -> i32 {
+    script
+        .directives
+        .iter()
+        .filter(|d| d.tick == tick && d.kind == DirectiveKind::Command(ScriptCommand::EndLife))
+        .count() as i32
+}
+
+/// Counts the deaths of a route, leaving out the lives its own end life
+/// commands give up (see [`lives_ended_at`]): Claw dying after such a
+/// command, until the life is taken and he is back, and the life itself,
+/// are the route's technique, not a death.
+#[derive(Debug, Clone, Copy)]
+pub struct Deaths {
+    /// Claw's lives at the start.
+    lives: i32,
+    /// Lives given up by end life commands so far.
+    ended: i32,
+    /// Deaths the game reported so far.
+    reported: i32,
+}
+
+impl Deaths {
+    /// The count for a route played from `sim`.
+    pub fn new(sim: &Sim) -> Deaths {
+        Deaths {
+            lives: sim.stats().lives,
+            ended: 0,
+            reported: 0,
+        }
+    }
+
+    /// Notes the end life commands of `script` due before tick `tick`.
+    pub fn before_tick(&mut self, script: &InputScript, tick: usize) {
+        self.ended += lives_ended_at(script, tick);
+    }
+
+    /// Notes the tick `sim` has just played; true when Claw died in it
+    /// other than by an end life command.
+    pub fn died(&mut self, sim: &Sim) -> bool {
+        let mut taken = false;
+        for e in sim.last_events() {
+            if matches!(e, GameEvent::ClawDied { .. } | GameEvent::GameOver) {
+                self.reported += 1;
+                taken = true;
+            }
+        }
+        let lost = self.lives - sim.stats().lives;
+        // On the tick an end life's life is taken Claw still shows as
+        // dying; he is back on the next.
+        self.reported > self.ended
+            || lost > self.ended
+            || (dying(sim) && lost >= self.ended && !(taken && self.ended > 0))
+    }
+}
+
 /// Plays `script` from `start` (stepping a copy) and reports when `goal`
 /// was met.
 pub fn play(start: &Sim, script: &InputScript, goal: &Goal) -> Played {
@@ -287,6 +347,8 @@ pub fn play(start: &Sim, script: &InputScript, goal: &Goal) -> Played {
 }
 
 /// [`play`], the crabs built along the way given their `crabs` values.
+/// A life the route gives up with an end life command is no death (see
+/// [`Deaths`]).
 pub fn play_with(start: &Sim, script: &InputScript, goal: &Goal, crabs: &CrabValues) -> Played {
     let mut sim = start.clone();
     let mut out = Played {
@@ -294,26 +356,25 @@ pub fn play_with(start: &Sim, script: &InputScript, goal: &Goal, crabs: &CrabVal
         died: false,
         health_lost: 0,
     };
-    let lives = sim.stats().lives;
+    let mut deaths = Deaths::new(&sim);
     for (i, &t) in script.ticks.iter().enumerate() {
+        deaths.before_tick(script, i);
         play_directives(&mut sim, script, i);
         let health = sim.stats().health;
         sim.step(t);
         crabs.apply(&mut sim);
         out.health_lost += (health - sim.stats().health).max(0);
         for e in sim.last_events() {
-            match e {
-                GameEvent::LevelComplete { .. } if *goal == Goal::LevelComplete => {
-                    out.done_at.get_or_insert(i as u64);
-                }
-                GameEvent::ClawDied { .. } | GameEvent::GameOver => out.died = true,
-                _ => {}
+            if let GameEvent::LevelComplete { .. } = e
+                && *goal == Goal::LevelComplete
+            {
+                out.done_at.get_or_insert(i as u64);
             }
         }
         if goal.met_at(&sim) {
             out.done_at.get_or_insert(i as u64);
         }
-        if dying(&sim) || sim.stats().lives < lives {
+        if deaths.died(&sim) {
             out.died = true;
         }
         if out.done_at.is_some() || out.died {

@@ -23,6 +23,10 @@
 //!   fresh jump toward the boss, so that one of them presses jump on the
 //!   first tick in the room.
 //!
+//! In Omar's fight Claw goes about the arena (to the swords, down to the
+//! ledges, up to the hall), so the fight's macros are every move of the
+//! level, with the short wait and the blows turned either way.
+//!
 //! In Marrow's fight, while the pit is open between Claw and Marrow and
 //! his parrot patrols the top of the room or sits on its perch, Claw can
 //! only wait for its dive: on his feet the fight's only macro is then
@@ -419,8 +423,21 @@ pub fn choices_in(sim: &Sim, arena: &Arena) -> Vec<Action> {
 }
 
 /// The actions of a boss fight: the walks (the approach), the waits, the
-/// blows, and jumps to leap clear or over.
+/// blows, and jumps to leap clear or over. Omar's fight takes Claw about
+/// the arena: every move of the level, with the short wait and the blows
+/// turned either way on his feet.
 fn fight_choices(sim: &Sim) -> Vec<Action> {
+    if crate::search::omar_in_play(sim) {
+        let mut out = choices(sim);
+        if phase(sim) == Phase::Ground && !locked(sim) {
+            out.extend([
+                Action::Short,
+                Action::Strike { dir: -1 },
+                Action::Strike { dir: 1 },
+            ]);
+        }
+        return out;
+    }
     let holds = jump_holds(sim);
     let mut out = vec![Action::Wait, Action::Left, Action::Right];
     match phase(sim) {

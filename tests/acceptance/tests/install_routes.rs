@@ -16,7 +16,12 @@
 //!   tick moves him further than walking, running, falling or riding can
 //!   (nothing moves him but the input), except the boss room's door, which
 //!   takes him into the room, a rope's grab, which hangs him from its end,
-//!   and a warp, which puts him at its destination;
+//!   and a warp, which puts him at its destination; an End Life route
+//!   (one with an end life command, `@T command end_life`, the in-game
+//!   menu's End Life) gives up one life on purpose while the boss's
+//!   introduction freezes Claw: that one death, after the command, is the
+//!   route's only one, and the tick after its lives step puts Claw back
+//!   at his checkpoint;
 //! - the help screens and pauses a route holds between two ticks (`@`
 //!   lines: a stick of dynamite set off at Claw's side in mid-air by the
 //!   time the help screen is up) play as the game plays them, stepped and
@@ -24,7 +29,8 @@
 //! - on a level that ends with a boss, the boss is defeated before the
 //!   level is won, and the boss's introduction plays (the fight flag goes
 //!   0, 1, 2) unless the route is an intro-skip route (`introskip` in its
-//!   name), whose jump-in entry keeps the flag at 0 all along;
+//!   name), whose jump-in entry keeps the flag at 0 all along (an End Life
+//!   route's introduction plays on while Claw dies and comes back);
 //! - every change of the held buttons comes at least 2 ticks after the
 //!   previous one, so a 60 Hz display never drops a press;
 //! - nothing is held in the first tick (keys down when play starts count
@@ -46,7 +52,8 @@
 //! which must be the progress the next file starts with, and that file,
 //! played as a replay of it plays (with the seed and tuning it names), wins
 //! that level too; twice, with the same traces. Each level's crabs start
-//! with the values its file gives them.
+//! with the values its file gives them. After the last level's booty
+//! screen the game goes on to its end, not to another level.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -65,16 +72,20 @@ use claw_game::pause::PauseInput;
 use claw_game::saves::SaveStore;
 use claw_game::session::{LevelRecording, Session, script_behaviour};
 use claw_game::settings::{LevelChoice, Settings, UserDirs};
+use claw_sim::input::ScriptCommand;
 use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::logic::world_boss::fight;
 use claw_sim::player::hit::PickupFields;
 use claw_sim::player::state;
 use claw_sim::trace::TraceRow;
-use claw_sim::{InputScript, Sim, SimConfig, StartState, Tuning};
+use claw_sim::{DirectiveKind, InputScript, Sim, SimConfig, StartState, Tuning};
 use claw_ui::menu::MenuInput;
 use claw_ui::menu::draw::FontArt;
 use claw_ui::screens::booty::{BootyArt, BootyScreen};
 use tempfile::TempDir;
+
+/// The game's last level: its booty screen leads to the game's end.
+const LAST_LEVEL: u32 = 14;
 
 /// Fewest ticks between two changes of the held buttons.
 const MIN_SPACING: usize = 2;
@@ -88,8 +99,8 @@ const MAX_STEP_PX: i32 = 48;
 /// the third, four on the fourth, six on the fifth, ten on the sixth,
 /// four on the seventh, six on the eighth, four on the ninth, seven on
 /// the tenth, two on the eleventh, four on the twelfth, four on the
-/// thirteenth).
-const LEVEL_SEEDS: [(u32, u32); 13] = [
+/// thirteenth, five on the fourteenth).
+const LEVEL_SEEDS: [(u32, u32); 14] = [
     (1, 4_105_512_405),
     (2, 1_617_999_171),
     (3, 714_107_639),
@@ -103,6 +114,7 @@ const LEVEL_SEEDS: [(u32, u32); 13] = [
     (11, 1_980_168_385),
     (12, 1_617_999_171),
     (13, 1_617_999_171),
+    (14, 4_005_776_122),
 ];
 
 /// The route header keys.
@@ -335,33 +347,67 @@ fn install_routes_win_the_same_way_every_time() {
             .position(|(_, e)| matches!(e, GameEvent::LevelComplete { .. }));
         let won_at = won.map(|i| p.events[i].0);
         assert!(won_at.is_some(), "{name}: the level is not won");
-        assert!(
-            !p.events
-                .iter()
-                .any(|(_, e)| matches!(e, GameEvent::ClawDied { .. } | GameEvent::GameOver)),
-            "{name}: Claw died"
-        );
+        // Only an End Life route loses a life, the one its command gives
+        // up, after the command.
+        let ended: Vec<usize> = script
+            .directives
+            .iter()
+            .filter(|d| d.kind == DirectiveKind::Command(ScriptCommand::EndLife))
+            .map(|d| d.tick)
+            .collect();
+        let deaths: Vec<u64> = p
+            .events
+            .iter()
+            .filter(|(_, e)| matches!(e, GameEvent::ClawDied { .. } | GameEvent::GameOver))
+            .map(|&(t, _)| t)
+            .collect();
+        let end_life = !ended.is_empty();
+        if end_life {
+            assert_eq!(ended.len(), 1, "{name}: one end life");
+            assert_eq!(deaths.len(), 1, "{name}: one death, the end life's");
+            assert!(
+                deaths[0] >= ended[0] as u64,
+                "{name}: the death follows the end life"
+            );
+        } else {
+            assert!(deaths.is_empty(), "{name}: Claw died");
+        }
         // No tick moves Claw further than input can, but the door into the
         // boss room; and what happens in the boss room.
         let mut q = Player::with_crabs(start.clone(), crabs.clone());
         let level_warps = warps(&start);
         let mut at = q.at();
+        let mut life_taken = false;
         let mut boss = BossRun {
             flags: vec![q.sim.boss().fight()],
             ..BossRun::default()
         };
         for (i, t) in script.ticks.iter().enumerate() {
             let swinging = |sim: &Sim| sim.player().is_some_and(|o| o.state == state::SWING);
+            if end_life && i == ended[0] {
+                // The life is given up in the boss's introduction.
+                assert_eq!(
+                    q.sim.boss().fight(),
+                    fight::STAGING,
+                    "{name}: the end life comes in the boss's introduction"
+                );
+            }
             between_ticks(&mut q, &script, i);
             let was_swinging = swinging(&q.sim);
+            let lives = q.sim.stats().lives;
             q.step(t.held.0);
             let now = q.at();
             let moved = (now.0 - at.0).abs().max((now.1 - at.1).abs());
             let grabbed = !was_swinging && swinging(&q.sim);
+            // The life an End Life route gives up puts Claw back at his
+            // checkpoint on the tick after its lives step.
+            let respawned = end_life && life_taken;
+            life_taken = q.sim.stats().lives < lives;
             assert!(
                 moved <= MAX_STEP_PX
                     || through_the_door(end.as_ref(), at, now)
                     || grabbed
+                    || respawned
                     || through_a_warp(&level_warps, at, now),
                 "{name}: Claw moved {moved} px in tick {i}, from {at:?} to {now:?}"
             );
@@ -409,6 +455,13 @@ fn install_routes_win_the_same_way_every_time() {
                     ", in the boss room at tick {arrived}, fight on at {on}, boss defeated {} ticks later",
                     defeated - on
                 );
+                if end_life {
+                    fight_note.push_str(&format!(
+                        ", end life at tick {} in the introduction, {} lives left",
+                        ended[0],
+                        p.sim.stats().lives
+                    ));
+                }
             }
         }
 
@@ -525,6 +578,8 @@ struct Game {
     started: Vec<(u32, StartState)>,
     /// Each level won: its number and trace.
     won: Vec<(u32, Vec<TraceRow>)>,
+    /// Claw's deaths on each level, by number.
+    deaths: BTreeMap<u32, usize>,
 }
 
 impl Game {
@@ -560,6 +615,7 @@ impl Game {
             session: None,
             started: Vec::new(),
             won: Vec::new(),
+            deaths: BTreeMap::new(),
         };
         g.effects();
         g
@@ -627,11 +683,17 @@ impl Game {
                     let n = self.started.last().unwrap().0;
                     self.won.push((n, session.trace().to_vec()));
                 }
+                // Claw dies only by his level's end life (an End Life
+                // route's one death).
+                let n = self.started.last().unwrap().0;
+                let deaths = events
+                    .iter()
+                    .filter(|e| matches!(e, GameEvent::ClawDied { .. } | GameEvent::GameOver))
+                    .count();
+                *self.deaths.entry(n).or_default() += deaths;
                 assert!(
-                    !events
-                        .iter()
-                        .any(|e| matches!(e, GameEvent::ClawDied { .. } | GameEvent::GameOver)),
-                    "Claw died"
+                    self.deaths[&n] <= lives_ended(&self.files[&n]),
+                    "Claw died on level {n}"
                 );
                 self.flow.play_events(&events, session.sim());
             }
@@ -651,6 +713,11 @@ impl Game {
             assert!(guard < 1200, "level {n} is never won");
         }
         assert_eq!(self.won.last().map(|w| w.0), Some(n), "level {n} won");
+        assert_eq!(
+            self.deaths.get(&n).copied().unwrap_or(0),
+            lives_ended(&self.files[&n]),
+            "level {n}: the end life's death, no other"
+        );
     }
 
     /// Goes through the booty screen into the next level.
@@ -667,6 +734,15 @@ impl Game {
             assert!(guard < 100, "stuck at {:?}", self.flow.screen());
         }
     }
+}
+
+/// The lives the route `rec` gives up with its end life commands.
+fn lives_ended(rec: &LevelRecording) -> usize {
+    rec.script
+        .directives
+        .iter()
+        .filter(|d| d.kind == DirectiveKind::Command(ScriptCommand::EndLife))
+        .count()
 }
 
 /// `rec` replayed from `sim` as [`LevelRecording::replay`] replays it, the
@@ -746,9 +822,11 @@ fn install_routes_play_one_game_through_the_booty_screen() {
             );
             g.win_level();
             assert_eq!(g.flow.screen(), Screen::Booty);
+            // After the last level the game goes on to its end.
+            let next = (n < LAST_LEVEL).then_some(n + 1);
             assert_eq!(
                 g.flow.next_level().map(|(l, _)| l),
-                Some(n + 1),
+                next,
                 "the booty screen leads on"
             );
             traces.push(g.won.clone());

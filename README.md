@@ -415,12 +415,13 @@ made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
 life. Replays, `claw-replay` and the benchmark all follow them.
 
-The routes in `tests/acceptance/routes/` finish the first thirteen
+The routes in `tests/acceptance/routes/` finish all fourteen
 levels: `level1.csv` to `level8.csv`, `level10.csv`, `level12.csv` and
-`level13.csv` with the default tuning (the ninth and eleventh levels have
-no default-tuning route yet), `level1-original.csv` to
-`level13-original.csv` with the original game's speeds (the ninth,
-eleventh, twelfth and thirteenth levels' ways are described below),
+`level13.csv` with the default tuning (the ninth, eleventh and fourteenth
+levels have no default-tuning route yet), `level1-original.csv` to
+`level14-original.csv` with the original game's speeds (the ninth,
+eleventh, twelfth, thirteenth and fourteenth levels' ways are described
+below),
 `level2-introskip.csv`,
 `level4-introskip.csv`, `level6-introskip.csv`, `level8-introskip.csv`,
 `level10-introskip.csv`, `level12-introskip.csv` and
@@ -434,8 +435,8 @@ on to the block past the fifth level's last stack of pegs), and
 `level3-original.level4.csv`, `level4-original.level5.csv`,
 `level5-original.level6.csv`, `level6-original.level7.csv`,
 `level7-original.level8.csv`, `level9-original.level10.csv`,
-`level10-original.level11.csv`, `level11-original.level12.csv` and
-`level12-original.level13.csv`, the next
+`level10-original.level11.csv`, `level11-original.level12.csv`,
+`level12-original.level13.csv` and `level13-original.level14.csv`, the next
 level of the game the route before starts, which begin with the progress
 that game carries in (their
 `# start_score = ...` lines, which replays, `claw-replay` and the
@@ -651,6 +652,42 @@ takes the gem that rises from him once he has said his last line.
 the progress `level12-original.csv` ends with.
 `tools/bot/hints/level13-original.txt` and `tools/bot/hints/level13.txt`
 list the waypoints and the hand-written stretches' held buttons.
+The fourteenth level's route takes the long way through the temple,
+checkpoint to checkpoint, to the warp down to Omar's chamber. The bot is
+led with waypoints up the climbs its coarse graph counts as easy. The
+crossings that need a timing it does not see are written into the route
+by hand, each found by playing the game with every wait in a range and
+keeping one in the middle of those that work: the elevators met and left
+at the right moment, the rope beside them, a jump in place on a toggle
+peg that waits for the pegs' cycle, the climb of toggle pegs and the
+elevator above it, and three dynamite boosts, each a stick set off at
+Claw's side in mid-air by the time a help screen of three seconds is up
+(the `@N menu help 3000` lines), on to ledges no jump reaches. The warp
+drops Claw, falling, on the ladder top above the chamber, so his
+introduction cannot be skipped; `level14-original.csv` ends a life there
+instead, with the in-game menu's End Life (its `@N command end_life`
+line) while the introduction freezes Claw: he comes back on the ladder
+top at full health with one life fewer, free long before the introduction
+would have let him go, and Omar is reset with him. That is the route's
+one death; every other route still wins with none. In the first phase of
+the fight Omar stands on one of two ledges inside a turning ring of fire
+or ice that only a sword shot of the other element hurts, so the route
+fetches the ice sword to the right of the chamber and the fire sword to
+its left in turn (they can be taken again) and shoots him through the
+ring's gap from the floor between his ledges, four times; then it beats
+him in the hall above with four blows, each of which sends him to the
+hall's other end, and takes the gem that rises from him. The bot counts
+the shots and blows left, then the way to the sword the next shot needs,
+to the floor between the ledges once Claw holds it, or to Omar's end of
+the hall; with that sword in hand near the floor, where the ring's gap is
+in its turn is part of its coarse state, and once Omar is struck down for
+good, the time. `level13-original.level14.csv` plays
+`level14-original.csv`'s rows from the progress `level13-original.csv`
+ends with up to the press of the fire key before the checkpoint at
+x 27281, which plays out otherwise with the dynamite that game carries;
+from there its own stretches, its own End Life and its own fight were
+searched the same way. `tools/bot/hints/level14-original.txt` lists the
+waypoints and the hand-written stretches' held buttons.
 Once a boss is beaten and on his way to his gem, the bot only waits, and
 how far Claw is from him counts for nothing; RedTail struck down in the
 middle of a leap lands with no death to come and fights on with no health

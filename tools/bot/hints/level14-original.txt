@@ -1,0 +1,174 @@
+# Waypoints for the fourteenth level at the original speeds, from the
+# level's geometry. The route is searched a stretch at a time: each searched
+# stretch below runs with its waypoints as --hints (with --hints-on-foot)
+# and ends at its goal (--goal X,Y with --goal-on-foot), and the next
+# carries on from it (--from-route, --from-tick at its last tick). Every
+# stretch uses --seed level and --fragile-cost 100 unless it says
+# otherwise.
+#
+# The route takes the long way through the temple, checkpoint to
+# checkpoint, to the warp down to Omar's chamber. Several crossings need a
+# timing the search's coarse graph does not see: an elevator met and left
+# at the right moment, a rope swung from one, a jump in place on a toggle
+# peg that waits for the pegs' cycle, and three ledges no jump reaches,
+# climbed with a dynamite boost: a stick set off at Claw's side in mid-air
+# (right or left and dynamite, after a jump) by the time a help screen of
+# three seconds is up (the route's `@N menu help 3000` lines), then a jump
+# from the blast. Those are written by hand: each one was found by playing
+# the game from the stretch's start with every wait in a range and keeping
+# a wait in the middle of three or more that all work. Held buttons are
+# given as masks of the route file, in ticks counted from the stretch's
+# first tick, each range inclusive.
+#
+# 1. To the first checkpoint: goal 3825,3167.
+# 2. To the second checkpoint: goal 5103,3166.
+# 3. Down to the lower hall: goal 6700,4140 (20 minutes).
+# 4. To the checkpoint there: goal 7249,4127 (20 minutes).
+# 5. To the foot of the elevator shaft: goal 7410,3680 (10 minutes).
+# 6. Not searched: the elevator, a rope beside it and the ledge beyond.
+#    A wait for the elevator and a jump on to it; a wait on it as it
+#    rises and a jump on to the rope; a wait on the rope and a jump off it
+#    on to the ledge:
+#       route ticks 1945 to 2353
+#             0-387  0x0 nothing
+#           388-397  0x1 jump
+#           398-408  0x0 nothing
+#       route ticks 2354 to 2681
+#             0-311  0x0 nothing
+#           312-327  0x2000001 right and jump
+#       route ticks 2682 to 2765
+#              0-61  0x0 nothing
+#             62-77  0x2000001 right and jump
+#             78-83  0x2000000 right
+# 7. Up to the toggle peg below the upper ledges: goal 7498,2918
+#    (15 minutes).
+7904,3060
+7770,2925
+# 8. Not searched: a dynamite boost on to the ledge to the left (the help
+#    screen at route tick 3024), a wait for the elevator there and a jump
+#    on to it, and a second boost from it on to the block to the right
+#    (the help screen at route tick 3738):
+#       route ticks 3006 to 3097
+#               0-1  0x0 nothing
+#              2-15  0x1000001 left and jump
+#             16-17  0x1000100 left and dynamite
+#             18-48  0x0 nothing
+#             49-62  0x1000001 left and jump
+#             63-91  0x1000000 left
+#       route ticks 3098 to 3342
+#             0-221  0x0 nothing
+#           222-235  0x1 jump
+#           236-244  0x0 nothing
+#       route ticks 3343 to 3814
+#             0-378  0x0 nothing
+#           379-392  0x2000001 right and jump
+#           393-394  0x2000100 right and dynamite
+#           395-425  0x0 nothing
+#           426-439  0x2000001 right and jump
+#           440-471  0x2000000 right
+# 9. To the checkpoint: goal 8017,2463 (15 minutes).
+# 10. To the first save point: goal 9845,3037 (25 minutes).
+# 11. To the checkpoint past it: goal 12305,2973 (25 minutes).
+# 12. To the toggle peg below the elevator: goal 12717,2827 (10 minutes).
+12717,2904
+# 13. Not searched: a jump in place on the peg that waits for the pegs'
+#    cycle, a dynamite boost on to the ledge to the right (the help screen
+#    at route tick 5620), the climb of the toggle pegs and the elevator to
+#    the left, and a jump from the elevator on to the block to the right:
+#       route ticks 5438 to 5595
+#             0-120  0x0 nothing
+#           121-134  0x1 jump
+#           135-157  0x0 nothing
+#       route ticks 5596 to 5685
+#               0-7  0x0 nothing
+#              8-21  0x2000001 right and jump
+#             22-23  0x2000100 right and dynamite
+#             24-54  0x0 nothing
+#             55-68  0x2000001 right and jump
+#             69-89  0x2000000 right
+#       route ticks 5686 to 5852
+#               0-2  0x0 nothing
+#               3-8  0x1000000 left
+#              9-22  0x1000001 left and jump
+#             23-41  0x1000000 left
+#             42-44  0x0 nothing
+#             45-58  0x1 jump
+#             59-84  0x0 nothing
+#             85-98  0x1 jump
+#            99-131  0x0 nothing
+#           132-145  0x1000001 left and jump
+#           146-155  0x1000000 left
+#           156-166  0x0 nothing
+#       route ticks 5853 to 5892
+#               0-2  0x0 nothing
+#              3-16  0x2000001 right and jump
+#             17-36  0x2000000 right
+#             37-39  0x0 nothing
+# 14. To the checkpoint: goal 13202,2208 (20 minutes).
+# 15. On to the elevator over the floor spikes (searched to where it
+#     ends, 14784,2657), then, not searched, a wait on the elevator and a
+#     jump from it on to the block beyond the spikes, then to the
+#     checkpoint: goal 15440,2462 (25 minutes).
+#       route ticks 6471 to 6557
+#              0-30  0x0 nothing
+#             31-44  0x2000001 right and jump
+#             45-52  0x2000000 right
+#             53-86  0x0 nothing
+# 16. To the second save point: goal 19892,3549 (40 minutes).
+# 17. Up the column of pegs to the checkpoint: goal 21232,1823
+#     (25 minutes).
+20640,2570
+20640,2312
+20640,2060
+20650,1950
+# 18. On to the first elevator of the row of elevators (searched to where
+#     it ends, 22312,2219), then, not searched, the ride along the row: a
+#     walk along the first, then on each a wait for the next to come level
+#     and a jump on to it, to the ledge beyond:
+#       route ticks 9418 to 9459
+#              0-37  0x2000000 right
+#             38-41  0x0 nothing
+#       route ticks 9460 to 9930
+#             0-429  0x0 nothing
+#           430-443  0x2000001 right and jump
+#           444-449  0x2000000 right
+#           450-470  0x0 nothing
+#       route ticks 9931 to 10278
+#             0-304  0x0 nothing
+#           305-318  0x2000001 right and jump
+#           319-347  0x2000000 right
+#       route ticks 10279 to 10768
+#             0-438  0x0 nothing
+#           439-444  0x2000000 right
+#           445-458  0x2000001 right and jump
+#           459-489  0x2000000 right
+#     then to the checkpoint: goal 25425,2014 (15 minutes).
+# 19. To the checkpoint: goal 27281,2782 (25 minutes).
+# 20. Over the elevators and up the toggle pegs to the ledge at 28264,2285,
+#     then up the column of toggle pegs to the last checkpoint: goal
+#     28757,1437 (25 minutes, --fragile-cost 0).
+28640,2120
+28450,1959
+27885,1817
+27888,1473
+# 21. Through the boss room's door and the warp down to Omar's chamber:
+#     the search for the level's end (--intro play), up to Claw's landing
+#     on the ladder top. Not searched: the in-game menu's End Life while
+#     the introduction freezes him (the route's `@13921 command end_life`
+#     line), and a wait until he is back on the ladder top at full health:
+#       route ticks 13921 to 14019
+#              0-98  0x0 nothing
+# 22. Omar's fight and his gem: the search for the level's end from the
+#     ladder top (--intro play, --health-cost 30, the default
+#     --fragile-cost), carried on from the root of its last segment once
+#     (--from-route at route tick 21083, the third blow in the hall).
+#
+# level13-original.level14.csv (--carry, the progress level13-original.csv
+# ends with) keeps this route's rows up to route tick 11589, where a press
+# of the fire key plays out otherwise with the dynamite that game carries.
+# From there: to the checkpoint, goal 27281,2782 (25 minutes); to the
+# ledge at 28264,2285 (--fragile-cost 0); to the last checkpoint as in
+# stretch 20; the search for the level's end up to the landing on the
+# ladder top, the End Life three ticks after it (`@13883 command
+# end_life`) and 99 ticks of nothing; then Omar's fight as in stretch 22
+# (--fragile-cost 100), in one search.
