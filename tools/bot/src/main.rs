@@ -8,7 +8,8 @@
 //!          [--start X,Y] [--land-gap N] [--fragile-cost PX] [--tick-cost PX] [--threads N]
 //!          [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot]
 //!          [--intro any|play|skip] [--carry FILE] [--goal X,Y] [--goal-on-foot]
-//!          [--crabs FILE] [--crab-variants FILE[,FILE...]] [--drift-cost PX] [--quiet]
+//!          [--crabs FILE] [--crab-variants FILE[,FILE...]] [--drift-cost PX]
+//!          [--health-cost PX] [--quiet]
 //! ```
 //!
 //! The route is an input script (`tick,held_mask,pressed_mask`, one row
@@ -44,9 +45,11 @@
 //! `--hints`, the new route's header names the other route's hints file,
 //! since its leading ticks were found with those waypoints. The other
 //! route's help screens and pauses (`@` lines) up to T are played as the
-//! game plays them and kept in the new route; one that ends a life is
-//! refused, and so is a route recorded with a pause or screen switch other
-//! than the original's (`# pause_input = ...` or `# fuse_clock = ...`
+//! game plays them and kept in the new route, and so is an end life (the
+//! End Life technique: the prefix may give up a life that way, and the
+//! search starts once Claw is back; any other death in it is refused);
+//! a route recorded with a pause or screen switch other
+//! than the original's is refused (`# pause_input = ...` or `# fuse_clock = ...`
 //! naming another value), since the search plays them the original's
 //! way.
 //! `--start X,Y` plans a segment: Claw is placed at (X, Y) in the
@@ -65,7 +68,10 @@
 //! moves' own timing (no shadow games). `--tick-cost PX` is what each tick
 //! of the route costs the search (1 by default): more makes it prefer the
 //! quicker of two ways, for a stretch whose time is short (a powerup that
-//! must last to its end). `--cache-games N` is how many games the
+//! must last to its end). `--health-cost PX` is what each point of health
+//! Claw loses costs the search (12 by default): more makes it keep his
+//! health, for a long stretch that must end with health to spare (a boss
+//! fought with what health Claw brings to him). `--cache-games N` is how many games the
 //! search keeps in memory (512 by default; a node with its shadow games
 //! counts three): more is faster and takes more memory, and never changes
 //! the route.
@@ -114,7 +120,9 @@
 //! life, or is dying, in any of those games before the search starts.
 //!
 //! No route is written whose held mask changes twice less than two ticks
-//! apart.
+//! apart. When the search stops without a route after it started a
+//! segment, the moves to that segment's root are written as
+//! ROUTE.reached.csv, a route the search can be carried on from.
 //!
 //! Exit status: 0 with a route, 1 when the search failed, 2 on a usage
 //! error.
@@ -128,6 +136,7 @@ use claw_bot::actions::MIN_SPACING;
 use claw_bot::route::{self, Header, TuningName};
 use claw_bot::search::Intro;
 use claw_bot::{Goal, SearchConfig, search_report_with};
+use claw_sim::input::ScriptCommand;
 use claw_sim::logic::enemy::crab::CrabValues;
 use claw_sim::{Carry, DirectiveKind, InputScript, ScriptHeader, Sim, SimLevel, StartState};
 
@@ -136,7 +145,7 @@ const USAGE: &str = "usage: claw-bot --install PATH --level N --out ROUTE.csv \
 [--from-route FILE --from-tick T] [--start X,Y] [--land-gap N] [--fragile-cost PX] \
 [--tick-cost PX] [--threads N] [--cache-games N] [--no-shadows] [--margin-samples N] [--hints-on-foot] \
 [--intro any|play|skip] [--carry FILE] [--goal X,Y] [--goal-on-foot] [--crabs FILE] \
-[--crab-variants FILE[,FILE...]] [--drift-cost PX] [--quiet]";
+[--crab-variants FILE[,FILE...]] [--drift-cost PX] [--health-cost PX] [--quiet]";
 
 /// The random state a route starts from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,6 +181,7 @@ struct Args {
     land_gap: Option<u64>,
     fragile_cost: i64,
     tick_cost: i64,
+    health_cost: i64,
     threads: usize,
     cache_games: usize,
     shadows: bool,
@@ -204,6 +214,7 @@ impl Default for Args {
             land_gap: None,
             fragile_cost: DEFAULT_FRAGILE_COST,
             tick_cost: SearchConfig::default().tick_cost,
+            health_cost: SearchConfig::default().health_cost,
             threads: 1,
             cache_games: SearchConfig::default().cached_sims,
             shadows: true,
@@ -284,6 +295,12 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
                 a.tick_cost = v.parse().map_err(|_| num("tick cost"))?;
                 if a.tick_cost < 0 {
                     return Err(num("tick cost"));
+                }
+            }
+            "--health-cost" => {
+                a.health_cost = v.parse().map_err(|_| num("health cost"))?;
+                if a.health_cost < 0 {
+                    return Err(num("health cost"));
                 }
             }
             "--threads" => a.threads = v.parse::<usize>().map_err(|_| num("thread count"))?.max(1),
@@ -376,17 +393,32 @@ fn read_crabs(path: &Path) -> Result<CrabValues, String> {
 
 /// Plays the ticks of `prefix` on `sim` with its help screens and pauses
 /// (see [`route::play_directives`]), the crabs given their `crabs`
-/// values; an error when Claw loses a life in them. The directives due
-/// after its last tick, before the search's first, are played too.
+/// values; an error when Claw loses a life in them other than by the
+/// prefix's own end life (the End Life technique, see [`route::Deaths`]),
+/// or is still dying at its end. The directives due after its last tick,
+/// before the search's first, are played too.
 fn play_prefix(sim: &mut Sim, prefix: &InputScript, crabs: &CrabValues) -> Result<(), String> {
-    let lives = sim.stats().lives;
+    let mut deaths = route::Deaths::new(sim);
     for (i, &input) in prefix.ticks.iter().enumerate() {
+        deaths.before_tick(prefix, i);
         route::play_directives(sim, prefix, i);
         sim.step(input);
         crabs.apply(sim);
-        if sim.stats().lives < lives || claw_bot::search::dying(sim) {
+        if deaths.died(sim) {
             return Err(format!("Claw dies at tick {i} of the route continued"));
         }
+    }
+    if claw_bot::search::dying(sim) {
+        return Err(format!(
+            "Claw is still dying at tick {} of the route continued: continue it once he is back",
+            prefix.ticks.len()
+        ));
+    }
+    if route::lives_ended_at(prefix, prefix.ticks.len()) > 0 {
+        return Err(format!(
+            "the route ends a life at its continue point {}",
+            prefix.ticks.len()
+        ));
     }
     route::play_directives(sim, prefix, prefix.ticks.len());
     Ok(())
@@ -464,9 +496,10 @@ struct Prefix {
 /// pauses up to the boundary before tick `t`, for `--from-route`: its
 /// `# level`, `# tuning` and `# seed` lines must match the arguments and
 /// its progress (`# start_...` lines) `carry`, and it may hold no command
-/// (the end of a life) at or before `t`, nor a pause or screen switch
-/// other than the original's ([`original_switches`]). Its segment start,
-/// `# start X,Y`, is always the continued route's, none when it has none.
+/// at or before `t` but the end of a life (the End Life technique, kept
+/// in the new route), nor a pause or screen switch other than the
+/// original's ([`original_switches`]). Its segment start, `# start X,Y`,
+/// is always the continued route's, none when it has none.
 fn read_prefix(
     text: &str,
     t: usize,
@@ -485,13 +518,11 @@ fn read_prefix(
         return Err("the route starts with other progress than --carry gives".to_string());
     }
     original_switches(text)?;
-    // The search plays the prefix's help screens and pauses as the game
-    // does; a route never ends a life on purpose.
-    if let Some(d) = script
-        .directives
-        .iter()
-        .find(|d| d.tick <= t && matches!(d.kind, DirectiveKind::Command(_)))
-    {
+    // The search plays the prefix's help screens, pauses and end life as
+    // the game does; a route gives itself no powerup.
+    if let Some(d) = script.directives.iter().find(|d| {
+        d.tick <= t && matches!(d.kind, DirectiveKind::Command(c) if c != ScriptCommand::EndLife)
+    }) {
         return Err(format!(
             "the route gives a command at tick {}, at or before the continue point {t}",
             d.tick
@@ -689,6 +720,7 @@ fn run(a: Args) -> Result<bool, String> {
         }),
         fragile_cost: a.fragile_cost,
         tick_cost: a.tick_cost,
+        health_cost: a.health_cost,
         cached_sims: a.cache_games,
         shadows: a.shadows,
         hint_on_foot: a.hints_on_foot,
@@ -717,6 +749,31 @@ fn run(a: Args) -> Result<bool, String> {
         Ok(f) => f,
         Err(e) => {
             eprintln!("claw-bot: no route: {e}");
+            // The way to the last segment's root, to carry a long search
+            // on from there.
+            if let Some(reached) = &e.reached {
+                let mut script = prefix.clone();
+                script.ticks.extend(reached.ticks.iter().copied());
+                let header = Header {
+                    level: level_no,
+                    tuning: a.tuning,
+                    seed,
+                    mid_air_hit_fix: false,
+                    hints: route_hints(a.hints.as_deref(), prefix_hints.clone()),
+                    start: seg_start,
+                    carry: carry.clone(),
+                    crabs: crabs.clone(),
+                    crab_variants: crab_variants.clone(),
+                };
+                let partial = out.with_extension("reached.csv");
+                std::fs::write(&partial, route::route_csv(&header, &script))
+                    .map_err(|e| format!("writing {}: {e}", partial.display()))?;
+                eprintln!(
+                    "claw-bot: the last segment's root ({} ticks) is in {}",
+                    script.ticks.len(),
+                    partial.display()
+                );
+            }
             return Ok(false);
         }
     };
@@ -942,11 +999,10 @@ mod tests {
         assert_eq!(ticks(&read(&text, 2).unwrap()), Vec::<usize>::new());
         assert_eq!(ticks(&read(&text, 3).unwrap()), [3]);
         assert_eq!(ticks(&read(&text, 10).unwrap()), [3, 6]);
-        // A route never ends a life on purpose.
+        // An end life (the End Life technique) comes along too.
         let ended = text.replace("@6 pause 400", "@6 command end_life");
         assert!(read(&ended, 5).is_ok());
-        let e = read(&ended, 6).unwrap_err();
-        assert!(e.contains("command at tick 6"), "{e}");
+        assert_eq!(ticks(&read(&ended, 10).unwrap()), [3, 6]);
     }
 
     #[test]
@@ -975,6 +1031,9 @@ mod tests {
         assert_eq!(a.tick_cost, 1);
         assert_eq!(args("--tick-cost 4").map(|a| a.tick_cost), Ok(4));
         assert!(args("--tick-cost -1").is_err());
+        assert_eq!(a.health_cost, SearchConfig::default().health_cost);
+        assert_eq!(args("--health-cost 60").map(|a| a.health_cost), Ok(60));
+        assert!(args("--health-cost -1").is_err());
         let s = args("--install /i --level 1 --out r.csv --start 10355,2051").unwrap();
         assert_eq!(s.start, Some((10355, 2051)));
         assert!(args("--start 10").is_err());
