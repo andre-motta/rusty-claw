@@ -219,7 +219,8 @@
 #    21848,968.
 21311,984
 # 22. Over the ropes to the second super checkpoint: no waypoints, goal
-#    24496,1992.
+#    24496,1992. Searched from route tick 9237, where Claw stands at the
+#    checkpoint of stretch 21; the ticks before it are kept.
 # 23. To the checkpoint: no waypoints, goal 25969,2885.
 # 24. Down to the islands in the cave, over the water rocks to the third
 #    island: goal 27650,3617.
@@ -228,58 +229,67 @@
 27173,3820
 # 25. Over the crumbling pegs onto the row of path elevators: goal
 #    28600,3821.
-# 26. Not searched: from the elevator onto the rope and off it onto the
-#    water rock at the foot of the shaft of springboards:
-#       route ticks 11205 to 11415
-#                0-21  0x0 nothing
-#               22-37  0x2000001 right and jump
-#               38-62  0x2000000 right
-#              63-166  0x0 nothing
-#             167-182  0x2000001 right and jump
-#             183-210  0x2000000 right
+# 26. Not searched: from the elevator onto the rope (jumps after waits 0
+#    to 38 catch it) and off it onto the water rock at the foot of the
+#    shaft of springboards (waits 13 to 71 on the rope land), landing
+#    before the rock's throw:
+#       route ticks 11118 to 11267
+#                0-18  0x0 nothing
+#               19-34  0x2000001 right and jump
+#               35-59  0x2000000 right
+#              60-101  0x0 nothing
+#             102-117  0x2000001 right and jump
+#             118-145  0x2000000 right
+#             146-149  0x0 nothing
 # 27. Up the shaft of springboards to the checkpoint: goal 29366,2249.
 29061,3494
 29184,3191
 29067,2857
 29171,2558
-# 28. To the checkpoint: no waypoints, goal 30811,2633.
+# 28. To the checkpoint: no waypoints, goal 30811,2633. Not searched in
+#    the middle: Claw waits 170 ticks where he stands at 30486,2391 (route
+#    ticks 11985 to 12154, nothing held), which brings the climb of
+#    stretch 30 onto the shaft's way it fits; the search goes on from
+#    there.
 # 29. Onto the trigger elevator under the shaft of toggle pegs below the
 #    boss room's door: goal 32545,3316.
 # 30. Not searched: the shaft's pegs make three ways up, each out 6 s of
 #    every 24 s, in turn, with dart traps across. Claw jumps onto the water
 #    rock at its foot and is steered on its throw onto the lowest peg of
-#    the way that has just come out (waits 0 to 48 before the jump land),
-#    climbs it before it slides in, each hop timed not to meet a dart, and
-#    jumps onto the block beside the door (waits 1 to 16 land):
-#       route ticks 12835 to 13238
-#                0-23  0x0 nothing
-#               24-35  0x2000001 right and jump
-#               36-55  0x2000000 right
-#               56-81  0x0 nothing
-#               82-99  0x2000000 right
-#             100-112  0x0 nothing
-#             113-128  0x2000001 right and jump
-#             129-136  0x2000000 right
-#             137-148  0x0 nothing
-#             149-164  0x1000001 left and jump
-#             165-188  0x1000000 left
-#             189-191  0x0 nothing
-#             192-207  0x1000001 left and jump
-#             208-215  0x1000000 left
-#             216-238  0x0 nothing
-#             239-250  0x2000001 right and jump
-#             251-274  0x2000000 right
-#             275-277  0x0 nothing
-#             278-285  0x2000001 right and jump
-#             286-295  0x0 nothing
-#             296-307  0x2000001 right and jump
-#             308-315  0x2000000 right
-#             316-329  0x0 nothing
-#             330-345  0x1 jump
-#             346-365  0x0 nothing
-#             366-381  0x2000001 right and jump
-#             382-401  0x2000000 right
-#             402-403  0x0 nothing
+#    the way that has just come out (with right held 25 ticks after the
+#    jump, waits 16 to 22 before it land; with this wait, holds of 21 to
+#    30 ticks do), climbs it before it
+#    slides in, each hop timed not to meet a dart, and jumps onto the
+#    block beside the door:
+#       route ticks 12836 to 13234
+#                0-18  0x0 nothing
+#               19-30  0x2000001 right and jump
+#               31-55  0x2000000 right
+#               56-76  0x0 nothing
+#               77-94  0x2000000 right
+#              95-107  0x0 nothing
+#             108-123  0x2000001 right and jump
+#             124-131  0x2000000 right
+#             132-143  0x0 nothing
+#             144-159  0x1000001 left and jump
+#             160-183  0x1000000 left
+#             184-186  0x0 nothing
+#             187-202  0x1000001 left and jump
+#             203-210  0x1000000 left
+#             211-233  0x0 nothing
+#             234-245  0x2000001 right and jump
+#             246-269  0x2000000 right
+#             270-272  0x0 nothing
+#             273-280  0x2000001 right and jump
+#             281-290  0x0 nothing
+#             291-302  0x2000001 right and jump
+#             303-310  0x2000000 right
+#             311-324  0x0 nothing
+#             325-340  0x1 jump
+#             341-360  0x0 nothing
+#             361-376  0x2000001 right and jump
+#             377-396  0x2000000 right
+#             397-398  0x0 nothing
 # 31. Through the door, RedTail's introduction and his fight, and his
 #    gem: the level's end, no goal and no waypoints, with --intro play.
 #    Blows cost him 5 of his 100 health, and every third blow that finds
