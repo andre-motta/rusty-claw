@@ -11,7 +11,8 @@
 //! - the fight's, offered while a boss is in play: a short wait to time a
 //!   blow against the boss's own attacks, a blow struck after turning to
 //!   either side, and jumps to leap clear (the retreat) or over him; the
-//!   walks are the approach;
+//!   walks are the approach (once the boss is beaten and on his way to his
+//!   gem, only the wait: nothing Claw does hurries his death);
 //! - the door's, offered on the ground near the boss room's door: walk
 //!   toward the door for a few ticks, then jump on through it toward the
 //!   boss's side of the room, so that one of them jumps on Claw's first
@@ -386,6 +387,11 @@ pub struct Arena {
 pub fn choices_in(sim: &Sim, arena: &Arena) -> Vec<Action> {
     let boss = sim.boss();
     if boss.current().is_some() && boss.defeated().is_none() {
+        // Beaten and on his way to his gem, the boss needs nothing more
+        // from Claw, and nothing Claw does hurries his death.
+        if crate::search::boss_beaten(sim) == Some(true) {
+            return vec![Action::Wait];
+        }
         return fight_choices(sim);
     }
     let mut out = choices(sim);

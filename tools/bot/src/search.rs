@@ -96,6 +96,15 @@
 //! which holds him on the spot (every move made in it ends where it
 //! began). Aquatis is the boss whose gem ends the level.
 //!
+//! On the thirteenth level RedTail is the boss whose gem ends the level.
+//! Beaten on his ledge, he jumps down to die on the sand, falls and says
+//! his last line before his gem rises, and nothing Claw does hurries
+//! that: how far Claw is from him counts for nothing then
+//! ([`boss_beaten`]). Struck down in the
+//! middle of a leap, he lands with no death to come and fights on with no
+//! health left until another blow brings it: the guide counts him as a
+//! point of health away from his death then.
+//!
 //! A route can be made to win under several sets of the values the
 //! hermit crabs start with ([`CrabValues`], which the original game does
 //! not fix): [`SearchConfig::crabs`] is the set the route plays under,
@@ -672,6 +681,7 @@ pub fn is_boss(logic: &str) -> bool {
         || enemy::gabriel::NAMES.contains(&logic)
         || enemy::marrow::NAMES.contains(&logic)
         || enemy::aquatis::NAMES.contains(&logic)
+        || enemy::redtail::NAMES.contains(&logic)
 }
 
 /// The bosses whose fall the search guides into the water: blows cannot
@@ -854,6 +864,28 @@ fn boss_guarded(sim: &Sim) -> bool {
                 && o.special_flags & special::LIFTABLE == 0
                 && enemy::data_of(o).is_some_and(|d| d.may_lift && !d.dead)
         })
+}
+
+/// The attack RedTail jumps down from his ledge for when it is his death
+/// (see [`enemy::redtail::RedTailData::pending`]).
+const REDTAIL_DEATH: u8 = 6;
+
+/// Whether the boss in play, once he has no health left, is on his way to
+/// his gem: `Some(true)` through his death (RedTail first jumps down from
+/// his ledge to die on the sand), `Some(false)` while he fights on with none
+/// left (RedTail struck down in the middle of a leap lands with no death to
+/// come, until another blow brings it), `None` while he has health left.
+pub fn boss_beaten(sim: &Sim) -> Option<bool> {
+    let o = sim.boss().current().and_then(|id| sim.objects().get(id))?;
+    if o.health > 0 {
+        return None;
+    }
+    Some(match (EnemyState::from_id(o.state), &o.data) {
+        (Some(EnemyState::Dead), _) => true,
+        (Some(EnemyState::JumpDown), ObjectData::RedTail(d)) => d.pending == REDTAIL_DEATH,
+        (_, ObjectData::RedTail(_)) => false,
+        _ => true,
+    })
 }
 
 /// Marrow's health in one round of his fight: the round ends with his
@@ -1417,10 +1449,17 @@ impl Search<'_> {
                     boss.end.boss.0,
                     boss.end.boss.1,
                 ));
-                let health = (health.max(0) as u32).min(BOSS_HEALTH_CAP);
+                let mut health = (health.max(0) as u32).min(BOSS_HEALTH_CAP);
+                // A boss beaten but fighting on is a blow away from his
+                // death, as with a point of health left; one on his way to
+                // it is as near as Claw can be, wherever his death takes him.
+                let beaten = boss_beaten(sim);
+                if beaten == Some(false) {
+                    health = 1;
+                }
                 // Near enough to strike counts as there, and so does the
                 // boss in Claw's hands or in the flight of his throw.
-                let near = if boss_carried(sim) {
+                let near = if boss_carried(sim) || beaten == Some(true) {
                     0
                 } else {
                     ((bx - o.x).unsigned_abs().saturating_sub(60) + (by - o.y).unsigned_abs())
