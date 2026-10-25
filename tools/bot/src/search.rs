@@ -866,10 +866,6 @@ fn boss_guarded(sim: &Sim) -> bool {
         })
 }
 
-/// The attack RedTail jumps down from his ledge for when it is his death
-/// (see [`enemy::redtail::RedTailData::pending`]).
-const REDTAIL_DEATH: u8 = 6;
-
 /// Whether the boss in play, once he has no health left, is on his way to
 /// his gem: `Some(true)` through his death (RedTail first jumps down from
 /// his ledge to die on the sand), `Some(false)` while he fights on with none
@@ -882,7 +878,9 @@ pub fn boss_beaten(sim: &Sim) -> Option<bool> {
     }
     Some(match (EnemyState::from_id(o.state), &o.data) {
         (Some(EnemyState::Dead), _) => true,
-        (Some(EnemyState::JumpDown), ObjectData::RedTail(d)) => d.pending == REDTAIL_DEATH,
+        (Some(EnemyState::JumpDown), ObjectData::RedTail(d)) => {
+            d.pending == enemy::redtail::DEATH_ATTACK
+        }
         (_, ObjectData::RedTail(_)) => false,
         _ => true,
     })
