@@ -415,16 +415,17 @@ made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
 life. Replays, `claw-replay` and the benchmark all follow them.
 
-The routes in `tests/acceptance/routes/` finish the first twelve levels:
-`level1.csv` to `level8.csv`, `level10.csv` and `level12.csv` with the
-default tuning (the ninth and eleventh levels have no default-tuning
-route yet), `level1-original.csv` to `level12-original.csv` with the
-original game's speeds (the ninth, eleventh and twelfth levels' ways are
-described below), `level2-introskip.csv`,
+The routes in `tests/acceptance/routes/` finish the first thirteen
+levels: `level1.csv` to `level8.csv`, `level10.csv`, `level12.csv` and
+`level13.csv` with the default tuning (the ninth and eleventh levels have
+no default-tuning route yet), `level1-original.csv` to
+`level13-original.csv` with the original game's speeds (the ninth,
+eleventh, twelfth and thirteenth levels' ways are described below),
+`level2-introskip.csv`,
 `level4-introskip.csv`, `level6-introskip.csv`, `level8-introskip.csv`,
-`level10-introskip.csv` and `level12-introskip.csv` with the jump-in
-that skips Raux's, Katherine's, Wolvington's, Gabriel's, Marrow's and
-Aquatis's introductions,
+`level10-introskip.csv`, `level12-introskip.csv` and
+`level13-introskip.csv` with the jump-in that skips Raux's, Katherine's,
+Wolvington's, Gabriel's, Marrow's, Aquatis's and RedTail's introductions,
 `level3-boost.csv` with
 the dynamite boost on to the rock pillar past the third level's first save
 point (`level5-original.csv` and `level4-original.level5.csv` use one too,
@@ -433,8 +434,8 @@ on to the block past the fifth level's last stack of pegs), and
 `level3-original.level4.csv`, `level4-original.level5.csv`,
 `level5-original.level6.csv`, `level6-original.level7.csv`,
 `level7-original.level8.csv`, `level9-original.level10.csv`,
-`level10-original.level11.csv` and `level11-original.level12.csv`, the
-next
+`level10-original.level11.csv`, `level11-original.level12.csv` and
+`level12-original.level13.csv`, the next
 level of the game the route before starts, which begin with the progress
 that game carries in (their
 `# start_score = ...` lines, which replays, `claw-replay` and the
@@ -619,6 +620,35 @@ how far down, or gone), so a wait for one he set off to fall out of the
 way is progress, and it counts the time through the landing after a
 long fall, which holds Claw on the spot for a while; held by a tentacle
 beside Aquatis, it mashes its way out as in a bear's hug.
+The thirteenth level's routes take the long way over the island,
+checkpoint to checkpoint, passing by both warps down to the caves under
+it, up the shaft of toggle pegs below the boss room's door. The bot is
+led with waypoints over the springboards, the water rocks and the columns of
+toggle pegs its coarse graph counts as easy. The crossings that need a
+timing it does not see are written into the routes by hand, each found by
+playing the game with every wait in a range and keeping one in the middle
+of those that work: the ropes over the water, met and left at the moments
+that reach the next rope, a ledge or an elevator sliding beyond; the row
+of toggle pegs over the water whose pegs come out one at a time, not in
+order across; the two columns of pegs that are out only part of their
+cycle, climbed within one of their out phases; and the water rock at the
+foot of the shaft below the door, whose throw lands Claw on a peg of one
+of the shaft's three ways up as that way comes out. RedTail takes 5 of
+his 100 health from each blow, and every third blow that finds him free
+sends him leaping to the other level of his arena instead;
+`level13-original.csv` and `level13.csv` sit through his introduction
+and beat him on the sand, `level13-introskip.csv` jumps in and beats him
+on his ledge, from which he jumps down to die on the sand, and each
+takes the gem that rises from him once he has said his last line.
+`level12-original.level13.csv` plays `level13-original.csv`'s rows from
+the progress `level12-original.csv` ends with.
+`tools/bot/hints/level13-original.txt` and `tools/bot/hints/level13.txt`
+list the waypoints and the hand-written stretches' held buttons.
+Once a boss is beaten and on his way to his gem, the bot only waits, and
+how far Claw is from him counts for nothing; RedTail struck down in the
+middle of a leap lands with no death to come and fights on with no health
+left until another blow brings it, so the bot counts him then as a blow
+away from his death.
 The routes
 are written by the search bot, `claw-bot`,
 which tries short sequences of moves on copies of the headless game and
