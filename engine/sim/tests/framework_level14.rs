@@ -408,6 +408,45 @@ fn a_tiger_blocks_shots_throws_and_blasts_and_takes_blows_and_magic() {
 }
 
 #[test]
+fn a_tigers_flip_ends_by_the_side_claw_is_on_now() {
+    // Claw is on the tiger's left: the front flip goes left, to a landing
+    // point 100 px away, and goes on while Claw stays ahead of it.
+    let (mut sim, id) = tiger_beside_claw();
+    sim.with_world(|w| {
+        tiger_guard::enter_front_flip(w, id, true);
+        tiger_guard::front_flip_tick(w, id);
+    });
+    let o = sim.objects().get(id).unwrap();
+    assert_eq!(EnemyState::from_id(o.state), Some(EnemyState::FrontFlip));
+    assert!(o.flags & flags::NO_COLLIDE != 0);
+    // Once Claw is behind it, the tiger has passed its landing point as
+    // seen from his side: the flip ends at once, its slash starts and the
+    // tiger can be touched again.
+    sim.with_world(|w| {
+        enemy::data_mut(w, id).unwrap().claw_right = true;
+        tiger_guard::front_flip_tick(w, id);
+    });
+    let o = sim.objects().get(id).unwrap();
+    assert_ne!(EnemyState::from_id(o.state), Some(EnemyState::FrontFlip));
+    assert!(o.flags & flags::NO_COLLIDE == 0);
+    // The back flip goes away from Claw and ends once it is past its
+    // landing point away from the side he is on now.
+    let (mut sim, id) = tiger_beside_claw();
+    sim.with_world(|w| {
+        tiger_guard::enter_back_flip(w, id);
+        tiger_guard::back_flip_tick(w, id);
+    });
+    let o = sim.objects().get(id).unwrap();
+    assert_eq!(EnemyState::from_id(o.state), Some(EnemyState::BackFlip));
+    sim.with_world(|w| {
+        enemy::data_mut(w, id).unwrap().claw_right = true;
+        tiger_guard::back_flip_tick(w, id);
+    });
+    let o = sim.objects().get(id).unwrap();
+    assert_ne!(EnemyState::from_id(o.state), Some(EnemyState::BackFlip));
+}
+
+#[test]
 fn a_tiger_is_built_with_the_shared_human_boxes_and_its_records_colour() {
     let (sim, id) = tiger_beside_claw();
     let o = sim.objects().get(id).unwrap();
