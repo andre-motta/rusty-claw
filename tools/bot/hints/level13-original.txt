@@ -300,11 +300,15 @@
 # level13-introskip.csv: stretches 1 to 30 as above, then:
 # 31s. Through the door with the jump-in that skips RedTail's
 #    introduction (he stays in his start-up pose on his ledge, and his
-#    touch still hurts), up the peg onto his ledge, his fight and his gem:
-#    the level's end, no goal and no waypoints, with --intro skip. Beaten
-#    on his ledge, he jumps down to die on the sand; struck down in the
-#    middle of a leap instead, he lands with no death to come and fights on
-#    with no health left until another blow brings it.
+#    touch still hurts), his fight and his gem: the level's end, no goal
+#    and no waypoints, with --intro skip. In a game played from the
+#    level's start his blow count is already past its limit, so the jump
+#    slash that reaches him on his ledge (route tick 13322) does him no
+#    harm and only sends him home; he then leaps down to the sand, where
+#    Claw beats him. The route keeps the rows before tick 13322 and was
+#    searched again from there. Struck down in the middle of a leap
+#    instead, he lands with no death to come and fights on with no health
+#    left until another blow brings it.
 #
 # level12-original.level13.csv: the same rows as level13-original.csv,
 # with --carry naming the progress level12-original.csv ends with (its
