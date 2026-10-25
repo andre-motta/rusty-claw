@@ -633,9 +633,13 @@ of toggle pegs over the water whose pegs come out one at a time, not in
 order across; the two columns of pegs that are out only part of their
 cycle, climbed within one of their out phases; and the water rock at the
 foot of the shaft below the door, whose throw lands Claw on a peg of one
-of the shaft's three ways up as that way comes out. RedTail takes 5 of
-his 100 health from each blow, and every third blow that finds him free
-sends him leaping to the other level of his arena instead;
+of the shaft's three ways up as that way comes out (the pegs keep the
+level's clock, so `level13-original.csv` waits a few seconds on a quiet
+ledge on its way there to meet the way its climb fits). RedTail takes 5 of
+his 100 health from each blow, and blows that find him free send him
+leaping to the other level of his arena instead: every third once his
+introduction has played, and the second and every third after it when
+the jump-in skipped it;
 `level13-original.csv` and `level13.csv` sit through his introduction
 and beat him on the sand, `level13-introskip.csv` jumps in and beats him
 on his ledge, from which he jumps down to die on the sand, and each

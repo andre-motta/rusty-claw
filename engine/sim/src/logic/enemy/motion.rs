@@ -356,7 +356,13 @@ fn step(w: &mut World, id: ObjectId, d: &mut EnemyData) -> Option<DeathKind> {
     }
     let death = after_tiles(w, id, d, r, before_x);
     if now == ptype::STAND && d.ledge_guard && !d.stationary {
-        let moved = f64::from(x) + d.carry.0 - p0.0;
+        // A position the logic wrote (a teleport) is where the step
+        // starts, not a step: only the move made from there counts.
+        // Clamped, blocked and riding steps still count their whole move;
+        // whether the guard should look only at the speed's share of those
+        // too is left open, since no known run depends on it.
+        let from_x = if jump.is_some() { start_x } else { p0.0 };
+        let moved = f64::from(x) + d.carry.0 - from_x;
         let before = Before {
             x: before_x,
             y: y0,
@@ -511,6 +517,7 @@ fn collide(w: &mut World, id: ObjectId, tx: i32, ty: i32, tiles_only: bool) -> u
     let c = Collider {
         map: &w.level.map,
         platforms: &[],
+        below: None,
         step: w.tuning.physics.step,
     };
     match w.objects.get_mut(id) {

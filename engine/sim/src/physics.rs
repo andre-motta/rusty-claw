@@ -109,6 +109,11 @@ pub struct Collider<'a> {
     pub map: &'a TileMap,
     /// Platform objects in list order.
     pub platforms: &'a [Platform],
+    /// The platform the moving object stands on when it is not among
+    /// `platforms` (it no longer updates). Standing on a platform asks only
+    /// where its surface is, so the ride goes on; landing looks only among
+    /// `platforms`.
+    pub below: Option<Platform>,
     /// Largest step per axis.
     pub step: i32,
 }
@@ -119,6 +124,7 @@ impl<'a> Collider<'a> {
         Collider {
             map,
             platforms: &[],
+            below: None,
             step: 14,
         }
     }
@@ -539,7 +545,8 @@ fn ride_check(c: &Collider, o: &Object, tx: i32, ty: i32, mask: u32) -> bool {
     let Some(below) = o.object_below else {
         return false;
     };
-    let Some(p) = c.platforms.iter().find(|p| p.id == below) else {
+    let listed = c.platforms.iter().find(|p| p.id == below).copied();
+    let Some(p) = listed.or(c.below.filter(|p| p.id == below)) else {
         return false;
     };
     if !p.hit_rect.is_set() {
@@ -682,6 +689,7 @@ mod tests {
         let c = Collider {
             map: &map,
             platforms: &platforms,
+            below: None,
             step: 14,
         };
         let mut o = body(100, 130, ptype::FALL);
@@ -696,5 +704,40 @@ mod tests {
         assert_eq!(o.physics_type, ptype::STAND);
         physics(&c, &mut o, 102, y, 0);
         assert_eq!(o.physics_type, ptype::FALL);
+    }
+
+    #[test]
+    fn riders_keep_a_platform_that_no_longer_updates() {
+        let map = TileMap::from_ascii(64, &["....", "....", "....", "...."]);
+        let plat = Platform {
+            id: 7,
+            x: 100,
+            y: 200,
+            hit_rect: Rect::new(-40, 0, 40, 10),
+            move_x: 0,
+            move_y: 0,
+        };
+        let mut o = body(100, 200 - 60 - 1, ptype::STAND);
+        o.object_below = Some(7);
+        o.flags |= flags::ON_ELEVATOR;
+        let y = o.y;
+        // Off the list and not given as the ridden platform: the rider
+        // falls.
+        let mut gone = o.clone();
+        physics(&Collider::new(&map), &mut gone, 102, y, opt::PLATFORMS);
+        assert_eq!(gone.physics_type, ptype::FALL);
+        // Off the list but still below it: the ride goes on.
+        let c = Collider {
+            below: Some(plat),
+            ..Collider::new(&map)
+        };
+        physics(&c, &mut o, 102, y, opt::PLATFORMS);
+        assert_eq!(o.physics_type, ptype::STAND);
+        assert_eq!(o.y, y);
+        // It is never landed on.
+        let mut faller = body(100, 130, ptype::FALL);
+        physics(&c, &mut faller, 100, 142, opt::PLATFORMS);
+        assert_eq!(faller.object_below, None);
+        assert_eq!(faller.y, 142);
     }
 }

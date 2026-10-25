@@ -424,6 +424,9 @@ pub enum Later {
     HopBack,
 }
 
+/// The attack ([`RedTailData::pending`]) that is his death.
+pub const DEATH_ATTACK: u8 = 6;
+
 /// RedTail's data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RedTailData {
@@ -984,7 +987,7 @@ pub fn do_attack(w: &mut World, id: ObjectId, p: u8) {
         3 => knives_entry(w, id),
         4 => slide_entry(w, id),
         5 => kick_entry(w, id),
-        6 => die(w, id),
+        DEATH_ATTACK => die(w, id),
         _ => go_home(w, id),
     }
 }
@@ -1474,7 +1477,7 @@ pub fn block_tick(w: &mut World, id: ObjectId) {
 /// fall, busy, hurting nothing and safe from every hit.
 pub fn die(w: &mut World, id: ObjectId) {
     if !redtail_low(w, id) {
-        enter_jump_down(w, id, 6);
+        enter_jump_down(w, id, DEATH_ATTACK);
         return;
     }
     set_state(w, id, EnemyState::Dead);

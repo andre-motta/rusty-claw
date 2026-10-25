@@ -465,12 +465,15 @@ impl World<'_> {
             .into_iter()
             .filter(|p| p.id != id)
             .collect();
+        let below = self.objects.get(id).and_then(|o| o.object_below);
+        let below = crate::sim::unlisted_below(self.objects, below, &platforms);
         let Some(o) = self.objects.get_mut(id) else {
             return 0;
         };
         let c = Collider {
             map: &self.level.map,
             platforms: &platforms,
+            below,
             step: self.tuning.physics.step,
         };
         physics::physics(&c, o, tx, ty, mask)

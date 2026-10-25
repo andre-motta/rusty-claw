@@ -518,9 +518,11 @@ impl Ctx<'_> {
     }
 
     fn physics(&mut self, tx: i32, ty: i32, mask: u32) -> u32 {
+        let below = crate::sim::unlisted_below(self.objects, self.o.object_below, self.platforms);
         let c = Collider {
             map: &self.level.map,
             platforms: self.platforms,
+            below,
             step: self.t.physics.step,
         };
         physics::physics(&c, self.o, tx, ty, mask)

@@ -1,7 +1,8 @@
 //! The search in the thirteenth level's boss room on your own install
 //! (skipped without `CLAW_INSTALL`): RedTail is read as the boss whose
-//! gem ends the level, and once beaten on his ledge he is on his way to
-//! his gem. Nothing from an install is stored in the repository.
+//! gem ends the level, once beaten on his ledge he is on his way to his
+//! gem, and struck down in the middle of a leap he fights on beaten.
+//! Nothing from an install is stored in the repository.
 
 use std::path::PathBuf;
 
@@ -126,4 +127,58 @@ fn install_level13_redtail_beaten_on_his_ledge_is_on_his_way_to_his_gem() {
         hold(&mut sim, &mut prev_mask, 0, 1);
     }
     assert!(sim.boss().defeated().is_some(), "his gem rises");
+}
+
+#[test]
+fn install_level13_redtail_struck_down_in_a_leap_fights_on_beaten() {
+    let Some(level) = level13() else { return };
+    // RedTail starts the fight with 10 health: two damaging blows beat
+    // him. After the jump-in his blow count starts at 1, so the second
+    // blow sends him leaping instead of hurting him.
+    let mut sim = beside_the_door_with(level, Some(10));
+    let mut prev = 0;
+    let (right, jump, attack) = (Buttons::RIGHT.0, Buttons::JUMP.0, Buttons::ATTACK.0);
+    // The jump-in, up onto his ledge, the first blow (he keeps 5), the
+    // second (he leaps away and back), and the third as he leaps back up
+    // (blows 55 to 66 ticks after the second land in that leap).
+    for (mask, ticks) in [
+        (0, 15),
+        (right, 15),
+        (right | jump, 20),
+        (jump, 2),
+        (0, 98),
+        (jump, 14),
+        (0, 21),
+        (right | jump, 14),
+        (right, 11),
+        (0, 15),
+        (attack, 2),
+        (0, 10),
+    ] {
+        hold(&mut sim, &mut prev, mask, ticks);
+    }
+    assert_eq!(boss_beaten(&sim), None, "the first blow leaves him health");
+    hold(&mut sim, &mut prev, 0, 21);
+    hold(&mut sim, &mut prev, attack, 2);
+    hold(&mut sim, &mut prev, 0, 61);
+    assert_eq!(boss_beaten(&sim), None, "the second blow sends him leaping");
+    hold(&mut sim, &mut prev, attack, 2);
+    // Struck down in the air, he lands with no death to come and fights
+    // on with no health left.
+    let mut beaten_at = None;
+    for t in 0..40 {
+        if boss_beaten(&sim) == Some(false) {
+            beaten_at = Some(t);
+            break;
+        }
+        hold(&mut sim, &mut prev, 0, 1);
+    }
+    assert!(beaten_at.is_some(), "the third blow strikes him down");
+    hold(&mut sim, &mut prev, 0, 150);
+    assert_eq!(boss_beaten(&sim), Some(false), "he fights on beaten");
+    let boss = sim.boss();
+    let id = boss.current().expect("RedTail is in play");
+    let redtail = sim.objects().get(id).expect("RedTail");
+    assert!(redtail.health <= 0, "beaten, health {}", redtail.health);
+    assert_eq!(boss.defeated(), None, "no gem rises");
 }
