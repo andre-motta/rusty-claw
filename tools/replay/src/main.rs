@@ -10,6 +10,10 @@
 //!             [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]]
 //!             [--crabs FILE | --crab-variant N] [--expect-complete]
 //!             [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
+//!             [--carry-out FILE]
+//! claw-replay --install PATH --script ROUTE.csv --next ROUTE.csv [--next ROUTE.csv ...]
+//!             [--trace OUT.csv] [--res WxH] [--aspect pillarbox|frozen|widened]
+//!             [--expect-complete] [--carry-out FILE]
 //! ```
 //!
 //! The script has the columns `tick,held_mask,pressed_mask`, one row per
@@ -159,10 +163,40 @@
 //! store's start point and random state stand in for `--start` and
 //! `--seed` when those are not given ([`StoreStart`]).
 //!
+//! `--carry-out FILE` writes the progress the level hands on to the next
+//! one in one game, as the `# start_score = ...` lines a route of that
+//! level starts with (see [`hands_on`]); nothing is written when the level
+//! did not end.
+//!
+//! `--next ROUTE.csv`, once or more, plays a chain: one game through every
+//! booty screen. The script's level is played first, then each `--next`
+//! route in turn as the level after the previous one (its `# level` line
+//! names that level, and every route names the same tuning). Each level
+//! is played as a route of it alone is played (with its own seed, mid-air
+//! hit jump fix, switches, crab values and `@` lines), but it starts with
+//! the progress the previous level hands on ([`hands_on`]), as the game's
+//! flow starts it after the booty screen; when the route's own
+//! `# start_...` lines name other progress, the run says so, prints the
+//! lines the game carries in and counts it as a divergence. A level that
+//! does not end stops the chain there. A chain is plain play: the
+//! options that change one level only (`--level`, `--custom`, `--seed`,
+//! `--tuning`, `--start`, `--checkpoint`, `--logics`, `--mid-air-hit-fix`,
+//! the play-test aids, the crab options and `--compare`) are refused with
+//! it, and so are a route's diagnostic set-ups (`# checkpoint`, `# health`,
+//! `# boss_health`) and play-test aids. `--trace OUT.csv` writes one trace
+//! per level, the first level's to OUT.csv and level N's to
+//! OUT.levelN.csv, as a recorded game names its route files, so each
+//! level's part can be compared with a reference trace of that level;
+//! `--carry-out` writes what the chain's last level hands on. Each level's
+//! summary gives its end tick, health, score, lives and deaths, and the
+//! deaths other than its route's End Life commands are counted as a
+//! divergence.
+//!
 //! Exit status: 0 when everything passed, 1 on a divergence, 2 on a usage
-//! or input error, 3 when `--expect-complete` saw no level end.
+//! or input error, 3 when `--expect-complete` saw no level end (or a level
+//! of a chain did not end).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use claw_assets::{Install, LevelData, LevelSource, Source};
@@ -171,19 +205,24 @@ use claw_sim::input::{
     DirectiveKind, ScriptCommand, ScriptTuning, script_checkpoint, script_health,
 };
 use claw_sim::logic::enemy::crab::CrabValues;
+use claw_sim::player::hit::MAX_LIVES;
 use claw_sim::player::powerup_aid::AidPowerup;
-use claw_sim::player::progress::parse_start_lines;
+use claw_sim::player::progress::{parse_start_lines, start_lines};
 use claw_sim::rng::Rng;
 use claw_sim::trace::{self, Tolerances, TraceRow};
 use claw_sim::tuning::{FuseClock, PlayAids, TICK_MS};
-use claw_sim::{InputScript, Sim, SimConfig, SimLevel, StartState};
+use claw_sim::{Carry, InputScript, Sim, SimConfig, SimLevel, StartState};
 
 const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FILE.WWD] \
 --script ROUTE.csv [--trace OUT.csv] [--tuning default|original] [--seed N] [--res WxH] \
 [--aspect pillarbox|frozen|widened] [--start X,Y] [--checkpoint X,Y] [--logics on|off] \
 [--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]] \
 [--crabs FILE | --crab-variant N] [--expect-complete] \
-[--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
+[--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]] [--carry-out FILE]
+   or: claw-replay --install PATH --script ROUTE.csv --next ROUTE.csv [--next ROUTE.csv ...] \
+[--trace OUT.csv] [--res WxH] [--aspect pillarbox|frozen|widened] [--expect-complete] [--carry-out FILE]
+--next: the routes of the next levels of one game, played through every booty screen, each \
+level starting with the progress the previous one hands on; --trace writes OUT.csv and OUT.levelN.csv
 the script's @ lines play as in the game: a help screen's return runs its update pass, the in-game menu's frames and an End Life's move the frame pulse, a screen latches the keys down, a pause latches none, a command acts before its tick; `# fuse_clock = frozen` runs no help return pass and moves no frame pulse, and `# pause_input` other than original is refused
 --crabs FILE: one entry per line, `crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` or `nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` (STATIONARY 1 or 0, 0 when left out)";
 
@@ -314,6 +353,8 @@ struct Args {
     compare: Option<PathBuf>,
     tolerance: Option<String>,
     report: Option<PathBuf>,
+    next: Vec<PathBuf>,
+    carry_out: Option<PathBuf>,
 }
 
 fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -415,6 +456,8 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
             "--compare" => a.compare = Some(PathBuf::from(value()?)),
             "--tolerance" => a.tolerance = Some(value()?),
             "--report" => a.report = Some(PathBuf::from(value()?)),
+            "--next" => a.next.push(PathBuf::from(value()?)),
+            "--carry-out" => a.carry_out = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
     }
@@ -428,6 +471,30 @@ fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         return Err(format!(
             "--crabs and --crab-variant do not go together\n{USAGE}"
         ));
+    }
+    if !a.next.is_empty() {
+        let refused = [
+            ("--level", a.level.is_some()),
+            ("--custom", a.custom.is_some()),
+            ("--seed", a.seed.is_some()),
+            ("--tuning", a.tuning.is_some()),
+            ("--start", a.start.is_some()),
+            ("--checkpoint", a.checkpoint.is_some()),
+            ("--logics", a.logics.is_some()),
+            ("--mid-air-hit-fix", a.mid_air_hit_fix.is_some()),
+            ("--invincible", a.aids.invincible),
+            ("--infinite-lives", a.aids.infinite_lives),
+            ("--powerup", a.powerup.is_some()),
+            ("--crabs", a.crabs.is_some()),
+            ("--crab-variant", a.crab_variant.is_some()),
+            ("--compare", a.compare.is_some()),
+        ];
+        if let Some((flag, _)) = refused.iter().find(|(_, given)| *given) {
+            return Err(format!(
+                "{flag} does not go with --next: each level of a chain plays as its route \
+                 names\n{USAGE}"
+            ));
+        }
     }
     Ok(a)
 }
@@ -763,6 +830,10 @@ fn run(args: Args) -> Result<Outcome, String> {
         );
     }
 
+    if let Some(path) = &args.carry_out {
+        write_carry(path, completed.then(|| hands_on(&sim)))?;
+    }
+
     let mut outcome = Outcome::default();
     if let (Some(ref_path), Some(tol)) = (&args.compare, &tolerances) {
         let ref_text = std::fs::read_to_string(ref_path)
@@ -865,8 +936,280 @@ fn crab_values(
     }
 }
 
+/// What a won level hands on to the next level of one game, as the
+/// game's flow carries it through the booty screen: Claw's progress at
+/// the level's end (play stops in the tick the level is won, see
+/// [`Sim::level_ended`]), with one more life when the tally was perfect
+/// (every treasure row collected everything the level holds of its kind)
+/// and Claw has fewer than the most lives.
+pub fn hands_on(sim: &Sim) -> Carry {
+    let mut carry = sim.carry();
+    let collected = sim.stats().treasure_level;
+    let census = sim.treasure_census();
+    let perfect = collected.iter().zip(census).all(|(&c, n)| c >= n);
+    if perfect && carry.lives < MAX_LIVES {
+        carry.lives += 1;
+    }
+    carry
+}
+
+/// Writes the start lines of `carry` to `path` for `--carry-out`, or says
+/// why nothing was written.
+fn write_carry(path: &Path, carry: Option<Carry>) -> Result<(), String> {
+    match carry {
+        Some(c) => {
+            std::fs::write(path, start_lines(&c))
+                .map_err(|e| format!("writing {}: {e}", path.display()))?;
+            eprintln!(
+                "claw-replay: the progress handed on to the next level written to {}",
+                path.display()
+            );
+        }
+        None => eprintln!(
+            "claw-replay: the level did not end, so nothing is handed on and {} was not written",
+            path.display()
+        ),
+    }
+    Ok(())
+}
+
+/// The trace file of level `level` of a chain whose first level's trace
+/// is `base`: `base` itself for the first level, `<stem>.level<N>.csv`
+/// beside it after it.
+fn chain_trace_path(base: &Path, level: u32, first: bool) -> PathBuf {
+    if first {
+        return base.to_path_buf();
+    }
+    let stem = base
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    base.with_file_name(format!("{stem}.level{level}.csv"))
+}
+
+/// One level of a chain, played from its route.
+struct ChainPart {
+    level: u32,
+    tuning: Option<ScriptTuning>,
+    rows: Vec<TraceRow>,
+    /// The tick the level was won.
+    won_at: Option<usize>,
+    /// Claw's deaths.
+    deaths: usize,
+    /// The route's End Life commands (the deaths it gives up on purpose).
+    end_lives: usize,
+    hands_on: Carry,
+}
+
+/// Plays the route `path` as one level of a chain: as a replay of it alone
+/// plays it, but from the progress `carry` (none for a new game).
+fn play_part(
+    store: &claw_assets::AssetStore,
+    path: &Path,
+    text: &str,
+    carry: Option<Carry>,
+    view: ViewConfig,
+) -> Result<ChainPart, String> {
+    let named = |e: String| format!("{}: {e}", path.display());
+    let named_err = |e: claw_sim::input::ScriptError| named(e.to_string());
+    let script = InputScript::parse_with_aids(text).map_err(named_err)?;
+    let header = script.header;
+    let powerup_commands = script
+        .directives()
+        .iter()
+        .any(|d| matches!(d.kind, DirectiveKind::Command(ScriptCommand::Powerup(_))));
+    if header.any_aid() || powerup_commands {
+        return Err(named(
+            "a chain is plain play, and the route was played with a play-test aid".to_string(),
+        ));
+    }
+    if script_checkpoint(text).map_err(named)?.is_some()
+        || script_health(text).map_err(named)?.is_some()
+        || claw_sim::input::script_boss_health(text)
+            .map_err(named)?
+            .is_some()
+    {
+        return Err(named(
+            "a chain is plain play, and the route names a diagnostic set-up \
+             (`# checkpoint`, `# health` or `# boss_health`)"
+                .to_string(),
+        ));
+    }
+    let level = header
+        .level
+        .ok_or_else(|| named("the route of a chain names its level (`# level N`)".to_string()))?;
+    let crabs =
+        CrabValues::from_header(text).map_err(|e| named(format!("the crab values: {e}")))?;
+    let mut cfg = SimConfig::for_view(view);
+    if let Some(tuning) = header.tuning {
+        cfg.tuning = tuning.tuning();
+    }
+    if let Some(seed) = header.seed {
+        cfg.seed = seed;
+    }
+    cfg.tuning.behaviour.fix_double_jump = script_behaviour(text).unwrap_or(false);
+    cfg.fuse_clock = script_switches(text).map_err(named)?;
+    let built = LevelData::build(store, LevelSource::Retail(level))
+        .map_err(|e| format!("loading level {level}: {e}"))?;
+    let sim_level =
+        SimLevel::from_level(&built, store).map_err(|e| format!("preparing level {level}: {e}"))?;
+    let mut sim = Sim::with_start(sim_level, cfg, StartState { carry, save: None });
+    crabs.apply(&mut sim);
+    let mut rows = Vec::with_capacity(script.ticks.len());
+    let mut won_at = None;
+    let mut deaths = 0;
+    let mut end_lives = 0;
+    let mut directives = script.directives().iter().peekable();
+    for (tick, &input) in script.ticks.iter().enumerate() {
+        while let Some(d) = directives.next_if(|d| d.tick <= tick) {
+            if d.kind == DirectiveKind::Command(ScriptCommand::EndLife) {
+                end_lives += 1;
+            }
+            sim.play_directive(&d.kind);
+        }
+        sim.step(input);
+        crabs.apply(&mut sim);
+        for e in sim.last_events() {
+            match e {
+                GameEvent::LevelComplete { .. } => {
+                    won_at.get_or_insert(tick);
+                }
+                GameEvent::ClawDied { .. } | GameEvent::GameOver => deaths += 1,
+                _ => {}
+            }
+        }
+        rows.push(TraceRow::capture(&sim, tick as u64, "script"));
+    }
+    Ok(ChainPart {
+        level,
+        tuning: header.tuning,
+        rows,
+        won_at,
+        deaths,
+        end_lives,
+        hands_on: hands_on(&sim),
+    })
+}
+
+/// Plays a chain of routes as one game through every booty screen (see
+/// the module documentation, `--next`).
+fn run_chain(args: Args) -> Result<Outcome, String> {
+    let install_path = args.install.ok_or(USAGE)?;
+    let first = args.script.ok_or(USAGE)?;
+    let mut view = ViewConfig::default();
+    if let Some((w, h)) = args.res {
+        view.render_width = w;
+        view.render_height = h;
+    }
+    if let Some(aspect) = args.aspect {
+        view.aspect_policy = aspect;
+    }
+    // Every route is read before anything is played.
+    let mut routes = Vec::new();
+    for path in std::iter::once(first).chain(args.next) {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("reading {}: {e}", path.display()))?;
+        routes.push((path, text));
+    }
+    let install = Install::open(&install_path)
+        .map_err(|e| format!("opening install {}: {e}", install_path.display()))?;
+    let store = install
+        .store()
+        .map_err(|e| format!("mounting assets: {e}"))?;
+    let mut outcome = Outcome::default();
+    let mut carried: Option<Carry> = None;
+    let mut previous: Option<(u32, Option<ScriptTuning>)> = None;
+    let mut last_hands_on = None;
+    for (i, (path, text)) in routes.iter().enumerate() {
+        let own = parse_start_lines(text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let carry = match &carried {
+            None => own,
+            Some(c) => {
+                if own.as_ref() != Some(c) {
+                    outcome.diverged = true;
+                    println!(
+                        "{}: the route starts with other progress than the game carries in; \
+                         the game carries in:\n{}",
+                        path.display(),
+                        start_lines(c).trim_end()
+                    );
+                }
+                Some(c.clone())
+            }
+        };
+        let part = play_part(&store, path, text, carry, view)?;
+        if let Some((level, tuning)) = previous {
+            if part.level != level + 1 {
+                return Err(format!(
+                    "{}: level {} does not follow level {level}",
+                    path.display(),
+                    part.level
+                ));
+            }
+            if part.tuning != tuning {
+                return Err(format!(
+                    "{}: one game has one tuning, and the route names another",
+                    path.display()
+                ));
+            }
+        }
+        if let Some(base) = &args.trace {
+            let out = chain_trace_path(base, part.level, i == 0);
+            std::fs::write(&out, trace::to_csv(&part.rows))
+                .map_err(|e| format!("writing {}: {e}", out.display()))?;
+        }
+        let end = part.rows.last();
+        let other_deaths = part.deaths.saturating_sub(part.end_lives);
+        if other_deaths > 0 {
+            outcome.diverged = true;
+        }
+        println!(
+            "level {} ({}): {} of {} ticks, health {}, score {}, lives {}, deaths {} ({} by End \
+             Life){}",
+            part.level,
+            path.display(),
+            part.won_at
+                .map(|t| format!("won at tick {t}"))
+                .unwrap_or_else(|| "not won".to_string()),
+            part.rows.len(),
+            end.map_or(0, |r| r.health),
+            end.map_or(0, |r| r.score),
+            end.map_or(0, |r| r.lives),
+            part.deaths,
+            part.end_lives.min(part.deaths),
+            if other_deaths > 0 {
+                format!("; {other_deaths} other death(s)")
+            } else {
+                String::new()
+            }
+        );
+        if part.won_at.is_none() {
+            eprintln!(
+                "claw-replay: level {} was not completed, so the chain stops there",
+                part.level
+            );
+            outcome.incomplete = true;
+            last_hands_on = None;
+            break;
+        }
+        previous = Some((part.level, part.tuning));
+        carried = Some(part.hands_on.clone());
+        last_hands_on = Some(part.hands_on);
+    }
+    if let Some(path) = &args.carry_out {
+        write_carry(path, last_hands_on)?;
+    }
+    Ok(outcome)
+}
+
 fn main() -> ExitCode {
-    let result = parse_args(std::env::args().skip(1)).and_then(run);
+    let result = parse_args(std::env::args().skip(1)).and_then(|a| {
+        if a.next.is_empty() {
+            run(a)
+        } else {
+            run_chain(a)
+        }
+    });
     match result {
         Ok(Outcome { diverged: true, .. }) => ExitCode::from(1),
         Ok(Outcome {
@@ -921,6 +1264,110 @@ mod tests {
         assert!(args("--compare ref.csv").is_err(), "needs a tolerance");
         assert!(args("--tolerance exact").is_err(), "needs a reference");
         assert!(args("--report out.txt").is_err(), "needs a reference");
+    }
+
+    #[test]
+    fn a_chain_takes_its_routes_and_refuses_the_options_of_one_level() {
+        let a = args(
+            "--install /i --script a.csv --next b.csv --next c.csv --trace t.csv \
+             --carry-out c.txt --expect-complete --res 640x480",
+        )
+        .unwrap();
+        assert_eq!(a.next, vec![PathBuf::from("b.csv"), PathBuf::from("c.csv")]);
+        assert_eq!(a.carry_out, Some(PathBuf::from("c.txt")));
+        for extra in [
+            "--level 2",
+            "--seed 7",
+            "--tuning original",
+            "--start 1,2",
+            "--checkpoint 1,2",
+            "--logics off",
+            "--mid-air-hit-fix on",
+            "--invincible",
+            "--infinite-lives",
+            "--powerup fire",
+            "--crabs f.txt",
+            "--crab-variant 1",
+            "--compare r.csv --tolerance exact",
+        ] {
+            let e = args(&format!("--install /i --script a.csv --next b.csv {extra}")).unwrap_err();
+            assert!(e.contains("does not go with --next"), "{extra}: {e}");
+            assert!(
+                args(&format!("--install /i --script a.csv {extra}")).is_ok(),
+                "{extra} alone"
+            );
+        }
+        // The carried progress is written for one level too.
+        assert!(args("--install /i --script a.csv --carry-out c.txt").is_ok());
+    }
+
+    #[test]
+    fn a_chain_writes_one_trace_per_level_as_a_recorded_game_names_its_files() {
+        let base = Path::new("out/game.csv");
+        assert_eq!(
+            chain_trace_path(base, 1, true),
+            PathBuf::from("out/game.csv")
+        );
+        assert_eq!(
+            chain_trace_path(base, 2, false),
+            PathBuf::from("out/game.level2.csv")
+        );
+        assert_eq!(
+            chain_trace_path(Path::new("game.csv"), 14, false),
+            PathBuf::from("game.level14.csv")
+        );
+    }
+
+    #[test]
+    fn a_level_hands_on_its_progress_and_a_perfect_tallys_extra_life() {
+        use claw_sim::{SimConfig, TileMap};
+        let mut rows = vec![".".repeat(40); 15];
+        rows.push("#".repeat(40));
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let level = SimLevel::synthetic(TileMap::from_ascii(64, &rows), (300, 880));
+        let lines = "# start_score = 99700\n# start_health = 35\n# start_lives = 7\n\
+                     # start_pistol = 4\n# start_magic = 5\n# start_dynamite = 3\n\
+                     # start_weapon = pistol\n# start_treasure_game = 87, 0, 4, 4, 3, 0, 6, 0, 0\n";
+        let carry = parse_start_lines(lines).unwrap().unwrap();
+        let sim = Sim::with_start(
+            level.clone(),
+            SimConfig::default(),
+            StartState {
+                carry: Some(carry.clone()),
+                save: None,
+            },
+        );
+        // A level with no treasure: the tally is perfect (every row
+        // collected all of its kind), so one more life goes with Claw.
+        assert_eq!(
+            sim.treasure_census(),
+            [0; claw_sim::player::stats::TREASURE_KINDS]
+        );
+        let out = hands_on(&sim);
+        assert_eq!(out.lives, carry.lives + 1);
+        assert_eq!(
+            Carry {
+                lives: carry.lives,
+                ..out.clone()
+            },
+            carry,
+            "the rest is the progress as it is"
+        );
+        assert_eq!(parse_start_lines(&start_lines(&out)).unwrap(), Some(out));
+        // Never more than the most lives.
+        let full = Carry {
+            lives: MAX_LIVES,
+            ..carry
+        };
+        let sim = Sim::with_start(
+            level,
+            SimConfig::default(),
+            StartState {
+                carry: Some(full.clone()),
+                save: None,
+            },
+        );
+        assert_eq!(hands_on(&sim).lives, MAX_LIVES);
     }
 
     #[test]

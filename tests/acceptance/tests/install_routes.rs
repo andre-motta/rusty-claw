@@ -54,6 +54,18 @@
 //! that level too; twice, with the same traces. Each level's crabs start
 //! with the values its file gives them. After the last level's booty
 //! screen the game goes on to its end, not to another level.
+//!
+//! The folder `routes/game/` holds one game from LEVEL1 on, a level after
+//! another up to LEVEL14, as a recorded game names its files:
+//! `level1-original.csv` (the same file as `routes/level1-original.csv`)
+//! and `level1-original.level<N>.csv` for every later level, each starting
+//! with the progress the game's level before it ends with. Its routes are
+//! checked as every other route is (a copy of a route already checked is
+//! not checked twice), and the game is played once through the game's
+//! flow, through every booty screen: each level starts with the progress
+//! its file names, is won with no death but its End Life's, and plays as
+//! its route alone plays; after the last level's booty screen the next
+//! level comes, or the credits after LEVEL14.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -82,6 +94,7 @@ use claw_sim::{DirectiveKind, InputScript, Sim, SimConfig, StartState, Tuning};
 use claw_ui::menu::MenuInput;
 use claw_ui::menu::draw::FontArt;
 use claw_ui::screens::booty::{BootyArt, BootyScreen};
+use claw_ui::screens::credits::{CreditsArt, CreditsScreen, FontMetrics};
 use tempfile::TempDir;
 
 /// The game's last level: its booty screen leads to the game's end.
@@ -159,9 +172,46 @@ fn routes_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("routes")
 }
 
+/// The folder of the whole game, one route per level.
+fn game_dir() -> PathBuf {
+    routes_dir().join("game")
+}
+
+/// The name of the whole game's first route; level N's is
+/// `<stem>.level<N>.csv`.
+const GAME_FIRST: &str = "level1-original.csv";
+
 fn routes() -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = std::fs::read_dir(routes_dir())
-        .expect("the routes folder")
+    csv_files(&routes_dir())
+}
+
+/// The routes of the whole game, by level: [`GAME_FIRST`] for the first
+/// and `<stem>.level<N>.csv` for each later level N.
+fn game_routes() -> Vec<(u32, PathBuf)> {
+    let stem = GAME_FIRST.strip_suffix(".csv").unwrap();
+    let mut out: Vec<(u32, PathBuf)> = csv_files(&game_dir())
+        .into_iter()
+        .map(|p| {
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            let n = if name == GAME_FIRST {
+                1
+            } else {
+                name.strip_prefix(&format!("{stem}.level"))
+                    .and_then(|r| r.strip_suffix(".csv"))
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or_else(|| panic!("game/{name}: not a level of the game's files"))
+            };
+            (n, p)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The `.csv` files of `dir`, sorted.
+fn csv_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
         .map(|e| e.expect("a folder entry").path())
         .filter(|p| p.extension().is_some_and(|e| e == "csv"))
         .collect();
@@ -300,10 +350,26 @@ fn through_the_door(end: Option<&BossEnd>, from: (i32, i32), to: (i32, i32)) -> 
 #[test]
 fn install_routes_win_the_same_way_every_time() {
     let Some(root) = install() else { return };
-    let files = routes();
+    let mut files = routes();
     assert!(!files.is_empty(), "no committed routes");
+    // The whole game's routes too, but a copy of a route checked above.
+    let texts: Vec<String> = files
+        .iter()
+        .map(|p| std::fs::read_to_string(p).expect("the route reads"))
+        .collect();
+    for (_, p) in game_routes() {
+        let text = std::fs::read_to_string(&p).expect("the route reads");
+        if !texts.contains(&text) {
+            files.push(p);
+        }
+    }
     for path in files {
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let name = match path.parent() {
+            Some(d) if d == game_dir() => {
+                format!("game/{}", path.file_name().unwrap().to_string_lossy())
+            }
+            _ => path.file_name().unwrap().to_string_lossy().into_owned(),
+        };
         let text = std::fs::read_to_string(&path).expect("the route reads");
         // A route is plain play: one played with a play-test aid is refused.
         let script = InputScript::parse(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -658,6 +724,11 @@ impl Game {
                     Effect::EndLevel => {
                         self.session = None;
                     }
+                    Effect::ShowCredits(entry) => {
+                        let art = CreditsArt::plain(FontMetrics::uniform(8));
+                        self.flow
+                            .set_credits(CreditsScreen::new(entry, "THE END\r\n", art));
+                    }
                     Effect::ShowBooty(stats) => {
                         let art = BootyArt {
                             map: (None, claw_assets::Palette::default()),
@@ -877,4 +948,140 @@ fn install_routes_play_one_game_through_the_booty_screen() {
             traces[0][1].1.len()
         );
     }
+}
+
+#[test]
+fn install_routes_play_the_whole_game_through_every_booty_screen() {
+    let Some(root) = install() else { return };
+    let files = game_routes();
+    let levels: Vec<u32> = files.iter().map(|(n, _)| *n).collect();
+    let last = *levels.last().expect("the game's folder holds its routes");
+    assert_eq!(
+        levels,
+        (1..=last).collect::<Vec<_>>(),
+        "the game's folder holds one route per level, from LEVEL1 on"
+    );
+    assert!(last <= LAST_LEVEL);
+    let first = std::fs::read_to_string(&files[0].1).expect("the route reads");
+    assert_eq!(
+        first,
+        std::fs::read_to_string(routes_dir().join(GAME_FIRST)).expect("the route reads"),
+        "game/{GAME_FIRST} is the first level's route"
+    );
+    let mut recs = BTreeMap::new();
+    let mut crabs = BTreeMap::new();
+    for (n, p) in &files {
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        let text = std::fs::read_to_string(p).expect("the route reads");
+        if let Err(e) = InputScript::parse(&text) {
+            panic!("game/{name}: {e}");
+        }
+        let h = header(&text);
+        assert_eq!(h.level, *n, "game/{name}: the level its name says");
+        assert!(
+            h.original,
+            "game/{name}: the game is played with the original tuning"
+        );
+        let rec = LevelRecording::parse(&text).expect("the route parses");
+        if *n == 1 {
+            assert!(rec.start == StartState::default(), "the game starts new");
+        } else {
+            assert!(
+                rec.start.carry.is_some(),
+                "game/{name}: the progress carried in"
+            );
+        }
+        recs.insert(*n, rec);
+        crabs.insert(
+            *n,
+            route::crab_values(&text)
+                .unwrap_or_else(|e| panic!("game/{name}: {e}"))
+                .0,
+        );
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let mut g = Game::new(&root, tmp.path(), recs.clone(), crabs.clone());
+    assert_eq!(g.flow.screen(), Screen::Play);
+    g.win_level();
+    for n in 2..=last {
+        g.next_level();
+        assert_eq!(g.flow.level(), Some(&LevelChoice::Retail(n)));
+        let (m, start) = g.started.last().unwrap().clone();
+        assert_eq!(m, n);
+        assert_eq!(
+            start, recs[&n].start,
+            "level {n}: the progress the flow carries in is its route's start"
+        );
+        g.win_level();
+    }
+    assert_eq!(g.flow.screen(), Screen::Booty);
+    assert_eq!(
+        g.won.iter().map(|w| w.0).collect::<Vec<_>>(),
+        levels,
+        "every level won, in order"
+    );
+    if last == LAST_LEVEL {
+        assert_eq!(
+            g.flow.next_level(),
+            None,
+            "no level after LEVEL{LAST_LEVEL}"
+        );
+        // Through the last booty screen to the credits.
+        for _ in 0..3 {
+            g.flow.menu_input(MenuInput::Confirm, false);
+            g.effects();
+        }
+        let mut guard = 0;
+        while g.flow.screen() != Screen::Credits {
+            g.run(100.0);
+            guard += 1;
+            assert!(guard < 200, "stuck at {:?}", g.flow.screen());
+        }
+    } else {
+        assert_eq!(
+            g.flow.next_level().map(|(l, _)| l),
+            Some(last + 1),
+            "the booty screen leads on"
+        );
+    }
+    // Each level as played in the game is its route played on its own.
+    for (level, trace) in &g.won {
+        let rec = &recs[level];
+        let choice = LevelChoice::Retail(*level);
+        let bundle = load_level(&root, &choice).unwrap();
+        let base = Settings::new(&root, choice);
+        let sim = start_level(
+            &bundle,
+            rec.sim_config(base.sim_config(base.res)),
+            &rec.start,
+        );
+        let s = replay_with_crabs(rec, sim, &crabs[level]);
+        let won = trace.len();
+        assert!(
+            s.trace().len() >= won,
+            "level {level}: the route runs past its win"
+        );
+        assert_eq!(
+            plain(&s.trace()[..won]),
+            plain(trace),
+            "level {level} plays as its route alone plays"
+        );
+        let end = trace.last().unwrap();
+        println!(
+            "level {level}: won in {won} ticks, health {}, score {}, lives {}, deaths {}",
+            end.health,
+            end.score,
+            end.lives,
+            g.deaths.get(level).copied().unwrap_or(0)
+        );
+    }
+    println!(
+        "one game, LEVEL1 to LEVEL{last}, through every booty screen{}",
+        if last == LAST_LEVEL {
+            " to the credits"
+        } else {
+            ""
+        }
+    );
 }

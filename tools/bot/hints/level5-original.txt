@@ -134,3 +134,17 @@
 #       447-481 0x2000000 right
 # 14. Down the shaft through its rows of breaking planks and along the
 #     floor to the gem: no goal.
+#
+# The fifth level of the whole game (tests/acceptance/routes/game/
+# level1-original.level5.csv) starts with the progress that game's fourth
+# level ends with (30 health). It keeps level4-original.level5.csv's rows
+# to route tick 2271, where Claw stands on the high ledge of stretch 3
+# with 15 health, and from there the bot searched again with --carry
+# naming its start lines: the rest of stretch 3 from tick 2272 (its last
+# two waypoints, --health-cost 40), stretches 4 to 6 (--health-cost 40),
+# then a wait with nothing held to route tick 5607, where the earlier
+# route's stretch 7 started (the toggling pegs on the level's clock),
+# stretches 7 to 12 from there (stretch 7 with the default health cost,
+# the others with --health-cost 25), a wait to route tick 10365 and
+# stretch 13 as written above for level4-original.level5.csv, and
+# stretch 14 from route tick 10848 (--health-cost 25).

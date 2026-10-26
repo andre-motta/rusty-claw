@@ -183,3 +183,22 @@
 #     (level7-original.level8.csv) plays level8-original.csv's inputs
 #     from the progress that game carries in; they win the level the
 #     same way.
+#
+# The eighth level of the whole game (tests/acceptance/routes/game/
+# level1-original.level8.csv) starts with the progress that game's
+# seventh level ends with: no pistol shots, so the earlier route's shot
+# at route tick 250 does not come. It keeps level7-original.level8.csv's
+# rows to route tick 185 and the bot searched again from there with
+# --carry naming its start lines: stretch 1 from tick 186, then from
+# route tick 840 to stretch 3's goal in one search, stretches 4 and 5a,
+# a wait on the first rope to route tick 4604 and stretch 5b as the
+# earlier route plays it (its ticks 4605 to 4778), stretch 5c with only
+# its last waypoint and --health-cost 6, stretches 6 to 13
+# (--health-cost 6), stretch 14 to route tick 13236, then from there to
+# the last waypoint before the Catnip (--tick-cost 3), a wait on the
+# ladder there to route tick 14016 and the earlier route's ticks 14017
+# to 14062 (the Catnip taken on the earlier route's tick, the ropes on
+# the level's clock as they were), stretch 15 from route tick 14063,
+# then the earlier route's ticks 15545 to 16461 (the door, the
+# introduction and the dynamite boost) from route tick 15562, and
+# Gabriel's fight searched from route tick 16479 with --intro play.
