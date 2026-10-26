@@ -701,8 +701,11 @@ introduction cannot be skipped; `level14-original.csv` ends a life there
 instead, with the in-game menu's End Life (its `@N command end_life`
 line) while the introduction freezes Claw: he comes back on the ladder
 top at full health with one life fewer, free long before the introduction
-would have let him go, and Omar is reset with him. That is the route's
-one death; every other route still wins with none. In the first phase of
+would have let him go, and Omar is reset with him. The menu's frames
+keep the enemies' rhythm going, so Omar's random choices after the End
+Life come on the original's beat; with this, both routes kept their rows
+through the respawn and Omar's fight after it was searched again. That
+is the route's one death; every other route still wins with none. In the first phase of
 the fight Omar stands on one of two ledges inside a turning ring of fire
 or ice that only a sword shot of the other element hurts, so the route
 fetches the ice sword to the right of the chamber and the fire sword to
