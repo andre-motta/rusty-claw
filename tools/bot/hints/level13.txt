@@ -150,34 +150,36 @@
 #       route ticks 6790 to 6846
 #                0-14  0x0 nothing
 #               15-56  0x2000000 right
-# 21. Along the ledge and down to the checkpoint: goal 19699,1993.
+# 21. Along the ledge and down to the checkpoint: goal 19699,1993,
+#    searched from route tick 6847.
 19000,1751
 19221,2007
 19400,1879
-# 22. Not searched: over the three ropes to the far shore:
-#       route ticks 7197 to 7843
-#                0-27  0x2000000 right
-#               28-94  0x0 nothing
-#              95-110  0x2000001 right and jump
-#             111-143  0x2000000 right
-#             144-256  0x0 nothing
-#             257-272  0x2000001 right and jump
-#             273-301  0x2000000 right
-#             302-518  0x0 nothing
-#             519-534  0x2000001 right and jump
-#             535-559  0x2000000 right
-#             560-610  0x0 nothing
-#             611-626  0x2000001 right and jump
-#             627-646  0x2000000 right
+# 22. Not searched: over the three ropes to the far shore (waits of 29
+#    to 31 ticks before the first rope work):
+#       route ticks 7239 to 7844
+#                0-23  0x2000000 right
+#               24-53  0x0 nothing
+#               54-69  0x2000001 right and jump
+#              70-102  0x2000000 right
+#             103-215  0x0 nothing
+#             216-231  0x2000001 right and jump
+#             232-260  0x2000000 right
+#             261-477  0x0 nothing
+#             478-493  0x2000001 right and jump
+#             494-518  0x2000000 right
+#             519-569  0x0 nothing
+#             570-585  0x2000001 right and jump
+#             586-605  0x2000000 right
 # 23. Onto the springboard and its throw onto the toggle pegs above the
 #    floor spikes: goal 21770,1483.
 21982,1923
 # 24. Along the ledge onto the springboard against the wall: goal
 #    21223,1412.
 # 25. Not searched: Claw bounces on the springboard until its throw meets
-#    the high toggle peg out, and is steered onto it (waits 180 to 213
+#    the high toggle peg out, and is steered onto it (waits 198 to 219
 #    land):
-#       route ticks 8289 to 8520
+#       route ticks 8290 to 8521
 #               0-198  0x0 nothing
 #             199-216  0x2000000 right
 #             217-231  0x0 nothing
@@ -193,14 +195,15 @@
 # 30. Onto the upper row of path elevators while it carries Claw toward
 #    the rope: goal 28400,3821.
 # 31. Not searched: onto the rope and off it onto the water rock at the
-#    foot of the shaft of springboards:
-#       route ticks 10618 to 10871
-#                0-70  0x0 nothing
-#               71-86  0x2000001 right and jump
-#              87-112  0x2000000 right
-#             113-210  0x0 nothing
-#             211-226  0x2000001 right and jump
-#             227-253  0x2000000 right
+#    foot of the shaft of springboards (waits of 49 to 51 ticks before
+#    the rope work):
+#       route ticks 10520 to 10752
+#                0-49  0x0 nothing
+#               50-65  0x2000001 right and jump
+#               66-91  0x2000000 right
+#              92-189  0x0 nothing
+#             190-205  0x2000001 right and jump
+#             206-232  0x2000000 right
 # 32. Up the shaft of springboards to the checkpoint: goal 29366,2249.
 29061,3494
 29184,3191
@@ -209,39 +212,34 @@
 # 33. To the checkpoint: no waypoints, goal 30811,2633.
 # 34. Onto the trigger elevator under the shaft of toggle pegs: goal
 #    32545,3316.
-# 35. Not searched: onto the water rock, whose throw lands Claw on the
-#    peg above it while that peg is out; two jumps on it let darts pass
-#    under him; when it slides in he falls back onto the rock and is thrown
-#    again until the peg of the first way up comes out over the rock and
-#    holds him; up that way before it slides in, each hop timed not to
-#    meet a dart, and onto the block beside the door (waits 0 to 22
-#    land):
-#       route ticks 12179 to 13625
-#                0-11  0x2000001 right and jump
-#               12-31  0x2000000 right
-#              32-399  0x0 nothing
-#             400-415  0x1 jump
-#             416-583  0x0 nothing
-#             584-599  0x1 jump
-#            600-1217  0x0 nothing
-#           1218-1229  0x2000001 right and jump
-#           1230-1244  0x0 nothing
-#           1245-1260  0x1000001 left and jump
-#           1261-1268  0x1000000 left
-#           1269-1275  0x0 nothing
-#           1276-1291  0x2000001 right and jump
-#           1292-1299  0x2000000 right
-#           1300-1304  0x0 nothing
-#           1305-1320  0x1 jump
-#           1321-1339  0x0 nothing
-#           1340-1347  0x1000001 left and jump
-#           1348-1359  0x1000000 left
-#           1360-1363  0x0 nothing
-#           1364-1379  0x2000001 right and jump
-#           1380-1387  0x2000000 right
-#           1388-1404  0x0 nothing
-#           1405-1420  0x2000001 right and jump
-#           1421-1444  0x2000000 right
-#           1445-1446  0x0 nothing
+# 35. Not searched: onto the water rock, whose first throw lands Claw on
+#    the peg of the first way up as that peg comes out and holds him; up
+#    that way before it slides in, each hop timed not to meet a dart, and
+#    onto the block beside the door (first waits of 0 to 9 ticks work,
+#    and 31 to 33):
+#       route ticks 12012 to 12341
+#                 0-3  0x0 nothing
+#                4-15  0x2000001 right and jump
+#               16-35  0x2000000 right
+#              36-106  0x0 nothing
+#             107-118  0x2000001 right and jump
+#             119-133  0x0 nothing
+#             134-149  0x1000001 left and jump
+#             150-157  0x1000000 left
+#             158-164  0x0 nothing
+#             165-180  0x2000001 right and jump
+#             181-188  0x2000000 right
+#             189-193  0x0 nothing
+#             194-209  0x1 jump
+#             210-228  0x0 nothing
+#             229-236  0x1000001 left and jump
+#             237-248  0x1000000 left
+#             249-252  0x0 nothing
+#             253-268  0x2000001 right and jump
+#             269-276  0x2000000 right
+#             277-292  0x0 nothing
+#             293-308  0x2000001 right and jump
+#             309-329  0x2000000 right
 # 36. Through the door, RedTail's introduction and his fight, and his
-#    gem: the level's end, no goal and no waypoints, with --intro play.
+#    gem: the level's end, no goal and no waypoints, with --intro play
+#    (40 minutes).

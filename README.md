@@ -668,6 +668,9 @@ land below him. An enemy that is hit shows a hit burst only when the
 last frame drew it, so a lizard hidden in that frame and showing itself
 in the tick a slash kills it gets none (nor the roll for the burst's
 size), and a burst already running ends once its enemy was not drawn.
+With this, `level14-original.csv` and `level13-original.level14.csv` were
+searched again from tick 7116, before such a lizard by the path elevator,
+and `level13.csv` from tick 6847, before another one on the island.
 The bot is
 led with waypoints up the climbs its coarse graph counts as easy. The
 crossings that need a timing it does not see are written into the route
@@ -680,7 +683,9 @@ comes by as Claw drops on to it, jumps in place on a toggle
 peg that wait for the pegs' cycle (five of them on the lowest peg of the
 climb, which bring the path elevator above it round in time), the climb
 of toggle pegs and that
-elevator, and three dynamite boosts, each a stick set off at
+elevator, a wait of ten seconds partway up the column past the second
+save point, until the elevators beside it come round to where its next
+jumps meet them, and three dynamite boosts, each a stick set off at
 Claw's side in mid-air by the time a help screen of three seconds is up
 (the `@N menu help 3000` lines), on to ledges no jump reaches. The warp
 drops Claw, falling, on the ladder top above the chamber, so his

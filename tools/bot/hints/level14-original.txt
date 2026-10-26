@@ -128,38 +128,41 @@
 #     15440,2462 (25 minutes) with the waypoint below.
 14950,2468
 # 16. To the second save point: goal 19892,3549 (40 minutes).
-# 17. Up the column of pegs to the checkpoint: goal 21232,1823. The
-#     search from route tick 9538 (25 minutes, then carried on from the
-#     root of its last segment for 20 minutes more) does not get there;
-#     the route waits one tick and then plays the rows an earlier search
-#     of this stretch found, from route tick 9539 to 10549, which meet the
-#     pegs' cycle at those ticks only, and the search takes it on from
-#     there to the goal.
-20640,2570
-20640,2312
-20640,2060
-20650,1950
+# 17. Up the column of pegs and elevators to the checkpoint, in pieces
+#     (a search from the save point to the checkpoint does not get there):
+#     goal 20822,2859 (20 minutes), then goal 20686,2563 (20 minutes);
+#     then, not searched, a wait there of 574 ticks (waits of 573 to 579
+#     work), as the search from route tick 10206 to the next goal does not
+#     find the elevators beside the column where its jumps need them
+#     (20 minutes); after the wait they come round to that phase; then
+#     goal 20645,2305, goal 20628,1943 and goal 21232,1823 (20, 20 and
+#     25 minutes):
+#       route ticks 10206 to 10779
+#          0-573  0x0 nothing
 # 18. On to the ledge before the row of elevators: goal 22312,2219
 #     (15 minutes) and, not searched, a walk of twelve ticks right; then,
 #     not searched, the ride along the row: a walk to the ledge's end,
 #     then on each elevator a wait for the next to come level and a jump
-#     on to it, to the ledge beyond:
-#       route ticks 10995 to 11008
+#     on to it, to the ledge beyond. The first two waits work together
+#     only at 196 to 198 and 304 to 306 ticks (a first wait of 104 to 106
+#     reaches the next elevator too, but no second wait leaves it), the
+#     third at 438 to 440:
+#       route ticks 11536 to 11549
 #          0-11  0x2000000 right
 #         12-13  0x0 nothing
-#       route ticks 11009 to 11056
+#       route ticks 11550 to 11597
 #          0-43  0x2000000 right
 #         44-47  0x0 nothing
-#       route ticks 11057 to 11200
-#         0-102  0x0 nothing
-#       103-116  0x2000001 right and jump
-#       117-122  0x2000000 right
-#       123-143  0x0 nothing
-#       route ticks 11201 to 11548
+#       route ticks 11598 to 11835
+#         0-196  0x0 nothing
+#       197-210  0x2000001 right and jump
+#       211-216  0x2000000 right
+#       217-237  0x0 nothing
+#       route ticks 11836 to 12183
 #         0-304  0x0 nothing
 #       305-318  0x2000001 right and jump
 #       319-347  0x2000000 right
-#       route ticks 11549 to 12038
+#       route ticks 12184 to 12673
 #         0-438  0x0 nothing
 #       439-444  0x2000000 right
 #       445-458  0x2000001 right and jump
@@ -169,9 +172,17 @@
 # 20. Past the two tiger guards and along the low passage on the far
 #     path elevator: goal 28165,2763 without --goal-on-foot (15 minutes,
 #     --fragile-cost 0; the nearer elevator stops short of the pegs); up
-#     the toggle pegs to the ledge: goal 28264,2285 (10 minutes,
-#     --fragile-cost 0); then up the column of toggle pegs to the last
-#     checkpoint: goal 28757,1437 (25 minutes, --fragile-cost 0).
+#     the toggle pegs to the ledge a peg at a time, each with
+#     --fragile-cost 0 (10 minutes each): goal 28248,2662, goal
+#     28260,2541 and goal 28260,2416; then, not searched, the jumps an
+#     earlier search found from the top peg on to the ledge:
+#       route ticks 14262 to 14311
+#          0-13  0x2000001 right and jump
+#         14-27  0x2000000 right
+#         28-29  0x1000001 left and jump
+#         30-49  0x1000000 left
+#     then up the column of toggle pegs to the last checkpoint: goal
+#     28757,1437 (25 minutes, --fragile-cost 0).
 28640,2120
 28450,1959
 27885,1817
@@ -180,10 +191,10 @@
 #     goal 31171,2317 without --goal-on-foot (--intro play, 40 minutes),
 #     a tick before the warp. Not searched: right held on through the
 #     warp, the in-game menu's End Life while the introduction freezes
-#     Claw on the ladder top (the route's `@15191 command end_life` line,
+#     Claw on the ladder top (the route's `@16025 command end_life` line,
 #     three ticks after he lands there), and a wait until he is back on the
 #     ladder top at full health:
-#       route ticks 15188 to 15289
+#       route ticks 16022 to 16123
 #           0-2  0x2000000 right
 #         3-101  0x0 nothing
 # 22. Omar's fight and his gem: the search for the level's end from the
