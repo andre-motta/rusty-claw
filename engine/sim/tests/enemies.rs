@@ -2426,6 +2426,40 @@ fn an_enemy_owns_its_hit_burst_and_gets_none_off_screen() {
 }
 
 #[test]
+fn a_hit_burst_needs_its_owner_drawn_in_the_last_frame() {
+    let mut sim = sim_with(arena(vec![record("Officer", 1080, 900)]), 5);
+    sim.step(TickInput::default());
+    let id = first(&sim, GameLogic::Officer);
+    let set_drawn = |sim: &mut Sim, drawn: bool| {
+        sim.with_world(|w| w.objects.get_mut(id).unwrap().drawn_last_frame = drawn);
+    };
+    let hit_once = |sim: &Sim, drawn: bool| {
+        let mut sim = sim.clone();
+        set_drawn(&mut sim, drawn);
+        let blow = attacker(&mut sim, types::PLAYER, 1, 0);
+        let before = sim.rng().state();
+        hit(&mut sim, id, blow, true, false);
+        (bursts(&sim).len(), draws_between(before, sim.rng().state()))
+    };
+    // In view now in both: only the last frame decides. Not drawn then
+    // (hidden, or out of view, as a lizard back from hiding is in the tick
+    // it shows itself), the hit makes the place's two draws and no burst.
+    let (shown, drawn_shown) = hit_once(&sim, true);
+    let (unshown, drawn_unshown) = hit_once(&sim, false);
+    assert_eq!((shown, unshown), (1, 0));
+    assert_eq!(drawn_unshown + 1, drawn_shown, "no size draw");
+    // A running burst ends at its next step once its owner was not drawn.
+    let blow = attacker(&mut sim, types::PLAYER, 1, 0);
+    hit(&mut sim, id, blow, true, false);
+    assert_eq!(bursts(&sim).len(), 1);
+    sim.with_world(|w| w.objects.get_mut(id).unwrap().draw_flags |= draw_flags::HIDDEN);
+    sim.step(TickInput::default());
+    assert!(!obj(&sim, id).drawn_last_frame, "hidden in that frame");
+    sim.step(TickInput::default());
+    assert!(bursts(&sim).is_empty(), "the burst is gone");
+}
+
+#[test]
 fn the_officer_has_seven_health_after_the_first_level() {
     let mut l = arena(vec![
         record("Officer", 1300, 900),

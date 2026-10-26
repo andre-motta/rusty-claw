@@ -1146,7 +1146,11 @@ fn jump_hold_update(c: &mut Ctx) {
         return;
     }
     let tp = &c.t.player;
-    c.p.jump_press_time = (c.p.jump_press_time - tp.jump_hold_per_tick_ms).max(0.0);
+    // The window counts game time: the passes that run none (the
+    // respawn's, before the next tick) take nothing off it.
+    if c.dt_ms > 0 {
+        c.p.jump_press_time = (c.p.jump_press_time - tp.jump_hold_per_tick_ms).max(0.0);
+    }
     let (speed_y, k) = if c.p.movement.super_jump {
         (JUMP_HOLD_SPEED_SUPER, tp.jump_hold_factor_powered)
     } else if c.has_catnip() {

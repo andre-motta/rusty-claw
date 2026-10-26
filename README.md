@@ -531,6 +531,10 @@ put back on his ledge must, sees him in the first tick after the
 respawn. With both, `level10-original.csv` was searched again from the
 end of Marrow's first carry (tick 14799) and `level10.csv` from tick
 13940, where their games first change.
+Holding Jump raises a jump only through the first quarter
+second of game time after its press, and the respawn's passes take no
+game time: a jump pressed in the last tick of a death starts in those
+passes and keeps the whole quarter second for the ticks after them.
 The parrot keeps the point beside Marrow where it takes hold of him to
 the part of a pixel, and takes hold of him once it has flown past that
 exact point, so on some carries it grabs him a tick earlier or a tick
@@ -660,7 +664,11 @@ checkpoint to checkpoint, to the warp down to Omar's chamber. Near the
 start the tiger guard by the first lava pit front-flips at Claw; a flip
 that carries a tiger past Claw ends with its slash as soon as he is behind
 it, so the route jumps back on to the ledge above and lets the tiger
-land below him. The bot is
+land below him. An enemy that is hit shows a hit burst only when the
+last frame drew it, so a lizard hidden in that frame and showing itself
+in the tick a slash kills it gets none (nor the roll for the burst's
+size), and a burst already running ends once its enemy was not drawn.
+The bot is
 led with waypoints up the climbs its coarse graph counts as easy. The
 crossings that need a timing it does not see are written into the route
 by hand, each found by playing the game with every wait in a range and
