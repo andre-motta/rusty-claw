@@ -498,6 +498,9 @@ fn enemy(sim: &mut Sim, damage: i32) -> ObjectId {
 #[test]
 fn enemy_contact_hurts_with_a_window_between_hits() {
     let mut sim = sim_of(&[]);
+    // A frame shows Claw first: a hit burst follows only an object the
+    // last frame drew.
+    step(&mut sim);
     enemy(&mut sim, 10);
     let mut health = Vec::new();
     let mut first_audio = Vec::new();
