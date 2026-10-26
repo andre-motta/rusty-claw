@@ -57,17 +57,23 @@
 //!   included); then Home.
 //! - The lunge: attacking (Claw's blows do not hurt it), aimed at Claw's x
 //!   now, the lunge growl; still during the crouch, then at the lunge
-//!   speed; the claws' box live on the strike picture; Home once past the
-//!   aimed x, on the patrol limit ahead, or when the strike ends.
+//!   speed; the claws' box live on the strike picture; Home once its
+//!   whole-pixel x has reached the aimed x towards the side Claw is on
+//!   now, on the patrol limit on that side, or when the strike ends.
 //! - The front flip: attacking, out of pair collision, 250 px/s towards
-//!   Claw for [`FLIP_DISTANCE`] px with a flip sound; past that point or
-//!   on the limit ahead, the one slash (or Home); after [`FLIP_MS`] the
+//!   Claw for [`FLIP_DISTANCE`] px with a flip sound. Every tick it asks
+//!   from the side Claw is on now: once its whole-pixel x has reached the
+//!   landing point towards that side, the one slash (or Home) at once and
+//!   nothing more that tick, so a flip that carries the tiger past Claw
+//!   ends on the first tick he is behind it, its slash live in that tick;
+//!   on the limit on Claw's side, the same end; after [`FLIP_MS`] the
 //!   slash too, and Home in every case. The slash after the flip runs
 //!   still attacking.
 //! - The back flip: on the limit behind it, the front flip with a slash
 //!   instead; otherwise out of pair collision, 250 px/s away from Claw for
-//!   [`FLIP_DISTANCE`] px with a flip sound; Home past that point, on
-//!   either limit or after [`FLIP_MS`].
+//!   [`FLIP_DISTANCE`] px with a flip sound; Home once past that point
+//!   away from the side Claw is on now, on either limit or after
+//!   [`FLIP_MS`].
 //! - The block: it faces Claw, stops and holds its guard for [`BLOCK_MS`];
 //!   then Home. A block leaves the attacking flag, the flips' collision
 //!   and the strike rest as they were.
@@ -355,7 +361,8 @@ pub struct TigerGuardData {
     pub lunge_speed: f64,
     /// The x the lunge or the flip ends past.
     pub target: i32,
-    /// The flip goes to the right.
+    /// The flip started towards the right (its end tests read the side
+    /// Claw is on now).
     pub flip_right: bool,
     /// The flip's time limit.
     pub flip: Timer,
@@ -729,6 +736,22 @@ fn past(w: &World, id: ObjectId, right: bool, target: i32) -> bool {
     }
 }
 
+/// True when the tiger, looking right when `right`, has reached `target`
+/// by its whole-pixel position (the exact x cut towards zero).
+fn past_whole(w: &World, id: ObjectId, right: bool, target: i32) -> bool {
+    let x = exact_x(w, id).trunc();
+    if right {
+        x >= f64::from(target)
+    } else {
+        x <= f64::from(target)
+    }
+}
+
+/// True when Claw is on the tiger's right now (the pre-tick's side).
+fn claw_right(w: &World, id: ObjectId) -> bool {
+    data(w, id).is_some_and(|d| d.claw_right)
+}
+
 /// True when the tiger stands exactly on its patrol limit on the right
 /// when `right`, else on the left.
 fn on_limit(w: &World, id: ObjectId, right: bool) -> bool {
@@ -742,8 +765,8 @@ fn on_limit(w: &World, id: ObjectId, right: bool) -> bool {
 }
 
 /// LungeAttack: still while crouching, then the dash; the claws' box live
-/// on the strike picture; Home past the aimed x, on the limit ahead or at
-/// the strike's end.
+/// on the strike picture; Home past the aimed x or on the limit, both
+/// towards the side Claw is on now, or at the strike's end.
 pub fn lunge_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     let Some((speed, target)) = tiger_data(w, id).map(|t| (t.lunge_speed, t.target)) else {
@@ -757,8 +780,8 @@ pub fn lunge_tick(w: &mut World, id: ObjectId) {
         let o = obj_mut(w, id);
         o.attack_rect = facing_rect(o, LUNGE_RECT);
     }
-    let right = speed > 0.0;
-    if past(w, id, right, target) || on_limit(w, id, right) || obj(w, id).anim.is_done() {
+    let right = claw_right(w, id);
+    if past_whole(w, id, right, target) || on_limit(w, id, right) || obj(w, id).anim.is_done() {
         go_home(w, id);
     }
 }
@@ -807,18 +830,20 @@ fn end_front_flip(w: &mut World, id: ObjectId) {
     }
 }
 
-/// FrontFlip: past its point or on the limit ahead, its end; after its
+/// FrontFlip: past its point towards the side Claw is on now, its end and
+/// nothing more this tick; on the limit on Claw's side, its end; after its
 /// time limit, the slash too, and Home in every case.
 pub fn front_flip_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     let now = w.now_ms;
-    let Some((target, timer, slash, right)) =
-        tiger_data(w, id).map(|t| (t.target, t.flip, t.slash_after, t.flip_right))
+    let Some((target, timer, slash)) = tiger_data(w, id).map(|t| (t.target, t.flip, t.slash_after))
     else {
         return;
     };
-    if past(w, id, right, target) {
+    let right = claw_right(w, id);
+    if past_whole(w, id, right, target) {
         end_front_flip(w, id);
+        return;
     }
     if on_limit(w, id, right) {
         end_front_flip(w, id);
@@ -861,16 +886,16 @@ pub fn enter_back_flip(w: &mut World, id: ObjectId) {
     obj_mut(w, id).flags |= flags::NO_COLLIDE;
 }
 
-/// BackFlip: Home past its point, on either limit, or after its time
-/// limit.
+/// BackFlip: Home past its point away from the side Claw is on now, on
+/// either limit, or after its time limit.
 pub fn back_flip_tick(w: &mut World, id: ObjectId) {
     w.advance_anim(id);
     let now = w.now_ms;
-    let Some((target, timer, right)) = tiger_data(w, id).map(|t| (t.target, t.flip, t.flip_right))
-    else {
+    let Some((target, timer)) = tiger_data(w, id).map(|t| (t.target, t.flip)) else {
         return;
     };
-    if past(w, id, right, target)
+    let away_right = !claw_right(w, id);
+    if past(w, id, away_right, target)
         || on_limit(w, id, true)
         || on_limit(w, id, false)
         || timer.done(now)

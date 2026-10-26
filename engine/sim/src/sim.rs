@@ -1739,6 +1739,11 @@ impl Sim {
         self.claw.checkpoint = point;
     }
 
+    /// The checkpoint Claw respawns at, if he has reached one.
+    pub fn checkpoint(&self) -> Option<(i32, i32)> {
+        self.claw.checkpoint
+    }
+
     /// Sets Claw's health (tools and tests: a route's set-up at its time
     /// zero, see [`crate::input::script_health`]); a respawn refills it as
     /// any respawn does.

@@ -402,6 +402,13 @@ fn install_routes_win_the_same_way_every_time() {
             // The life an End Life route gives up puts Claw back at his
             // checkpoint on the tick after its lives step.
             let respawned = end_life && life_taken;
+            if respawned {
+                assert_eq!(
+                    Some(now),
+                    q.sim.checkpoint(),
+                    "{name}: after the end life Claw is back at his checkpoint"
+                );
+            }
             life_taken = q.sim.stats().lives < lives;
             assert!(
                 moved <= MAX_STEP_PX
