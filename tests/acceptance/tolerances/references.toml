@@ -1226,6 +1226,25 @@ reference = "level13/pair-original"
 clock = "c18"
 tolerance = "exact"
 
+# The bot's route of the fourteenth level (original speeds), one 18 ms step
+# per frame: past the tiger guards, the lava and the chameleons with three
+# help screens on the way, then the End Life in Omar's staging freeze (Claw
+# gives up a life on the ladder top and comes back free sooner), both phases
+# of Omar's fight and the gem. Every repeat wins the level and is equal on
+# every compared row, the random stream included.
+[[compare]]
+reference = "level14/bot-original"
+clock = "c18"
+tolerance = "exact"
+
+# The fourteenth level of a game that started with the thirteenth level's
+# route (`level13-original.csv`), entered through the end-of-level screen with
+# the progress the thirteenth level carries: equal on every row.
+[[compare]]
+reference = "level14/pair-original"
+clock = "c18"
+tolerance = "exact"
+
 # The bot's route of the tenth level (default tuning) at 60 frames per
 # second. It leaves the feel tolerance at 1184 ms in Claw's height (the
 # default tuning's movement, as on the earlier levels), then the runs go
