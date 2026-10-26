@@ -1027,13 +1027,14 @@ fn install_routes_play_the_whole_game_through_every_booty_screen() {
             None,
             "no level after LEVEL{LAST_LEVEL}"
         );
-        // Through the last booty screen to the credits.
-        for _ in 0..3 {
-            g.flow.menu_input(MenuInput::Confirm, false);
-            g.effects();
-        }
+        // Through the last booty screen (and the screen the game's end
+        // shows before it) to the credits, confirming each step.
         let mut guard = 0;
         while g.flow.screen() != Screen::Credits {
+            if g.flow.screen() == Screen::Booty {
+                g.flow.menu_input(MenuInput::Confirm, false);
+                g.effects();
+            }
             g.run(100.0);
             guard += 1;
             assert!(guard < 200, "stuck at {:?}", g.flow.screen());

@@ -126,3 +126,43 @@
 #    its right and right to the end-of-level gem: the level's end, no goal
 #    and no waypoints, searched from route tick 1569 (searched again
 #    once the keg's blast hurt in its own tick).
+#
+# The ninth level of the whole game (tests/acceptance/routes/game/
+# level1-original.level9.csv) starts with the progress that game's eighth
+# level ends with: 31 health, no pistol shots and the dynamite selected,
+# while the route above needs about 66 health for its blasts and a pistol
+# shot at the keg. Its route is reshaped: Claw takes health on the way up
+# and climbs the shaft on four sticks of dynamite, the fourth in place of
+# the keg's shot. Every search runs with --carry naming its start lines.
+#    route ticks 0 to 65: right to the stacked crates by the start, one
+#       blow of the sword (ticks 46 and 47) and a wait while the bottle of
+#       25 health they hold comes to him (56 health).
+#    66 to 624: stretch 1 searched from tick 66 with its waypoints and two
+#       more, the meat (1891,6968) and the bottle (1983,6718) on the way
+#       (the waypoints 1880,7244, 1600,6924 and 2000,6795 marked `foot`,
+#       not --hints-on-foot), goal 2300,7244 on foot, --health-cost 25:
+#       71 health and five pistol shots picked up on the way.
+#    625 to 1449: right on to x 2293 (ticks 625 to 634), then a wait on
+#       the deck: PegLeg's fight and where his Catnip flies depend on the
+#       tick it starts, and with this one the Catnip comes to Claw on his
+#       way back left.
+#    1450 to 1586: stretch 2's first 137 ticks as written above (the three
+#       blows).
+#    1587 to 1740: back left (a hop at 1587, tick 1589 on walking), a wait
+#       on the floor (1658 to 1683) so that Claw lands on the springboard
+#       on the earlier route's tick plus 889 (16.002 s, four swings of its
+#       ropes less 2 ms, so the ropes swing as they did), on to the
+#       springboard and down on it (1735 to 1740).
+#    1741 to 1860: the earlier route's ticks 852 to 971 (the springboard,
+#       the first rope and the second).
+#    1861 to 1925: searched from tick 1861 with no waypoints to goal
+#       2210,6419 on foot (--tick-cost 5): Claw is hit where the earlier
+#       route lands, so the ledge is reached another way.
+#    1926 to 1934: left along the low plank.
+#    1935 to 2386: the earlier route's ticks 1046 to 1497 (stretch 4, the
+#       warp, and the shaft to the top of the jump after the third stick).
+#    2387 to 2456: the fourth stick (dynamite at 2387 and 2388, the help
+#       screen at 2389), the jump pressed on the tick after the stand
+#       (2420 to 2433) on to the bridge, and a wait there.
+#    2457 to the end: stretch 6 searched from tick 2457 (--health-cost 25),
+#       the level's end with 11 health.
