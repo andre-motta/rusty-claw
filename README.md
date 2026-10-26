@@ -413,15 +413,22 @@ rows, it can name how it is played in `#` header lines (`# level N`,
 `# tuning default|original`, `# seed N`, and the behaviour switches it was
 made with), and it can hold `@` lines for what happens between two ticks:
 a pause or a menu screen with its wall time, or the in-game menu's end of a
-life. Replays, `claw-replay` and the benchmark all follow them. The game
-holds while the in-game menu is up, but the menu's frames keep the
-enemies' rhythm going: enemies make some of their random choices only on
-every third frame, a beat the game counts on every frame it shows, menus
-included. So a `menu ingame` line moves that beat on by one frame per
-18 ms of the menu (rounded up), and an End Life (`command end_life`) by
-the five frames of its visit to the menu (it opens, its confirmation page
-takes three, the yes one), or four after a `menu ingame` line at the same
-tick, which already opened it.
+life. Replays, `claw-replay` and the benchmark all follow them, with
+the one difference below. The game holds while the in-game menu is up,
+but the menu's frames keep the enemies' rhythm going: enemies make some
+of their random choices only on every third frame, a beat the game counts
+on every frame it shows, menus included. In `claw-replay` and the bot's
+runs, a `menu ingame` line moves that beat on by one frame per 18 ms of
+the menu (rounded up), and an End Life (`command end_life`) by the five
+frames of its visit to the menu (it opens, its confirmation page takes
+three, the yes one), or four after a `menu ingame` line at the same tick,
+which already opened it. The game itself (live play, `--replay`,
+`--trace` and the benchmark) moves the beat by an End Life's five frames
+the same way, but not yet by the in-game menu's own frames: there a
+`menu ingame` line leaves the beat as it was, and an End Life after one
+still moves it by five. So a script with a `menu ingame` line can give
+the enemies other random choices in the game than in `claw-replay`; the
+routes in `tests/acceptance/routes/` hold no such line.
 
 The routes in `tests/acceptance/routes/` finish all fourteen
 levels: `level1.csv` to `level8.csv`, `level10.csv`, `level12.csv` and

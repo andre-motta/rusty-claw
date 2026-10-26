@@ -1830,6 +1830,11 @@ impl Sim {
     /// With [`FuseClock::Frozen`] the menu leaves the frame pulse as it
     /// was, as every screen does with that switch; after the level's end
     /// ([`Sim::level_ended`]) it does nothing either.
+    ///
+    /// [`Sim::play_directive`] calls it for a `menu ingame` line, so
+    /// `claw-replay` and the bot count the menu's frames. The game's own
+    /// session (live play, its replays and the benchmark) does not call it
+    /// yet: there only an End Life moves the frame pulse.
     pub fn pass_ingame_menu(&mut self, ms: u32) {
         let mut frames = ms.div_ceil(TICK_MS) as usize;
         if self.menu_opened {
