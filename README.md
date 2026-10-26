@@ -653,14 +653,23 @@ the progress `level12-original.csv` ends with.
 `tools/bot/hints/level13-original.txt` and `tools/bot/hints/level13.txt`
 list the waypoints and the hand-written stretches' held buttons.
 The fourteenth level's route takes the long way through the temple,
-checkpoint to checkpoint, to the warp down to Omar's chamber. The bot is
+checkpoint to checkpoint, to the warp down to Omar's chamber. Near the
+start the tiger guard by the first lava pit front-flips at Claw; a flip
+that carries a tiger past Claw ends with its slash as soon as he is behind
+it, so the route jumps back on to the ledge above and lets the tiger
+land below him. The bot is
 led with waypoints up the climbs its coarse graph counts as easy. The
 crossings that need a timing it does not see are written into the route
 by hand, each found by playing the game with every wait in a range and
-keeping one in the middle of those that work: the elevators met and left
-at the right moment, the rope beside them, a jump in place on a toggle
-peg that waits for the pegs' cycle, the climb of toggle pegs and the
-elevator above it, and three dynamite boosts, each a stick set off at
+keeping one in the middle of those that work (or the only ones that do):
+the elevators met and left
+at the right moment, the rope beside them, a long wait on safe ground
+before the elevator over the lava past the first save point, so that it
+comes by as Claw drops on to it, jumps in place on a toggle
+peg that wait for the pegs' cycle (five of them on the lowest peg of the
+climb, which bring the path elevator above it round in time), the climb
+of toggle pegs and that
+elevator, and three dynamite boosts, each a stick set off at
 Claw's side in mid-air by the time a help screen of three seconds is up
 (the `@N menu help 3000` lines), on to ledges no jump reaches. The warp
 drops Claw, falling, on the ladder top above the chamber, so his
@@ -683,10 +692,9 @@ the hall; with that sword in hand near the floor, where the ring's gap is
 in its turn is part of its coarse state, and once Omar is struck down for
 good, the time. `level13-original.level14.csv` plays
 `level14-original.csv`'s rows from the progress `level13-original.csv`
-ends with up to the press of the fire key before the checkpoint at
-x 27281, which plays out otherwise with the dynamite that game carries;
-from there its own stretches, its own End Life and its own fight were
-searched the same way. `tools/bot/hints/level14-original.txt` lists the
+ends with, through the warp and the End Life, which that game reaches
+the same way; from there its own fight was searched the same way.
+`tools/bot/hints/level14-original.txt` lists the
 waypoints and the hand-written stretches' held buttons.
 Once a boss is beaten and on his way to his gem, the bot only waits, and
 how far Claw is from him counts for nothing; RedTail struck down in the
