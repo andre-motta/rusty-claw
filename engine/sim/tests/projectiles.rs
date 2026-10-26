@@ -819,6 +819,9 @@ fn a_hit_burst_follows_its_owner_and_removes_itself() {
 fn a_followed_burst_moves_with_its_owner() {
     let mut sim = sim();
     let owner = target(&mut sim, 1200, 900, 0);
+    // A frame draws the owner first: a burst follows only an object the
+    // last frame drew.
+    step(&mut sim);
     let burst = sim
         .with_world(|w| effect::spawn_hit_burst(w, 1204, 896, 400, Some(owner), false))
         .unwrap();
@@ -921,9 +924,10 @@ fn a_splash_needs_its_art_on_levels_that_list_their_image_sets() {
 }
 
 #[test]
-fn a_burst_shows_only_while_its_owners_drawn_box_is_on_screen() {
-    // The owner's drawn box reaches 300 px to its left, so it shows while
-    // its position is just right of the view.
+fn a_burst_shows_only_while_its_owners_drawn_box_was_on_screen() {
+    // The owner's drawn box reaches 300 px to its left, so the frame after
+    // a tick draws it while its position is just right of the view; what
+    // counts is that frame.
     let mut l = arena();
     let mut frames = ImageFrames::range(1, 1);
     frames.boxes.insert(1, Rect::new(-300, -10, 0, 10));
@@ -939,17 +943,28 @@ fn a_burst_shows_only_while_its_owners_drawn_box_is_on_screen() {
         o.image_set = "TEST_WIDE".into();
         o.frame = 1;
     });
+    // Not drawn yet: no burst.
+    let early = sim
+        .with_world(|w| effect::spawn_hit_burst(w, view.right + 200, 900, 0, Some(owner), false));
+    assert_eq!(early, None);
+    step(&mut sim);
     let shown = sim
         .with_world(|w| effect::spawn_hit_burst(w, view.right + 200, 900, 0, Some(owner), false));
     assert!(shown.is_some());
+    // Moved out of the view, it still counts as drawn until a frame
+    // leaves it out.
     sim.with_world(|w| w.objects.get_mut(owner).unwrap().x = view.right + 400);
+    let still = sim
+        .with_world(|w| effect::spawn_hit_burst(w, view.right + 400, 900, 0, Some(owner), false));
+    assert!(still.is_some());
+    step(&mut sim);
     let hidden = sim
         .with_world(|w| effect::spawn_hit_burst(w, view.right + 400, 900, 0, Some(owner), false));
     assert_eq!(hidden, None);
-    // The burst already shown goes with its owner off screen.
-    step(&mut sim);
+    // The bursts already shown go once their owner was not drawn.
     step(&mut sim);
     assert!(obj(&sim, shown.unwrap()).is_none());
+    assert!(obj(&sim, still.unwrap()).is_none());
 }
 
 #[test]

@@ -209,7 +209,9 @@ pub fn spawn(w: &mut World, kind: EffectKind, x: i32, y: i32) -> Option<ObjectId
 
 /// Shows a hit burst at (x, y, z). With an `owner` the burst follows it,
 /// and nothing is shown when the owner is gone, about to be removed or
-/// off screen; `claw_image` picks Claw's burst art over an enemy's.
+/// was not drawn in the last frame (off screen or hidden then, even when
+/// it shows itself in this tick); `claw_image` picks Claw's burst art over
+/// an enemy's.
 pub fn spawn_hit_burst(
     w: &mut World,
     x: i32,
@@ -220,7 +222,7 @@ pub fn spawn_hit_burst(
 ) -> Option<ObjectId> {
     let offset = match owner {
         Some(owner) => {
-            if !shown(w, owner) {
+            if !drawn(w, owner) {
                 return None;
             }
             let o = w.objects.get(owner)?;
@@ -308,28 +310,14 @@ fn random_in(w: &mut World, lo: i32, hi: i32) -> f64 {
     r as f64
 }
 
-/// True when `id` exists, is not about to be removed and was on screen:
-/// the box its frame is drawn in overlaps the logic view. When the level
-/// does not know its frame, its hit box, its movement box or its position
-/// stands in.
-fn shown(w: &World, id: ObjectId) -> bool {
-    let Some(o) = w.objects.get(id) else {
-        return false;
-    };
-    if o.flags & flags::DESTROY != 0 || o.draw_flags & draw_flags::HIDDEN != 0 {
-        return false;
-    }
-    let r = w.draw_box(o).unwrap_or_else(|| {
-        let r = if o.hit_rect.is_set() {
-            o.hit_rect
-        } else if o.move_rect.is_set() {
-            o.move_rect
-        } else {
-            Rect::new(0, 0, 0, 0)
-        };
-        r.translate(o.x, o.y)
-    });
-    r.overlaps(&w.view)
+/// True when `id` exists, is not about to be removed and was drawn in the
+/// frame shown after the last tick ([`Object::drawn_last_frame`]). An
+/// object that was hidden or off screen then fails, even when it shows
+/// itself in this tick.
+fn drawn(w: &World, id: ObjectId) -> bool {
+    w.objects
+        .get(id)
+        .is_some_and(|o| o.flags & flags::DESTROY == 0 && o.drawn_last_frame)
 }
 
 fn data_mut(o: &mut Object) -> &mut EffectData {
@@ -416,7 +404,7 @@ fn hit_burst_tick(w: &mut World, id: ObjectId) {
         return;
     }
     if let Some(owner) = d.owner
-        && !shown(w, owner)
+        && !drawn(w, owner)
     {
         w.destroy(id);
         return;

@@ -498,6 +498,9 @@ fn enemy(sim: &mut Sim, damage: i32) -> ObjectId {
 #[test]
 fn enemy_contact_hurts_with_a_window_between_hits() {
     let mut sim = sim_of(&[]);
+    // A frame shows Claw first: a hit burst follows only an object the
+    // last frame drew.
+    step(&mut sim);
     enemy(&mut sim, 10);
     let mut health = Vec::new();
     let mut first_audio = Vec::new();
@@ -709,6 +712,44 @@ fn the_respawn_shows_a_frame_of_its_own_at_the_checkpoint() {
     let o = sim.player().unwrap();
     assert_eq!((o.x, o.y), start);
     assert!(o.drawn_last_frame, "shown by the respawn's frame");
+}
+
+#[test]
+fn a_jump_pressed_as_the_death_ends_keeps_its_hold_window_through_the_respawn() {
+    // A life lost, played once to learn which tick ends the death.
+    let dying = || {
+        let mut sim = sim_of(&[]);
+        let e = enemy(&mut sim, 150);
+        step(&mut sim);
+        sim.with_world(|w| w.destroy(e));
+        sim
+    };
+    let mut probe = dying();
+    let start = probe.tick();
+    run_until(&mut probe, TickInput::default(), 200, Sim::respawn_pending);
+    let last = probe.tick() - 1;
+    // The same death with Jump pressed in its last tick and held on.
+    let mut sim = dying();
+    while sim.tick() < last {
+        sim.step(TickInput::default());
+    }
+    assert_eq!(sim.tick(), last);
+    assert!(last > start);
+    sim.step(press(JUMP));
+    assert!(sim.respawn_pending());
+    // The respawn's passes run Claw with the keys of that tick: he jumps
+    // from the checkpoint, but the passes take no game time, so they take
+    // nothing off the hold window.
+    assert!(sim.respawn_now());
+    let tp = SimConfig::default().tuning.player;
+    assert_eq!(sim.player().unwrap().state, state::JUMP);
+    assert_eq!(sim.claw().jump_press_time, tp.jump_hold_window_ms);
+    // The next tick, Jump still held, takes its one step off.
+    sim.step(hold(JUMP));
+    assert_eq!(
+        sim.claw().jump_press_time,
+        tp.jump_hold_window_ms - tp.jump_hold_per_tick_ms
+    );
 }
 
 #[test]
