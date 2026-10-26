@@ -43,11 +43,17 @@
 //! (`menu help`) runs the update pass of that return with the screen's
 //! time (the dynamite fuse burns on, every object runs once more, and the
 //! next frame pulse comes as many frames later as the help screen ran);
+//! the in-game menu's frames keep the enemies' rhythm going: the return
+//! from it (`menu ingame`) moves the next frame pulse by one frame per
+//! 18 ms of the menu, rounded up, and an End Life (`command end_life`) by
+//! the five frames of the menu's visit (it opens, three frames for the
+//! confirmation page, one for the yes), or four when a `menu ingame` line
+//! at the same tick already opened the menu;
 //! after a help screen or the in-game menu the keys down count as already
 //! pressed until released; a pause (`pause`, or the pause screen
 //! `menu pause`) latches no key; and as play resumes after any of them the
-//! game's clock is reset. A pause or the in-game menu's wall time changes
-//! nothing else in the game.
+//! game's clock is reset. A pause's wall time changes nothing else in the
+//! game, and the in-game menu's nothing but the frame pulse.
 //!
 //! A recording names the pause and screen switches the game played it
 //! with (`# fuse_clock = original|frozen`, `# pause_input = original|...`;
@@ -176,7 +182,7 @@ const USAGE: &str = "usage: claw-replay --install PATH [--level N | --custom FIL
 [--mid-air-hit-fix on|off] [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]] \
 [--crabs FILE | --crab-variant N] [--expect-complete] \
 [--compare REF.csv --tolerance exact|feel|FILE.toml [--report OUT.txt]]
-the script's @ lines play as in the game: a help screen's return runs its update pass, a screen latches the keys down, a pause latches none, a command acts before its tick; `# fuse_clock = frozen` runs no help return pass, and `# pause_input` other than original is refused
+the script's @ lines play as in the game: a help screen's return runs its update pass, the in-game menu's frames and an End Life's move the frame pulse, a screen latches the keys down, a pause latches none, a command acts before its tick; `# fuse_clock = frozen` runs no help return pass and moves no frame pulse, and `# pause_input` other than original is refused
 --crabs FILE: one entry per line, `crab RECORD = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` or `nest_crab NEST_RECORD HATCH = SIDE, HALF_WIDTH, HALF_HEIGHT[, STATIONARY]` (STATIONARY 1 or 0, 0 when left out)";
 
 /// The key of the mid-air hit jump fix in a script's comment line.

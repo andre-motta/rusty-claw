@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_frame::{AudioCue, Buttons, GameEvent};
-use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
+use claw_sim::input::{DirectiveKind, MenuScreen, ScriptCommand, ScriptTuning};
 use claw_sim::logic::enemy::{EnemyState, katherine};
 use claw_sim::logic::pickup;
 use claw_sim::logic::world_boss::{AMULET_SOUND, fight};
@@ -238,8 +238,14 @@ fn play(
     let mut hers = Vec::new();
     for tick in 0..ticks {
         while let Some(d) = directives.next_if(|d| d.tick <= tick) {
-            if let DirectiveKind::Command(ScriptCommand::EndLife) = d.kind {
-                sim.end_life();
+            match d.kind {
+                DirectiveKind::Menu {
+                    screen: MenuScreen::InGame,
+                    wall_ms,
+                    ..
+                } => sim.pass_ingame_menu(wall_ms),
+                DirectiveKind::Command(ScriptCommand::EndLife) => sim.end_life(),
+                _ => {}
             }
         }
         sim.step(script.ticks.get(tick).copied().unwrap_or_default());
@@ -342,11 +348,9 @@ const STORES: &[(&str, &[&str])] = &[
 ///   fight after a skip and her blows that end Claw's freeze follow the
 ///   original step for step, the random stream included, and so do
 ///   Claw's own death fall, the camera after his respawn and her reset
-///   when he respawns, near her clearing or far from it.
-/// - c18 end of life: the in-game menu opened before the life ends puts
-///   the original's frame pulse a tick earlier from then on (14418 ms);
-///   the replay plays no time for that menu, so her rolls come a tick
-///   later from there. Her reset on the respawn step still holds.
+///   when he respawns, near her clearing or far from it, the life ended
+///   from the in-game menu included (the menu's frames keep the frame
+///   pulse going, as in the original).
 /// - c60 (the default tuning played tick by tick): the introduction's
 ///   delays count 18 ms ticks against frames of 16 and 17 ms, so the flag
 ///   reaches 2 about 350 ms later (10000 ms) and her fight comes later
@@ -406,19 +410,6 @@ const KNOWN: &[Known] = &[
             ("her_y", 12933),
             ("boss_health", 15150),
             ("her_health", 15150),
-        ],
-    ),
-    (
-        "boss-intro-normal-end-life",
-        "c18",
-        &[
-            ("rng", 14418),
-            ("her_state", 14940),
-            ("cam_x", 16398),
-            ("health", 16380),
-            ("state_id", 16380),
-            ("x", 16398),
-            ("her_x", 18108),
         ],
     ),
     (

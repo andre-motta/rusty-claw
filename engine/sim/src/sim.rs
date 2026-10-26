@@ -181,6 +181,10 @@ pub struct Sim {
     /// [`Sim::end_life`] was called: Claw dies at the start of the next
     /// tick.
     end_life: bool,
+    /// The in-game menu's opening frame has run at the boundary before the
+    /// next tick (see [`Sim::pass_ingame_menu`] and [`Sim::end_life`]): a
+    /// second count of the same visit leaves it out.
+    menu_opened: bool,
     /// The powerup [`Sim::give_powerup`] (or the level start's
     /// [`SimConfig::start_powerup`]) gives at the start of the next tick.
     give_powerup: Option<AidPowerup>,
@@ -489,12 +493,24 @@ pub const LEVEL_LOAD_SEED: u32 = 0x1_B3CF;
 
 /// Period of the frame pulse, ms: a countdown fed the 18 ms of each tick
 /// that reaches 0 on every third tick. Enemies make their per-tick roll and
-/// a few random choices only on a pulse tick.
+/// a few random choices only on a pulse tick. The frames of the help screen
+/// and of the in-game menu feed it too, 18 ms each (see
+/// [`Sim::pass_help_return`] and [`Sim::pass_ingame_menu`]).
 pub const PULSE_MS: u32 = 33;
 
 /// The frame pulse countdown when play starts, ms: the first pulse comes in
 /// the sixth tick (the tick ending at 108 ms), then every third tick.
 pub const PULSE_START_MS: u32 = 100;
+
+/// Frames the in-game menu takes to come up: the first frame it shows. Its
+/// frames run the frame pulse countdown as play's ticks do (see
+/// [`Sim::pass_ingame_menu`]).
+pub const MENU_OPEN_FRAMES: usize = 1;
+
+/// Frames the in-game menu's End Life takes once the menu is up: three for
+/// its confirmation page after the End Life key, one after the yes (see
+/// [`Sim::end_life`]).
+pub const END_LIFE_FRAMES: usize = 4;
 
 /// Seed of the sound-only random stream of a level: it depends on the
 /// game seed and the level number only, so it restarts with each level.
@@ -589,6 +605,7 @@ impl Sim {
             last_events: Vec::new(),
             last_bodies: Vec::new(),
             end_life: false,
+            menu_opened: false,
             give_powerup: None,
             respawned: false,
             place_at: None,
@@ -806,6 +823,8 @@ impl Sim {
     /// attack's end or cancel in the last tick makes Left or Right, when
     /// held, count as pressed in this one ([`Claw::repress_directions`]).
     pub fn step(&mut self, input: TickInput) -> SimSnapshot {
+        // A menu visit belongs to the boundary before this tick.
+        self.menu_opened = false;
         if self.ended {
             // Play stopped with the level's end: the tick passes and
             // nothing moves.
@@ -1768,10 +1787,67 @@ impl Sim {
     /// death from whatever he is doing (standing, climbing, carrying
     /// something, which he lets go of), falls off the screen and loses a
     /// life as for any other death, so the game ends after the last life.
-    /// While he is already dying it does nothing. Calling it again before
-    /// the next tick changes nothing.
+    /// While he is already dying the death does nothing.
+    ///
+    /// The menu's frames before that keep the enemies' rhythm going: the
+    /// frame pulse countdown runs once for each of them, as for a tick
+    /// (see [`Sim::pass_ingame_menu`]). The End Life takes
+    /// [`END_LIFE_FRAMES`] once the menu is up, and the menu's opening
+    /// frame ([`MENU_OPEN_FRAMES`]) too unless the menu's own time was
+    /// already counted before this tick (`menu ingame` and then
+    /// `command end_life` at one tick of a route): five frames, or four
+    /// after the menu's. So when the countdown stood at 15 ms after the
+    /// last tick, the next tick is no longer a pulse tick and the one
+    /// after it is. Calling it again before the next tick changes nothing.
     pub fn end_life(&mut self) {
+        if self.end_life {
+            return;
+        }
         self.end_life = true;
+        let open = if self.menu_opened {
+            0
+        } else {
+            MENU_OPEN_FRAMES
+        };
+        self.menu_opened = true;
+        self.count_screen_frames(open + END_LIFE_FRAMES);
+    }
+
+    /// The return from the in-game menu that was up for `ms` of wall time,
+    /// at the boundary before the next tick.
+    ///
+    /// The game is held while the menu is up, but the frame pulse
+    /// countdown runs on through every frame the menu shows, as it does
+    /// for a tick: one frame per 18 ms of the menu (rounded up: 17 for
+    /// 300 ms, 56 for 1000 ms), so the next pulse tick comes as many
+    /// frames later as the menu ran and the enemies keep their rhythm
+    /// across it. When an End Life already counted the menu's opening
+    /// frame before this tick ([`Sim::end_life`]), that frame is not
+    /// counted twice. Nothing else of the game moves: the dynamite fuse
+    /// and every timer wait for play. Keys pressed on the menu add no
+    /// frame here.
+    ///
+    /// With [`FuseClock::Frozen`] the menu leaves the frame pulse as it
+    /// was, as every screen does with that switch; after the level's end
+    /// ([`Sim::level_ended`]) it does nothing either.
+    pub fn pass_ingame_menu(&mut self, ms: u32) {
+        let mut frames = ms.div_ceil(TICK_MS) as usize;
+        if self.menu_opened {
+            frames = frames.saturating_sub(MENU_OPEN_FRAMES);
+        }
+        self.menu_opened = true;
+        self.count_screen_frames(frames);
+    }
+
+    /// Runs the frame pulse countdown for `frames` frames of a screen over
+    /// play (none with [`FuseClock::Frozen`] or after the level's end).
+    fn count_screen_frames(&mut self, frames: usize) {
+        if self.cfg.fuse_clock == FuseClock::Frozen || self.ended {
+            return;
+        }
+        for _ in 0..frames {
+            self.count_pulse();
+        }
     }
 
     /// True when [`Sim::end_life`] waits for the next tick.
@@ -1802,6 +1878,10 @@ impl Sim {
     ///
     /// - the return from the help screen (`menu help`) runs its update
     ///   pass ([`Sim::pass_help_return`], with the keys pressed on it);
+    /// - the return from the in-game menu (`menu ingame`) runs the frame
+    ///   pulse countdown on through the menu's frames
+    ///   ([`Sim::pass_ingame_menu`]), and so does the End Life it offers
+    ///   ([`Sim::end_life`]);
     /// - as play resumes after a pause or a screen, the game's clock is
     ///   reset ([`Sim::restart_idle_wait`]);
     /// - after a screen (the help screen or the in-game menu), every key
@@ -1827,8 +1907,10 @@ impl Sim {
                 wall_ms,
                 keys,
             } => {
-                if *screen == MenuScreen::Help {
-                    self.pass_help_return(*wall_ms, keys.len());
+                match screen {
+                    MenuScreen::Help => self.pass_help_return(*wall_ms, keys.len()),
+                    MenuScreen::InGame => self.pass_ingame_menu(*wall_ms),
+                    MenuScreen::Pause => {}
                 }
                 self.restart_idle_wait();
                 self.latch_keys();

@@ -308,11 +308,13 @@ pub enum FuseClock {
     /// update pass runs at the game time plus the time help was up, so a
     /// lit stick of dynamite whose fuse has burnt by then goes off at
     /// once, and the next frame pulse moves by the screen's frames. The
-    /// pause and the in-game menu freeze the fuse.
+    /// pause and the in-game menu freeze the fuse; the in-game menu's
+    /// frames still move the next frame pulse.
     #[default]
     Original,
     /// Every screen freezes the fuse, help included: the help screen's
-    /// return runs no pass and leaves the frame pulse as it was.
+    /// return runs no pass, and neither it nor the in-game menu moves the
+    /// frame pulse.
     Frozen,
 }
 

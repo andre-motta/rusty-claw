@@ -72,9 +72,16 @@ const fn span(from: usize, to: usize, held: u32, press: bool) -> Span {
     }
 }
 
+/// How long the in-game menu is up before its End Life ends Claw's
+/// life, ms, in the stores' routes (`menu ingame 500` and then
+/// `command end_life` at the same row): its frames move the frame pulse
+/// ([`Sim::pass_ingame_menu`], [`Sim::end_life`]).
+const END_LIFE_MENU_MS: u32 = 500;
+
 /// A route of the stores: its name, where Claw is put down, the clocks it
 /// was run at, how many rows it has, its stretches (rows not covered hold
-/// nothing) and the row before which Claw ends a life, if any.
+/// nothing) and the row before which Claw ends a life from the in-game
+/// menu, if any.
 struct Route {
     store: &'static str,
     start: (i32, i32),
@@ -173,9 +180,10 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 ///   again at the next row's edge, so Claw falls two ticks ahead of the
 ///   original and meets the town guard below two ticks earlier, at the
 ///   same height; from 3222 ms his health matches again.
-/// - c18, plank-reset, 8100 ms: Claw's fall off the screen after he ends
-///   his life is 1 px from the original's on some rows (his own death
-///   fall, not the planks').
+/// - c18, plank-reset, 12132 ms: after the life ended from the in-game
+///   menu (whose frames keep the frame pulse going, as in the original)
+///   and the restore, Claw's state parts from the original's, not traced
+///   yet.
 /// - c60 (the default tuning played tick by tick): the planks count 18 ms
 ///   ticks, so a 500 ms wait is 28 ticks (504 ms) against 30 frames
 ///   (500 ms) and the 26 crumble calls to the floor's end take 468 ms
@@ -244,14 +252,11 @@ const KNOWN: &[Known] = &[
         "plank-reset",
         "c18",
         &[
-            ("rng", 36),
-            ("y", 8100),
-            ("state_id", 10728),
-            ("physics_type", 10728),
-            ("health", 10728),
-            ("x", 10746),
-            ("cam_x", 10746),
+            ("state_id", 12132),
+            ("physics_type", 12132),
+            ("y", 12168),
             ("cam_y", 12168),
+            ("rng", 12366),
         ],
     ),
     ("statue-front", "c60", &[("score", 1633)]),
@@ -291,6 +296,8 @@ struct StoreRoute {
     rows: Vec<(u32, u32)>,
     /// The rows before which Claw ends a life.
     end_life: Vec<usize>,
+    /// The in-game menus before the rows: (row, ms).
+    menus: Vec<(usize, u32)>,
 }
 
 /// The route file of a store.
@@ -310,7 +317,19 @@ fn store_route(dir: &Path) -> Option<StoreRoute> {
         .filter(|l| l.ends_with("command end_life"))
         .filter_map(|l| l.trim_start_matches('@').split(' ').next()?.parse().ok())
         .collect();
-    Some(StoreRoute { rows, end_life })
+    let menus = text
+        .lines()
+        .filter_map(|l| {
+            let (row, rest) = l.strip_prefix('@')?.split_once(' ')?;
+            let ms = rest.strip_prefix("menu ingame ")?;
+            Some((row.parse().ok()?, ms.trim().parse().ok()?))
+        })
+        .collect();
+    Some(StoreRoute {
+        rows,
+        end_life,
+        menus,
+    })
 }
 
 /// A value of a store's `meta.toml`: `key` in the table `[section]`, or
@@ -406,6 +425,7 @@ fn time_zero(dir: &Path, clock: &str) -> Option<(u64, u32)> {
 /// so).
 fn step_row(sim: &mut Sim, r: &Route, ticks: &[TickInput], k: usize) {
     if r.end_life == Some(k) {
+        sim.pass_ingame_menu(END_LIFE_MENU_MS);
         sim.end_life();
     }
     sim.step(ticks.get(k).copied().unwrap_or_default());
@@ -476,7 +496,11 @@ fn new_divergences(
 fn the_routes_match_the_stores_copies() {
     let Some(root) = reference_root() else { return };
     for r in &ROUTES {
-        let Some(StoreRoute { rows, end_life }) = store_route(&root.join("level5").join(r.store))
+        let Some(StoreRoute {
+            rows,
+            end_life,
+            menus,
+        }) = store_route(&root.join("level5").join(r.store))
         else {
             println!("{}: no route in the store", r.store);
             continue;
@@ -489,6 +513,12 @@ fn the_routes_match_the_stores_copies() {
         let first = ours.iter().zip(&rows).position(|(a, b)| a != b);
         assert_eq!(first, None, "{}: first different row", r.store);
         assert_eq!(end_life, r.end_life.into_iter().collect::<Vec<_>>());
+        let our_menus: Vec<(usize, u32)> = r
+            .end_life
+            .map(|k| (k, END_LIFE_MENU_MS))
+            .into_iter()
+            .collect();
+        assert_eq!(menus, our_menus, "{}: in-game menus", r.store);
     }
 }
 

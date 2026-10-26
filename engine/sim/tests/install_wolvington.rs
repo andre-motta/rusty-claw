@@ -43,7 +43,7 @@ use std::path::{Path, PathBuf};
 use claw_assets::{Install, LevelData, LevelSource};
 use claw_frame::{AudioCue, GameEvent};
 use claw_sim::activation::Centres;
-use claw_sim::input::{DirectiveKind, ScriptCommand, ScriptTuning};
+use claw_sim::input::{DirectiveKind, MenuScreen, ScriptCommand, ScriptTuning};
 use claw_sim::logic::enemy::{EnemyState, wolvington};
 use claw_sim::logic::pickup;
 use claw_sim::logic::world_boss::{AMULET_SOUND, fight};
@@ -348,8 +348,14 @@ fn play(
     let mut hims = Vec::new();
     for tick in 0..ticks {
         while let Some(d) = directives.next_if(|d| d.tick <= tick) {
-            if let DirectiveKind::Command(ScriptCommand::EndLife) = d.kind {
-                sim.end_life();
+            match d.kind {
+                DirectiveKind::Menu {
+                    screen: MenuScreen::InGame,
+                    wall_ms,
+                    ..
+                } => sim.pass_ingame_menu(wall_ms),
+                DirectiveKind::Command(ScriptCommand::EndLife) => sim.end_life(),
+                _ => {}
             }
         }
         sim.step(script.ticks.get(tick).copied().unwrap_or_default());
@@ -468,13 +474,9 @@ const STORES: &[(&str, &[&str])] = &[
 ///   original step for step, the random stream included; so does Claw
 ///   standing still for 17 s after a skip that leaves him asleep, to the
 ///   draw of Claw's idle line when his idle animation ends (18018 ms).
-/// - c18 end of life: the in-game menu opened to end the life puts the
-///   original's frame pulse a tick later from there on (18018 ms; the
-///   replay plays no time for the menu), Claw's death fall is a pixel off
-///   from 18900 ms, and on the tick after the respawn Wolvington stands a
-///   pixel left of the original's (19710 ms: 34957 against 34958, where
-///   he is put back; the respawn's passes no longer move him, but this
-///   build's tick still does, by a pixel).
+/// - c18 end of life: the in-game menu's frames keep the frame pulse
+///   going, as in the original, and the run follows the original to its
+///   end, the death fall and Wolvington after the respawn included.
 /// - c18 Catnip held 20 ticks: he wakes in the air, fights, and kills
 ///   Claw; Claw's death fall, his respawn and Wolvington's place after it
 ///   follow the original's, but the fight flag of the introduction Claw
@@ -491,20 +493,6 @@ const STORES: &[(&str, &[&str])] = &[
 type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 
 const KNOWN: &[Known] = &[
-    (
-        "boss-intro-normal-end-life",
-        "c18",
-        &[
-            ("rng", 18018),
-            ("y", 18900),
-            ("cam_x", 19710),
-            ("his_state", 19710),
-            ("his_x", 19710),
-            ("health", 21600),
-            ("state_id", 21600),
-            ("x", 21618),
-        ],
-    ),
     (
         "boss-intro-skip-catnip-full",
         "c18",

@@ -378,13 +378,6 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// follows the stream before the fight's second phase.
 const WARP_C18: &[(&str, u64)] = &[("rng", 630), ("cam_x", 9468), ("cam_y", 9450)];
 
-/// The warp at the original's speeds with the End Life: [`WARP_C18`]'s
-/// cause; and the original's frame pulse countdown runs on through the
-/// frames the in-game menu takes, which the replay does not play (every
-/// pulse draw comes a tick later from the End Life on, 738 ms); the
-/// banner's shake shakes the camera differently from 9126 ms.
-const END_LIFE_C18: &[(&str, u64)] = &[("rng", 630), ("cam_x", 9126), ("cam_y", 9126)];
-
 /// The warp walk at the default speeds (c60, the default tuning played
 /// tick by tick against the original's frames of 16 and 17 ms): the walk
 /// into the warp ends a pixel off the original's 60 frames per second
@@ -414,12 +407,11 @@ const END_LIFE_C60: &[(&str, u64)] = &[
 /// The first reference time (ms) at which each column already leaves its
 /// tolerance, per store and clock; a column not listed must stay within
 /// it, and one listed must not leave it earlier. The diagnostic fight
-/// (`boss-fight-c18`) follows the original exactly at c18.
+/// (`boss-fight-c18`) follows the original exactly at c18, and so do the
+/// lives ended from the in-game menu (`boss-end-life-c18`,
+/// `boss-end-life-h90-c18`, `boss-kill-dead-c18`): the menu's frames keep
+/// the frame pulse going, as in the original.
 ///
-/// - Life ended in Omar's death fall (c18): the original's frame pulse
-///   countdown runs on through the frames the in-game menu takes, so
-///   every pulse draw comes a tick later from the End Life on; the replay
-///   plays no time for the menu. Nothing decides on those draws there.
 /// - The fight at the default speeds (c60): Claw's flinch from a lava
 ///   hand's ball, timed in 18 ms ticks, ends a frame apart (667 ms); the
 ///   first teleport comes with Left pressed on the next row, which the
@@ -430,9 +422,6 @@ const END_LIFE_C60: &[(&str, u64)] = &[
 const KNOWN: &[Known] = &[
     ("boss-intro-normal", "c18", WARP_C18),
     ("boss-skip-c18", "c18", WARP_C18),
-    ("boss-end-life-c18", "c18", END_LIFE_C18),
-    ("boss-end-life-h90-c18", "c18", END_LIFE_C18),
-    ("boss-kill-dead-c18", "c18", &[("rng", 21906)]),
     ("boss-intro-normal", "c60", WARP_C60),
     ("boss-skip", "c60", WARP_C60),
     ("boss-end-life", "c60", END_LIFE_C60),

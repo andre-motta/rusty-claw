@@ -2,7 +2,8 @@
 //! a help screen was up reaches the dynamite fuse once, in the update pass
 //! of its return at the boundary before the first tick after it, and the
 //! screen's frames move the next frame pulse; with the fuse clock frozen
-//! neither happens. The fuse is lit in the tick a stick is thrown and goes
+//! neither happens. The in-game menu's frames, and those of the End Life
+//! it offers, move the next frame pulse too, and nothing else. The fuse is lit in the tick a stick is thrown and goes
 //! off 70 ticks later. On a level with Claw alone the pass changes nothing
 //! a trace shows, and Claw's call in it sees no key pressed: a weapon
 //! switch pressed in the tick before the screen switches once.
@@ -11,10 +12,11 @@ use std::sync::Arc;
 
 use claw_sim::anim::Animation;
 use claw_sim::container::CollisionEvent;
+use claw_sim::input::{MenuScreen, ScriptCommand};
 use claw_sim::logic::projectile::{self, Phase, ProjectileSpec};
 use claw_sim::object::{LogicKind, Object, ObjectId, Rect, flags, types};
 use claw_sim::tuning::FuseClock;
-use claw_sim::{Buttons, Sim, SimConfig, SimLevel, TickInput, TileMap};
+use claw_sim::{Buttons, DirectiveKind, Sim, SimConfig, SimLevel, TickInput, TileMap};
 
 fn frames(n: i32, ms: i32) -> Vec<(i32, i32)> {
     (1..=n).map(|f| (f, ms)).collect()
@@ -239,6 +241,138 @@ fn the_help_screens_frames_move_the_next_frame_pulse() {
         out
     };
     assert_eq!(frozen, plain);
+}
+
+/// The ticks among the first 12 that are frame pulse ticks, with
+/// `between` played at the boundary before tick 4.
+fn pulses_around(fuse_clock: FuseClock, between: impl Fn(&mut Sim)) -> Vec<i32> {
+    let mut sim = sim(fuse_clock);
+    let mut out = Vec::new();
+    for n in 0..12 {
+        if n == 4 {
+            between(&mut sim);
+        }
+        sim.step(TickInput::default());
+        if sim.pulse() {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// The in-game menu up for `ms`.
+fn in_game_menu(ms: u32) -> DirectiveKind {
+    DirectiveKind::Menu {
+        screen: MenuScreen::InGame,
+        wall_ms: ms,
+        keys: Vec::new(),
+    }
+}
+
+/// How many ticks later than without `between` the first pulse at or
+/// after tick 4 comes, modulo the pulse's three ticks.
+fn pulse_shift(fuse_clock: FuseClock, between: impl Fn(&mut Sim)) -> i32 {
+    let after = |v: Vec<i32>| v.into_iter().find(|&n| n >= 4).unwrap();
+    let plain = after(pulses_around(fuse_clock, |_| {}));
+    (after(pulses_around(fuse_clock, between)) - plain).rem_euclid(3)
+}
+
+#[test]
+fn the_in_game_menus_frames_move_the_next_frame_pulse() {
+    // One frame per 18 ms of the menu, rounded up: 300 ms run 17 frames,
+    // two short of a whole number of pulse periods (one tick later, as
+    // two frames earlier), 54 ms three frames, a whole period, and 18 ms
+    // one, two ticks later.
+    let menu = |ms| {
+        move |sim: &mut Sim| {
+            sim.play_directive(&in_game_menu(ms));
+        }
+    };
+    let original = FuseClock::Original;
+    assert_eq!(pulse_shift(original, menu(300)), 1);
+    assert_eq!(pulse_shift(original, menu(299)), 1);
+    assert_eq!(pulse_shift(original, menu(54)), 0);
+    assert_eq!(pulse_shift(original, menu(18)), 2);
+    // Keys pressed on it add no frame.
+    let keyed = |sim: &mut Sim| {
+        sim.play_directive(&DirectiveKind::Menu {
+            screen: MenuScreen::InGame,
+            wall_ms: 300,
+            keys: vec!["down".into(), "confirm".into()],
+        });
+    };
+    assert_eq!(pulse_shift(original, keyed), 1);
+    // With the fuse clock frozen the menu leaves the pulse alone.
+    assert_eq!(pulse_shift(FuseClock::Frozen, menu(300)), 0);
+    // The pause screen moves nothing.
+    let pause = |sim: &mut Sim| {
+        sim.play_directive(&DirectiveKind::Menu {
+            screen: MenuScreen::Pause,
+            wall_ms: 300,
+            keys: Vec::new(),
+        });
+    };
+    assert_eq!(pulse_shift(original, pause), 0);
+}
+
+#[test]
+fn the_end_lifes_menu_frames_move_the_next_frame_pulse() {
+    let end_life = DirectiveKind::Command(ScriptCommand::EndLife);
+    // Alone: the menu opens (one frame), the confirmation page (three)
+    // and the yes (one), five frames: one tick later.
+    let alone = |sim: &mut Sim| {
+        assert!(sim.play_directive(&end_life));
+    };
+    assert_eq!(pulse_shift(FuseClock::Original, alone), 1);
+    // Called directly, the same.
+    assert_eq!(
+        pulse_shift(FuseClock::Original, |sim: &mut Sim| sim.end_life()),
+        1
+    );
+    // A second call before the tick counts nothing more.
+    let twice = |sim: &mut Sim| {
+        sim.end_life();
+        sim.end_life();
+    };
+    assert_eq!(pulse_shift(FuseClock::Original, twice), 1);
+    // After the menu's own time at the same boundary the menu is already
+    // open: four more frames. 300 ms (17 frames) and four: 21, a whole
+    // number of periods; in either order.
+    let after_menu = |sim: &mut Sim| {
+        sim.play_directive(&in_game_menu(300));
+        sim.play_directive(&end_life);
+    };
+    assert_eq!(pulse_shift(FuseClock::Original, after_menu), 0);
+    let before_menu = |sim: &mut Sim| {
+        sim.play_directive(&end_life);
+        sim.play_directive(&in_game_menu(300));
+    };
+    assert_eq!(pulse_shift(FuseClock::Original, before_menu), 0);
+    // A menu at an earlier boundary does not open this one.
+    let earlier = {
+        let mut sim = sim(FuseClock::Original);
+        let mut out = Vec::new();
+        for n in 0..12 {
+            if n == 3 {
+                sim.play_directive(&in_game_menu(54));
+            }
+            if n == 4 {
+                sim.play_directive(&end_life);
+            }
+            sim.step(TickInput::default());
+            if sim.pulse() {
+                out.push(n);
+            }
+        }
+        out
+    };
+    let five = pulses_around(FuseClock::Original, alone);
+    assert_eq!(
+        earlier.iter().filter(|&&n| n >= 4).collect::<Vec<_>>(),
+        five.iter().filter(|&&n| n >= 4).collect::<Vec<_>>()
+    );
+    // With the fuse clock frozen the pulse is left alone.
+    assert_eq!(pulse_shift(FuseClock::Frozen, alone), 0);
 }
 
 #[test]
