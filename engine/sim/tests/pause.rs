@@ -264,3 +264,30 @@ fn a_key_pressed_before_the_help_screen_acts_once() {
     });
     assert_eq!(weapon(&sim), switched, "held across the screen: latched");
 }
+
+#[test]
+fn the_help_returns_frame_puts_objects_left_outside_the_window_to_sleep() {
+    // Claw moved far along just before the screen: the camera's call in
+    // the return's pass catches up with him, and the return's frame ends
+    // with the leave pass there, so an object by his old place is asleep
+    // before the next tick runs, and one by his new place is still live.
+    let marker = |x: i32| {
+        let mut o = Object::new(0, x, 940, 0, "Marker".into(), LogicKind::Inert);
+        o.flags = flags::WORLD;
+        o
+    };
+    let run = |fuse_clock: FuseClock| {
+        let mut sim = sim(fuse_clock);
+        let behind = sim.spawn(marker(1100));
+        sim.step(TickInput::default());
+        sim.teleport_player(9000, 900);
+        let ahead = sim.spawn(marker(9100));
+        sim.pass_menu_time(3000);
+        let live = |id: ObjectId| sim.objects().get(id).is_some_and(Object::is_listed);
+        (live(behind), live(ahead))
+    };
+    assert_eq!(run(FuseClock::Original), (false, true));
+    // With the fuse clock frozen the return runs no pass at all: the next
+    // tick's own leave pass is the first to see the move.
+    assert_eq!(run(FuseClock::Frozen), (true, true));
+}

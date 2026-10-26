@@ -479,7 +479,10 @@ height only with the Catnip PegLeg drops on the deck by the first saw.
 When play comes back from a help screen, the game runs every object once
 more at the game time plus the screen's time (a stick whose fuse has burnt
 by then goes off there; Claw, in mid-jump, does not move) and the frame
-pulse moves on by the screen's frames; then the clock goes back, so an
+pulse moves on by the screen's frames; that redraw ends as any frame does,
+so an object the pass carried out of the area around the camera (an enemy
+walking away from Claw at its edge) is asleep in the next tick, and no
+object wakes there; then the clock goes back, so an
 enemy that pass moved goes back as far in the next tick; Claw's own call
 in that pass sees no key pressed, so a key pressed just before the screen
 acts once. A powder keg's
