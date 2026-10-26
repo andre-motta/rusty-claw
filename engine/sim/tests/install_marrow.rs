@@ -160,13 +160,20 @@ impl Route {
             .collect()
     }
 
-    /// The rows at which a life is ended.
-    fn end_life_rows(&self) -> Vec<usize> {
-        self.directives
-            .iter()
-            .filter(|(_, d)| d == "command end_life")
-            .map(|(k, _)| *k)
-            .collect()
+    /// Plays the route's in-game menu and End Life due before row `k`, in
+    /// the route's order: the menu's frames move the frame pulse
+    /// ([`Sim::pass_ingame_menu`]), and the End Life ends the life.
+    fn play_holds(&self, sim: &mut Sim, k: usize) {
+        for (row, d) in &self.directives {
+            if *row != k {
+                continue;
+            }
+            if let Some(ms) = d.strip_prefix("menu ingame ") {
+                sim.pass_ingame_menu(ms.parse().expect("a menu's time"));
+            } else if d == "command end_life" {
+                sim.end_life();
+            }
+        }
     }
 }
 
@@ -379,12 +386,10 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// - c18, the bridge trick, the parrot's late swoop (66258 ms): the same
 ///   rounding of the step time as the ride's climb above, on one row
 ///   of a swoop's set-up across.
-/// - c18, the diagnostic run, from the life ended at row 300 (5436 ms):
-///   the original's frame pulse countdown stands still in the tick the
-///   in-game menu takes (the menu takes the frame), so every pulse draw
-///   comes a tick later from there on; the replay plays no time for the
-///   menu. Marrow's and the parrot's draws, the screen shake of the second
-///   blast and the fight after it follow.
+/// - c18, the diagnostic run, after the life ended from the in-game menu
+///   at row 300 (whose frames keep the frame pulse going, as in the
+///   original), Marrow's height (28746 ms), not traced yet; the bridge
+///   trick below parts on the same column.
 /// - c60 (the default tuning played tick by tick): the walk into the door
 ///   ends a pixel off the original's 60 frames per second walk (the
 ///   checkpoint event), the camera's follow differs by a few pixels, the
@@ -408,22 +413,7 @@ const KNOWN: &[Known] = &[
         "c18",
         &[("marrow_y", 40698), ("parrot_x", 66258)],
     ),
-    (
-        "boss-skip-death-fight-c18",
-        "c18",
-        &[
-            ("rng", 5436),
-            ("parrot_y", 7362),
-            ("marrow_x", 8028),
-            ("marrow_state", 8028),
-            ("cam_x", 9108),
-            ("cam_y", 9108),
-            ("marrow_y", 10530),
-            ("boss_health", 10620),
-            ("marrow_health", 10620),
-            ("state_id", 36522),
-        ],
-    ),
+    ("boss-skip-death-fight-c18", "c18", &[("marrow_y", 28746)]),
     (
         "boss-intro-normal",
         "c60",
@@ -845,14 +835,11 @@ fn play(level: &SimLevel, r: &Route, clock: &str, seed: u32, ticks: usize) -> Pl
     let mut sim = at_time_zero(level, clock, r, t0_ms(clock), seed);
     let ids = WATCHED.map(|who| find(&sim, who));
     let input = r.ticks();
-    let ends = r.end_life_rows();
     let mut rows = Vec::new();
     let mut room = Vec::new();
     let mut completed = false;
     for k in 0..ticks {
-        if ends.contains(&k) {
-            sim.end_life();
-        }
+        r.play_holds(&mut sim, k);
         sim.step(input.get(k).copied().unwrap_or_default());
         completed |= sim
             .last_events()
@@ -1141,13 +1128,10 @@ fn watch(level: &SimLevel, store: &str, rows: usize) -> Vec<Look> {
     let mut sim = at_time_zero(level, "c18", &r, t0_ms("c18"), SEED);
     let ids = WATCHED.map(|who| find(&sim, who));
     let input = r.ticks();
-    let ends = r.end_life_rows();
     let mut out = Vec::new();
     let mut gem_id = None;
     for k in 0..rows {
-        if ends.contains(&k) {
-            sim.end_life();
-        }
+        r.play_holds(&mut sim, k);
         sim.step(input.get(k).copied().unwrap_or_default());
         let c = sim.player().expect("Claw");
         let m = ids[0].and_then(|id| sim.objects().get(id));
@@ -1520,8 +1504,9 @@ fn install_marrow_after_a_death_the_skipped_fight_blocks_whistles_and_drops_back
     assert_eq!(open(0, 40534), r + 35);
     // From then on every 25 damage costs a blocked blow and a whistle the
     // parrot never answers: Safe for 5000 ms, the call 16 rows in, the
-    // drop 278 rows in with the phase health his health; four such cycles
-    // still end in his death.
+    // drop 278 rows in with the phase health his health, Safe no more
+    // from there, or, when a blow of Claw's meets him then, once he has
+    // blocked it; four such cycles still end in his death.
     let waits = starts(&rows, r, |l| st(l) == Some(EnemyState::WaitForParrot));
     assert!(waits.len() >= 3, "{waits:?}");
     for &w in &waits {
@@ -1530,8 +1515,16 @@ fn install_marrow_after_a_death_the_skipped_fight_blocks_whistles_and_drops_back
         assert!(rows[w].marrow_safe);
         let call = first(&rows, w, |l| l.link.is_some_and(|k| k.parrot_call));
         assert_eq!(call - w, marrow::CALL_TICK as usize);
-        let drop = first(&rows, w, |l| !l.marrow_safe);
+        let drop = first(&rows, w, |l| l.link.is_some_and(|k| k.phase_health == h));
         assert_eq!(drop - w, (marrow::WAIT_FOR_PARROT_MS as usize).div_ceil(18));
+        let open = first(&rows, w, |l| !l.marrow_safe);
+        assert!(open >= drop, "safe through the wait");
+        assert!(
+            rows[drop..open]
+                .iter()
+                .all(|l| matches!(st(l), Some(EnemyState::BlockHigh | EnemyState::BlockLow))),
+            "a block keeps him safe past the drop"
+        );
         assert_eq!(
             rows[drop].link.map(|k| (k.phase_health, k.parrot_call)),
             Some((h, false))

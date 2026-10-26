@@ -113,7 +113,8 @@ impl Hold {
                 sim.restart_idle_wait();
                 sim.latch_keys();
             }
-            Hold::Menu(_) => {
+            Hold::Menu(ms) => {
+                sim.pass_ingame_menu(ms);
                 sim.restart_idle_wait();
                 sim.latch_keys();
             }
@@ -220,29 +221,16 @@ type Known = (&'static str, &'static str, &'static [(&'static str, u64)]);
 /// - siren-screens: the return from the help screen runs every object's
 ///   logic once more, outside any step (see `Sim::pass_help_return`), and
 ///   in that pass the Siren's song ends 14 rows before its time is over
-///   (she goes home on row 120, not 134), as in the original. The random
-///   stream still parts from the run's at 2916 ms (row 161), and from
-///   there her state (4914 ms) and her next lockout (5562 ms): not looked
-///   into here.
+///   (she goes home on row 120, not 134), as in the original; the
+///   in-game menu's frames on row 160 keep the frame pulse going, so the
+///   random stream follows the run's after it too.
 /// - siren-stand at 60 frames per second: the random stream is stepped a
 ///   different number of times at the two clocks (every enemy's roll comes
 ///   every third step, and the original's steps are shorter there), so her
 ///   wait after her first song is another draw and her second song, with
 ///   its lockout, comes earlier (its lockout from 5652 ms against the
 ///   run's 6050); the first lockout is within the slack.
-const KNOWN: &[Known] = &[
-    ("siren-stand", "c60", &[("lock", 5652)]),
-    (
-        "siren-screens",
-        "c18",
-        &[
-            ("rng", 2916),
-            ("siren_state", 4914),
-            ("lock", 5562),
-            ("dazed", 5562),
-        ],
-    ),
-];
+const KNOWN: &[Known] = &[("siren-stand", "c60", &[("lock", 5652)])];
 
 fn known(store: &str, clock: &str) -> Vec<(&'static str, u64)> {
     KNOWN

@@ -123,6 +123,12 @@ const fn every(first: usize, len: usize, key: u32, gap: usize, until: usize) -> 
     }
 }
 
+/// How long the in-game menu is up before its End Life ends Claw's
+/// life, ms, in the stores' routes (`menu ingame 500` and then
+/// `command end_life` at the same row): its frames move the frame pulse
+/// ([`Sim::pass_ingame_menu`], [`Sim::end_life`]).
+const END_LIFE_MENU_MS: u32 = 500;
+
 /// A route of the stores.
 struct Route {
     store: &'static str,
@@ -133,7 +139,8 @@ struct Route {
     every: &'static [Every],
     /// Catnip given at time zero, ms.
     catnip_ms: Option<u32>,
-    /// The row at which Claw's life is ended.
+    /// The row at which Claw's life is ended, from the in-game menu up
+    /// for [`END_LIFE_MENU_MS`] first.
     end_life: Option<usize>,
     /// After this row his count of cannon hits is set to this number (the
     /// original's diagnostic run).
@@ -822,6 +829,7 @@ fn play(
     let mut hooks_idle_from = None;
     for tick in 0..ticks {
         if r.end_life == Some(tick) {
+            sim.pass_ingame_menu(END_LIFE_MENU_MS);
             sim.end_life();
         }
         sim.step(input.get(tick).copied().unwrap_or_default());
@@ -947,10 +955,11 @@ fn trace_firsts(cmp: &Comparison) -> BTreeMap<String, u64> {
 ///   and on the death point's objects first, so the camera, the animations
 ///   (his idle pose two ticks shorter here) and the draws differ from
 ///   there; those rules come with the same work.
-/// - A life ended through the in-game menu: the original's frame pulse
-///   countdown stands still in that tick (the menu takes the frame), so
-///   every pulse draw comes a tick later from there on; the replay plays
-///   no time for the menu.
+/// - A life ended through the in-game menu: the menu's frames keep the
+///   frame pulse going, as in the original, and the button route follows
+///   the original to its end. After the jump-in skip the respawn at the
+///   level's start parts in the random stream (7110 ms, the respawn's
+///   tick: two draws in the original against one here), not traced yet.
 /// - A cannonball striking Gabriel while he is off screen (Claw at the
 ///   button's foot): the original shows no hit burst for an enemy it did
 ///   not draw and makes no draw for its size; this build still shows it.
@@ -983,25 +992,6 @@ const KNOWN: &[Known] = &[
             ("state_id", 39366),
             ("cam_x", 39384),
             ("x", 39384),
-        ],
-    ),
-    // The menu tick, then the death fall and the respawn.
-    (
-        "boss-button-normal-end-life-c18",
-        "c18",
-        &[
-            ("rng", 19818),
-            ("y", 20700),
-            ("cam_x", 21510),
-            ("his_state", 23886),
-            ("boss_health", 25542),
-            ("his_health", 25542),
-            ("health", 29988),
-            ("state_id", 29988),
-            ("x", 30006),
-            ("physics_type", 39816),
-            ("events", 41508),
-            ("lives", 41508),
         ],
     ),
     // The gem out of him: the camera, then his gem's first call and its
@@ -1134,11 +1124,11 @@ const KNOWN: &[Known] = &[
             ("his_state", 13100),
         ],
     ),
-    // The menu tick, then the death fall and the respawn.
+    // The respawn after the life ended from the menu, then his state.
     (
         "boss-intro-skip-end-life-c18",
         "c18",
-        &[("rng", 5436), ("y", 6300), ("his_state", 9522)],
+        &[("rng", 7110), ("his_state", 9522)],
     ),
     // The walk's last pixel and the introduction's delays.
     (
@@ -1372,6 +1362,7 @@ fn run_route(
     start_at(&mut sim, START, T0_MS[0].1, SEED, r.catnip_ms);
     for tick in 0..ticks {
         if r.end_life == Some(tick) {
+            sim.pass_ingame_menu(END_LIFE_MENU_MS);
             sim.end_life();
         }
         sim.step(input.get(tick).copied().unwrap_or_default());

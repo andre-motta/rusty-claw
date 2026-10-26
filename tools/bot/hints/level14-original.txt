@@ -193,15 +193,18 @@
 #     warp, the in-game menu's End Life while the introduction freezes
 #     Claw on the ladder top (the route's `@16025 command end_life` line,
 #     three ticks after he lands there), and a wait until he is back on the
-#     ladder top at full health:
-#       route ticks 16022 to 16123
+#     ladder top at full health, in the respawn's tick 16119:
+#       route ticks 16022 to 16119
 #           0-2  0x2000000 right
-#         3-101  0x0 nothing
+#          3-97  0x0 nothing
 # 22. Omar's fight and his gem: the search for the level's end from the
-#     ladder top (--intro play, --health-cost 30, the default
-#     --fragile-cost, 60 minutes).
+#     ladder top, from route tick 16120, the first after the respawn's
+#     (--intro play, --health-cost 30, 60 minutes). The in-game menu's
+#     frames of the End Life keep the enemies' rhythm going, so Omar's
+#     random choices after it come on the original's beat; the fight was
+#     searched again with that.
 #
 # level13-original.level14.csv (--carry, the progress level13-original.csv
-# ends with) keeps this route's rows through the End Life: that game
+# ends with) keeps this route's rows through the respawn's tick: that game
 # plays them the same way. From there: Omar's fight as in stretch 22, in
 # one search.
