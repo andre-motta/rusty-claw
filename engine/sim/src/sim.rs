@@ -1903,6 +1903,13 @@ impl Sim {
     /// flight catches up the screen's time in one capped step (see
     /// [`logic::pickup`]), as it did before this pass was modelled.
     ///
+    /// The return's frame then ends with the leave pass, at the camera
+    /// point the pass left, as a tick ends: an object the pass carried out
+    /// of the window around that point (an enemy walking away from Claw at
+    /// the window's edge, carried up to 24 px) is asleep in the first tick
+    /// after the screen and makes none of its calls or draws there. No
+    /// collision pass and no enter pass run in the return's frame.
+    ///
     /// Then the game clock goes back to the time of the last tick, so the
     /// next tick reads less time than the pass did: an enemy's movement
     /// covers a negative time there and goes back by up to 24 px, and a
@@ -1934,6 +1941,14 @@ impl Sim {
         let input = self.claw_input;
         self.claw_input.pressed = Buttons::NONE;
         self.update_pass();
+        // The return's frame ends as any frame does: every object the pass
+        // left outside the window around the camera point it left goes to
+        // sleep. No collision pass and no enter pass run here.
+        let c = self.centres();
+        {
+            let (mut runner, objects, activation) = self.parts();
+            activation.leave(objects, c, &mut |objects, id, _| runner.notify(objects, id));
+        }
         self.claw_input = input;
         self.help_pass_ms = None;
         self.frame_ms = TICK_MS;

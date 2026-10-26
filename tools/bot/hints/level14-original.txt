@@ -71,61 +71,70 @@
 #       442-473  0x2000000 right
 # 9. To the checkpoint: goal 8017,2463 (15 minutes).
 # 10. To the first save point: goal 9845,3037 (25 minutes).
-# 11. To the ledge before the elevator over the lava: goal 11303,2603
-#     (25 minutes), with, not searched, a wait on safe ground at x 10950
-#     on the way (route tick 5100), so that the elevator comes by as Claw
-#     drops on to it, and nine ticks more right at the end (route ticks
-#     5798 to 5806); then on
-#     to the right end of the elevator's run: goal 11880,2953
+# 11. On to safe ground at x 10950 before the ledge above the lava:
+#     goal 10950,2475 (25 minutes); then, not searched, a walk of ten
+#     ticks right and a wait there, so that the elevator over the lava
+#     comes by as Claw gets to it, and on to the ledge (waits of 820 to
+#     1146 ticks get him on to the ledge, and walks of eight to thirteen
+#     ticks with them; of those, 850 times the elevator's run):
+#       route ticks 4920 to 5867
+#           0-9  0x2000000 right
+#        10-859  0x0 nothing
+#       860-870  0x2000000 right
+#       871-875  0x2000001 right and jump
+#       876-901  0x2000000 right
+#       902-906  0x2000001 right and jump
+#       907-947  0x2000000 right
+#     then on to the right end of the elevator's run: goal 11880,2953
 #     (15 minutes); then to the checkpoint: goal 12305,2973 (30 minutes).
-#       route ticks 5100 to 5718
-#         0-618  0x0 nothing
 # 12. To the toggle peg below the elevator: goal 12717,2827 (10 minutes).
 12717,2904
-# 13. Not searched: five jumps in place on the peg that wait for the
-#    pegs' cycle (they also bring the path elevator above the climb round
-#    in time), a dynamite boost on to the ledge to the right (the help
-#    screen at route tick 6953), the climb of the toggle pegs to the left,
-#    a ride on the path elevator, a jump from it on to the highest peg and
-#    a jump from that on to the block to the right:
-#       route ticks 6425 to 7184
-#         0-130  0x0 nothing
-#       131-144  0x1 jump
-#       145-214  0x0 nothing
-#       215-228  0x1 jump
-#       229-298  0x0 nothing
-#       299-312  0x1 jump
-#       313-382  0x0 nothing
-#       383-396  0x1 jump
-#       397-466  0x0 nothing
-#       467-480  0x1 jump
-#       481-511  0x0 nothing
-#       512-525  0x2000001 right and jump
-#       526-527  0x2000100 right and dynamite
-#       528-558  0x0 nothing
-#       559-572  0x2000001 right and jump
-#       573-593  0x2000000 right
-#       594-600  0x0 nothing
-#       601-606  0x1000000 left
-#       607-620  0x1000001 left and jump
-#       621-639  0x1000000 left
-#       640-642  0x0 nothing
-#       643-656  0x1 jump
-#       657-686  0x0 nothing
-#       687-700  0x1000001 left and jump
-#       701-706  0x1000000 left
-#       707-725  0x0 nothing
-#       726-739  0x2000001 right and jump
-#       740-759  0x2000000 right
-# 14. To the checkpoint: goal 13202,2208 (20 minutes).
+# 13. Not searched: a walk of six ticks right on to the peg's middle,
+#    five jumps in place on the peg that wait for the pegs' cycle (they
+#    also bring the path elevator above the climb round in time), a
+#    dynamite boost on to the ledge to the right (the help screen at route
+#    tick 6957), the climb of the toggle pegs to the left and on to the
+#    path elevator (walks of five to seven ticks work, and first waits of
+#    128, 129, 131 and 132 ticks):
+#       route ticks 6423 to 7115
+#           0-5  0x2000000 right
+#         6-136  0x0 nothing
+#       137-150  0x1 jump
+#       151-220  0x0 nothing
+#       221-234  0x1 jump
+#       235-304  0x0 nothing
+#       305-318  0x1 jump
+#       319-388  0x0 nothing
+#       389-402  0x1 jump
+#       403-472  0x0 nothing
+#       473-486  0x1 jump
+#       487-517  0x0 nothing
+#       518-531  0x2000001 right and jump
+#       532-533  0x2000100 right and dynamite
+#       534-564  0x0 nothing
+#       565-578  0x2000001 right and jump
+#       579-599  0x2000000 right
+#       600-606  0x0 nothing
+#       607-612  0x1000000 left
+#       613-626  0x1000001 left and jump
+#       627-645  0x1000000 left
+#       646-648  0x0 nothing
+#       649-662  0x1 jump
+#       663-692  0x0 nothing
+# 14. From the path elevator to the checkpoint: goal 13202,2208
+#     (20 minutes).
 # 15. On to the elevator over the floor spikes: goal 14784,2657
 #     (25 minutes), then over the spikes to the checkpoint: goal
 #     15440,2462 (25 minutes) with the waypoint below.
 14950,2468
 # 16. To the second save point: goal 19892,3549 (40 minutes).
-# 17. Up the column of pegs to the checkpoint: goal 21232,1823
-#     (25 minutes, then carried on from the root of its last segment, at
-#     route tick 10351, for 20 minutes more).
+# 17. Up the column of pegs to the checkpoint: goal 21232,1823. The
+#     search from route tick 9538 (25 minutes, then carried on from the
+#     root of its last segment for 20 minutes more) does not get there;
+#     the route waits one tick and then plays the rows an earlier search
+#     of this stretch found, from route tick 9539 to 10549, which meet the
+#     pegs' cycle at those ticks only, and the search takes it on from
+#     there to the goal.
 20640,2570
 20640,2312
 20640,2060
@@ -135,17 +144,17 @@
 #     not searched, the ride along the row: a walk to the ledge's end,
 #     then on each elevator a wait for the next to come level and a jump
 #     on to it, to the ledge beyond:
-#       route ticks 10968 to 10981
+#       route ticks 10995 to 11008
 #          0-11  0x2000000 right
 #         12-13  0x0 nothing
-#       route ticks 10982 to 11029
+#       route ticks 11009 to 11056
 #          0-43  0x2000000 right
 #         44-47  0x0 nothing
-#       route ticks 11030 to 11200
-#         0-129  0x0 nothing
-#       130-143  0x2000001 right and jump
-#       144-149  0x2000000 right
-#       150-170  0x0 nothing
+#       route ticks 11057 to 11200
+#         0-102  0x0 nothing
+#       103-116  0x2000001 right and jump
+#       117-122  0x2000000 right
+#       123-143  0x0 nothing
 #       route ticks 11201 to 11548
 #         0-304  0x0 nothing
 #       305-318  0x2000001 right and jump
@@ -157,21 +166,24 @@
 #       459-489  0x2000000 right
 #     then to the checkpoint: goal 25425,2014 (15 minutes).
 # 19. To the checkpoint: goal 27281,2782 (25 minutes).
-# 20. Past the two tiger guards: goal 28118,2763 (25 minutes,
-#     --fragile-cost 0); up the toggle pegs to the ledge: goal 28264,2285
-#     (20 minutes, --fragile-cost 0); then up the column of toggle pegs to
-#     the last checkpoint: goal 28757,1437 (25 minutes, --fragile-cost 0).
+# 20. Past the two tiger guards and along the low passage on the far
+#     path elevator: goal 28165,2763 without --goal-on-foot (15 minutes,
+#     --fragile-cost 0; the nearer elevator stops short of the pegs); up
+#     the toggle pegs to the ledge: goal 28264,2285 (10 minutes,
+#     --fragile-cost 0); then up the column of toggle pegs to the last
+#     checkpoint: goal 28757,1437 (25 minutes, --fragile-cost 0).
 28640,2120
 28450,1959
 27885,1817
 27888,1473
 # 21. Through the boss room's door to the warp down to Omar's chamber:
 #     goal 31171,2317 without --goal-on-foot (--intro play, 40 minutes),
-#     two ticks before the warp. Not searched: the in-game menu's End Life
-#     while the introduction freezes Claw on the ladder top (the route's
-#     `@15310 command end_life` line, three ticks after the warp), and a
-#     wait until he is back on the ladder top at full health:
-#       route ticks 15307 to 15408
+#     a tick before the warp. Not searched: right held on through the
+#     warp, the in-game menu's End Life while the introduction freezes
+#     Claw on the ladder top (the route's `@15191 command end_life` line,
+#     three ticks after he lands there), and a wait until he is back on the
+#     ladder top at full health:
+#       route ticks 15188 to 15289
 #           0-2  0x2000000 right
 #         3-101  0x0 nothing
 # 22. Omar's fight and his gem: the search for the level's end from the
