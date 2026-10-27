@@ -2772,6 +2772,70 @@ fn later_runs_play_the_logo_only_unless_it_is_skipped() {
 }
 
 #[test]
+fn skip_logo_waits_for_the_intro_only_when_the_intro_plays_on_this_run() {
+    // A first run with the intro on the shelf: the logo plays anyway.
+    let r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of([-1, 0], false, true),
+    );
+    assert_eq!(r.movies, [MovieIndex::LOGO]);
+    // A first run without the intro: skip_logo applies, straight to the
+    // title, and the intro is not recorded.
+    for movies in [vec![-1], vec![-1, 2, 4]] {
+        let r = Rig::with_movies(
+            Start::Title,
+            LevelChoice::Retail(1),
+            main_menu(),
+            shelf_of(movies.clone(), false, true),
+        );
+        assert!(r.movies.is_empty(), "{movies:?}");
+        assert_eq!(r.flow.screen(), Screen::Title, "{movies:?}");
+        assert!(r.flow.title().is_some(), "{movies:?}");
+        assert_eq!(r.intro_records, 0);
+        assert!(!r.flow.settings().intro_seen);
+    }
+    // Without skip_logo the logo still plays when the intro is missing.
+    let r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of([-1], false, false),
+    );
+    assert_eq!(r.movies, [MovieIndex::LOGO]);
+}
+
+#[test]
+fn an_intro_that_failed_is_not_recorded_as_seen() {
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of([-1, 0], false, false),
+    );
+    movie_ends(&mut r);
+    assert_eq!(playing(&r), MovieIndex::INTRO);
+    r.flow.movie_failed();
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::Title);
+    assert!(r.flow.title().is_some());
+    assert_eq!(r.intro_records, 0);
+    assert!(!r.flow.settings().intro_seen);
+    assert!(!r.flow.movies().unwrap().intro_seen);
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(!text.contains("intro_seen"), "{text}");
+    // The next run plays the logo and the intro again.
+    let r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of([-1, 0], r.flow.settings().intro_seen, false),
+    );
+    assert_eq!(r.movies, [MovieIndex::LOGO]);
+}
+
+#[test]
 fn a_missing_intro_is_not_recorded_as_seen() {
     let nothing_recorded = |r: &Rig| {
         assert_eq!(r.intro_records, 0);

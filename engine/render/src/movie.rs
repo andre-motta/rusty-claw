@@ -9,7 +9,10 @@
 //! - I420 pictures go up as three one-byte planes (Y at full size, U and V
 //!   at half size), each sampled bilinearly, and the shader turns Y, U and
 //!   V into colour with the picture's matrix (BT.601 or BT.709) and range
-//!   (limited or full), from [`yuv_to_rgb`]'s coefficients.
+//!   (limited or full), from [`yuv_to_rgb`]'s coefficients. U and V are
+//!   sampled where they sit across the row ([`ChromaSiting`]): level with
+//!   the left one of each pair of Y samples (the MPEG family's default) or
+//!   halfway between them.
 //!
 //! Colours are sRGB values, converted for an sRGB target as the game's own
 //! final pass does. [`crate::cpu::movie_frame`] computes the same pixels on
@@ -20,6 +23,30 @@ use bytemuck::{Pod, Zeroable};
 use crate::gpu::Gpu;
 
 const SHADER: &str = include_str!("shaders/movie.wgsl");
+
+/// Where the U and V samples of an I420 picture sit across each row,
+/// against the Y samples (vertically they sit halfway between two rows
+/// either way).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromaSiting {
+    /// Level with the left one of each pair of Y samples (MPEG-2, MPEG-4,
+    /// H.264 and H.265 pictures, unless tagged otherwise).
+    Left,
+    /// Halfway between each pair of Y samples.
+    Centre,
+}
+
+impl ChromaSiting {
+    /// How far right of the Y sample's position U and V are read, in
+    /// colour samples: a left-sited sample lies a quarter of a colour
+    /// sample left of where a centred one would.
+    pub fn shift(self) -> f32 {
+        match self {
+            ChromaSiting::Left => 0.25,
+            ChromaSiting::Centre => 0.0,
+        }
+    }
+}
 
 /// How a picture's planes are laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +60,8 @@ pub enum PictureLayout {
         bt709: bool,
         /// Full range (otherwise limited range).
         full_range: bool,
+        /// Where U and V sit across each row.
+        chroma: ChromaSiting,
     },
 }
 
@@ -131,7 +160,9 @@ pub fn yuv_to_rgb(bt709: bool, full_range: bool) -> YuvToRgb {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct MovieU {
     srgb: u32,
-    pad: [u32; 3],
+    /// [`ChromaSiting::shift`].
+    chroma_shift: f32,
+    pad: [u32; 2],
     offset: [f32; 4],
     rows: [[f32; 4]; 3],
 }
@@ -286,11 +317,11 @@ impl MoviePresenter {
             uniform,
             picture: None,
         };
-        presenter.write_uniform(gpu, yuv_to_rgb(false, false));
+        presenter.write_uniform(gpu, yuv_to_rgb(false, false), ChromaSiting::Centre);
         presenter
     }
 
-    fn write_uniform(&self, gpu: &Gpu, yuv: YuvToRgb) {
+    fn write_uniform(&self, gpu: &Gpu, yuv: YuvToRgb, chroma: ChromaSiting) {
         let [o0, o1, o2] = yuv.offset;
         let row = |r: [f32; 3]| [r[0], r[1], r[2], 0.0];
         gpu.queue.write_buffer(
@@ -298,7 +329,8 @@ impl MoviePresenter {
             0,
             bytemuck::bytes_of(&MovieU {
                 srgb: u32::from(self.format.is_srgb()),
-                pad: [0; 3],
+                chroma_shift: chroma.shift(),
+                pad: [0; 2],
                 offset: [o0, o1, o2, 0.0],
                 rows: yuv.rows.map(row),
             }),
@@ -343,8 +375,13 @@ impl MoviePresenter {
         {
             self.picture = Some(self.make_textures(gpu, kind, (w, h)));
         }
-        if let PictureLayout::I420 { bt709, full_range } = picture.layout {
-            self.write_uniform(gpu, yuv_to_rgb(bt709, full_range));
+        if let PictureLayout::I420 {
+            bt709,
+            full_range,
+            chroma,
+        } = picture.layout
+        {
+            self.write_uniform(gpu, yuv_to_rgb(bt709, full_range), chroma);
         }
         let Some(up) = &self.picture else {
             return Ok(());

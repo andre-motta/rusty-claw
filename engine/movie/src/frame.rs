@@ -23,6 +23,19 @@ impl Matrix {
     }
 }
 
+/// Where the colour (U and V) samples of a picture with half-width colour
+/// planes sit across each row, against the brightness (Y) samples.
+/// Vertically they sit halfway between two rows either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChromaSiting {
+    /// Level with the left sample of each pair of Y samples: MPEG-2,
+    /// MPEG-4, H.264 and H.265 pictures, unless the stream says otherwise.
+    Left,
+    /// Halfway between each pair of Y samples (MPEG-1 and JPEG pictures,
+    /// and streams tagged so).
+    Centre,
+}
+
 /// How a picture's bytes are laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameLayout {
@@ -53,6 +66,9 @@ pub struct VideoFrame {
     pub planes: [Vec<u8>; 3],
     /// Bytes from one row to the next in each plane.
     pub strides: [usize; 3],
+    /// Where the colour samples of an [`FrameLayout::I420`] picture sit
+    /// across each row ([`FrameLayout::Rgba`] pictures leave it unused).
+    pub chroma: ChromaSiting,
 }
 
 impl std::fmt::Debug for VideoFrame {
@@ -63,6 +79,7 @@ impl std::fmt::Debug for VideoFrame {
             .field("pts", &self.pts)
             .field("layout", &self.layout)
             .field("strides", &self.strides)
+            .field("chroma", &self.chroma)
             .finish_non_exhaustive()
     }
 }
@@ -108,6 +125,7 @@ mod tests {
                 Vec::new(),
             ],
             strides: [10, 0, 0],
+            chroma: ChromaSiting::Centre,
         };
         assert_eq!(f.rgba(1, 0), Some([5, 6, 7, 8]));
         assert_eq!(f.rgba(0, 1), Some([9, 10, 11, 12]));

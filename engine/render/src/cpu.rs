@@ -292,7 +292,9 @@ fn sample_plane(
 /// The colour the movie presenter draws for `picture` at (u, v) (0 to 1
 /// across the picture), as sRGB red, green and blue from 0 to 1: the RGBA
 /// texel, or Y, U and V each sampled from its plane and turned into colour
-/// by [`yuv_to_rgb`].
+/// by [`yuv_to_rgb`], U and V read where they sit across the row
+/// ([`crate::movie::ChromaSiting::shift`] colour samples right of the Y
+/// sample's position).
 pub fn movie_pixel(picture: &MoviePicture, u: f32, v: f32) -> [f32; 3] {
     let (w, h) = (picture.width, picture.height);
     let rgb = match picture.layout {
@@ -300,12 +302,17 @@ pub fn movie_pixel(picture: &MoviePicture, u: f32, v: f32) -> [f32; 3] {
             let s = |c| sample_plane(picture.planes[0], picture.strides[0], (w, h), 4, c, u, v);
             [s(0), s(1), s(2)]
         }
-        PictureLayout::I420 { bt709, full_range } => {
+        PictureLayout::I420 {
+            bt709,
+            full_range,
+            chroma: siting,
+        } => {
             let chroma = (w.div_ceil(2), h.div_ceil(2));
+            let cu = u + siting.shift() / chroma.0 as f32;
             let yuv = [
                 sample_plane(picture.planes[0], picture.strides[0], (w, h), 1, 0, u, v),
-                sample_plane(picture.planes[1], picture.strides[1], chroma, 1, 0, u, v),
-                sample_plane(picture.planes[2], picture.strides[2], chroma, 1, 0, u, v),
+                sample_plane(picture.planes[1], picture.strides[1], chroma, 1, 0, cu, v),
+                sample_plane(picture.planes[2], picture.strides[2], chroma, 1, 0, cu, v),
             ];
             let m = yuv_to_rgb(bt709, full_range);
             let d = [0, 1, 2].map(|i| yuv[i] - m.offset[i]);

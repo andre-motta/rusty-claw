@@ -120,6 +120,16 @@ pub struct PadEvent {
 /// A source of gamepad events: the system's gamepads, or a script in
 /// tests.
 pub trait PadSource {
+    /// Starts reading, before the first event; fails, with the reason,
+    /// when the system has no gamepad support. A source handed to
+    /// [`InputRouter::with_source`] is opened at the router's first poll,
+    /// and one that fails is reported once and read no more, as the
+    /// router's own gamepads are. Sources that need no opening keep the
+    /// default.
+    fn open(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
     /// The next waiting event, or `None` when there is none.
     fn next_event(&mut self) -> Option<PadEvent>;
 }
@@ -304,6 +314,8 @@ enum Backend {
     Off,
     /// Opened at the first poll.
     Auto,
+    /// A source given to the router, opened at the first poll.
+    Given(Box<dyn PadSource>),
     /// Reading.
     Open(Box<dyn PadSource>),
     /// No gamepad support on this system.
@@ -357,7 +369,7 @@ impl fmt::Debug for InputRouter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let backend = match self.backend {
             Backend::Off => "off",
-            Backend::Auto => "not opened",
+            Backend::Auto | Backend::Given(_) => "not opened",
             Backend::Open(_) => "open",
             Backend::Unavailable => "unavailable",
         };
@@ -437,13 +449,14 @@ impl InputRouter {
         InputRouter::build(settings.keymap.clone(), settings.pad.clone(), backend)
     }
 
-    /// A router reading gamepads from `source` (a script in tests).
+    /// A router reading gamepads from `source` (a script in tests), which
+    /// it opens at the first poll ([`PadSource::open`]).
     pub fn with_source(
         keymap: Keymap,
         pad: PadSettings,
         source: Box<dyn PadSource>,
     ) -> InputRouter {
-        InputRouter::build(keymap, pad, Backend::Open(source))
+        InputRouter::build(keymap, pad, Backend::Given(source))
     }
 
     /// The keyboard map.
@@ -824,11 +837,18 @@ impl InputRouter {
     }
 
     fn open_pads(&mut self) {
-        if !matches!(self.backend, Backend::Auto) {
-            return;
-        }
-        self.backend = match GilrsSource::open() {
-            Ok(source) => Backend::Open(Box::new(source)),
+        let opened = match std::mem::replace(&mut self.backend, Backend::Unavailable) {
+            Backend::Auto => {
+                GilrsSource::open().map(|source| Box::new(source) as Box<dyn PadSource>)
+            }
+            Backend::Given(mut source) => source.open().map(|()| source),
+            other => {
+                self.backend = other;
+                return;
+            }
+        };
+        self.backend = match opened {
+            Ok(source) => Backend::Open(source),
             Err(e) => {
                 self.notice(format!(
                     "gamepads are not available ({e}); playing with the keyboard"

@@ -99,17 +99,21 @@
 //! own ([`Screen::Movie`]): the music and the menu's loop stop before it,
 //! the window plays it ([`Effect::PlayMovie`]) and says when it is over
 //! ([`Flow::movie_finished`] when it ended or was skipped,
-//! [`Flow::movie_missing`] when it could not play), and the next screen
-//! starts with its own sounds. Menu inputs and the idle timers wait while a
-//! movie plays, and no input given to a movie reaches the screen after it.
+//! [`Flow::movie_missing`] when it could not play, [`Flow::movie_failed`]
+//! when it opened but could not be shown or stopped early), and the next
+//! screen starts with its own sounds. Menu inputs and the idle timers wait
+//! while a movie plays, and no input given to a movie reaches the screen
+//! after it.
 //! The movies play at these moments, each only when it is on the shelf:
 //!
 //! - At start-up, for a run that starts at the title: on a first run (the
 //!   intro movie was never seen) the logo movie, then the intro movie,
-//!   whatever `skip_logo` says; once the intro has played, watched or
-//!   skipped, the flow records it ([`Effect::RecordIntroSeen`], written
-//!   back as `intro_seen = yes`). On later runs the logo movie only, and
-//!   not with `skip_logo`. A run straight in a level plays neither.
+//!   whatever `skip_logo` says; once the intro has played to its end or
+//!   was skipped, the flow records it ([`Effect::RecordIntroSeen`], written
+//!   back as `intro_seen = yes`), and not when it failed. On later runs
+//!   the logo movie only, and not with `skip_logo`; a first run without
+//!   the intro on the shelf counts as a later one. A run straight in a
+//!   level plays neither.
 //! - After levels 2, 4, 6, 8, 10, 12, 13 and 14 (see
 //!   [`MovieIndex::after_level`]): the level's movie comes first in its
 //!   end-of-level screens, before the map screen, whose sounds wait for it.
@@ -715,8 +719,8 @@ impl Flow {
     /// asks for no movie. Called before the first [`Flow::take_effects`]
     /// (or at least before any time passed), a run that starts at the title
     /// plays its start-up movies first (see the module documentation): the
-    /// logo then the intro when the intro was never seen, else the logo
-    /// unless `skip_logo` is set.
+    /// logo then the intro when the intro was never seen and is on the
+    /// shelf, else the logo unless `skip_logo` is set.
     pub fn set_movies(&mut self, shelf: MovieShelf) {
         let at_start = self.screen == Screen::Title
             && self.elapsed == 0.0
@@ -724,7 +728,8 @@ impl Flow {
             && self.play.is_none();
         let has = |i: MovieIndex| shelf.available.contains(i);
         let intro = !shelf.intro_seen && has(MovieIndex::INTRO);
-        let logo = has(MovieIndex::LOGO) && (!shelf.intro_seen || !shelf.skip_logo);
+        // skip_logo waits for the intro only when the intro plays now.
+        let logo = has(MovieIndex::LOGO) && (intro || !shelf.skip_logo);
         self.movies = Some(shelf);
         self.refresh_enabled();
         if !at_start || !(logo || intro) {
@@ -787,6 +792,14 @@ impl Flow {
         if matches!(self.screen, Screen::Movie(_)) {
             self.after_movie_ends();
         }
+    }
+
+    /// The movie asked for by [`Effect::PlayMovie`] opened but failed: its
+    /// pictures could not be shown, or decoding stopped on an error or
+    /// before any picture. The screen after it follows, as when it could
+    /// not play; an intro that failed is not recorded as seen.
+    pub fn movie_failed(&mut self) {
+        self.movie_missing();
     }
 
     fn after_movie_ends(&mut self) {

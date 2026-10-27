@@ -4,10 +4,13 @@
 //! window finds its sources ([`claw_movie::locate_all`]), opens the first
 //! that plays ([`MoviePlayback::start`]), sends its soundtrack to the audio
 //! engine, uploads each picture as it falls due and draws it full screen,
-//! at the movie's own shape, centred on black. When the movie ends, is
-//! skipped or cannot play (one line on the terminal says why), the window
-//! tells the flow ([`crate::flow::Flow::movie_finished`]) and the game goes
-//! on.
+//! at the movie's own shape, centred on black. When the movie ends or is
+//! skipped, the window tells the flow so
+//! ([`crate::flow::Flow::movie_finished`]); when it cannot play, cannot be
+//! shown or stops on a decoding error (one line on the terminal says why),
+//! it tells the flow it failed ([`crate::flow::Flow::movie_failed`]), so an
+//! intro that never showed is not noted as seen ([`MovieEnd`],
+//! [`tell_flow`]). Either way the game goes on.
 //!
 //! Skipping: a movie file skips on Escape or a pad's Back or Start button;
 //! a clip of the movie archive on any key, mouse click or pad button
@@ -17,28 +20,33 @@
 //! Only the game with its menus plays movies ([`movies_allowed`]): from
 //! the title, or straight in a level. Replays, traces, benchmarks and the
 //! tools never do, so movies change no recorded or measured run. `--movie
-//! INDEX|FILE` plays one movie and ends the program; `--no-movies` turns
-//! them off for the run.
+//! INDEX|FILE` plays one movie and ends the program ([`MOVIE_INDICES`] are
+//! the indices it takes); `--no-movies` turns them off for the run.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use claw_movie::{
-    FileKind, FrameLayout, Matrix, MovieError, MovieIndex, MovieMode, MovieSet, Player, Roots,
+    ChromaSiting, FileKind, FrameLayout, Matrix, MovieError, MovieIndex, MovieSet, Player, Roots,
     SkipRule, Source, VideoFrame, locate_all, open_first,
 };
 use claw_render::{MoviePicture, PictureLayout};
 use winit::keyboard::KeyCode;
 
 use crate::audio::AudioBridge;
-use crate::flow::MovieShelf;
+use crate::flow::{Flow, MovieShelf};
 use crate::input::{GilrsSource, PadEvent, PadEventKind, PadSource};
 use crate::keymap::PadButton;
 use crate::settings::{Mode, Settings};
 
 /// Rate of a movie's soundtrack when no audio engine plays it.
 const SILENT_RATE: u32 = 48000;
+
+/// The movie indices `--movie` takes: the attract clip (-2), the logo
+/// (-1), the intro (0), the movies after levels 2, 4, 6, 8, 10, 12 and 13,
+/// and the end of the game (14). The odd indices 1 to 11 name no movie.
+pub const MOVIE_INDICES: [i8; 11] = [-2, -1, 0, 2, 4, 6, 8, 10, 12, 13, 14];
 
 /// What `--movie` plays.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,8 +58,9 @@ pub enum MovieTarget {
 }
 
 impl MovieTarget {
-    /// Reads `--movie`'s value: a whole number is an index, anything else
-    /// a file (write `./3` for a file named `3`).
+    /// Reads `--movie`'s value: a whole number is an index, one of
+    /// [`MOVIE_INDICES`], anything else a file (write `./3` for a file
+    /// named `3`).
     pub fn parse(s: &str) -> Result<MovieTarget, String> {
         let s = s.trim();
         if s.is_empty() {
@@ -60,13 +69,15 @@ impl MovieTarget {
         match s.parse::<i32>() {
             Ok(n) => i8::try_from(n)
                 .ok()
+                .filter(|n| MOVIE_INDICES.contains(n))
                 .and_then(MovieIndex::new)
                 .map(MovieTarget::Index)
                 .ok_or_else(|| {
+                    let valid: Vec<String> = MOVIE_INDICES.iter().map(i8::to_string).collect();
                     format!(
-                        "movie index {n} does not exist: the movies are {} to {}",
-                        MovieIndex::MIN,
-                        MovieIndex::MAX
+                        "movie index {n} names no movie: the movies are {} (or give a movie \
+                         file)",
+                        valid.join(", ")
                     )
                 }),
             Err(_) => Ok(MovieTarget::File(PathBuf::from(s))),
@@ -132,15 +143,6 @@ pub fn movies_allowed(mode: &RunMode) -> bool {
     matches!(mode, RunMode::Menus | RunMode::Play)
 }
 
-/// Where this run looks for movies: the install's folder.
-pub fn roots(settings: &Settings) -> Roots {
-    Roots {
-        install: settings.install.clone(),
-        user_folder: None,
-        mode: MovieMode::default(),
-    }
-}
-
 /// The movies found under `roots`, when this build can play movies (none
 /// otherwise).
 pub fn shelf(roots: &Roots) -> MovieShelf {
@@ -192,6 +194,10 @@ pub fn picture(frame: &VideoFrame) -> MoviePicture<'_> {
         FrameLayout::I420 { matrix, full_range } => PictureLayout::I420 {
             bt709: matrix == Matrix::Bt709,
             full_range,
+            chroma: match frame.chroma {
+                ChromaSiting::Left => claw_render::ChromaSiting::Left,
+                ChromaSiting::Centre => claw_render::ChromaSiting::Centre,
+            },
         },
     };
     MoviePicture {
@@ -203,13 +209,68 @@ pub fn picture(frame: &VideoFrame) -> MoviePicture<'_> {
     }
 }
 
+/// How a movie in the window ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MovieEnd {
+    /// It played to the end of its stream.
+    Finished,
+    /// The player skipped it.
+    Skipped,
+    /// It could not be shown, stopped on a decoding error, or ended before
+    /// any picture showed.
+    Failed,
+}
+
+/// What happened to a playing movie so far, kept by [`MoviePlayback`]
+/// apart from the player so that how a movie ends follows from it alone
+/// ([`MovieProgress::end`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MovieProgress {
+    /// An input skipped it.
+    pub skipped: bool,
+    /// A picture could not be shown.
+    pub failed: bool,
+    /// A picture was handed over to be shown.
+    pub shown: bool,
+}
+
+impl MovieProgress {
+    /// How the movie ended, or `None` while it plays. `stream_over` says
+    /// the player has nothing more to show; `decode_error` that decoding
+    /// stopped on an error. Pictures that cannot be shown fail it; an
+    /// input that skips it skips it; otherwise it finished only when its
+    /// stream ended without an error after a picture showed.
+    pub fn end(&self, stream_over: bool, decode_error: bool) -> Option<MovieEnd> {
+        if self.failed {
+            Some(MovieEnd::Failed)
+        } else if self.skipped {
+            Some(MovieEnd::Skipped)
+        } else if !stream_over {
+            None
+        } else if decode_error || !self.shown {
+            Some(MovieEnd::Failed)
+        } else {
+            Some(MovieEnd::Finished)
+        }
+    }
+}
+
+/// Tells the flow how the movie it asked for ended: over (played to its
+/// end or skipped) or failed. Only an intro that is over is noted as seen.
+pub fn tell_flow(flow: &mut Flow, end: MovieEnd) {
+    match end {
+        MovieEnd::Finished | MovieEnd::Skipped => flow.movie_finished(),
+        MovieEnd::Failed => flow.movie_failed(),
+    }
+}
+
 /// A movie playing in the window (see the module documentation).
 #[derive(Debug)]
 pub struct MoviePlayback {
     player: Player,
     source: Source,
     rule: SkipRule,
-    skipped: bool,
+    progress: MovieProgress,
 }
 
 impl MoviePlayback {
@@ -230,7 +291,7 @@ impl MoviePlayback {
                     rule: source.skip_rule(),
                     player,
                     source,
-                    skipped: false,
+                    progress: MovieProgress::default(),
                 })
             }
             Err(e) => {
@@ -250,7 +311,9 @@ impl MoviePlayback {
     /// The picture to upload now: the newest one due, when there is one
     /// not shown yet.
     pub fn frame(&mut self) -> Option<MoviePicture<'_>> {
-        self.player.next_frame().map(picture)
+        let frame = self.player.next_frame()?;
+        self.progress.shown = true;
+        Some(picture(frame))
     }
 
     /// An input while the movie plays; true when it skips the movie. The
@@ -258,19 +321,26 @@ impl MoviePlayback {
     /// skipping or not.
     pub fn input(&mut self, event: &RawInput) -> bool {
         let skip = skips(self.rule, event);
-        self.skipped |= skip;
+        self.progress.skipped |= skip;
         skip
     }
 
-    /// Ends the movie early, as a skip does (for example when its pictures
-    /// cannot be shown).
-    pub fn end(&mut self) {
-        self.skipped = true;
+    /// Ends the movie because its pictures cannot be shown: it failed
+    /// ([`MovieEnd::Failed`]).
+    pub fn fail(&mut self) {
+        self.progress.failed = true;
     }
 
-    /// Whether the movie ended or was skipped.
+    /// How the movie ended, or `None` while it plays (see
+    /// [`MovieProgress::end`]).
+    pub fn end(&self) -> Option<MovieEnd> {
+        self.progress
+            .end(self.player.finished(), self.player.error().is_some())
+    }
+
+    /// Whether the movie is over, however it ended.
     pub fn done(&self) -> bool {
-        self.skipped || self.player.finished()
+        self.end().is_some()
     }
 
     /// The movie's shape, width over height.
@@ -298,36 +368,72 @@ impl MoviePlayback {
     }
 }
 
+/// Opens a source of gamepad events, or says why there is none.
+pub type PadOpener = Box<dyn FnMut() -> Result<Box<dyn PadSource>, String>>;
+
 /// The system's gamepads for the input router, noting each button pressed
 /// so the window can hand it to a playing movie (the router turns pad
 /// buttons into menu inputs, which cannot tell Start from the confirm
-/// button). Opened at the first poll, as the router's own are.
-#[derive(Debug, Default)]
+/// button). Opened when the router opens it, at its first poll; when
+/// gamepads are not available the router says so once, as for its own,
+/// and reads no more.
 pub struct PadTap {
-    pads: Option<GilrsSource>,
+    opener: PadOpener,
+    pads: Option<Box<dyn PadSource>>,
     tried: bool,
     presses: Rc<RefCell<Vec<PadButton>>>,
 }
 
+impl std::fmt::Debug for PadTap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PadTap")
+            .field("open", &self.pads.is_some())
+            .field("tried", &self.tried)
+            .field("presses", &self.presses)
+            .finish_non_exhaustive()
+    }
+}
+
 impl PadTap {
-    /// A tap and the list it notes presses in.
+    /// A tap on the system's gamepads and the list it notes presses in.
     pub fn new() -> (PadTap, Rc<RefCell<Vec<PadButton>>>) {
-        let tap = PadTap::default();
-        let presses = Rc::clone(&tap.presses);
+        PadTap::with_opener(Box::new(|| {
+            GilrsSource::open().map(|pads| Box::new(pads) as Box<dyn PadSource>)
+        }))
+    }
+
+    /// A tap on the pads `opener` opens (a script in tests) and the list it
+    /// notes presses in.
+    pub fn with_opener(opener: PadOpener) -> (PadTap, Rc<RefCell<Vec<PadButton>>>) {
+        let presses = Rc::new(RefCell::new(Vec::new()));
+        let tap = PadTap {
+            opener,
+            pads: None,
+            tried: false,
+            presses: Rc::clone(&presses),
+        };
         (tap, presses)
     }
 }
 
 impl PadSource for PadTap {
+    /// Opens the gamepads, once; the router reports a failure, once, as for
+    /// its own.
+    fn open(&mut self) -> Result<(), String> {
+        if self.tried {
+            return match self.pads {
+                Some(_) => Ok(()),
+                None => Err("gamepad support did not start".into()),
+            };
+        }
+        self.tried = true;
+        self.pads = Some((self.opener)()?);
+        Ok(())
+    }
+
     fn next_event(&mut self) -> Option<PadEvent> {
         if !self.tried {
-            self.tried = true;
-            match GilrsSource::open() {
-                Ok(pads) => self.pads = Some(pads),
-                Err(e) => eprintln!(
-                    "rusty-claw: gamepads are not available ({e}); playing with the keyboard"
-                ),
-            }
+            let _ = self.open();
         }
         let event = self.pads.as_mut()?.next_event()?;
         if let PadEventKind::Button(button, true) = event.kind {

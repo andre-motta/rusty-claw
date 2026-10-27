@@ -70,10 +70,11 @@
 //! plays from the level's own start (or the start point the route names).
 //!
 //! `--movie INDEX|FILE` plays one movie full screen with its sound, then
-//! exits: an index from -2 to 14 from the install (-1 is the logo, 0 the
-//! intro, 14 the end of the game), or any movie file. Escape, or a pad's
-//! Back or Start button, skips it. A build without the movie player says
-//! so and fails.
+//! exits: an index from the install, one of -2, -1, 0, 2, 4, 6, 8, 10, 12,
+//! 13 and 14 (-2 is the attract clip, -1 the logo, 0 the intro, 2 to 13
+//! after those levels, 14 the end of the game), or FILE, any movie file.
+//! Escape, or a pad's Back or Start button, skips it. A build without the
+//! movie player says so and fails.
 //!
 //! In a game with its menus the movies play where the original's do: at
 //! start-up, before the map screen after levels 2, 4, 6, 8, 10, 12, 13 and
@@ -116,10 +117,12 @@ How a run starts:
                                      benchmark is silent
   --bench-route FILE.csv --headless  benchmark along a route from the level's
                                      start until its end
-  --movie INDEX|FILE                 one movie, then exit: -1 the logo, 0 the
-                                     intro, 2 to 14 after those levels, or
-                                     any movie file; Escape or the pad's Back
-                                     or Start button skips it
+  --movie INDEX|FILE                 one movie, then exit: INDEX is -2 the
+                                     attract clip, -1 the logo, 0 the intro,
+                                     2, 4, 6, 8, 10, 12, 13 after those
+                                     levels or 14 the end of the game; FILE
+                                     is any movie file; Escape or the pad's
+                                     Back or Start button skips it
   --no-movies                        no movie this run (at start-up, after
                                      levels, in the menus)
 

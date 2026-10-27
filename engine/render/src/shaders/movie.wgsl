@@ -2,11 +2,14 @@
 // rectangle at its display aspect; the rest of the target is cleared to
 // black), with bilinear filtering. RGBA pictures are one texture; I420
 // pictures are three one-byte planes (Y, then U and V at half size) turned
-// into colour here. Mirrors movie_pixel() in cpu.rs.
+// into colour here, U and V read where they sit across the row (see
+// chroma_shift). Mirrors movie_pixel() in cpu.rs.
 
 struct MovieU {
     srgb: u32,
-    pad0: u32,
+    // How far right of the Y sample's position U and V are read, in colour
+    // samples: 0.25 for left-sited colour, 0 for centred.
+    chroma_shift: f32,
     pad1: u32,
     pad2: u32,
     // Subtracted from Y, U and V (w unused).
@@ -59,10 +62,12 @@ fn fs_rgba(in: VsOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_i420(in: VsOut) -> @location(0) vec4<f32> {
+    let chroma_width = f32(textureDimensions(plane_u).x);
+    let cuv = vec2<f32>(in.uv.x + mu.chroma_shift / chroma_width, in.uv.y);
     let yuv = vec3<f32>(
         textureSample(plane_y, bilinear, in.uv).r,
-        textureSample(plane_u, bilinear, in.uv).r,
-        textureSample(plane_v, bilinear, in.uv).r,
+        textureSample(plane_u, bilinear, cuv).r,
+        textureSample(plane_v, bilinear, cuv).r,
     ) - mu.offset.xyz;
     return finish(vec3<f32>(dot(mu.red.xyz, yuv), dot(mu.green.xyz, yuv), dot(mu.blue.xyz, yuv)));
 }
