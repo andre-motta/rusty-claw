@@ -60,13 +60,17 @@
 //! [`Session::directives`] lists every directive given or played so far;
 //! the recorder writes them into the recording. A pause or menu changes
 //! nothing in the game itself: play stops and goes on where it stopped,
-//! with the input the ticks after it were recorded with. There are three
+//! with the input the ticks after it were recorded with. There are four
 //! exceptions, live and replayed alike: with the fuse clock at its original
 //! default ([`claw_sim::tuning::FuseClock`]) the return from the help
 //! screen runs an update pass with the time it was up at the boundary
 //! after it, which burns the dynamite fuse on, runs every object once more
 //! and moves the next frame pulse by the screen's frames
-//! ([`Sim::pass_help_return`]), with the original rule for keys (see
+//! ([`Sim::pass_help_return`]), the in-game menu's frames (one per 18 ms
+//! it was up, its opening frame at least) and those of its End Life move
+//! the next frame pulse too, so the enemies keep their rhythm across it
+//! as `claw-replay` plays it ([`Sim::pass_ingame_menu`],
+//! [`Sim::end_life`]), with the original rule for keys (see
 //! below) the keys down when a screen closes count as already pressed
 //! ([`Sim::latch_keys`]; the pause screen of a `menu pause` line is the
 //! pause key's pause and latches none), and as play resumes the game's
@@ -325,26 +329,25 @@ impl Directives {
     }
 }
 
-/// The help screen time and the number of keys pressed on it that a
-/// pause or menu directive passes to the help screen's return when play
-/// goes on after it (see [`Sim::pass_help_return`]).
-fn menu_time(kind: &DirectiveKind) -> Option<(u32, usize)> {
+/// The menu screen, its time and the number of keys pressed on it that a
+/// menu directive passes to the screen's return when play goes on after
+/// it (see [`Sim::pass_menu`]): the help screen's update pass and the
+/// in-game menu's frames.
+fn menu_time(kind: &DirectiveKind) -> Option<(MenuScreen, u32, usize)> {
     match kind {
         DirectiveKind::Menu {
-            screen: MenuScreen::Help,
+            screen: screen @ (MenuScreen::Help | MenuScreen::InGame),
             wall_ms,
             keys,
-        } => Some((*wall_ms, keys.len())),
+        } => Some((*screen, *wall_ms, keys.len())),
         _ => None,
     }
 }
 
-/// Carries out a command directive.
+/// Carries out a command directive, as every player of a route does
+/// ([`Sim::play_directive`]).
 fn apply_command(sim: &mut Sim, c: ScriptCommand) {
-    match c {
-        ScriptCommand::EndLife => sim.end_life(),
-        ScriptCommand::Powerup(p) => sim.give_powerup(p),
-    }
+    sim.play_directive(&DirectiveKind::Command(c));
 }
 
 /// A level in play.
@@ -367,9 +370,10 @@ pub struct Session {
     live_span: Option<LiveSpan>,
     /// A replayed pause or menu in progress: the wall time left, µs.
     hold_us: Option<u64>,
-    /// The help screen time (and the keys pressed on it) the replayed
-    /// hold in progress passes to the help screen's return when it ends.
-    hold_menu_ms: Option<(u32, usize)>,
+    /// The menu screen, its time and the keys pressed on it that the
+    /// replayed hold in progress passes to the screen's return when it
+    /// ends (see [`menu_time`]).
+    hold_menu: Option<(MenuScreen, u32, usize)>,
     /// The replayed hold in progress is a screen: with the original rule
     /// the keys down when it ends count as already pressed.
     hold_screen: bool,
@@ -444,7 +448,7 @@ impl Session {
             directives: Directives::default(),
             live_span: None,
             hold_us: None,
-            hold_menu_ms: None,
+            hold_menu: None,
             hold_screen: false,
             hold_span: None,
             hold_changes: Vec::new(),
@@ -585,12 +589,15 @@ impl Session {
     }
 
     /// Gives up Claw's life at the start of the next tick (the in-game
-    /// menu's end life; see [`Sim::end_life`]), noted as a command.
+    /// menu's end life; see [`Sim::end_life`]), noted as a command. It
+    /// plays as a replayed `end_life` command does, the menu's frames
+    /// included.
     pub fn end_life(&mut self) {
-        self.sim.end_life();
+        let kind = DirectiveKind::Command(ScriptCommand::EndLife);
+        self.sim.play_directive(&kind);
         self.directives.log.push(Directive {
             tick: self.ticks as usize,
-            kind: DirectiveKind::Command(ScriptCommand::EndLife),
+            kind,
         });
     }
 
@@ -638,8 +645,17 @@ impl Session {
     /// [`Session::close_span`]: noted at the boundary before the next tick,
     /// with the wall time of the frames that run until it closes. It only
     /// notes the stop; the caller stops the clock ([`Session::pause`]). A
-    /// span still open is closed first.
+    /// span still open is closed first; when play has not gone on since
+    /// it opened (the help screen opened from the in-game menu), its
+    /// screen's return is played now, as a replay plays the two at one
+    /// boundary (see [`Sim::pass_menu`]).
     pub fn open_span(&mut self, span: Span) {
+        if self.paused
+            && let Some(s) = self.live_span.take()
+        {
+            self.pass_live_menu(&s);
+            self.live_span = Some(s);
+        }
         self.close_span();
         let index = self.directives.log.len();
         let live = LiveSpan {
@@ -878,8 +894,8 @@ impl Session {
                         start: false,
                     });
                 }
-                if let Some((ms, keys)) = self.hold_menu_ms.take() {
-                    self.sim.pass_help_return(ms, keys);
+                if let Some((screen, ms, keys)) = self.hold_menu.take() {
+                    self.sim.pass_menu(screen, ms, keys);
                 }
                 // Play resumes: the game's clock is reset.
                 self.sim.restart_idle_wait();
@@ -1023,7 +1039,7 @@ impl Session {
             d.log.push(next);
             if let Some(us) = hold {
                 self.hold_us = Some(us);
-                self.hold_menu_ms = menu_ms;
+                self.hold_menu = menu_ms;
                 self.hold_screen = screen;
                 self.hold_span = span;
                 if let Some(span) = span {
@@ -1172,12 +1188,10 @@ impl Session {
         }
         self.driver.step_mut().resume();
         self.paused = false;
-        let Some(span) = self.live_span.as_ref() else {
+        let Some(span) = self.live_span.clone() else {
             return;
         };
-        if let Span::Menu(MenuScreen::Help) = span.span {
-            self.sim.pass_help_return(span.wall_ms(), span.keys.len());
-        }
+        self.pass_live_menu(&span);
         // Play resumes after a pause or a screen: the game's clock is reset.
         // A replay being watched plays its own pauses and menus (where the
         // reset comes as each one's hold ends), so pausing it changes
@@ -1210,6 +1224,21 @@ impl Session {
         }
         self.driver.step_mut().step_once();
         self.stepping = true;
+    }
+
+    /// The return from the screen of live span `span`, as play goes on
+    /// after it: the help screen's update pass, the in-game menu's frames
+    /// (see [`Sim::pass_menu`]). A replay being watched counts its own
+    /// menus' frames as each one's hold ends, so an in-game menu opened
+    /// while watching it moves nothing.
+    fn pass_live_menu(&mut self, span: &LiveSpan) {
+        let Span::Menu(screen) = span.span else {
+            return;
+        };
+        if screen == MenuScreen::InGame && self.replaying() {
+            return;
+        }
+        self.sim.pass_menu(screen, span.wall_ms(), span.keys.len());
     }
 
     /// True while paused.
@@ -2214,6 +2243,128 @@ mod tests {
             ]
         );
         assert!(!session.holding());
+    }
+
+    /// The frame pulse of each tick of `script` played straight on the
+    /// simulation, its directives as `claw-replay` plays them.
+    fn pulses_played(script: &InputScript) -> Vec<bool> {
+        let mut sim = Sim::new(level(), SimConfig::default());
+        (0..script.ticks.len())
+            .map(|t| {
+                sim.play_directives(script, t);
+                sim.step(script.ticks[t]);
+                sim.pulse()
+            })
+            .collect()
+    }
+
+    /// Runs `session` in frames of 1 ms (one tick at most each) until it
+    /// has run `ticks` ticks, noting the frame pulse of each.
+    fn pulses_run(session: &mut Session, ticks: u64, out: &mut Vec<bool>) {
+        while session.ticks() < ticks {
+            if session.frame(Duration::from_millis(1)).ticks > 0 {
+                out.push(session.sim().pulse());
+            }
+        }
+    }
+
+    fn in_game_menu(wall_ms: u32) -> DirectiveKind {
+        DirectiveKind::Menu {
+            screen: MenuScreen::InGame,
+            wall_ms,
+            keys: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_replayed_in_game_menu_keeps_the_beat_as_claw_replay_does() {
+        let at = |tick, kind| Directive { tick, kind };
+        let mut script = InputScript::from_held(&[0; 60]);
+        let plain = pulses_played(&script);
+        script.directives = vec![
+            at(10, in_game_menu(300)),
+            at(20, in_game_menu(0)),
+            at(20, DirectiveKind::Command(ScriptCommand::EndLife)),
+            at(
+                30,
+                DirectiveKind::Menu {
+                    screen: MenuScreen::Help,
+                    wall_ms: 40,
+                    keys: Vec::new(),
+                },
+            ),
+            at(31, in_game_menu(18)),
+        ];
+        let played = pulses_played(&script);
+        assert_ne!(played, plain, "the menus move the beat");
+        let mut session =
+            Session::new(Sim::new(level(), SimConfig::default())).with_replay(script.clone());
+        let mut replayed = Vec::new();
+        pulses_run(&mut session, script.ticks.len() as u64, &mut replayed);
+        assert_eq!(replayed, played);
+    }
+
+    #[test]
+    fn the_live_in_game_menu_keeps_the_beat_as_its_recording_does() {
+        let mut session = Session::new(Sim::new(level(), SimConfig::default()));
+        let mut live = Vec::new();
+        let menu = |session: &mut Session, ms: u64| {
+            session.pause();
+            session.open_span(Span::Menu(MenuScreen::InGame));
+            for _ in 0..ms {
+                session.frame(Duration::from_millis(1));
+            }
+        };
+        let resume = |session: &mut Session| {
+            session.resume();
+            session.close_span();
+        };
+        pulses_run(&mut session, 10, &mut live);
+        // The menu, closed.
+        menu(&mut session, 300);
+        resume(&mut session);
+        pulses_run(&mut session, 20, &mut live);
+        // The menu and its End Life, as the window plays it: play goes on,
+        // then the life ends.
+        menu(&mut session, 100);
+        resume(&mut session);
+        session.end_life();
+        pulses_run(&mut session, 30, &mut live);
+        // The help screen opened from the menu.
+        menu(&mut session, 60);
+        session.open_span(Span::Menu(MenuScreen::Help));
+        for _ in 0..40 {
+            session.frame(Duration::from_millis(1));
+        }
+        resume(&mut session);
+        pulses_run(&mut session, 60, &mut live);
+        let mut script = InputScript::from_held(&[0; 60]);
+        script.directives = session.directives();
+        assert_eq!(script.directives.len(), 5, "{:?}", script.directives);
+        assert_ne!(
+            pulses_played(&script),
+            pulses_played(&InputScript::from_held(&[0; 60])),
+            "the menus move the beat"
+        );
+        assert_eq!(live, pulses_played(&script));
+    }
+
+    #[test]
+    fn an_in_game_menu_opened_while_watching_a_replay_moves_nothing() {
+        let script = InputScript::from_held(&[0; 40]);
+        let mut session =
+            Session::new(Sim::new(level(), SimConfig::default())).with_replay(script.clone());
+        let mut watched = Vec::new();
+        pulses_run(&mut session, 10, &mut watched);
+        session.pause();
+        session.open_span(Span::Menu(MenuScreen::InGame));
+        for _ in 0..300 {
+            session.frame(Duration::from_millis(1));
+        }
+        session.resume();
+        session.close_span();
+        pulses_run(&mut session, 40, &mut watched);
+        assert_eq!(watched, pulses_played(&script));
     }
 
     #[test]

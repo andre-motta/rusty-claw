@@ -1831,12 +1831,16 @@ impl Sim {
     /// was, as every screen does with that switch; after the level's end
     /// ([`Sim::level_ended`]) it does nothing either.
     ///
-    /// [`Sim::play_directive`] calls it for a `menu ingame` line, so
-    /// `claw-replay` and the bot count the menu's frames. The game's own
-    /// session (live play, its replays and the benchmark) does not call it
-    /// yet: there only an End Life moves the frame pulse.
+    /// A visit to the menu counts its opening frame ([`MENU_OPEN_FRAMES`])
+    /// however short its time, so a menu of 0 ms followed by an End Life
+    /// moves the frame pulse as a lone End Life does.
+    ///
+    /// Every player of a game calls it the same way, through
+    /// [`Sim::pass_menu`]: [`Sim::play_directive`] for a `menu ingame`
+    /// line (`claw-replay`, the bot and the reference tests), and the
+    /// game's own session for the in-game menu played live or replayed.
     pub fn pass_ingame_menu(&mut self, ms: u32) {
-        let mut frames = ms.div_ceil(TICK_MS) as usize;
+        let mut frames = (ms.div_ceil(TICK_MS) as usize).max(MENU_OPEN_FRAMES);
         if self.menu_opened {
             frames = frames.saturating_sub(MENU_OPEN_FRAMES);
         }
@@ -1912,11 +1916,7 @@ impl Sim {
                 wall_ms,
                 keys,
             } => {
-                match screen {
-                    MenuScreen::Help => self.pass_help_return(*wall_ms, keys.len()),
-                    MenuScreen::InGame => self.pass_ingame_menu(*wall_ms),
-                    MenuScreen::Pause => {}
-                }
+                self.pass_menu(*screen, *wall_ms, keys.len());
                 self.restart_idle_wait();
                 self.latch_keys();
                 false
@@ -1929,6 +1929,20 @@ impl Sim {
                 self.give_powerup(*p);
                 true
             }
+        }
+    }
+
+    /// The return from menu screen `screen`, up for `ms` of wall time with
+    /// `keys` keys pressed on it, at the boundary before the next tick:
+    /// the help screen's update pass ([`Sim::pass_help_return`]), the
+    /// in-game menu's frames ([`Sim::pass_ingame_menu`]), nothing for the
+    /// pause screen. [`Sim::play_directive`] and the game's session both
+    /// play a menu's return through it.
+    pub fn pass_menu(&mut self, screen: MenuScreen, ms: u32, keys: usize) {
+        match screen {
+            MenuScreen::Help => self.pass_help_return(ms, keys),
+            MenuScreen::InGame => self.pass_ingame_menu(ms),
+            MenuScreen::Pause => {}
         }
     }
 
