@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::bank::{Pcm, SoundBank};
 use crate::mixer::{Mixer, MusicSource, PlayParams};
 use crate::settings::{AudioSettings, Channel, MixSettings, PlayRequest};
-use crate::state::{AudioState, Command, Shared};
+use crate::state::{AudioState, Command, Garbage, Shared};
 
 struct Counting;
 
@@ -125,6 +125,7 @@ fn mixer_render_does_not_allocate() {
         ..AudioSettings::default()
     });
     mixer.set_music(Some(Box::new(Saw(0.0))));
+    mixer.set_movie(Some(Box::new(Saw(0.05))));
     let mut out = vec![0.0f32; 2 * 4096];
     let ids: Vec<_> = (0..40)
         .map(|k| bank.id(&format!("S{k}")).unwrap())
@@ -176,6 +177,7 @@ fn output_side_does_not_allocate() {
         Command::Settings(mix),
         Command::Bank { epoch: 1, bank },
         Command::Music(Some(Box::new(Saw(0.0)))),
+        Command::Movie(Some(Box::new(Saw(0.05)))),
     ];
     for (k, id) in ids.iter().enumerate() {
         cmds.push(Command::Play {
@@ -190,6 +192,7 @@ fn output_side_does_not_allocate() {
     cmds.push(Command::HoldMusic(false));
     cmds.push(Command::Stop(2));
     cmds.push(Command::Music(Some(Box::new(Saw(0.1)))));
+    cmds.push(Command::Movie(None));
     for c in cmds {
         assert!(tx.push(c).is_ok());
     }
@@ -203,9 +206,53 @@ fn output_side_does_not_allocate() {
         state.fill(&mut device, 6);
     });
     assert_eq!(ops, 0, "heap operations on the output side");
-    // The replaced music source came back to be dropped here.
-    assert!(grx.pop().is_ok());
+    // The replaced music source and the cleared movie soundtrack came back
+    // to be dropped here.
+    assert!(matches!(grx.pop(), Ok(Garbage::Music(_))));
+    assert!(matches!(grx.pop(), Ok(Garbage::Movie(_))));
+    assert!(grx.pop().is_err());
     drop(keep);
+}
+
+#[test]
+fn a_cleared_movie_comes_back_to_be_dropped() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A soundtrack that notes on which thread it was dropped.
+    struct Noted(Arc<AtomicBool>);
+    impl MusicSource for Noted {
+        fn render(&mut self, out: &mut [f32], _rate: u32) {
+            out.fill(0.1);
+        }
+    }
+    impl Drop for Noted {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    let (mut tx, rx) = rtrb::RingBuffer::new(8);
+    let (gtx, mut grx) = rtrb::RingBuffer::new(4);
+    let shared = Arc::new(Shared::default());
+    let mut state = AudioState::new(Mixer::new(48000), rx, gtx, shared);
+    let dropped = Arc::new(AtomicBool::new(false));
+    assert!(
+        tx.push(Command::Movie(Some(Box::new(Noted(Arc::clone(&dropped))))))
+            .is_ok()
+    );
+    state.run_silent(100);
+    assert!(state.mixer.has_movie());
+    assert!(tx.push(Command::Movie(None)).is_ok());
+    state.run_silent(100);
+    assert!(!state.mixer.has_movie());
+    assert!(
+        !dropped.load(Ordering::Relaxed),
+        "not dropped on the output side"
+    );
+    let back = grx.pop();
+    assert!(matches!(back, Ok(Garbage::Movie(_))));
+    drop(back);
+    assert!(dropped.load(Ordering::Relaxed));
 }
 
 #[test]

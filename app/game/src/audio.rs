@@ -44,6 +44,10 @@
 //! the level track. The game itself asks for no power-up music while a
 //! boss fight is on, so the bridge needs no rule of its own for it.
 //!
+//! Movies: a playing movie's soundtrack goes to the engine through
+//! [`AudioBridge::set_movie`], at the sound volume and through pauses and
+//! music holds; the flow stops the music before a movie.
+//!
 //! Music needs a General MIDI SoundFont (see
 //! [`claw_audio::music::soundfont`]); without one, music is off, one
 //! message says how to get a bank, and sound effects are unaffected.
@@ -340,6 +344,13 @@ impl AudioBridge {
         AudioBridge::with_engine(AudioEngine::new(settings.clone()), settings, font)
     }
 
+    /// Starts the audio engine on the default output device (or silently,
+    /// as [`AudioBridge::new`]) without looking for a SoundFont: for a run
+    /// that plays a movie and no music.
+    pub fn without_music(settings: AudioSettings) -> AudioBridge {
+        AudioBridge::with_engine(AudioEngine::new(settings.clone()), settings, None)
+    }
+
     /// A bridge that never opens a device and has no music (tests).
     pub fn silent(settings: AudioSettings) -> AudioBridge {
         AudioBridge::silent_with_music(settings, None)
@@ -370,6 +381,19 @@ impl AudioBridge {
     /// The engine.
     pub fn engine(&self) -> &AudioEngine {
         &self.engine
+    }
+
+    /// Plays a movie's soundtrack (or stops it with `None`): at the sound
+    /// volume, through pauses and music holds (see
+    /// [`AudioEngine::set_movie`]).
+    pub fn set_movie(&mut self, movie: Option<Box<dyn claw_audio::MusicSource>>) {
+        self.engine.set_movie(movie);
+    }
+
+    /// The rate the output renders at now, in Hz (see
+    /// [`AudioEngine::out_rate`]).
+    pub fn out_rate(&self) -> u32 {
+        self.engine.out_rate()
     }
 
     /// The music player, when music is loaded.

@@ -18,6 +18,7 @@
 //! - [`pause`]: what pauses play and what a pause holds;
 //! - [`flow`]: the game flow: title, menus, play, the end-of-level tally
 //!   and the end of a game;
+//! - [`movie`]: the game's movies in the window;
 //! - [`window`]: the game window;
 //! - [`bench`]: benchmarks in a window or offscreen;
 //! - [`replay_headless`]: replaying an input script without a window.
@@ -39,6 +40,7 @@ pub mod flow;
 pub mod input;
 pub mod keymap;
 pub mod load;
+pub mod movie;
 pub mod pause;
 pub mod rope_swing;
 pub mod saves;
@@ -46,7 +48,9 @@ pub mod session;
 pub mod settings;
 pub mod window;
 
+pub use flow::Start;
 pub use load::{LevelBundle, load_graphics, load_level, new_sim, preload};
+pub use movie::{MovieTarget, RunMode, movies_allowed};
 pub use session::Session;
 pub use settings::{Aspect, LevelChoice, Mode, Scale, Settings};
 

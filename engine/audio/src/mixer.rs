@@ -22,6 +22,9 @@ use crate::curve;
 use crate::settings::{AudioSettings, Channel, MAX_VOICES, MixSettings, PlayRequest};
 
 /// A music generator mixed under the sound effects at the music volume.
+///
+/// A movie's soundtrack is a source too, set with [`Mixer::set_movie`] and
+/// mixed at the sound volume instead.
 pub trait MusicSource: Send {
     /// Fills `out` (interleaved stereo, already zeroed) with the next
     /// `out.len() / 2` frames at `rate` Hz. Must not allocate or block.
@@ -123,6 +126,8 @@ pub struct Mixer {
     music_held: bool,
     music: Option<Box<dyn MusicSource>>,
     music_gain: f32,
+    movie: Option<Box<dyn MusicSource>>,
+    movie_gain: f32,
     scratch: Box<[f32]>,
 }
 
@@ -136,6 +141,7 @@ impl fmt::Debug for Mixer {
             .field("all_paused", &self.all_paused)
             .field("music_held", &self.music_held)
             .field("music", &self.music.is_some())
+            .field("movie", &self.movie.is_some())
             .finish()
     }
 }
@@ -156,6 +162,8 @@ impl Mixer {
             music_held: false,
             music: None,
             music_gain: curve::music_gain(settings.music_volume),
+            movie: None,
+            movie_gain: movie_gain(&settings),
             scratch: vec![0.0; SCRATCH_FRAMES * 2].into_boxed_slice(),
         }
     }
@@ -198,6 +206,7 @@ impl Mixer {
         } else {
             0.0
         };
+        self.movie_gain = movie_gain(&settings);
         let cap = usize::from(settings.voice_cap);
         for (slot, v) in self.voices.iter_mut().enumerate() {
             if !v.active {
@@ -396,6 +405,26 @@ impl Mixer {
         self.music.is_some()
     }
 
+    /// Replaces the movie's soundtrack and returns the previous one, so the
+    /// caller decides where it is dropped.
+    ///
+    /// The soundtrack is mixed at the sound volume (as the effects are),
+    /// and neither [`Mixer::pause_game`] nor [`Mixer::hold_music`] holds
+    /// it. It is rendered even when its gain is zero (sound off, or a sound
+    /// volume of 0), so a source that counts the frames it renders keeps a
+    /// running clock.
+    pub fn set_movie(
+        &mut self,
+        movie: Option<Box<dyn MusicSource>>,
+    ) -> Option<Box<dyn MusicSource>> {
+        std::mem::replace(&mut self.movie, movie)
+    }
+
+    /// Whether a movie soundtrack is set.
+    pub fn has_movie(&self) -> bool {
+        self.movie.is_some()
+    }
+
     /// Number of playing (or paused) voices.
     pub fn active_voices(&self) -> usize {
         self.voices.iter().filter(|v| v.active).count()
@@ -447,11 +476,32 @@ impl Mixer {
                     }
                 }
             }
+            if let Some(movie) = self.movie.as_mut() {
+                let gain = self.movie_gain;
+                for chunk in out.chunks_mut(SCRATCH_FRAMES * 2) {
+                    let scratch = &mut self.scratch[..chunk.len()];
+                    scratch.fill(0.0);
+                    movie.render(scratch, self.out_rate);
+                    for (o, m) in chunk.iter_mut().zip(scratch.iter()) {
+                        *o += m * gain;
+                    }
+                }
+            }
             for s in out.iter_mut() {
                 *s = s.clamp(-1.0, 1.0);
             }
         }
         self.clock_frames += frames as u64;
+    }
+}
+
+/// The movie soundtrack's gain: the sound volume through the game's curve,
+/// or 0 with sound off.
+fn movie_gain(settings: &MixSettings) -> f32 {
+    if settings.enabled {
+        curve::gain(curve::attenuation(settings.sound_volume))
+    } else {
+        0.0
     }
 }
 
@@ -1076,6 +1126,79 @@ mod tests {
         m.pause_game();
         m.render(&mut out);
         assert_eq!(rendered.load(Ordering::Relaxed), 200);
+    }
+
+    #[test]
+    fn a_movie_plays_at_the_sound_volume() {
+        let settings = AudioSettings {
+            sound_volume: 50,
+            music_volume: 100,
+            ..full_volume()
+        };
+        let mut m = mixer(&settings);
+        assert!(m.set_movie(Some(Box::new(Constant(0.5)))).is_none());
+        assert!(m.has_movie() && !m.has_music());
+        // Longer than the scratch buffer.
+        let mut out = vec![0.0f32; 2 * 3000];
+        m.render(&mut out);
+        let e = 0.5 * curve::gain(curve::attenuation(50));
+        assert!(out.iter().all(|s| close(*s, e)), "{} vs {e}", out[0]);
+        // The music volume and switch do not touch it.
+        m.set_settings(&AudioSettings {
+            music: false,
+            music_volume: 0,
+            ..settings.clone()
+        });
+        m.render(&mut out);
+        assert!(out.iter().all(|s| close(*s, e)));
+        m.set_settings(&AudioSettings {
+            sound_volume: 100,
+            ..settings
+        });
+        m.render(&mut out);
+        assert!(out.iter().all(|s| close(*s, 0.5)));
+    }
+
+    #[test]
+    fn a_movie_ignores_the_game_pause_and_the_music_hold() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut m = mixer(&full_volume());
+        let rendered = Arc::new(AtomicUsize::new(0));
+        m.set_movie(Some(Box::new(Counting(Arc::clone(&rendered)))));
+        m.pause_game();
+        m.hold_music(true);
+        let mut out = vec![0.0f32; 2 * 100];
+        m.render(&mut out);
+        assert_eq!(rendered.load(Ordering::Relaxed), 100);
+        assert!(out.iter().all(|s| close(*s, 0.25)));
+    }
+
+    #[test]
+    fn a_silent_movie_still_runs_its_clock() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for settings in [
+            AudioSettings {
+                sound_volume: 0,
+                ..full_volume()
+            },
+            AudioSettings {
+                enabled: false,
+                ..full_volume()
+            },
+        ] {
+            let mut m = mixer(&settings);
+            let rendered = Arc::new(AtomicUsize::new(0));
+            m.set_movie(Some(Box::new(Counting(Arc::clone(&rendered)))));
+            let mut out = vec![0.0f32; 2 * 1500];
+            m.render(&mut out);
+            assert_eq!(rendered.load(Ordering::Relaxed), 1500, "{settings:?}");
+            assert!(out.iter().all(|s| *s == 0.0), "{settings:?}");
+        }
+        let mut m = mixer(&full_volume());
+        assert!(m.set_movie(None).is_none());
+        assert!(!m.has_movie());
     }
 
     #[test]

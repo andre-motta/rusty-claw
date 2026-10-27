@@ -8,8 +8,9 @@
 //!
 //! | From | Event | To |
 //! | --- | --- | --- |
-//! | start (plain `--install`) | | title |
+//! | start (plain `--install`) | | title, after the logo movie when movies play |
 //! | start (`--level`, `--custom`) | | play |
+//! | logo movie | it ends, is skipped or cannot play | title |
 //! | title | its sound ends, or a key | main menu |
 //! | main menu | idle 120 s (180 s in a submenu) | title |
 //! | main menu | new game at level n | play, new-game values |
@@ -87,10 +88,21 @@
 //!
 //! Screens fade out over [`FADE_MS`] before the next one, which fades in
 //! over the same time (with the menu's roll-up and unroll sounds).
+//!
+//! Movies: the flow plays none until the window hands it the movies it can
+//! play ([`Flow::set_movies`]), which it does only for the game with its
+//! menus (see [`crate::movie::movies_allowed`]). Then a run that starts at
+//! the title shows the logo movie first, when there is one. A movie is a
+//! screen of its own ([`Screen::Movie`]): the music stops before it, the
+//! window plays it ([`Effect::PlayMovie`]) and says when it is over
+//! ([`Flow::movie_finished`], also when it is skipped or cannot play), and
+//! the next screen starts with its own sounds. Menu inputs and the idle
+//! timers wait while a movie plays.
 
 use std::collections::{BTreeSet, VecDeque};
 
 use claw_frame::{AudioCue, GameEvent, SoundChannel, SoundCue};
+use claw_movie::{MovieIndex, MovieSet};
 use claw_sim::logic::checkpoint::MESSAGE_SAVED;
 use claw_sim::tuning::{FuseClock, PlayAids};
 use claw_sim::{Sim, StartState};
@@ -108,6 +120,7 @@ use winit::keyboard::KeyCode;
 
 use crate::input::{CaptureOutcome, Captured};
 use crate::keymap::{Action, Keymap, PadMap, key_name};
+use crate::movie::MovieTarget;
 use crate::pause::PauseInput;
 use crate::saves::{SaveRecord, SaveStore, retail_level_name};
 use crate::settings::{LevelChoice, PAD_DEAD_ZONE_RANGE, Scale, Settings, WINDOW_SIZES};
@@ -197,6 +210,8 @@ pub enum Screen {
     GameOver,
     /// The credits.
     Credits,
+    /// A movie, which the window plays (see [`Effect::PlayMovie`]).
+    Movie(MovieIndex),
     /// The program ends.
     Exit,
 }
@@ -254,6 +269,9 @@ pub enum Effect {
     /// Show the credits: hand a [`CreditsScreen`] opened from this entry
     /// to [`Flow::set_credits`].
     ShowCredits(CreditsEntry),
+    /// Play a movie full screen, then call [`Flow::movie_finished`] (also
+    /// when it is skipped or cannot play).
+    PlayMovie(MovieIndex),
     /// Start a music track of the screens (looping or once), stopping the
     /// one playing.
     Music {
@@ -517,6 +535,10 @@ pub struct Flow {
     effects: Vec<Effect>,
     /// The level the tally leads to and how it starts.
     next: Option<(u32, StartState)>,
+    /// The movies this run can play, once the window said so.
+    movies: Option<MovieShelf>,
+    /// What follows the movie on screen.
+    after_movie: Option<Pending>,
 }
 
 impl std::fmt::Debug for Flow {
@@ -536,6 +558,21 @@ pub enum Start {
     Title,
     /// Straight into `settings.level`.
     Play,
+    /// One movie, then the end of the program. The window plays it without
+    /// menus (see [`crate::window::run_movie`]); a flow started this way
+    /// ends at once.
+    Movie(MovieTarget),
+}
+
+/// The movies a run can play and the choices about them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MovieShelf {
+    /// The movies that have a source to play from.
+    pub available: MovieSet,
+    /// The intro movie has played on an earlier run.
+    pub intro_seen: bool,
+    /// The logo movie is not wanted at start-up.
+    pub skip_logo: bool,
 }
 
 impl Flow {
@@ -587,6 +624,8 @@ impl Flow {
             told_unsaved: false,
             effects: Vec::new(),
             next: None,
+            movies: None,
+            after_movie: None,
         };
         if let Some(tree) = main {
             flow.main = Some(flow.prepare(tree));
@@ -613,8 +652,71 @@ impl Flow {
                 let level = flow.settings.level.clone();
                 flow.begin_play(level, StartState::default());
             }
+            Start::Movie(_) => {
+                flow.screen = Screen::Exit;
+                flow.effects.push(Effect::Quit);
+            }
         }
         flow
+    }
+
+    /// Hands over the movies this run can play. Without this call the flow
+    /// asks for no movie. Called before the first [`Flow::take_effects`]
+    /// (or at least before any time passed), a run that starts at the title
+    /// plays the logo movie first when it is on the shelf.
+    pub fn set_movies(&mut self, shelf: MovieShelf) {
+        let at_start = self.screen == Screen::Title
+            && self.elapsed == 0.0
+            && self.pending.is_none()
+            && self.play.is_none();
+        let logo = shelf.available.contains(MovieIndex::LOGO);
+        self.movies = Some(shelf);
+        if at_start && logo {
+            self.effects.retain(|e| *e != Effect::ShowTitle);
+            if let Some(mut t) = self.title.take() {
+                let stop = t.leave();
+                self.effects.push(Effect::Sound(stop));
+            }
+            self.play_movie(MovieIndex::LOGO, Pending::Screen(Screen::Title));
+        }
+    }
+
+    /// The movies this run can play, once [`Flow::set_movies`] was called.
+    pub fn movies(&self) -> Option<&MovieShelf> {
+        self.movies.as_ref()
+    }
+
+    /// The movie showing, if any.
+    pub fn playing_movie(&self) -> Option<MovieIndex> {
+        match self.screen {
+            Screen::Movie(index) => Some(index),
+            _ => None,
+        }
+    }
+
+    /// The movie asked for by [`Effect::PlayMovie`] is over: it ended, was
+    /// skipped or could not play. The screen after it follows.
+    pub fn movie_finished(&mut self) {
+        if !matches!(self.screen, Screen::Movie(_)) {
+            return;
+        }
+        let next = self
+            .after_movie
+            .take()
+            .unwrap_or(Pending::Screen(Screen::MainMenu));
+        self.pending = Some(next);
+        self.run_pending();
+    }
+
+    /// Shows movie `index`, then `then`. The music stops first.
+    fn play_movie(&mut self, index: MovieIndex, then: Pending) {
+        self.effects.push(Effect::Sound(AudioCue::StopMusic));
+        self.screen = Screen::Movie(index);
+        self.idle_ms = 0.0;
+        self.fade = None;
+        self.pending = None;
+        self.after_movie = Some(then);
+        self.effects.push(Effect::PlayMovie(index));
     }
 
     /// Adds this game's own pages to a menu: the controls list, the Video
@@ -1201,7 +1303,7 @@ impl Flow {
                     g.skip();
                 }
             }
-            Screen::Play | Screen::Exit => {}
+            Screen::Play | Screen::Movie(_) | Screen::Exit => {}
         }
     }
 
@@ -1911,7 +2013,7 @@ impl Flow {
                 }
                 self.drain_credits();
             }
-            Screen::Help | Screen::Exit => {}
+            Screen::Help | Screen::Movie(_) | Screen::Exit => {}
         }
     }
 

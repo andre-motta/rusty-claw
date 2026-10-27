@@ -472,7 +472,11 @@ dependencies = [
 name = "claw-movie"
 version = "0.1.0"
 dependencies = [
+ "claw-audio",
+ "rtrb",
  "rusty_ffmpeg",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

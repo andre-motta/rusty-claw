@@ -6,7 +6,8 @@
 //! never allocates, locks or blocks. Objects whose last owner could be this
 //! side are handed back to the game side to drop:
 //!
-//! - a replaced music source goes back through the return queue;
+//! - a replaced music source or movie soundtrack goes back through the
+//!   return queue;
 //! - sound banks: the game side keeps every bank it sent until this side
 //!   reports, through the retire floor, that no playing voice still uses it.
 
@@ -41,11 +42,13 @@ pub(crate) enum Command {
         bank: Arc<SoundBank>,
     },
     Music(Option<Box<dyn MusicSource>>),
+    Movie(Option<Box<dyn MusicSource>>),
 }
 
 /// Something the output side gives back for the game side to drop.
 pub(crate) enum Garbage {
     Music(#[allow(dead_code)] Box<dyn MusicSource>),
+    Movie(#[allow(dead_code)] Box<dyn MusicSource>),
 }
 
 /// Counters and flags shared between the game side, the output host thread
@@ -139,6 +142,11 @@ impl AudioState {
                         // When the return queue is full the source is dropped
                         // here; the queue is drained on every game-side call.
                         let _ = self.garbage.push(Garbage::Music(old));
+                    }
+                }
+                Command::Movie(movie) => {
+                    if let Some(old) = self.mixer.set_movie(movie) {
+                        let _ = self.garbage.push(Garbage::Movie(old));
                     }
                 }
             }

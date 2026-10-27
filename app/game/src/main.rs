@@ -7,15 +7,17 @@
 //!            [--invincible] [--infinite-lives] [--powerup NAME[:SECONDS]]
 //!            [--vsync on|off] [--fps-cap N | --uncapped]
 //!            [--no-interp] [--smooth-rope on|off] [--no-audio]
-//!            [--record FILE.csv]
+//!            [--no-movies] [--record FILE.csv]
 //!            [--replay FILE.csv [--trace OUT.csv] [--render-hz HZ]]
 //!            [--bench SECONDS [--headless] [--render-hz HZ]]
 //!            [--bench-route FILE.csv --headless [--bench SECONDS]
 //!             [--render-hz HZ]]
+//! rusty-claw --install PATH --movie INDEX|FILE [--no-audio]
 //! ```
 //!
 //! With only `--install` (and options), the game starts at the title and
-//! its main menu. `--level` and `--custom` start straight into that level
+//! its main menu, after the logo movie when the build plays movies and the
+//! install has it (`--no-movies` skips it). `--level` and `--custom` start straight into that level
 //! with the in-game menu, the end-of-level tally and the main menu after
 //! it; `--replay` and `--bench` play one level without menus. A replay in
 //! the window plays the game's sound and music as play does (silent with
@@ -66,6 +68,12 @@
 //! starts from carried progress or a save point is refused: the benchmark
 //! plays from the level's own start (or the start point the route names).
 //!
+//! `--movie INDEX|FILE` plays one movie full screen with its sound, then
+//! exits: an index from -2 to 14 from the install (-1 is the logo, 0 the
+//! intro, 14 the end of the game), or any movie file. Escape, or a pad's
+//! Back or Start button, skips it. A build without the movie player says
+//! so and fails.
+//!
 //! A benchmark prints its report as one line of JSON on standard output and
 //! a one-line PASS or FAIL verdict naming each budget on standard error. It
 //! exits with status [`BUDGET_FAILED`] when a measured budget is missed.
@@ -99,6 +107,12 @@ How a run starts:
                                      benchmark is silent
   --bench-route FILE.csv --headless  benchmark along a route from the level's
                                      start until its end
+  --movie INDEX|FILE                 one movie, then exit: -1 the logo, 0 the
+                                     intro, 2 to 14 after those levels, or
+                                     any movie file; Escape or the pad's Back
+                                     or Start button skips it
+  --no-movies                        no movie this run (the logo before the
+                                     title is one)
 
 Play-test aids, off by default, for trying out hard levels:
   --invincible                       Claw takes no damage (death tiles and pits
@@ -264,6 +278,10 @@ fn run(args: Args, matches: &ArgMatches) -> Result<Outcome> {
         bail!("--headless goes with --bench or --bench-route");
     }
     let mut settings = Settings::from_args(&args)?;
+    if let Some(target) = settings.movie.clone() {
+        window::run_movie(settings, target, Instant::now())?;
+        return Ok(Outcome::Done);
+    }
     if settings.widen_activation && settings.aspect != Aspect::Fill {
         eprintln!(
             "rusty-claw: --widen-activation applies to the fill aspect only; \
