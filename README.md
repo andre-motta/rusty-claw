@@ -205,9 +205,12 @@ original does, full screen at the movie's own shape on black, with its
 sound at the sound volume:
 
 - at start-up, before the title: the company logo, and on the first run
-  the intro after it. Once the intro has played, watched or skipped, the
-  game notes it in the config file (`intro_seen = yes`) and later runs
-  start with the logo only, or with nothing at all with `skip_logo = on`;
+  the intro after it. Once the intro has played to its end or was
+  skipped, the game notes it in the config file (`intro_seen = yes`; an
+  intro that could not play or be shown is not noted) and later runs
+  start with the logo only, or with nothing at all with `skip_logo = on`.
+  `skip_logo` waits for the intro only when the intro plays on that run:
+  without an intro to play it skips the logo on the first run too;
 - after levels 2, 4, 6, 8, 10, 12 and 13, before the map screen, and the
   ending after level 14, before its map screen and the credits;
 - in the main menu when nobody touches it for two minutes (three in a
@@ -218,12 +221,16 @@ sound at the sound volume:
 A run straight in a level (`--level`, `--custom`) skips the start-up
 movies, community custom levels have none, and replays, traces,
 benchmarks and the tools never play any. `--no-movies` turns them off for
-one run, and `--movie INDEX|FILE` plays one movie and exits (`-1` the logo,
-`0` the intro, `2` to `14` after those levels, or any movie file).
+one run, and `--movie INDEX|FILE` plays one movie and exits. INDEX is one
+of `-2` (the attract clip), `-1` (the logo), `0` (the intro), `2`, `4`,
+`6`, `8`, `10`, `12`, `13` (after those levels) and `14` (the ending);
+the odd numbers 1 to 11 name no movie and are refused. FILE is any movie
+file.
 
 Escape, or the gamepad's Back or Start button, skips a movie file; any
 key, click or gamepad button skips a clip of the movie archive. Keys
-pressed during a movie do nothing on the screen after it.
+pressed during a movie do nothing on the screen after it. Pictures show
+ahead of the sound by the sound output's latency.
 
 Where movies come from, best first:
 
@@ -246,7 +253,7 @@ No movie file comes with the source, and the game never writes one.
 | `movies = original` | only the install's movie files, then its movie archive |
 | `movies = archive` | only the movie archive, as the original does with DVD movies off |
 | `movies = off` | no movies |
-| `skip_logo = on` | no logo at start-up, once the intro has played |
+| `skip_logo = on` | no logo at start-up, once the intro has played or when there is no intro to play |
 | `movie_folder = "/path"` | where your copies are |
 | `intro_seen = yes` | written by the game once the intro played; `no` shows it again |
 
@@ -293,7 +300,7 @@ soundfont = "/path/to/a/soundfont.sf2"
 gamepad = on               # on or off
 pad_dead_zone = 0.34       # stick dead zone, 0.05 to 0.95
 movies = upscaled          # original, archive or off (see Movies)
-skip_logo = off            # on: no logo movie at start-up after the first run
+skip_logo = off            # on: no logo movie at start-up unless the intro plays
 movie_folder = "/path/to/your/movies"
 intro_seen = no            # the game sets it once the intro movie played
 key_jump = "Space"         # key_<action>: key names, comma separated

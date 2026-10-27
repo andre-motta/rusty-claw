@@ -1084,18 +1084,19 @@ impl App {
     }
 
     /// Ends the playing movie when it is over: its sound stops and the
-    /// flow goes on (a `--movie` run ends).
+    /// flow learns how it ended ([`movie::tell_flow`]) and goes on (a
+    /// `--movie` run ends).
     fn finish_movie(&mut self, event_loop: &ActiveEventLoop) {
-        if !self.movie.as_ref().is_some_and(MoviePlayback::done) {
+        let Some(end) = self.movie.as_ref().and_then(MoviePlayback::end) else {
             return;
-        }
+        };
         if let Some(m) = self.movie.take() {
             m.stop(self.audio.as_mut());
         }
         if self.movie_only.is_some() {
             event_loop.exit();
         } else if let Some(f) = self.flow.as_mut() {
-            f.movie_finished();
+            movie::tell_flow(f, end);
             self.run_effects(event_loop);
         }
     }
@@ -1120,7 +1121,7 @@ impl App {
                 "rusty-claw: the movie {} cannot be shown: {e}",
                 movie.source().describe()
             );
-            movie.end();
+            movie.fail();
             return;
         }
         let aspect = movie.aspect();

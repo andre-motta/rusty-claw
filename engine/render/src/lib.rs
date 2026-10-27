@@ -36,7 +36,9 @@ pub mod view;
 
 pub use gpu::{Gpu, GpuError, Offscreen, Renderer};
 pub use images::{FrameInfo, ImageSource, LevelGraphics, MemoryImages, StoreImages};
-pub use movie::{MovieDrawError, MoviePicture, MoviePresenter, PictureLayout, movie_rect};
+pub use movie::{
+    ChromaSiting, MovieDrawError, MoviePicture, MoviePresenter, PictureLayout, movie_rect,
+};
 pub use pack::HdPack;
 pub use scene::{Composition, FrameInput, Scene, SceneBuilder, SpriteInput};
 pub use screen::{Anchor, ImageId, ScreenBuilder, ScreenScene, ScreenSprite};

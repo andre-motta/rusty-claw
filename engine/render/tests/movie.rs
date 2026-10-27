@@ -1,12 +1,13 @@
 //! Movie pictures: where they show at each output shape, the colours of
-//! YUV pictures, and (with `CLAW_GPU_TESTS=1`, under the bench lock) RGBA
+//! YUV pictures and where their colour samples sit, and (with `CLAW_GPU_TESTS=1`, under the bench lock) RGBA
 //! and I420 pictures drawn offscreen and compared with the CPU reference.
 
 use claw_render::cpu::{movie_frame, movie_pixel};
 use claw_render::gpu::COLOR_FORMAT;
 use claw_render::movie::yuv_to_rgb;
 use claw_render::{
-    Gpu, MovieDrawError, MoviePicture, MoviePresenter, PictureLayout, movie_rect, wgpu,
+    ChromaSiting, Gpu, MovieDrawError, MoviePicture, MoviePresenter, PictureLayout, movie_rect,
+    wgpu,
 };
 
 const FOUR_THREE: f32 = 4.0 / 3.0;
@@ -196,7 +197,11 @@ fn colour(yuv: [u8; 3], bt709: bool, full_range: bool) -> [u8; 3] {
     let picture = MoviePicture {
         width: 1,
         height: 1,
-        layout: PictureLayout::I420 { bt709, full_range },
+        layout: PictureLayout::I420 {
+            bt709,
+            full_range,
+            chroma: ChromaSiting::Centre,
+        },
         planes: [&planes[0], &planes[1], &planes[2]],
         strides: [1, 1, 1],
     };
@@ -300,11 +305,20 @@ impl I420 {
         }
     }
 
+    /// The picture with left-sited colour, the MPEG family's default.
     fn picture(&self, bt709: bool, full_range: bool) -> MoviePicture<'_> {
+        self.sited(bt709, full_range, ChromaSiting::Left)
+    }
+
+    fn sited(&self, bt709: bool, full_range: bool, chroma: ChromaSiting) -> MoviePicture<'_> {
         MoviePicture {
             width: self.w,
             height: self.h,
-            layout: PictureLayout::I420 { bt709, full_range },
+            layout: PictureLayout::I420 {
+                bt709,
+                full_range,
+                chroma,
+            },
             planes: [&self.planes[0], &self.planes[1], &self.planes[2]],
             strides: self.strides,
         }
@@ -485,4 +499,126 @@ fn the_presenter_switches_between_layouts_and_refuses_short_planes() {
         Err(MovieDrawError::BadPicture(_))
     ));
     assert!(presenter.has_picture());
+}
+
+/// The Y, U and V of the two sides of [`edge`].
+const EDGE_LEFT: [u8; 3] = [126, 60, 200];
+const EDGE_RIGHT: [u8; 3] = [126, 200, 60];
+/// The colour column where [`edge`]'s right side starts.
+const EDGE_AT: u32 = 8;
+
+/// A 32x24 I420 picture of flat grey brightness whose colour changes
+/// sharply from [`EDGE_LEFT`] to [`EDGE_RIGHT`] at colour column
+/// [`EDGE_AT`] (between Y columns 15 and 16 for centred colour).
+fn edge() -> I420 {
+    let (w, h) = (32u32, 24u32);
+    let (cw, ch) = (w / 2, h / 2);
+    let strides = [w as usize, cw as usize, cw as usize];
+    let mut planes = [
+        vec![EDGE_LEFT[0]; strides[0] * h as usize],
+        vec![0u8; strides[1] * ch as usize],
+        vec![0u8; strides[2] * ch as usize],
+    ];
+    for y in 0..ch as usize {
+        for x in 0..cw as usize {
+            let side = if (x as u32) < EDGE_AT {
+                EDGE_LEFT
+            } else {
+                EDGE_RIGHT
+            };
+            planes[1][y * strides[1] + x] = side[1];
+            planes[2][y * strides[2] + x] = side[2];
+        }
+    }
+    I420 {
+        w,
+        h,
+        planes,
+        strides,
+    }
+}
+
+/// The colour [`movie_pixel`] gives Y column `x` of `picture` (at its
+/// middle row), shown one to one.
+fn column(picture: &MoviePicture, x: u32) -> [u8; 3] {
+    let u = (x as f32 + 0.5) / picture.width as f32;
+    bytes(movie_pixel(picture, u, 0.5))
+}
+
+/// The colour of `a` and `b` mixed, `t` of the way from `a` to `b`.
+fn mixed(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
+    let yuv: [u8; 3] =
+        std::array::from_fn(|i| (f32::from(a[i]) * (1.0 - t) + f32::from(b[i]) * t).round() as u8);
+    colour(yuv, false, false)
+}
+
+#[test]
+fn left_sited_colour_is_read_level_with_the_even_y_columns() {
+    let movie = edge();
+    let picture = movie.sited(false, false, ChromaSiting::Left);
+    let (left, right) = (
+        colour(EDGE_LEFT, false, false),
+        colour(EDGE_RIGHT, false, false),
+    );
+    // Colour column i sits on Y column 2i: the even columns show their
+    // colour sample as it is, the odd ones the mean of their neighbours.
+    let edge = 2 * EDGE_AT;
+    for x in 0..edge {
+        if x % 2 == 0 || x + 1 < edge {
+            assert_eq!(column(&picture, x), left, "column {x}");
+        }
+    }
+    assert_eq!(
+        column(&picture, edge - 1),
+        mixed(EDGE_LEFT, EDGE_RIGHT, 0.5)
+    );
+    for x in edge..picture.width {
+        assert_eq!(column(&picture, x), right, "column {x}");
+    }
+}
+
+#[test]
+fn centred_colour_is_read_between_two_y_columns() {
+    let movie = edge();
+    let picture = movie.sited(false, false, ChromaSiting::Centre);
+    // Colour column i sits between Y columns 2i and 2i + 1: the change
+    // spreads over the two Y columns either side of the edge, evenly.
+    let edge = 2 * EDGE_AT;
+    assert_eq!(column(&picture, edge - 3), colour(EDGE_LEFT, false, false));
+    assert_eq!(
+        column(&picture, edge - 1),
+        mixed(EDGE_LEFT, EDGE_RIGHT, 0.25)
+    );
+    assert_eq!(column(&picture, edge), mixed(EDGE_LEFT, EDGE_RIGHT, 0.75));
+    assert_eq!(column(&picture, edge + 2), colour(EDGE_RIGHT, false, false));
+    // The siting moves the edge by half a Y column.
+    let left = movie.sited(false, false, ChromaSiting::Left);
+    assert_ne!(column(&picture, edge), column(&left, edge));
+}
+
+#[test]
+fn a_sharp_colour_edge_on_the_gpu_matches_the_reference_for_each_siting() {
+    let Some(gpu) = gpu() else { return };
+    let mut presenter = MoviePresenter::new(&gpu, COLOR_FORMAT);
+    let movie = edge();
+    let mut one_to_one = Vec::new();
+    for chroma in [ChromaSiting::Left, ChromaSiting::Centre] {
+        let picture = movie.sited(false, false, chroma);
+        presenter.upload(&gpu, &picture).unwrap();
+        // One to one, every pixel within 1; scaled up, within 3 at the
+        // edge and 1 elsewhere.
+        let size = (32, 24);
+        let out = draw(&gpu, &presenter, size);
+        let (diff, at) = worst(&out, &movie_frame(&picture, size, FOUR_THREE), size.0);
+        assert!(diff <= 1, "{chroma:?}: off by {diff} at {at:?}");
+        one_to_one.push(out);
+        let size = (200, 120);
+        let out = draw(&gpu, &presenter, size);
+        let (diff, at) = worst_smooth(&out, &movie_frame(&picture, size, FOUR_THREE), size);
+        assert!(diff <= 1, "{chroma:?} scaled: off by {diff} at {at:?}");
+    }
+    // The GPU moved the edge too: Y column 16 differs between the two.
+    let at = |out: &[u8], x: usize| out[(12 * 32 + x) * 4..][..3].to_vec();
+    assert_ne!(at(&one_to_one[0], 16), at(&one_to_one[1], 16));
+    assert_eq!(at(&one_to_one[0], 14), at(&one_to_one[1], 14));
 }

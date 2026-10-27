@@ -6,6 +6,13 @@
 //!   untagged pictures of 576 lines or fewer, BT.709 above). The renderer
 //!   turns them into colours. 8-bit 4:2:0 pictures are copied as they are;
 //!   others (10-bit HEVC Main10, 4:2:2, 4:4:4, NV12) go through swscale.
+//!   Each picture also says where its colour samples sit across the row
+//!   ([`ChromaSiting`]): as the stream tags them, else as its codec places
+//!   them (left for the MPEG family, which the decoders also report for
+//!   untagged H.264, H.265 and MPEG-4 streams; centred for JPEG-range
+//!   formats). swscale keeps the samples where they are when the source
+//!   has half-width colour already and centres them when it halves full
+//!   width colour (4:4:4).
 //! - Palette and RGB pictures (Smacker) become RGBA through swscale, so
 //!   their palette colours stay exact.
 
@@ -16,7 +23,7 @@ use std::time::Duration;
 use rusty_ffmpeg::ffi;
 
 use crate::MovieError;
-use crate::frame::{FrameLayout, Matrix, VideoFrame};
+use crate::frame::{ChromaSiting, FrameLayout, Matrix, VideoFrame};
 
 /// What a scaler was made for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +97,7 @@ impl Converter {
                     layout: FrameLayout::Rgba,
                     planes: planes.data,
                     strides: planes.strides,
+                    chroma: ChromaSiting::Centre,
                 })
             }
         }
@@ -234,6 +242,49 @@ fn i420_frame(f: &ffi::AVFrame, pts: Duration, layout: FrameLayout, planes: Plan
         layout,
         planes: planes.data,
         strides: planes.strides,
+        // SAFETY: the caller's frame is a valid decoded frame.
+        chroma: unsafe { chroma_siting(f) },
+    }
+}
+
+/// Where the colour samples of the I420 picture made from `f` sit across
+/// each row (see the module documentation).
+///
+/// # Safety
+/// `f` is a valid frame.
+unsafe fn chroma_siting(f: &ffi::AVFrame) -> ChromaSiting {
+    let format = f.format as ffi::AVPixelFormat;
+    // SAFETY: a lookup in a static table; NULL for unknown formats.
+    let desc = unsafe { ffi::av_pix_fmt_desc_get(format) };
+    // SAFETY: checked for NULL first.
+    if !desc.is_null() && unsafe { (*desc).log2_chroma_w } != 1 {
+        // swscale makes the half-width colour planes itself, centred.
+        return ChromaSiting::Centre;
+    }
+    siting_of(f.chroma_location, format)
+}
+
+/// The colour sample siting a picture of `format` tagged `location` has
+/// across each row.
+fn siting_of(location: ffi::AVChromaLocation, format: ffi::AVPixelFormat) -> ChromaSiting {
+    match location {
+        ffi::AVCHROMA_LOC_LEFT | ffi::AVCHROMA_LOC_TOPLEFT | ffi::AVCHROMA_LOC_BOTTOMLEFT => {
+            ChromaSiting::Left
+        }
+        ffi::AVCHROMA_LOC_CENTER | ffi::AVCHROMA_LOC_TOP | ffi::AVCHROMA_LOC_BOTTOM => {
+            ChromaSiting::Centre
+        }
+        // Untagged: JPEG-range formats come from JPEG-style codecs, which
+        // centre them; every other codec the player decodes is of the
+        // MPEG family.
+        _ if matches!(
+            format,
+            ffi::AV_PIX_FMT_YUVJ420P | ffi::AV_PIX_FMT_YUVJ422P | ffi::AV_PIX_FMT_YUVJ444P
+        ) =>
+        {
+            ChromaSiting::Centre
+        }
+        _ => ChromaSiting::Left,
     }
 }
 
@@ -304,4 +355,48 @@ unsafe fn yuv_details(f: &ffi::AVFrame) -> Option<(Matrix, bool)> {
             ffi::AV_PIX_FMT_YUVJ420P | ffi::AV_PIX_FMT_YUVJ422P | ffi::AV_PIX_FMT_YUVJ444P
         );
     Some((matrix, full))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tagged_pictures_keep_their_siting_and_untagged_ones_take_their_codecs() {
+        let yuv = ffi::AV_PIX_FMT_YUV420P;
+        for loc in [
+            ffi::AVCHROMA_LOC_LEFT,
+            ffi::AVCHROMA_LOC_TOPLEFT,
+            ffi::AVCHROMA_LOC_BOTTOMLEFT,
+        ] {
+            assert_eq!(siting_of(loc, yuv), ChromaSiting::Left);
+        }
+        for loc in [
+            ffi::AVCHROMA_LOC_CENTER,
+            ffi::AVCHROMA_LOC_TOP,
+            ffi::AVCHROMA_LOC_BOTTOM,
+        ] {
+            assert_eq!(siting_of(loc, yuv), ChromaSiting::Centre);
+            assert_eq!(
+                siting_of(loc, ffi::AV_PIX_FMT_YUVJ420P),
+                ChromaSiting::Centre
+            );
+        }
+        assert_eq!(
+            siting_of(ffi::AVCHROMA_LOC_UNSPECIFIED, yuv),
+            ChromaSiting::Left
+        );
+        assert_eq!(
+            siting_of(ffi::AVCHROMA_LOC_UNSPECIFIED, ffi::AV_PIX_FMT_YUV420P10LE),
+            ChromaSiting::Left
+        );
+        assert_eq!(
+            siting_of(ffi::AVCHROMA_LOC_UNSPECIFIED, ffi::AV_PIX_FMT_YUVJ420P),
+            ChromaSiting::Centre
+        );
+        assert_eq!(
+            siting_of(ffi::AVCHROMA_LOC_LEFT, ffi::AV_PIX_FMT_YUVJ420P),
+            ChromaSiting::Left
+        );
+    }
 }

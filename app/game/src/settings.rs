@@ -36,7 +36,7 @@
 //! gamepad = on              # on or off
 //! pad_dead_zone = 0.34      # stick dead zone, 0.05 to 0.95
 //! movies = upscaled         # original, archive or off
-//! skip_logo = off           # on: no logo movie at start-up once the intro was seen
+//! skip_logo = off           # on: no logo movie at start-up unless the intro plays
 //! movie_folder = "/path/to/your/upscaled/movies"
 //! intro_seen = no           # the game sets it once the intro movie played
 //! key_jump = "Space"        # key_<action>: key names, comma separated
@@ -123,10 +123,11 @@
 //! plays none. `movie_folder` is where the copies are looked for (by
 //! default `<data home>/rusty-claw/movies`, see [`UserDirs::movies_dir`]).
 //! `skip_logo` leaves out the logo movie at start-up, except on a run that
-//! also plays the intro movie; the game writes `intro_seen = yes` once the
-//! intro movie has played (watched or skipped), and from then on starts
-//! with the logo movie only. The Display menu's movie interlacing switch is
-//! kept for the run only and changes nothing.
+//! also plays the intro movie (a first run whose install has no intro skips
+//! it too); the game writes `intro_seen = yes` once the intro movie has
+//! played (watched to its end or skipped, not when it failed), and from
+//! then on starts with the logo movie only. The Display menu's movie
+//! interlacing switch is kept for the run only and changes nothing.
 //!
 //! The smooth rope swing (`smooth_rope`, `--smooth-rope`, on by default)
 //! also only changes what is drawn: on, Claw, the rope he hangs from and
@@ -443,10 +444,11 @@ pub struct Args {
     /// `--uncapped` is given.
     #[arg(long, requires = "bench")]
     pub headless: bool,
-    /// Play one movie full screen, then exit: an index from -2 to 14 (-1
-    /// is the logo, 0 the intro, 14 the end of the game) from the install,
-    /// or any movie file. Escape, or a pad's Back or Start button, skips
-    /// it.
+    /// Play one movie full screen, then exit: INDEX from the install, one
+    /// of -2, -1, 0, 2, 4, 6, 8, 10, 12, 13, 14 (-2 the attract clip, -1
+    /// the logo, 0 the intro, 2 to 13 after those levels, 14 the end of
+    /// the game), or FILE, any movie file. Escape, or a pad's Back or Start
+    /// button, skips it.
     #[arg(
         long,
         value_name = "INDEX|FILE",
