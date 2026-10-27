@@ -3,8 +3,8 @@
 //! 8000 Hz) plays through the window's movie playback with an audio engine
 //! on its silent output, which plays the soundtrack in real time. Held, it
 //! shows no new picture and its sound stands still; let go, it goes on from
-//! where it held rather than jumping ahead by the time it was held.
-#![cfg(feature = "movies")]
+//! where it held rather than jumping ahead by the time it was held. A build
+//! without FFmpeg has no movie player, so there the test says it skipped.
 
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -177,6 +177,10 @@ fn frames_until(
 
 #[test]
 fn a_movie_held_in_the_background_goes_on_from_where_it_held() {
+    if !claw_movie::available() {
+        eprintln!("skipped: built without FFmpeg");
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("held.avi");
     std::fs::write(&path, movie()).unwrap();
