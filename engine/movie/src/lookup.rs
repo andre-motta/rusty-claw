@@ -3,29 +3,93 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::fec::Fec;
 use crate::index::MovieIndex;
-use crate::source::{FileKind, Roots, Source};
+use crate::source::{FileKind, MovieMode, Roots, Source};
 
+/// The extensions of the copies in the player's movie folder, in
+/// preference order.
+const UPSCALED_EXTENSIONS: [&str; 4] = ["mkv", "mp4", "mov", "avi"];
 /// The extensions of the install's movie files, in preference order.
 const ORIGINAL_EXTENSIONS: [&str; 2] = ["avi", "vob"];
+/// The install's folder of movies copied from the CD.
+const MOVIES_FOLDER: &str = "Movies";
+/// The movie archive's name, without and with its extension.
+const ARCHIVE_STEM: &str = "CLAW";
+const ARCHIVE_EXTENSION: [&str; 1] = ["fec"];
 
 /// Every place movie `index` can play from under `roots`, best first. A
 /// player tries them in order (see [`crate::open_first`]).
 ///
-/// The install's own files come from its root folder: `STEM.avi`, then
-/// `STEM.vob`, where STEM is [`MovieIndex::stem`] and the name matches in
-/// any case.
+/// With STEM the movie's [`MovieIndex::stem`] and names matched in any
+/// case, the order is:
+///
+/// 1. In [`MovieMode::Upscaled`] only: the movie folder's `STEM.mkv`,
+///    `STEM.mp4`, `STEM.mov` and `STEM.avi`.
+/// 2. Unless in [`MovieMode::Archive`]: the install's `STEM.avi` and
+///    `STEM.vob`, then the same in its `Movies` folder.
+/// 3. The movie's archive clip ([`MovieIndex::fec_entry`]) in the
+///    install's `CLAW.FEC`, then in `Movies/CLAW.FEC`. An archive is only
+///    offered when it reads cleanly and holds that clip.
+///
+/// A movie without a stem or a clip has none of those candidates; the odd
+/// indices 1 to 11 have neither and return nothing.
 pub fn locate_all(index: MovieIndex, roots: &Roots) -> Vec<Source> {
-    let Some(stem) = index.stem() else {
+    let mut out: Vec<Source> = Vec::new();
+    let movies = movies_folders(&roots.install);
+    let mut add_files = |dir: &Path, stem: &str, extensions: &[&str], kind: FileKind| {
+        for path in find_files(dir, stem, extensions) {
+            if !out.iter().any(|s| source_path(s) == path) {
+                out.push(Source::File { path, kind });
+            }
+        }
+    };
+    if let Some(stem) = index.stem() {
+        if roots.mode == MovieMode::Upscaled
+            && let Some(folder) = &roots.user_folder
+        {
+            add_files(folder, stem, &UPSCALED_EXTENSIONS, FileKind::Upscaled);
+        }
+        if roots.mode != MovieMode::Archive {
+            for dir in std::iter::once(&roots.install).chain(&movies) {
+                add_files(dir, stem, &ORIGINAL_EXTENSIONS, FileKind::Original);
+            }
+        }
+    }
+    if let Some(entry) = index.fec_entry() {
+        for dir in std::iter::once(&roots.install).chain(&movies) {
+            for path in find_files(dir, ARCHIVE_STEM, &ARCHIVE_EXTENSION) {
+                let holds = Fec::read(&path).is_ok_and(|fec| fec.entry(entry).is_some());
+                if holds && !out.iter().any(|s| source_path(s) == path) {
+                    out.push(Source::Archive { path, entry });
+                }
+            }
+        }
+    }
+    out
+}
+
+fn source_path(source: &Source) -> &Path {
+    match source {
+        Source::File { path, .. } | Source::Archive { path, .. } => path,
+    }
+}
+
+/// The folders of `install` named `Movies` in any case, by name.
+fn movies_folders(install: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(install) else {
         return Vec::new();
     };
-    find_files(&roots.install, stem, &ORIGINAL_EXTENSIONS)
-        .into_iter()
-        .map(|path| Source::File {
-            path,
-            kind: FileKind::Original,
+    let mut found: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_str()?.to_string();
+            let path = entry.path();
+            (name.eq_ignore_ascii_case(MOVIES_FOLDER) && path.is_dir()).then_some((name, path))
         })
-        .collect()
+        .collect();
+    found.sort();
+    found.into_iter().map(|(_, path)| path).collect()
 }
 
 /// The files of `dir` named `stem` with one of `extensions`, in the order
@@ -85,7 +149,7 @@ mod tests {
                         assert_eq!(*kind, FileKind::Original);
                         path.file_name().unwrap().to_string_lossy().into_owned()
                     }
-                    Source::Archive { .. } => panic!("no archive in this item"),
+                    Source::Archive { .. } => panic!("no archive here"),
                 })
                 .collect()
         };
@@ -100,5 +164,17 @@ mod tests {
             ..Roots::default()
         };
         assert!(locate_all(MovieIndex::LOGO, &missing).is_empty());
+    }
+
+    #[test]
+    fn a_folder_that_is_also_the_install_lists_each_file_once() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("LOGO.avi"), b"x").unwrap();
+        let roots = Roots {
+            install: dir.path().to_path_buf(),
+            user_folder: Some(dir.path().to_path_buf()),
+            mode: MovieMode::Upscaled,
+        };
+        assert_eq!(locate_all(MovieIndex::LOGO, &roots).len(), 1);
     }
 }

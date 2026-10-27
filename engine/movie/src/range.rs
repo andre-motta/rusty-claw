@@ -1,24 +1,32 @@
 //! A byte range of a larger reader, read as a file of its own, with its
-//! first bytes optionally replaced.
+//! first bytes optionally replaced. Nothing is ever written: the
+//! replacement happens as the bytes are read.
 
 use std::io::{self, Read, Seek, SeekFrom};
 
 /// `[offset, offset + len)` of `inner` as a reader of its own: reads stop
 /// at the range's end, seeks are relative to the range (`SeekFrom::End` to
 /// its end), and the range's first four bytes read as `patch` when one is
-/// given.
+/// given, whatever the size and start of each read.
+///
+/// Seeking past the end is allowed, as for a file, and reads there return
+/// nothing; seeking before the start is an error.
 #[derive(Debug)]
 pub struct PatchedRange<R: Read + Seek> {
     inner: R,
     offset: u64,
     len: u64,
     patch: Option<[u8; 4]>,
+    /// The position in the range.
     pos: u64,
+    /// Whether `inner` is at `offset + pos`, so a read needs no seek.
+    in_place: bool,
 }
 
 impl<R: Read + Seek> PatchedRange<R> {
     /// The range `[offset, offset + len)` of `inner`, starting at its first
-    /// byte.
+    /// byte. Fails when the range's end does not fit in 64 bits or `inner`
+    /// cannot seek to its start.
     pub fn new(inner: R, offset: u64, len: u64, patch: Option<[u8; 4]>) -> io::Result<Self> {
         offset
             .checked_add(len)
@@ -29,9 +37,10 @@ impl<R: Read + Seek> PatchedRange<R> {
             len,
             patch,
             pos: 0,
+            in_place: false,
         };
         range.inner.seek(SeekFrom::Start(offset))?;
-        range.pos = 0;
+        range.in_place = true;
         Ok(range)
     }
 
@@ -49,19 +58,28 @@ impl<R: Read + Seek> PatchedRange<R> {
 impl<R: Read + Seek> Read for PatchedRange<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let left = self.len.saturating_sub(self.pos);
-        let want = (buf.len() as u64).min(left) as usize;
+        let want = usize::try_from(left).map_or(buf.len(), |left| left.min(buf.len()));
         if want == 0 {
             return Ok(0);
         }
-        self.inner.seek(SeekFrom::Start(self.offset + self.pos))?;
-        let n = self.inner.read(&mut buf[..want])?;
-        if let Some(patch) = self.patch {
-            for (i, b) in buf[..n].iter_mut().enumerate() {
-                let at = self.pos + i as u64;
-                if at < 4 {
-                    *b = patch[at as usize];
-                }
+        if !self.in_place {
+            // pos < len here, and offset + len fits (checked in `new`).
+            self.inner.seek(SeekFrom::Start(self.offset + self.pos))?;
+            self.in_place = true;
+        }
+        let n = match self.inner.read(&mut buf[..want]) {
+            Ok(n) => n,
+            Err(e) => {
+                self.in_place = false;
+                return Err(e);
             }
+        };
+        if let Some(patch) = self.patch
+            && self.pos < 4
+        {
+            let from = self.pos as usize;
+            let to = (from + n).min(4);
+            buf[..to - from].copy_from_slice(&patch[from..to]);
         }
         self.pos += n as u64;
         Ok(n)
@@ -78,7 +96,10 @@ impl<R: Read + Seek> Seek for PatchedRange<R> {
         let to = to.ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "seek before the range's start")
         })?;
-        self.pos = to;
+        if to != self.pos {
+            self.pos = to;
+            self.in_place = false;
+        }
         Ok(to)
     }
 }
@@ -106,5 +127,25 @@ mod tests {
         r.read_exact(&mut b).unwrap();
         assert_eq!(&b, &[b'C', b'D', 14]);
         assert!(r.seek(SeekFrom::Current(-10)).is_err());
+    }
+
+    #[test]
+    fn single_byte_reads_see_the_patch_too() {
+        let data: Vec<u8> = (0..10u8).collect();
+        let mut r = PatchedRange::new(Cursor::new(data), 3, 6, Some(*b"WXYZ")).unwrap();
+        let mut got = Vec::new();
+        let mut b = [0u8; 1];
+        while r.read(&mut b).unwrap() == 1 {
+            got.push(b[0]);
+        }
+        assert_eq!(got, [b'W', b'X', b'Y', b'Z', 7, 8]);
+    }
+
+    #[test]
+    fn a_range_shorter_than_the_patch_gets_only_its_part() {
+        let mut r = PatchedRange::new(Cursor::new(vec![1u8, 2, 3]), 1, 2, Some(*b"ABCD")).unwrap();
+        let mut all = Vec::new();
+        r.read_to_end(&mut all).unwrap();
+        assert_eq!(all, b"AB");
     }
 }
