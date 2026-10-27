@@ -52,10 +52,9 @@
 //! 18 ms of the menu, rounded up, and an End Life (`command end_life`) by
 //! the five frames of the menu's visit (it opens, three frames for the
 //! confirmation page, one for the yes), or four when a `menu ingame` line
-//! at the same tick already opened the menu (the game itself moves it
-//! by an End Life's frames but not yet by a `menu ingame` line's, so such
-//! a line can give enemies other random choices there than here);
-//! after a help screen or the in-game menu the keys down count as already
+//! at the same tick already opened the menu (a menu line counts its
+//! opening frame however short its time); the game counts them the same
+//! way, live and replayed; after a help screen or the in-game menu the keys down count as already
 //! pressed until released; a pause (`pause`, or the pause screen
 //! `menu pause`) latches no key; and as play resumes after any of them the
 //! game's clock is reset. A pause's wall time changes nothing else in the

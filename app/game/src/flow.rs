@@ -1348,9 +1348,10 @@ impl Flow {
         if self.settings.config_path.is_none() {
             if !self.told_unsaved {
                 self.told_unsaved = true;
-                self.push_notice(
-                    "options are not saved: no config file location (set HOME)".into(),
-                );
+                self.push_notice(format!(
+                    "options are not saved: no config file location (set {})",
+                    crate::settings::CONFIG_HOME_VARS
+                ));
             }
             return;
         }

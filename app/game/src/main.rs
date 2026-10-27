@@ -119,9 +119,10 @@ and the powerups F6 gave, and routes, the bot and comparisons with reference
 traces refuse them.
 
 Saved games are kept in $XDG_DATA_HOME/rusty-claw/saves/default/ (by default
-~/.local/share/rusty-claw/saves/default/). Options changed in the menus are
-written back to the config file; options given on the command line are not,
-unless changed in the menus.";
+~/.local/share/rusty-claw/saves/default/, or
+%LOCALAPPDATA%\\rusty-claw\\saves\\default\\ on Windows). Options changed in
+the menus are written back to the config file; options given on the command
+line are not, unless changed in the menus.";
 
 /// What a run ended with.
 enum Outcome {

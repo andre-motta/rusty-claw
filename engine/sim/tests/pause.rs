@@ -376,6 +376,35 @@ fn the_end_lifes_menu_frames_move_the_next_frame_pulse() {
 }
 
 #[test]
+fn a_visit_to_the_in_game_menu_counts_at_least_its_opening_frame() {
+    let end_life = DirectiveKind::Command(ScriptCommand::EndLife);
+    // A menu of no time still shows its opening frame: one frame, as for
+    // 18 ms, two ticks later.
+    let empty = |sim: &mut Sim| {
+        sim.play_directive(&in_game_menu(0));
+    };
+    assert_eq!(pulse_shift(FuseClock::Original, empty), 2);
+    // So a menu of no time and its End Life move the pulse as a lone End
+    // Life does (five frames), in either order.
+    let alone = |sim: &mut Sim| {
+        sim.play_directive(&end_life);
+    };
+    let menu_then_end = |sim: &mut Sim| {
+        sim.play_directive(&in_game_menu(0));
+        sim.play_directive(&end_life);
+    };
+    let end_then_menu = |sim: &mut Sim| {
+        sim.play_directive(&end_life);
+        sim.play_directive(&in_game_menu(0));
+    };
+    let five = pulses_around(FuseClock::Original, alone);
+    assert_eq!(pulses_around(FuseClock::Original, menu_then_end), five);
+    assert_eq!(pulses_around(FuseClock::Original, end_then_menu), five);
+    // With the fuse clock frozen nothing moves.
+    assert_eq!(pulse_shift(FuseClock::Frozen, empty), 0);
+}
+
+#[test]
 fn a_key_pressed_before_the_help_screen_acts_once() {
     let weapon = |sim: &Sim| claw_sim::TraceRow::capture(sim, 0, "script").weapon;
     let switch = TickInput {

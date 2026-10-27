@@ -4,7 +4,8 @@
 //! Every setting can come from the config file or the command line; the
 //! command line wins. The config file is `--config FILE`, or else
 //! `$XDG_CONFIG_HOME/rusty-claw/config.toml` (by default
-//! `~/.config/rusty-claw/config.toml`) when it exists. It holds one
+//! `~/.config/rusty-claw/config.toml`, or `%APPDATA%\rusty-claw\config.toml`
+//! on Windows; see [`FolderRules`]) when it exists. It holds one
 //! `key = value` line per setting, with `#` comments:
 //!
 //! ```toml
@@ -235,8 +236,8 @@ impl Default for LevelChoice {
 #[command(name = "rusty-claw", version)]
 #[command(group(ArgGroup::new("which").args(["level", "custom"])))]
 pub struct Args {
-    /// Config file (default: $XDG_CONFIG_HOME/rusty-claw/config.toml when it
-    /// exists).
+    /// Config file (default: $XDG_CONFIG_HOME/rusty-claw/config.toml, or
+    /// %APPDATA%\rusty-claw\config.toml on Windows, when it exists).
     #[arg(long, value_name = "FILE")]
     pub config: Option<PathBuf>,
     /// Root folder of your own game install (the one holding `Assets` or
@@ -955,10 +956,9 @@ impl Settings {
     /// Writes the current values of `keys` back to the config file (see
     /// [`Settings::write_back_values`]); returns the keys written.
     pub fn write_back(&self, keys: &[&str]) -> Result<Vec<String>> {
-        let path = self
-            .config_path
-            .as_ref()
-            .ok_or_else(|| anyhow!("no config file location: set HOME or pass --config FILE"))?;
+        let path = self.config_path.as_ref().ok_or_else(|| {
+            anyhow!("no config file location: set {CONFIG_HOME_VARS} or pass --config FILE")
+        })?;
         let values = self.write_back_values(keys);
         if values.is_empty() {
             return Ok(Vec::new());
@@ -1043,13 +1043,47 @@ pub fn view_for(aspect: Aspect, scale: Scale, widen: bool, size: (u32, u32)) -> 
     }
 }
 
-/// The user's folders for settings and saved games, from `HOME` and the
-/// XDG base directory variables.
+/// The variable to set when the game finds no folder for its config file.
+pub const CONFIG_HOME_VARS: &str = if cfg!(windows) {
+    "APPDATA or HOME"
+} else {
+    "HOME"
+};
+
+/// How the user's folders are found: the XDG base directory rules (Linux
+/// and other Unix systems), or the same with the standard Windows folders
+/// as the defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderRules {
+    /// `$XDG_CONFIG_HOME` and `$XDG_DATA_HOME`, or their places under
+    /// `HOME` (`.config`, `.local/share`).
+    Xdg,
+    /// `$XDG_CONFIG_HOME` and `$XDG_DATA_HOME` first too; when unset, the
+    /// roaming application data folder (`%APPDATA%`) for settings and the
+    /// local one (`%LOCALAPPDATA%`) for data and saved games, and only
+    /// then the places under `HOME`.
+    Windows,
+}
+
+impl FolderRules {
+    /// The rules of the system the game was built for.
+    pub const NATIVE: FolderRules = if cfg!(windows) {
+        FolderRules::Windows
+    } else {
+        FolderRules::Xdg
+    };
+}
+
+/// The user's folders for settings and saved games, from `HOME`, the XDG
+/// base directory variables and, on Windows, the application data folders
+/// (see [`FolderRules`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UserDirs {
-    /// `$XDG_CONFIG_HOME`, or `$HOME/.config`.
+    /// `$XDG_CONFIG_HOME`; else `%APPDATA%` on Windows; else
+    /// `$HOME/.config`.
     pub config_home: Option<PathBuf>,
-    /// `$XDG_DATA_HOME`, or `$HOME/.local/share`.
+    /// `$XDG_DATA_HOME`; else `%LOCALAPPDATA%` on Windows; else
+    /// `$HOME/.local/share`.
     pub data_home: Option<PathBuf>,
 }
 
@@ -1059,20 +1093,34 @@ impl UserDirs {
         UserDirs::from_lookup(|k| std::env::var_os(k))
     }
 
-    /// The folders named by the variables `get` returns. An XDG variable
-    /// that is unset, empty or relative falls back to its place under
-    /// `HOME`, as the XDG rules say.
+    /// The folders named by the variables `get` returns, with the rules of
+    /// the system the game was built for ([`FolderRules::NATIVE`]).
     pub fn from_lookup(get: impl Fn(&str) -> Option<OsString>) -> UserDirs {
+        UserDirs::from_lookup_with(FolderRules::NATIVE, get)
+    }
+
+    /// The folders named by the variables `get` returns, with `rules`. A
+    /// variable that is unset, empty or relative falls back to the next
+    /// place: an XDG variable first, then (with [`FolderRules::Windows`])
+    /// the application data folder, then the place under `HOME`, as the
+    /// XDG rules say.
+    pub fn from_lookup_with(
+        rules: FolderRules,
+        get: impl Fn(&str) -> Option<OsString>,
+    ) -> UserDirs {
+        let absolute = |var: &str| get(var).map(PathBuf::from).filter(|p| p.is_absolute());
         let home = get("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
-        let xdg = |var: &str, under_home: &str| {
-            get(var)
-                .map(PathBuf::from)
-                .filter(|p| p.is_absolute())
+        let find = |xdg: &str, windows: &str, under_home: &str| {
+            absolute(xdg)
+                .or_else(|| match rules {
+                    FolderRules::Windows => absolute(windows),
+                    FolderRules::Xdg => None,
+                })
                 .or_else(|| home.as_ref().map(|h| h.join(under_home)))
         };
         UserDirs {
-            config_home: xdg("XDG_CONFIG_HOME", ".config"),
-            data_home: xdg("XDG_DATA_HOME", ".local/share"),
+            config_home: find("XDG_CONFIG_HOME", "APPDATA", ".config"),
+            data_home: find("XDG_DATA_HOME", "LOCALAPPDATA", ".local/share"),
         }
     }
 

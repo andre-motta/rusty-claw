@@ -684,3 +684,33 @@ fn the_null_output_plays_music_and_works_without_it() {
     engine.poll_device();
     assert_eq!(engine.output(), Output::Null);
 }
+
+#[test]
+fn the_user_bank_folder_takes_the_windows_folder_when_xdg_is_unset() {
+    // Absolute on every system.
+    let base = std::env::temp_dir().join("user-banks");
+    let at = |p: &str| Some(base.join(p).into_os_string());
+    let banks = |under: &str| Some(base.join(under).join(soundfont::SUBDIR));
+    let all = |k: &str| match k {
+        "HOME" => at("home"),
+        "LOCALAPPDATA" => at("local"),
+        "XDG_DATA_HOME" => at("xdg"),
+        _ => None,
+    };
+    let no_xdg = |k: &str| if k == "XDG_DATA_HOME" { None } else { all(k) };
+    let home_only = |k: &str| if k == "HOME" { all(k) } else { None };
+    // The XDG folder first everywhere.
+    assert_eq!(soundfont::data_dir_from(true, all), banks("xdg"));
+    assert_eq!(soundfont::data_dir_from(false, all), banks("xdg"));
+    // Then the local application data folder on Windows only.
+    assert_eq!(soundfont::data_dir_from(true, no_xdg), banks("local"));
+    assert_eq!(
+        soundfont::data_dir_from(false, no_xdg),
+        banks("home/.local/share")
+    );
+    assert_eq!(
+        soundfont::data_dir_from(true, home_only),
+        banks("home/.local/share")
+    );
+    assert_eq!(soundfont::data_dir_from(true, |_| None), None);
+}

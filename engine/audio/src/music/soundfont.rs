@@ -11,7 +11,8 @@
 //! 3. the installed package's `share/rusty-claw/soundfonts/` folder, next to
 //!    the game's `bin/` folder;
 //! 4. the user data directory, `$XDG_DATA_HOME/rusty-claw/soundfonts/`
-//!    (default `~/.local/share/rusty-claw/soundfonts/`);
+//!    (default `~/.local/share/rusty-claw/soundfonts/`, or
+//!    `%LOCALAPPDATA%\rusty-claw\soundfonts\` on Windows);
 //! 5. common system paths, where distributions install FluidR3_GM.
 //!
 //! In a folder, `GeneralUser-GS.sf2` is taken first and otherwise the first
@@ -119,14 +120,32 @@ impl Places {
 }
 
 /// The user data directory's bank folder:
-/// `$XDG_DATA_HOME/rusty-claw/soundfonts`, or
+/// `$XDG_DATA_HOME/rusty-claw/soundfonts`; else, on Windows,
+/// `%LOCALAPPDATA%\rusty-claw\soundfonts`; else
 /// `~/.local/share/rusty-claw/soundfonts`.
 pub fn data_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
+    data_dir_from(cfg!(windows), |k| std::env::var_os(k))
+}
+
+/// The user data directory's bank folder (see [`data_dir`]) from the
+/// variables `get` returns, with the Windows folders when `windows` is
+/// true. A variable that is unset, empty or relative falls back to the
+/// next place.
+pub fn data_dir_from(
+    windows: bool,
+    get: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let absolute = |var: &str| get(var).map(PathBuf::from).filter(|p| p.is_absolute());
+    let base = absolute("XDG_DATA_HOME")
         .or_else(|| {
-            std::env::var_os("HOME")
+            if windows {
+                absolute("LOCALAPPDATA")
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            get("HOME")
                 .filter(|h| !h.is_empty())
                 .map(|h| PathBuf::from(h).join(".local/share"))
         })?;
