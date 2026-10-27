@@ -1,0 +1,3 @@
+# The upstream crate's own style (edition 2021), so the vendored sources keep
+# their released formatting.
+edition = "2021"

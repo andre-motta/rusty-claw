@@ -6,6 +6,9 @@ members = [
     "tools/*",
     "tests/*",
 ]
+# Vendored third-party code is built as a dependency but is not linted or
+# tested as part of the workspace.
+exclude = ["third_party"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,6 +21,7 @@ publish = false
 claw-assets = { path = "engine/assets" }
 claw-audio = { path = "engine/audio" }
 claw-frame = { path = "engine/frame" }
+claw-movie = { path = "engine/movie" }
 claw-render = { path = "engine/render" }
 claw-sim = { path = "engine/sim" }
 claw-ui = { path = "engine/ui" }
@@ -27,6 +31,8 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 proptest = "1"
 tempfile = "3"
 thiserror = "2"
+# FFmpeg's FFI declarations, linked against the pinned build (third_party/ffmpeg).
+rusty_ffmpeg = { path = "third_party/ffmpeg/rusty_ffmpeg", features = ["ffmpeg8_1"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

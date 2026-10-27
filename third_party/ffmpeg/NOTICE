@@ -1,0 +1,48 @@
+FFmpeg in rusty-claw
+====================
+
+rusty-claw plays movies with FFmpeg (https://ffmpeg.org), linked statically
+into the game. FFmpeg is not stored in this repository: build.sh in this
+directory downloads its source release, checks it and builds it.
+
+  Version:    FFmpeg 8.1.3
+  Source:     https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz
+  SHA-256:    7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
+  Licence:    GNU Lesser General Public License, version 2.1 or later
+              (LGPL-2.1-or-later)
+  Configure:  --disable-gpl --disable-nonfree --disable-everything
+              --disable-autodetect --disable-programs --disable-doc
+              --disable-network --disable-avdevice --disable-avfilter
+              --enable-static --disable-shared --enable-pic --enable-pthreads
+              --enable-decoder=mpeg4,h264,hevc,mpeg2video,mp3,mp3float,mp2,ac3,aac,smacker,smackaud,pcm_s16le,rawvideo
+              --enable-demuxer=avi,smacker,mov,matroska,mpegps
+              --enable-parser=mpeg4video,h264,hevc,mpegvideo,mpegaudio,ac3,aac
+              --enable-protocol=file
+              --enable-swscale --enable-swresample
+              (and --enable-x86asm on x86, assembled with nasm 3.02)
+
+The configuration enables no GPL and no non-free part of FFmpeg, so the
+libraries are under the LGPL only. FFmpeg's own record of it is in the built
+libraries (avutil_configuration() and avutil_license()) and in the build
+prefix, share/rusty-claw/ffmpeg-build.txt. FFmpeg's licence texts
+(LICENSE.md and COPYING.LGPLv2.1) are installed with the libraries in
+share/licenses/ffmpeg and are part of the source release above.
+
+The LGPL lets a program link FFmpeg statically as long as its users can
+relink the program with a modified FFmpeg. rusty-claw is free software under
+the GNU General Public License, version 3 or later, and its complete source,
+including this build script, is published, so anyone can rebuild the game
+against a changed FFmpeg: edit the pins or the configure line in build.sh, or
+point FFMPEG_PREFIX at another build, and rebuild.
+
+Whoever distributes a rusty-claw binary built with movies distributes FFmpeg
+too, and passes on these terms: the LGPL text, this notice, and the FFmpeg
+source release named above (or a written offer of it).
+
+nasm (https://www.nasm.us, BSD-2-Clause) is only a build tool for FFmpeg's
+assembly; it is not part of the game.
+
+The Rust declarations of FFmpeg's interface in rusty_ffmpeg/ come from
+rusty_ffmpeg 0.17.0+ffmpeg.8.1 (https://github.com/CCExtractor/rusty_ffmpeg)
+under the MIT licence, in rusty_ffmpeg/LICENSE; its build script is replaced
+by one that links the build above.
