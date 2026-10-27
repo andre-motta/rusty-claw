@@ -71,7 +71,8 @@
 //! inputs. When the movie cannot play or stops on an error the window says
 //! so ([`Flow::credits_movie_failed`]) and the parchment shows at once,
 //! for the rest of that visit; when that happens before the text rises,
-//! the unroll sound left out for the movie plays then.
+//! the unroll sound left out for the movie plays then (from its beginning,
+//! so late when the parchment was part way through its unroll).
 //!
 //! End life asks for a confirmation; its question is the low-lives one
 //! when Claw has fewer than 2 lives left, since that death ends the game.
@@ -807,7 +808,8 @@ impl Flow {
     /// rest of this visit. While the parchment is still black or unrolling,
     /// its unroll sound, left out for the movie, plays now (the delayed one
     /// after the last level), so the parchment sounds as it does without a
-    /// movie.
+    /// movie; a failure part way through the unroll starts the sound that
+    /// late, from its beginning.
     pub fn credits_movie_failed(&mut self) {
         let unrolling = self
             .credits

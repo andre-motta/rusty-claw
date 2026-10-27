@@ -22,8 +22,9 @@ directory downloads its source release, checks it and builds it.
               --enable-libdav1d --enable-decoder=libdav1d --enable-parser=av1
               --pkg-config-flags=--static
               (and --enable-x86asm on x86, assembled with nasm 3.02; a
-              system without meson, pip or pkg-config builds it without the
-              dav1d line, and RUSTY_CLAW_FFMPEG_H26X=on adds
+              build without AV1, where dav1d cannot be built or with
+              RUSTY_CLAW_FFMPEG_AV1=off, has no dav1d line, and
+              RUSTY_CLAW_FFMPEG_H26X=on adds
               --enable-decoder=h264,hevc --enable-parser=h264,hevc, which
               no published build has)
 
@@ -59,6 +60,10 @@ static library into the same prefix and links into the game with FFmpeg.
   Options:    --buildtype=release --default-library=static
               -Denable_tools=false -Denable_tests=false
               -Denable_examples=false -Denable_docs=false
+
+dav1d is built with meson and ninja: the system's, or the pinned releases
+build.sh downloads and checks (meson 1.10.2, Apache-2.0; ninja 1.13.2,
+Apache-2.0). They are build tools only; nothing of them is in the game.
 
 Its licence text (COPYING in the source release) is installed with the
 libraries in share/licenses/dav1d. Whoever distributes a rusty-claw binary

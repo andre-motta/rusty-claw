@@ -3,9 +3,9 @@
 //! Without it the crate builds its player stub, which plays no movie.
 //!
 //! With FFmpeg, `claw_ffmpeg_av1` says the linked build decodes AV1 (it has
-//! dav1d, DEP_FFMPEG_AV1) and `claw_ffmpeg_h26x` that it was asked for the
-//! H.264 and HEVC decoders (RUSTY_CLAW_FFMPEG_H26X=on, DEP_FFMPEG_H26X); the
-//! tests check the decoders against them.
+//! dav1d, DEP_FFMPEG_AV1) and `claw_ffmpeg_h26x` that it has the H.264 and
+//! HEVC decoders (DEP_FFMPEG_H26X), both as the linked build's record says;
+//! the tests check the decoders against them.
 
 use std::env;
 

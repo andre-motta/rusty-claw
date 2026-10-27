@@ -2,7 +2,8 @@
 //! rising credits text, in place of the parchment.
 //!
 //! **Where it comes from.** The movie folder's copy named `CREDITS`
-//! (`.mkv`, `.mp4`, `.mov` or `.avi`), then the long clip of the movie
+//! (`.mkv`, `.webm`, `.mp4`, `.mov` or `.avi`; the folder's other copies
+//! are `LOGO` and `CLAW0` to `CLAW8`), then the long clip of the movie
 //! archive (`CLAW.FEC`, clip 11): see [`claw_movie::MovieIndex::CREDITS`].
 //! The same clip plays whether the credits follow the last level or the
 //! main menu: the archive's clip 12, which the game could also take after
@@ -460,6 +461,9 @@ pub struct CreditsMovie {
     /// showed its first picture (`None` before, or when the helper could
     /// not start: the next pass opens at the loop point then).
     next: Option<JoinHandle<Option<MoviePlayback>>>,
+    /// This pass asked for the next one already (one helper thread per
+    /// pass, even when it could not start).
+    asked_next: bool,
     /// Times it started again from the beginning.
     loops: u32,
     /// The terminal heard that a pass stopped early on an error.
@@ -488,6 +492,7 @@ impl CreditsMovie {
         Some(CreditsMovie {
             playback,
             next: None,
+            asked_next: false,
             loops: 0,
             told_damaged: false,
             base: Canvas::black(),
@@ -557,6 +562,7 @@ impl CreditsMovie {
                 let _ = std::thread::Builder::new()
                     .name("credits-movie-ended".into())
                     .spawn(move || drop(ended));
+                self.asked_next = false;
                 self.loops += 1;
                 Ok(())
             }
@@ -564,13 +570,16 @@ impl CreditsMovie {
         }
     }
 
-    /// Opens the next pass on a helper thread, unless it is open or
-    /// opening already. Its clock starts at its first reading, so it waits,
-    /// its first pictures decoded, until the loop point.
+    /// Opens the next pass on a helper thread, once per pass: unless this
+    /// pass asked for it already (a helper that could not start is not
+    /// tried again each picture; the next pass then opens at the loop
+    /// point). Its clock starts at its first reading, so it waits, its
+    /// first pictures decoded, until the loop point.
     fn open_next(&mut self) {
-        if self.next.is_some() {
+        if self.asked_next {
             return;
         }
+        self.asked_next = true;
         let source = self.playback.source().clone();
         self.next = std::thread::Builder::new()
             .name("credits-movie-next".into())
