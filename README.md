@@ -101,7 +101,8 @@ end the game. Finishing a level shows the treasure tally, then the main
 menu; the next level is then open in the new game and load lists.
 Finishing the fourteenth level shows its map and tally, then the credits
 over the parchment; Escape, Enter, a game key or a click returns to the
-main menu, whose Credits entry shows them again.
+main menu, whose Credits entry shows them again. When the game is built
+with FFmpeg it also plays the game's movies (see [Movies](#movies)).
 
 The game pauses when its window loses focus.
 
@@ -197,6 +198,66 @@ recording paused or opened a menu. `--no-audio` or `audio = off` keeps it
 silent. Replays that write a trace (`--trace`), benchmarks and headless
 runs are always silent.
 
+## Movies
+
+A game built with FFmpeg plays the movies of your install where the
+original does, full screen at the movie's own shape on black, with its
+sound at the sound volume:
+
+- at start-up, before the title: the company logo, and on the first run
+  the intro after it. Once the intro has played, watched or skipped, the
+  game notes it in the config file (`intro_seen = yes`) and later runs
+  start with the logo only, or with nothing at all with `skip_logo = on`;
+- after levels 2, 4, 6, 8, 10, 12 and 13, before the map screen, and the
+  ending after level 14, before its map screen and the credits;
+- in the main menu when nobody touches it for two minutes (three in a
+  submenu): the intro and the title in turn, the intro first;
+- from the main menu's Replay Movies page, one entry per movie; an entry is
+  greyed out when its movie is not found, and the page when none is.
+
+A run straight in a level (`--level`, `--custom`) skips the start-up
+movies, community custom levels have none, and replays, traces,
+benchmarks and the tools never play any. `--no-movies` turns them off for
+one run, and `--movie INDEX|FILE` plays one movie and exits (`-1` the logo,
+`0` the intro, `2` to `14` after those levels, or any movie file).
+
+Escape, or the gamepad's Back or Start button, skips a movie file; any
+key, click or gamepad button skips a clip of the movie archive. Keys
+pressed during a movie do nothing on the screen after it.
+
+Where movies come from, best first:
+
+1. Your own copies, for example upscaled ones, in
+   `~/.local/share/rusty-claw/movies/` (or under `$XDG_DATA_HOME`; on
+   Windows `%LOCALAPPDATA%\rusty-claw\movies\` unless `XDG_DATA_HOME` is
+   set), or the folder `movie_folder` names. Name them after the movie they
+   replace, `LOGO` and `CLAW0` to `CLAW8`, with the extension `.mkv`,
+   `.mp4`, `.mov` or `.avi` (in any case); H.264 or H.265 video is the
+   best choice.
+2. The install's own movie files, `LOGO` and `CLAW0` to `CLAW8` as `.avi`
+   or `.vob`, in the install folder or its `Movies` folder.
+3. The install's movie archive, `CLAW.FEC`.
+
+No movie file comes with the source, and the game never writes one.
+
+| Setting | What it does |
+| --- | --- |
+| `movies = upscaled` | your copies first, then the install's movies (the default) |
+| `movies = original` | only the install's movie files, then its movie archive |
+| `movies = archive` | only the movie archive, as the original does with DVD movies off |
+| `movies = off` | no movies |
+| `skip_logo = on` | no logo at start-up, once the intro has played |
+| `movie_folder = "/path"` | where your copies are |
+| `intro_seen = yes` | written by the game once the intro played; `no` shows it again |
+
+The Display page's movie interlacing switch is kept for the run only and
+changes nothing: movies always show whole.
+
+Building FFmpeg for the movies is one command, `make ffmpeg`, once per
+machine; [third_party/ffmpeg/README.md](third_party/ffmpeg/README.md) has
+the details. A game built without it plays no movies, says so once at
+start-up, and goes on as if the install had none.
+
 ## Settings and saved games
 
 Settings live in a config file, `~/.config/rusty-claw/config.toml` (or under
@@ -231,6 +292,10 @@ ambient = on               # ambient sounds
 soundfont = "/path/to/a/soundfont.sf2"
 gamepad = on               # on or off
 pad_dead_zone = 0.34       # stick dead zone, 0.05 to 0.95
+movies = upscaled          # original, archive or off (see Movies)
+skip_logo = off            # on: no logo movie at start-up after the first run
+movie_folder = "/path/to/your/movies"
+intro_seen = no            # the game sets it once the intro movie played
 key_jump = "Space"         # key_<action>: key names, comma separated
 pad_jump = "South"         # pad_<action>: pad button names
 ```
@@ -968,11 +1033,12 @@ unless `--uncapped` is given.
 
 - Levels 3 to 14: their own enemies, bosses, traps, ropes, conveyor belts
   and other objects do not move or act yet.
-- No movies or cut scenes, and no multiplayer (curses only act in
-  multiplayer games, so they vanish in single player as in the original).
-  After the last level the ending movie is left out: a short black hold
-  stands in for it before the map screen, and the credits show over the
-  parchment rather than over a moving background.
+- Movies need a build with FFmpeg (see [Movies](#movies)); without one,
+  or without the ending movie, a short black hold stands in for it after
+  the last level. The credits show over the parchment rather than over a
+  moving background, and the movie interlacing switch does nothing.
+- No multiplayer (curses only act in multiplayer games, so they vanish in
+  single player as in the original).
 - The credits text uses the game's bitmap font, which has capitals, digits
   and a few signs only: letters show as capitals, and other signs
   (hyphens, apostrophes, slashes, quotes, colons) show as spaces.

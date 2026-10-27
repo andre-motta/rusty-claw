@@ -3,11 +3,16 @@
 //! A menu file gives every entry a command number. The catalogue turns
 //! those numbers into a [`MenuCommand`] named by what it does, plus the
 //! slider an entry also works as and its hotkey letter. Entries for
-//! features this game does not have (multiplayer, movies, help, credits,
-//! community custom level picking, score upload, player profiles) map to
+//! features this game does not have (multiplayer, help, credits, community
+//! custom level picking, score upload, player profiles) map to
 //! [`MenuCommand::Unavailable`]: they stay in the menu, greyed out, and
 //! play the disabled sound. The game enables two of them where it has the
 //! screen: the in-game menu's help and the main menu's credits.
+//!
+//! The main menu's Replay Movies entry opens its page ([`Page::Movies`]),
+//! whose entries replay one movie each ([`MenuCommand::ReplayMovie`]); the
+//! game greys out the page and each entry when it has no such movie to
+//! play.
 
 /// Which menu a tree belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -58,7 +63,7 @@ pub enum Page {
     EndGameConfirm,
     /// Multiplayer (not available).
     Multiplayer,
-    /// Movies (not available).
+    /// Replay Movies: one entry per movie.
     Movies,
     /// Any other submenu.
     Other,
@@ -79,7 +84,8 @@ pub enum Toggle {
     HighDetail,
     /// The front layer of the level.
     FrontLayer,
-    /// Interlaced movies (kept only).
+    /// Interlaced movies: the switch is kept for the run and changes
+    /// nothing (movies always show whole).
     MovieInterlace,
 }
 
@@ -180,7 +186,9 @@ pub enum GameplaySetting {
 pub enum Unavailable {
     /// Multiplayer, racing and the lobby.
     Multiplayer,
-    /// The movies.
+    /// The movies. The catalogue no longer gives this to any entry (see
+    /// [`MenuCommand::ReplayMovie`]); an entry carrying it still opens
+    /// [`Page::Movies`].
     Movies,
     /// The help screen.
     Help,
@@ -239,6 +247,10 @@ pub enum MenuCommand {
     /// step (from the highest back to the lowest); Left and Right lower
     /// and raise it.
     PadDeadZone,
+    /// Replays one movie of the Replay Movies page: `1` the logo, `2` the
+    /// intro, `3` to `10` the movies after levels 2, 4, 6, 8, 10, 12, 13
+    /// and 14, in that order (see [`MOVIE_ENTRIES`]).
+    ReplayMovie(u8),
     /// A feature this game does not have.
     Unavailable(Unavailable),
     /// Nothing.
@@ -276,6 +288,8 @@ pub struct CommandCatalogue {
 const LEVEL_KEYS: &[u8; 14] = b"RAFWOLDSPCVUIT";
 /// Hotkeys of the movie entries in order.
 const MOVIE_KEYS: &[u8; 10] = b"UIEOTHRGWC";
+/// How many movies the Replay Movies page lists.
+pub const MOVIE_ENTRIES: u8 = 10;
 
 fn key(b: &[u8], i: usize) -> Option<char> {
     b.get(i).map(|&c| char::from(c))
@@ -310,7 +324,7 @@ fn main_entry(id: u32) -> CatalogueEntry {
     match id {
         10001 => e(C::Open(Page::SinglePlayer), c('S')),
         10002 => e(C::Unavailable(U::Multiplayer), c('M')),
-        10003 => e(C::Unavailable(U::Movies), c('R')),
+        10003 => e(C::Open(Page::Movies), c('R')),
         10004 => e(C::Open(Page::Options), c('O')),
         10005 => e(C::Unavailable(U::Help), c('H')),
         10006 => e(C::Open(Page::QuitConfirm), c('Q')),
@@ -373,7 +387,7 @@ fn main_entry(id: u32) -> CatalogueEntry {
         13505 => e(C::Toggle(Toggle::MovieInterlace), c('M')),
         14001 => e(C::Quit, c('Y')),
         15001..=15010 => e(
-            C::Unavailable(U::Movies),
+            C::ReplayMovie((id - 15000) as u8),
             key(MOVIE_KEYS, (id - 15001) as usize),
         ),
         _ => e(C::Nothing, None),

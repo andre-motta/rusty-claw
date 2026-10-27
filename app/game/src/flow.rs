@@ -8,11 +8,14 @@
 //!
 //! | From | Event | To |
 //! | --- | --- | --- |
-//! | start (plain `--install`) | | title, after the logo movie when movies play |
+//! | start (plain `--install`) | | title, after the start-up movies when movies play |
 //! | start (`--level`, `--custom`) | | play |
-//! | logo movie | it ends, is skipped or cannot play | title |
+//! | logo movie | it ends, is skipped or cannot play | the intro movie on a first run, else the title |
+//! | intro movie at start-up | it ends, is skipped or cannot play | title |
 //! | title | its sound ends, or a key | main menu |
-//! | main menu | idle 120 s (180 s in a submenu) | title |
+//! | main menu | idle 120 s (180 s in a submenu) | title, or every other time the intro movie |
+//! | intro movie after the idle time | it ends, is skipped or cannot play | main menu |
+//! | Replay Movies page | a movie chosen | that movie, then the same page |
 //! | main menu | new game at level n | play, new-game values |
 //! | main menu | load (level n, start or save point) | play from the save |
 //! | main menu | quit, confirmed | the program ends |
@@ -25,7 +28,8 @@
 //! | in-game menu | end life, confirmed | play: Claw dies at the next tick |
 //! | in-game menu | end the game, confirmed | main menu |
 //! | play | level complete, after its delay | tally |
-//! | play of level 14 | level complete, after its delay | a short black hold, then the tally |
+//! | play of level 2, 4, 6, 8, 10, 12 or 13 | level complete, after its delay | the level's movie when there is one, then the tally |
+//! | play of level 14 | level complete, after its delay | the end-of-game movie (a short black hold without it), then the tally |
 //! | tally of level n below 14 | done | play: level n + 1, progress carried |
 //! | tally of level 14 | done | the tally fades, then the credits |
 //! | credits | Escape, Space, Enter, a non-direction input, a click outside the top-left corner | main menu |
@@ -47,10 +51,10 @@
 //! yet load and play with those objects drawn but still. A community
 //! custom level ends at the main menu.
 //!
-//! The end of the game: when level 14 is won, the end-of-level movie of the
-//! original is not played (the game has no movie player); the screen holds
-//! black for [`CUT_SCREEN_MS`] in its place (Escape, Space or Enter end it
-//! at once), then the map screen and the tally follow as after every level.
+//! The end of the game: when level 14 is won, its movie plays first, as
+//! after every level that has one; without it the screen holds black for
+//! [`CUT_SCREEN_MS`] in its place (Escape, Space or Enter end it at once).
+//! Then the map screen and the tally follow as after every level.
 //! When the tally is done it fades out over
 //! [`claw_ui::screens::credits::FADE_OUT_MS`] and the credits follow (see
 //! [`claw_ui::screens::credits`]); they lead back to the main menu, which
@@ -91,13 +95,32 @@
 //!
 //! Movies: the flow plays none until the window hands it the movies it can
 //! play ([`Flow::set_movies`]), which it does only for the game with its
-//! menus (see [`crate::movie::movies_allowed`]). Then a run that starts at
-//! the title shows the logo movie first, when there is one. A movie is a
-//! screen of its own ([`Screen::Movie`]): the music stops before it, the
-//! window plays it ([`Effect::PlayMovie`]) and says when it is over
-//! ([`Flow::movie_finished`], also when it is skipped or cannot play), and
-//! the next screen starts with its own sounds. Menu inputs and the idle
-//! timers wait while a movie plays.
+//! menus (see [`crate::movie::movies_allowed`]). A movie is a screen of its
+//! own ([`Screen::Movie`]): the music and the menu's loop stop before it,
+//! the window plays it ([`Effect::PlayMovie`]) and says when it is over
+//! ([`Flow::movie_finished`] when it ended or was skipped,
+//! [`Flow::movie_missing`] when it could not play), and the next screen
+//! starts with its own sounds. Menu inputs and the idle timers wait while a
+//! movie plays, and no input given to a movie reaches the screen after it.
+//! The movies play at these moments, each only when it is on the shelf:
+//!
+//! - At start-up, for a run that starts at the title: on a first run (the
+//!   intro movie was never seen) the logo movie, then the intro movie,
+//!   whatever `skip_logo` says; once the intro has played, watched or
+//!   skipped, the flow records it ([`Effect::RecordIntroSeen`], written
+//!   back as `intro_seen = yes`). On later runs the logo movie only, and
+//!   not with `skip_logo`. A run straight in a level plays neither.
+//! - After levels 2, 4, 6, 8, 10, 12, 13 and 14 (see
+//!   [`MovieIndex::after_level`]): the level's movie comes first in its
+//!   end-of-level screens, before the map screen, whose sounds wait for it.
+//!   Community custom levels have none.
+//! - In the main menu, when it is left alone: the idle time leads in turn
+//!   to the intro movie (first) and to the title; after the movie the main
+//!   menu shows again.
+//! - From the Replay Movies page: each of its entries replays one movie
+//!   ([`replay_movie_index`]); the page and each entry are greyed out
+//!   without one. After the movie the same page shows, the entry still
+//!   highlighted.
 
 use std::collections::{BTreeSet, VecDeque};
 
@@ -269,9 +292,14 @@ pub enum Effect {
     /// Show the credits: hand a [`CreditsScreen`] opened from this entry
     /// to [`Flow::set_credits`].
     ShowCredits(CreditsEntry),
-    /// Play a movie full screen, then call [`Flow::movie_finished`] (also
-    /// when it is skipped or cannot play).
+    /// Play a movie full screen, then call [`Flow::movie_finished`] when it
+    /// ends or is skipped, or [`Flow::movie_missing`] when it cannot play.
     PlayMovie(MovieIndex),
+    /// The intro movie has played for the first time: the flow wrote
+    /// `intro_seen = yes` back to the config file (see [`Flow::settings`]),
+    /// so later runs start with the logo movie only. Nothing more is asked
+    /// of the window.
+    RecordIntroSeen,
     /// Start a music track of the screens (looping or once), stopping the
     /// one playing.
     Music {
@@ -284,13 +312,19 @@ pub enum Effect {
     Quit,
 }
 
-/// What a fade-out leads to.
+/// What a fade-out (or a movie) leads to.
 #[derive(Debug, Clone, PartialEq)]
 enum Pending {
     Screen(Screen),
     Start(LevelChoice, StartState),
     Credits(CreditsEntry),
     Quit,
+    /// A movie, then what follows it.
+    Movie(MovieIndex, Box<Pending>),
+    /// The end-of-level screens, waiting behind a movie.
+    Booty,
+    /// The main menu at this page, with this entry highlighted.
+    MenuPage(usize, usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -305,6 +339,19 @@ struct Play {
     level: LevelChoice,
     checkpoint: Option<(i32, i32)>,
     complete_in: Option<f64>,
+}
+
+/// The movie entry `entry` of the Replay Movies page replays (see
+/// [`MenuCommand::ReplayMovie`]): 1 the logo, 2 the intro, 3 to 10 the
+/// movies after levels 2, 4, 6, 8, 10, 12, 13 and 14.
+pub fn replay_movie_index(entry: u8) -> Option<MovieIndex> {
+    const AFTER: [u32; 8] = [2, 4, 6, 8, 10, 12, 13, 14];
+    match entry {
+        1 => Some(MovieIndex::LOGO),
+        2 => Some(MovieIndex::INTRO),
+        3..=10 => MovieIndex::after_level(AFTER[usize::from(entry - 3)]),
+        _ => None,
+    }
 }
 
 /// The retail level number of `level`.
@@ -539,6 +586,9 @@ pub struct Flow {
     movies: Option<MovieShelf>,
     /// What follows the movie on screen.
     after_movie: Option<Pending>,
+    /// The main menu's next idle time leads to the intro movie (rather
+    /// than the title), when there is one.
+    idle_movie: bool,
 }
 
 impl std::fmt::Debug for Flow {
@@ -626,6 +676,7 @@ impl Flow {
             next: None,
             movies: None,
             after_movie: None,
+            idle_movie: true,
         };
         if let Some(tree) = main {
             flow.main = Some(flow.prepare(tree));
@@ -663,22 +714,43 @@ impl Flow {
     /// Hands over the movies this run can play. Without this call the flow
     /// asks for no movie. Called before the first [`Flow::take_effects`]
     /// (or at least before any time passed), a run that starts at the title
-    /// plays the logo movie first when it is on the shelf.
+    /// plays its start-up movies first (see the module documentation): the
+    /// logo then the intro when the intro was never seen, else the logo
+    /// unless `skip_logo` is set.
     pub fn set_movies(&mut self, shelf: MovieShelf) {
         let at_start = self.screen == Screen::Title
             && self.elapsed == 0.0
             && self.pending.is_none()
             && self.play.is_none();
-        let logo = shelf.available.contains(MovieIndex::LOGO);
+        let has = |i: MovieIndex| shelf.available.contains(i);
+        let intro = !shelf.intro_seen && has(MovieIndex::INTRO);
+        let logo = has(MovieIndex::LOGO) && (!shelf.intro_seen || !shelf.skip_logo);
         self.movies = Some(shelf);
-        if at_start && logo {
-            self.effects.retain(|e| *e != Effect::ShowTitle);
-            if let Some(mut t) = self.title.take() {
-                let stop = t.leave();
-                self.effects.push(Effect::Sound(stop));
-            }
-            self.play_movie(MovieIndex::LOGO, Pending::Screen(Screen::Title));
+        self.refresh_enabled();
+        if !at_start || !(logo || intro) {
+            return;
         }
+        self.effects.retain(|e| *e != Effect::ShowTitle);
+        if let Some(mut t) = self.title.take() {
+            let stop = t.leave();
+            self.effects.push(Effect::Sound(stop));
+        }
+        let title = Pending::Screen(Screen::Title);
+        match (logo, intro) {
+            (true, true) => self.play_movie(
+                MovieIndex::LOGO,
+                Pending::Movie(MovieIndex::INTRO, Box::new(title)),
+            ),
+            (true, false) => self.play_movie(MovieIndex::LOGO, title),
+            _ => self.play_movie(MovieIndex::INTRO, title),
+        }
+    }
+
+    /// True when movie `index` is on the shelf.
+    pub fn movie_available(&self, index: MovieIndex) -> bool {
+        self.movies
+            .as_ref()
+            .is_some_and(|m| m.available.contains(index))
     }
 
     /// The movies this run can play, once [`Flow::set_movies`] was called.
@@ -694,12 +766,30 @@ impl Flow {
         }
     }
 
-    /// The movie asked for by [`Effect::PlayMovie`] is over: it ended, was
-    /// skipped or could not play. The screen after it follows.
+    /// The movie asked for by [`Effect::PlayMovie`] is over: it ended or
+    /// was skipped. The screen after it follows. The first time the intro
+    /// movie ends this way, the flow records that it was seen
+    /// ([`Effect::RecordIntroSeen`]).
     pub fn movie_finished(&mut self) {
-        if !matches!(self.screen, Screen::Movie(_)) {
+        let Screen::Movie(index) = self.screen else {
             return;
+        };
+        if index == MovieIndex::INTRO {
+            self.record_intro_seen();
         }
+        self.after_movie_ends();
+    }
+
+    /// The movie asked for by [`Effect::PlayMovie`] could not play (no
+    /// source of it opened). The screen after it follows; an intro that
+    /// could not play is not recorded as seen.
+    pub fn movie_missing(&mut self) {
+        if matches!(self.screen, Screen::Movie(_)) {
+            self.after_movie_ends();
+        }
+    }
+
+    fn after_movie_ends(&mut self) {
         let next = self
             .after_movie
             .take()
@@ -708,9 +798,36 @@ impl Flow {
         self.run_pending();
     }
 
-    /// Shows movie `index`, then `then`. The music stops first.
+    /// Notes that the intro movie has played, once: in the shelf, in the
+    /// settings and in the config file.
+    fn record_intro_seen(&mut self) {
+        let Some(shelf) = self.movies.as_mut() else {
+            return;
+        };
+        if shelf.intro_seen {
+            return;
+        }
+        shelf.intro_seen = true;
+        self.settings.intro_seen = true;
+        // Without a config file there is nothing to write it to; the run
+        // says nothing about it.
+        if self.settings.config_path.is_some() {
+            self.persist(&["intro_seen"]);
+        }
+        self.effects.push(Effect::RecordIntroSeen);
+    }
+
+    /// Shows movie `index`, then `then`. The music and the menu's loop stop
+    /// first.
     fn play_movie(&mut self, index: MovieIndex, then: Pending) {
         self.effects.push(Effect::Sound(AudioCue::StopMusic));
+        if self.bed_volume > 0 || self.bed.is_some() {
+            self.effects.push(Effect::Sound(AudioCue::Stop {
+                voice: MENU_BED_VOICE,
+            }));
+            self.bed_volume = 0;
+            self.bed = None;
+        }
         self.screen = Screen::Movie(index);
         self.idle_ms = 0.0;
         self.fade = None;
@@ -1217,7 +1334,12 @@ impl Flow {
         let progress = self.progress.clone();
         let sound = self.state.switches.sound;
         let music = self.music_available;
+        let shelf = self.movies.as_ref().map(|m| m.available.clone());
+        let any_movie = shelf.as_ref().is_some_and(|s| !s.is_empty());
         let rule = |item: &claw_ui::menu::MenuItem| match item.command {
+            MenuCommand::Open(Page::Movies) => any_movie,
+            MenuCommand::ReplayMovie(entry) => replay_movie_index(entry)
+                .is_some_and(|i| shelf.as_ref().is_some_and(|s| s.contains(i))),
             MenuCommand::NewGame { level } => progress.can_start(level),
             MenuCommand::Open(Page::LoadEntries { level }) => progress.can_start(level),
             MenuCommand::Load { level, entry: 0 } => progress.can_start(level),
@@ -1518,6 +1640,7 @@ impl Flow {
                     self.fade_to(Pending::Credits(CreditsEntry::FromMenu));
                 }
             }
+            MenuCommand::ReplayMovie(entry) => self.replay_movie(entry),
             MenuCommand::Open(_)
             | MenuCommand::Back
             | MenuCommand::Controls
@@ -1525,6 +1648,29 @@ impl Flow {
             | MenuCommand::Unavailable(_)
             | MenuCommand::Nothing => {}
         }
+    }
+
+    /// Replays movie `entry` of the Replay Movies page, then shows the page
+    /// again with the entry highlighted.
+    fn replay_movie(&mut self, entry: u8) {
+        if self.screen != Screen::MainMenu || self.pending.is_some() {
+            return;
+        }
+        let Some(index) = replay_movie_index(entry).filter(|&i| self.movie_available(i)) else {
+            return;
+        };
+        let back = self
+            .main
+            .as_ref()
+            .map_or(Pending::Screen(Screen::MainMenu), |n| {
+                let page = n.page_item();
+                let at = n
+                    .selected()
+                    .and_then(|k| n.entries().iter().position(|&e| e == k))
+                    .unwrap_or(0);
+                Pending::MenuPage(page, at)
+            });
+        self.play_movie(index, back);
     }
 
     /// Steps the pad dead zone (see [`dead_zone_step`]), applies and
@@ -1854,6 +2000,9 @@ impl Flow {
                 lives: 0,
             },
         };
+        let movie = number
+            .and_then(MovieIndex::after_level)
+            .filter(|&i| self.movie_available(i));
         self.play = None;
         self.in_game = None;
         self.effects.push(Effect::EndLevel);
@@ -1861,7 +2010,11 @@ impl Flow {
         self.screen = Screen::Booty;
         self.booty = None;
         self.effects.push(Effect::ShowBooty(stats));
-        if self.ending {
+        if let Some(index) = movie {
+            // The level's movie first; the map screen fades in after it.
+            self.fade = None;
+            self.play_movie(index, Pending::Booty);
+        } else if self.ending {
             // The black in place of the end-of-game movie; the map screen
             // fades in after it.
             self.fade = None;
@@ -1880,8 +2033,9 @@ impl Flow {
     }
 
     fn drain_booty_audio(&mut self) {
-        if self.cut_left.is_some() {
-            // The map screen's sounds wait for the end of the black.
+        if self.cut_left.is_some() || matches!(self.screen, Screen::Movie(_)) {
+            // The map screen's sounds wait for the end of the black or of
+            // the movie.
             return;
         }
         if let Some(b) = self.booty.as_mut() {
@@ -1942,7 +2096,18 @@ impl Flow {
                     _ => IDLE_SUBMENU_MS,
                 };
                 if self.idle_ms >= limit && self.pending.is_none() {
-                    self.fade_to(Pending::Screen(Screen::Title));
+                    // In turn the intro movie, when there is one, and the
+                    // title.
+                    let movie = self.idle_movie && self.movie_available(MovieIndex::INTRO);
+                    self.idle_movie = !movie;
+                    self.fade_to(if movie {
+                        Pending::Movie(
+                            MovieIndex::INTRO,
+                            Box::new(Pending::Screen(Screen::MainMenu)),
+                        )
+                    } else {
+                        Pending::Screen(Screen::Title)
+                    });
                 }
                 if self.fade.is_some_and(|f| f.out) {
                     return;
@@ -2097,6 +2262,19 @@ impl Flow {
             Pending::Quit => {
                 self.screen = Screen::Exit;
                 self.effects.push(Effect::Quit);
+            }
+            Pending::Movie(index, then) => self.play_movie(index, *then),
+            Pending::Booty => {
+                self.screen = Screen::Booty;
+                self.idle_ms = 0.0;
+                self.fade_in();
+                self.drain_booty_audio();
+            }
+            Pending::MenuPage(page, at) => {
+                self.enter(Screen::MainMenu);
+                if let Some(n) = self.main.as_mut() {
+                    n.show(page, at);
+                }
             }
         }
     }

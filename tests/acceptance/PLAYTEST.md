@@ -463,14 +463,33 @@ the level at its start).
 
 Failures only, as above: note the line, what happened instead, and where.
 Win the fourteenth level (Omar's gem), or, until his fight is in, choose
-Credits on the main menu for lines 3 to 6. The original plays its ending
-movie after the gem; this game has no movie player yet, so a short black
-stands in for it (line 1).
+Credits on the main menu for lines 3 to 6. A game built with FFmpeg plays
+the ending movie after the gem (see "Movies" below); without the movie
+player, or without the ending movie, a short black stands in for it
+(line 1).
 
-1. Taking the last gem: the level ends as other levels do, the screen stays black for about a second (Escape, Space or Enter end it sooner), then the map screen shows the amulet: the last gem plays into its socket, the amulet is made whole with its sound and Claw says his line; the treasure tally follows as after every level.
+1. Taking the last gem: the level ends as other levels do, the ending movie plays (or, without it, the screen stays black for about a second; Escape, Space or Enter end it sooner), then the map screen shows the amulet: the last gem plays into its socket, the amulet is made whole with its sound and Claw says his line; the treasure tally follows as after every level.
 2. When the tally is done (or skipped), it fades out, the screen stays black for half a second, and the parchment with the skull and crossed swords unrolls from a narrow strip at the centre to the full screen with its sound.
 3. The credits text rises from the bottom over the parchment, white, in a column from near the left edge, at a slow even pace (25 px a second), and the credits music plays and loops; once the last line has left the top, the text starts again from the bottom.
 4. Escape, Space, Enter, a game key such as attack or jump, a pad button, or a click anywhere but the top-left corner returns to the main menu at once (no unroll) with the menu music; the arrow keys do nothing. Keys pressed while the parchment unrolls do nothing.
 5. A click in the top-left corner (about 100 px square) switches to another tune, shows a line from the developers in white at the centre for 3 s and changes the text's colour every 0.3 s; a second click there, or the tune's end, brings the white text and the credits music back.
 6. From the main menu, Credits rolls the menu up and unrolls the parchment, then the same credits run.
 7. After the credits the main menu offers every level in New Game and Load Game as before; finishing the game saves nothing new.
+
+## Movies
+
+Failures only, as above. Build with movies (`make ffmpeg`, then `make
+run-game ARGS='--install PATH'`), and start once with `intro_seen` removed
+from the config file (or set to `no`) for lines 1 and 2. Every movie plays
+full screen at its own shape, centred on black, with its sound at the sound
+volume; the screen after it starts with its own sound and music.
+
+1. First run: the company logo plays, then the intro, then the title and the main menu. With `skip_logo = on` the logo still plays on this run. Afterwards the config file says `intro_seen = yes`.
+2. Escape (or the pad's Back or Start) skips each start-up movie at once; the key does not also skip the title. Enter, Space or a click do nothing during a movie file.
+3. Later runs: the logo only, then the title; with `skip_logo = on`, straight to the title. `--level N` starts in the level with no movie, and `--no-movies` or `movies = off` play none at all.
+4. Win levels 1 to 14 (the play-test aids help): after levels 2, 4, 6, 8, 10, 12 and 13 the level's movie plays before the map screen, and after level 14 the ending movie plays in place of the black; levels 1, 3, 5, 7, 9 and 11 go straight to the map screen. The map screen's sounds start after the movie, the map screen is not skipped by the key that skipped the movie, and the tally and the next level (or the credits) follow as before.
+5. Leave the main menu alone for two minutes: the menu rolls up, its loop stops and the intro plays; after it the main menu comes back with its loop. Two minutes later the title shows instead, then the intro again the time after.
+6. Replay Movies in the main menu: the page lists the ten movies; choose each: the select sound, then the movie, then the same page with that entry highlighted. Escape during a replayed movie skips it and does not also leave the page.
+7. Copy a movie (for example an H.264 `.mkv`) to `~/.local/share/rusty-claw/movies/LOGO.mkv`: the next start plays it instead of the install's logo. With `movies = original` the install's own logo plays again; with `movies = archive` the 320x240 clip of the movie archive plays, and any key, click or pad button skips it.
+8. Put an empty file named `CLAW0.mkv` in the movie folder and set `intro_seen = no`: one terminal line says that copy cannot play, the install's intro plays in its place, and nothing crashes or hangs. Remove the file afterwards.
+9. On a Steam Deck: Back or Start skips a movie; the movie's sound follows the sound volume.
