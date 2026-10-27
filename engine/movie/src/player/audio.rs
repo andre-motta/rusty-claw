@@ -53,17 +53,22 @@ impl Resampler {
             self.key = None;
             // SAFETY: the frame's layout is valid for reading. On failure
             // the context is freed and NULL.
-            unsafe { self.reopen(f)? };
+            if let Err(e) = unsafe { self.reopen(f) } {
+                // The old context's sound still plays; this frame's is lost.
+                return if out.is_empty() { Err(e) } else { Ok(out) };
+            }
             self.key = Some(key);
         }
         // SAFETY: the context is initialised; the input planes are the
         // frame's own.
-        let samples = unsafe { self.run(f.extended_data as *const *const u8, f.nb_samples)? };
-        if out.is_empty() {
-            Ok(samples)
-        } else {
-            out.extend_from_slice(&samples);
-            Ok(out)
+        match unsafe { self.run(f.extended_data as *const *const u8, f.nb_samples) } {
+            Ok(samples) if out.is_empty() => Ok(samples),
+            Ok(samples) => {
+                out.extend_from_slice(&samples);
+                Ok(out)
+            }
+            Err(_) if !out.is_empty() => Ok(out),
+            Err(e) => Err(e),
         }
     }
 

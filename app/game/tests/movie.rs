@@ -391,10 +391,10 @@ fn a_movie_ends_by_its_stream_by_a_skip_or_by_failing() {
         ..MovieProgress::default()
     };
     // Still playing.
-    assert_eq!(playing.end(false, false), None);
-    assert_eq!(MovieProgress::default().end(false, false), None);
+    assert_eq!(playing.end(false), None);
+    assert_eq!(MovieProgress::default().end(false), None);
     // Played to the end of its stream.
-    assert_eq!(playing.end(true, false), Some(MovieEnd::Finished));
+    assert_eq!(playing.end(true), Some(MovieEnd::Finished));
     // Skipped, whether a picture showed or not.
     for shown in [false, true] {
         let skipped = MovieProgress {
@@ -402,7 +402,7 @@ fn a_movie_ends_by_its_stream_by_a_skip_or_by_failing() {
             shown,
             ..MovieProgress::default()
         };
-        assert_eq!(skipped.end(false, false), Some(MovieEnd::Skipped));
+        assert_eq!(skipped.end(false), Some(MovieEnd::Skipped));
     }
     // A picture that cannot be shown fails it, skipped or not.
     for skipped in [false, true] {
@@ -411,19 +411,13 @@ fn a_movie_ends_by_its_stream_by_a_skip_or_by_failing() {
             shown: true,
             skipped,
         };
-        assert_eq!(failed.end(false, false), Some(MovieEnd::Failed));
+        assert_eq!(failed.end(false), Some(MovieEnd::Failed));
     }
-    // Decoding stopped at once, with an error or with no picture at all,
-    // or on an error later: failed.
-    assert_eq!(
-        MovieProgress::default().end(true, true),
-        Some(MovieEnd::Failed)
-    );
-    assert_eq!(
-        MovieProgress::default().end(true, false),
-        Some(MovieEnd::Failed)
-    );
-    assert_eq!(playing.end(true, true), Some(MovieEnd::Failed));
+    // Decoding stopped at once, with no picture shown: failed.
+    assert_eq!(MovieProgress::default().end(true), Some(MovieEnd::Failed));
+    // A stream that showed pictures and then stopped (on an error near
+    // its end or not) is over: an intro played that far counts as seen.
+    assert_eq!(playing.end(true), Some(MovieEnd::Finished));
 }
 
 /// A first run at the title with the logo and the intro, the intro now
@@ -465,7 +459,7 @@ fn an_intro_that_cannot_be_shown_is_not_recorded() {
         failed: true,
         ..MovieProgress::default()
     };
-    tell_flow(&mut r.flow, progress.end(false, false).unwrap());
+    tell_flow(&mut r.flow, progress.end(false).unwrap());
     r.run();
     assert_eq!(r.flow.screen(), Screen::Title);
     assert!(!r.took().contains(&Effect::RecordIntroSeen));
@@ -475,17 +469,15 @@ fn an_intro_that_cannot_be_shown_is_not_recorded() {
 
 #[test]
 fn an_intro_whose_decoding_stops_at_once_is_not_recorded() {
-    for decode_error in [true, false] {
-        let mut r = intro_playing();
-        // The player ended before any picture showed.
-        let end = MovieProgress::default().end(true, decode_error).unwrap();
-        tell_flow(&mut r.flow, end);
-        r.run();
-        assert_eq!(r.flow.screen(), Screen::Title, "{decode_error}");
-        assert!(!r.took().contains(&Effect::RecordIntroSeen));
-        assert!(!r.flow.settings().intro_seen);
-        assert!(!r.flow.movies().unwrap().intro_seen);
-    }
+    let mut r = intro_playing();
+    // The player ended before any picture showed.
+    let end = MovieProgress::default().end(true).unwrap();
+    tell_flow(&mut r.flow, end);
+    r.run();
+    assert_eq!(r.flow.screen(), Screen::Title);
+    assert!(!r.took().contains(&Effect::RecordIntroSeen));
+    assert!(!r.flow.settings().intro_seen);
+    assert!(!r.flow.movies().unwrap().intro_seen);
 }
 
 #[test]

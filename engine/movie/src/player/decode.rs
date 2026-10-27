@@ -22,8 +22,10 @@ pub(super) const QUEUE_FRAMES: usize = 4;
 /// While an audio engine plays the soundtrack and its ring holds less than
 /// this, the decoder does not wait for room in a full picture queue: in a
 /// file whose pictures come well before their sound (as in many VOB files),
-/// the sound it needs lies further on, behind more pictures.
-const SOUND_LOW_WATER: Duration = Duration::from_millis(250);
+/// the sound it needs lies further on, behind more pictures. It is below
+/// what a well-interleaved file keeps in the ring alongside a full queue of
+/// [`QUEUE_FRAMES`] pictures, so such files keep that queue.
+const SOUND_LOW_WATER: Duration = Duration::from_millis(60);
 /// How far the picture queue may then reach, from its oldest picture to
 /// its newest.
 const QUEUE_MAX_SPAN: Duration = Duration::from_secs(2);

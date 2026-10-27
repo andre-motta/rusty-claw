@@ -125,6 +125,8 @@ impl Converter {
             yuv,
         };
         if self.key != Some(key) {
+            // The context keeps swscale's default chroma positions (centred
+            // samples in what it makes): chroma_siting relies on that.
             // SAFETY: sws_getCachedContext frees or reuses the old context.
             self.sws = unsafe {
                 ffi::sws_getCachedContext(

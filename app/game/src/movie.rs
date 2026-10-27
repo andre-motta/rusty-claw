@@ -236,18 +236,20 @@ pub struct MovieProgress {
 
 impl MovieProgress {
     /// How the movie ended, or `None` while it plays. `stream_over` says
-    /// the player has nothing more to show; `decode_error` that decoding
-    /// stopped on an error. Pictures that cannot be shown fail it; an
-    /// input that skips it skips it; otherwise it finished only when its
-    /// stream ended without an error after a picture showed.
-    pub fn end(&self, stream_over: bool, decode_error: bool) -> Option<MovieEnd> {
+    /// the player has nothing more to show. Pictures that cannot be shown
+    /// fail it; an input that skips it skips it; a stream that ends before
+    /// any picture showed (decoding stopped at once) fails it. A stream that
+    /// showed pictures is over when it ends, even when decoding stopped on
+    /// an error near its end (a damaged tail), so an intro played that far
+    /// is not shown again on every start.
+    pub fn end(&self, stream_over: bool) -> Option<MovieEnd> {
         if self.failed {
             Some(MovieEnd::Failed)
         } else if self.skipped {
             Some(MovieEnd::Skipped)
         } else if !stream_over {
             None
-        } else if decode_error || !self.shown {
+        } else if !self.shown {
             Some(MovieEnd::Failed)
         } else {
             Some(MovieEnd::Finished)
@@ -334,8 +336,7 @@ impl MoviePlayback {
     /// How the movie ended, or `None` while it plays (see
     /// [`MovieProgress::end`]).
     pub fn end(&self) -> Option<MovieEnd> {
-        self.progress
-            .end(self.player.finished(), self.player.error().is_some())
+        self.progress.end(self.player.finished())
     }
 
     /// Whether the movie is over, however it ended.
