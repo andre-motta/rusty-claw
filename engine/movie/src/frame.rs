@@ -29,7 +29,8 @@ impl Matrix {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChromaSiting {
     /// Level with the left sample of each pair of Y samples: MPEG-2,
-    /// MPEG-4, H.264 and H.265 pictures, unless the stream says otherwise.
+    /// MPEG-4, H.264, H.265 and AV1 pictures, unless the stream says
+    /// otherwise.
     Left,
     /// Halfway between each pair of Y samples (MPEG-1 and JPEG pictures,
     /// and streams tagged so).

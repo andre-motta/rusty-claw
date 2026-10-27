@@ -75,10 +75,13 @@ On Debian and Ubuntu the packages are `build-essential git curl
 libvulkan1 mesa-vulkan-drivers libasound2-dev libudev-dev`.
 
 Movies come with a plain `cargo build` (and with `make run-game`) on Linux
-and the Steam Deck: the first build downloads FFmpeg's source and builds it
-once per machine into your cache (about a minute, no root needed; `make
-ffmpeg` does that step on its own). Where FFmpeg cannot be built, cargo
-prints one warning and the game builds without movies.
+and the Steam Deck: the first build downloads the sources of FFmpeg and of
+dav1d (its AV1 decoder) and builds them once per machine into your cache
+(about a minute, no root needed; `make ffmpeg` does that step on its own;
+dav1d also needs `pkg-config`, and meson and ninja, which the build
+installs with pip into your cache when they are missing). Where FFmpeg
+cannot be built, cargo prints one warning and the game builds without
+movies.
 `RUSTY_CLAW_FFMPEG=off` builds without FFmpeg on purpose, and
 `RUSTY_CLAW_FFMPEG=require` makes a build without it fail. On Windows, run
 FFmpeg's Windows build script once first, or the game builds without
@@ -269,8 +272,11 @@ Where movies come from, best first:
    Windows `%LOCALAPPDATA%\rusty-claw\movies\` unless `XDG_DATA_HOME` is
    set), or the folder `movie_folder` names. Name them after the movie they
    replace, `LOGO`, `CLAW0` to `CLAW8` and `CREDITS`, with the extension `.mkv`,
-   `.mp4`, `.mov` or `.avi` (in any case); H.264 or H.265 video is the
-   best choice.
+   `.webm`, `.mp4`, `.mov` or `.avi` (in any case); AV1 video (8-bit or
+   10-bit) with Opus sound in `.mkv` or `.webm` is the best choice, and
+   plays in every build (2560x1920 AV1 decodes at about 5 times real time
+   on four cores of a desktop CPU; see
+   [third_party/ffmpeg/README.md](third_party/ffmpeg/README.md)).
 2. The install's own movie files, `LOGO` and `CLAW0` to `CLAW8` as `.avi`
    or `.vob`, in the install folder or its `Movies` folder.
 3. The install's movie archive, `CLAW.FEC` (for the credits, only this
@@ -300,6 +306,12 @@ with movies; on Windows, FFmpeg's Windows build script runs first. A game
 built without FFmpeg (it could not be built, or `RUSTY_CLAW_FFMPEG=off`)
 plays no movies, says so once at start-up (pointing at that README), and
 goes on as if the install had none.
+
+The build has no H.264 or HEVC (H.265) decoder, and nothing published
+carries one, because they are patent-pooled formats; the install's movies
+never need them. If you build the game for yourself, you can add them with
+`RUSTY_CLAW_FFMPEG_H26X=on` set for `make ffmpeg` and for cargo alike (see
+that README).
 
 ## Settings and saved games
 

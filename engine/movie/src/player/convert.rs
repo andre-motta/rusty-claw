@@ -1,18 +1,22 @@
 //! Decoded pictures to the player's frame layout.
 //!
-//! - YUV pictures (MPEG-4, H.264, HEVC, MPEG-2, any chroma layout or bit
-//!   depth) become I420: 8-bit Y, U and V planes, U and V at half width
-//!   and half height, keeping the stream's matrix and range (BT.601 for
-//!   untagged pictures of 576 lines or fewer, BT.709 above). The renderer
-//!   turns them into colours. 8-bit 4:2:0 pictures are copied as they are;
-//!   others (10-bit HEVC Main10, 4:2:2, 4:4:4, NV12) go through swscale.
+//! - YUV pictures (MPEG-4, MPEG-2, AV1, and H.264 and HEVC in builds
+//!   that have them; any chroma layout or bit depth) become I420: 8-bit Y,
+//!   U and V planes, U and V at half width and half height, keeping the
+//!   stream's matrix and range (BT.601 for untagged pictures of 576 lines
+//!   or fewer, BT.709 above). The renderer turns them into colours. 8-bit
+//!   4:2:0 pictures are copied as they are; others (10-bit AV1 or HEVC
+//!   Main10, 4:2:2, 4:4:4, NV12) go through swscale.
 //!   Each picture also says where its colour samples sit across the row
 //!   ([`ChromaSiting`]): as the stream tags them, else as its codec places
 //!   them (left for the MPEG family, which the decoders also report for
 //!   untagged H.264, H.265 and MPEG-4 streams; centred for JPEG-range
-//!   formats). swscale keeps the samples where they are when the source
-//!   has half-width colour already and centres them when it halves full
-//!   width colour (4:4:4).
+//!   formats). AV1 streams carry their siting in the sequence header,
+//!   which FFmpeg reports as left (vertical) or top-left (colocated), both
+//!   left across the row; an AV1 stream that leaves it unknown is taken
+//!   as left too. swscale keeps the samples where they are when the
+//!   source has half-width colour already and centres them when it halves
+//!   full width colour (4:4:4).
 //! - Palette and RGB pictures (Smacker) become RGBA through swscale, so
 //!   their palette colours stay exact.
 

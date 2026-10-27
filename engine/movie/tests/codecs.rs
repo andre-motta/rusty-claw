@@ -1,14 +1,19 @@
-//! H.264 and HEVC movies like the upscaled copies players make: clips are
-//! made here, in a temporary folder, with the `ffmpeg` command-line tool of
-//! the system, and played through the player.
+//! Movies like the upscaled copies players make: clips are made here, in a
+//! temporary folder, with the `ffmpeg` command-line tool of the system, and
+//! played through the player.
 //!
-//! - H.264 in MP4 and in MKV with AAC sound (the libopenh264 encoder);
-//! - HEVC Main (8-bit) and Main10 (10-bit) in MKV with AAC sound
-//!   (hevc_nvenc, else hevc_vaapi). Both encode on the GPU, so they run only
-//!   with `CLAW_CODECS_BENCH=1` and `CLAW_GPU_TESTS=1` both set, and then
-//!   under the bench lock; otherwise the tests leave the GPU alone;
+//! - AV1 8-bit in WebM and AV1 10-bit in MKV, with Opus sound (libsvtav1,
+//!   else libaom-av1, else av1_nvenc; libopus, else FFmpeg's own opus
+//!   encoder), tagged with left colour siting; the upscaled movies' format;
+//! - in a build with the H.264 and HEVC decoders (RUSTY_CLAW_FFMPEG_H26X=on)
+//!   only: H.264 in MP4 and in MKV with AAC sound (the libopenh264 encoder),
+//!   and HEVC Main (8-bit) and Main10 (10-bit) in MKV with AAC sound
+//!   (hevc_nvenc, else hevc_vaapi);
 //!
 //! each 2560x1920 at 29.97 pictures a second, tagged BT.601, limited range.
+//! Encoders that work on the GPU (av1_nvenc, hevc_nvenc, hevc_vaapi) are
+//! used only with `CLAW_CODECS_BENCH=1` and `CLAW_GPU_TESTS=1` both set,
+//! and then under the bench lock; otherwise the tests leave the GPU alone.
 //! The first pictures are a moving test pattern under fresh grain in every
 //! picture, so the encoder spends its whole bit rate (16 Mb/s, as a
 //! detailed upscale would), and the last ones a flat colour. Each test
@@ -29,7 +34,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use claw_movie::{FileKind, FrameLayout, Matrix, Player, Source, VideoFrame};
+use claw_movie::{ChromaSiting, FileKind, FrameLayout, Matrix, Player, Source, VideoFrame};
 
 const W: u32 = 2560;
 const H: u32 = 1920;
@@ -93,10 +98,36 @@ fn has_encoder(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The video format of a clip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Codec {
+    /// AV1 with Opus sound, which every build with dav1d plays.
+    Av1,
+    /// H.264 or HEVC with AAC sound, which only a build made with
+    /// RUSTY_CLAW_FFMPEG_H26X=on plays.
+    H26x,
+}
+
+impl Codec {
+    /// Why this build cannot play the codec, if it cannot.
+    fn missing(self) -> Option<&'static str> {
+        match self {
+            Codec::Av1 if !cfg!(claw_ffmpeg_av1) => {
+                Some("this FFmpeg was built without AV1 (no dav1d)")
+            }
+            Codec::H26x if !cfg!(claw_ffmpeg_h26x) => Some(
+                "this FFmpeg has no H.264 or HEVC decoder (they come with RUSTY_CLAW_FFMPEG_H26X=on)",
+            ),
+            _ => None,
+        }
+    }
+}
+
 /// How a clip is made.
 #[derive(Debug, Clone, Copy)]
 struct Clip {
     name: &'static str,
+    codec: Codec,
     /// The file name, whose extension picks the container.
     file: &'static str,
     /// Encoders to try in turn.
@@ -112,8 +143,30 @@ struct Clip {
     full_range: bool,
 }
 
+const AV1_WEBM: Clip = Clip {
+    name: "AV1 8-bit WebM + Opus",
+    codec: Codec::Av1,
+    file: "av1.webm",
+    encoders: &["libsvtav1", "libaom-av1", "av1_nvenc"],
+    pix_fmt: "yuv420p",
+    options: &["-b:v", "16M"],
+    size: (W, H),
+    frames: FRAMES,
+    flat_from: FLAT_FROM,
+    bt709: false,
+    full_range: false,
+};
+
+const AV1_10_MKV: Clip = Clip {
+    name: "AV1 10-bit MKV + Opus",
+    file: "av1-10.mkv",
+    pix_fmt: "yuv420p10le",
+    ..AV1_WEBM
+};
+
 const H264_MP4: Clip = Clip {
     name: "H.264 MP4 + AAC",
+    codec: Codec::H26x,
     file: "h264.mp4",
     encoders: &["libopenh264"],
     pix_fmt: "yuv420p",
@@ -169,6 +222,13 @@ fn make(clip: &Clip, dir: &Path) -> Result<(PathBuf, &'static str), String> {
         RATE.0, RATE.1, clip.flat_from
     );
     let mut tried = Vec::new();
+    let audio: &[&str] = match clip.codec {
+        Codec::Av1 if has_encoder("libopus") => &["-c:a", "libopus", "-b:a", "128k"],
+        // FFmpeg's own Opus encoder is marked experimental.
+        Codec::Av1 if has_encoder("opus") => &["-c:a", "opus", "-strict", "-2", "-b:a", "128k"],
+        Codec::Av1 => return Err("no Opus encoder (libopus or opus) in this ffmpeg".into()),
+        Codec::H26x => &["-c:a", "aac"],
+    };
     for &encoder in clip.encoders {
         let gpu = encoder.ends_with("_nvenc") || encoder.ends_with("_vaapi");
         if gpu && !gpu_allowed() {
@@ -192,6 +252,8 @@ fn make(clip: &Clip, dir: &Path) -> Result<(PathBuf, &'static str), String> {
                 "nv12"
             };
             filter.push_str(&format!(",format={upload},hwupload"));
+        } else if encoder == "av1_nvenc" && clip.pix_fmt == "yuv420p10le" {
+            filter.push_str(",format=p010le");
         } else {
             filter.push_str(&format!(",format={}", clip.pix_fmt));
         }
@@ -211,6 +273,17 @@ fn make(clip: &Clip, dir: &Path) -> Result<(PathBuf, &'static str), String> {
             ]);
         } else {
             cmd.args(clip.options);
+        }
+        match encoder {
+            // Fast presets: the clips test decoding, not the encoder.
+            "libsvtav1" => cmd.args(["-preset", "10"]),
+            "libaom-av1" => cmd.args(["-cpu-used", "8", "-row-mt", "1", "-usage", "realtime"]),
+            _ => &mut cmd,
+        };
+        if clip.codec == Codec::Av1 {
+            // AV1's sequence header carries the colour siting; left (as
+            // MPEG) is what upscaled copies made from the originals have.
+            cmd.args(["-chroma_sample_location", "left"]);
         }
         if encoder == "libopenh264" {
             // The colour description inside the H.264 stream too.
@@ -232,7 +305,8 @@ fn make(clip: &Clip, dir: &Path) -> Result<(PathBuf, &'static str), String> {
             "-color_range",
             range,
         ]);
-        cmd.args(["-c:a", "aac", "-ac", "2"]);
+        cmd.args(audio);
+        cmd.args(["-ac", "2"]);
         cmd.arg(&path);
         match cmd.output() {
             Ok(o) if o.status.success() && path.is_file() => return Ok((path, encoder)),
@@ -347,6 +421,9 @@ fn check_layout(clip: &Clip, f: &VideoFrame) {
         "{}",
         clip.name
     );
+    if clip.codec == Codec::Av1 {
+        assert_eq!(f.chroma, ChromaSiting::Left, "{}", clip.name);
+    }
     let (cw, ch) = (w.div_ceil(2) as usize, h.div_ceil(2) as usize);
     assert!(f.strides[0] >= w as usize && f.strides[1] >= cw && f.strides[2] >= cw);
     assert!(f.planes[0].len() >= f.strides[0] * (h as usize - 1) + w as usize);
@@ -420,6 +497,10 @@ fn speed_on_four_cores(path: &Path) -> Result<f64, String> {
 
 /// Makes, plays and measures `clip`; prints one table row.
 fn check(clip: Clip) {
+    if let Some(why) = clip.codec.missing() {
+        println!("skipped {}: {why}", clip.name);
+        return;
+    }
     let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let (path, encoder) = match make(&clip, dir.path()) {
@@ -478,6 +559,16 @@ fn check(clip: Clip) {
 }
 
 #[test]
+fn av1_8_bit_in_webm_with_opus_plays_as_i420() {
+    check(AV1_WEBM);
+}
+
+#[test]
+fn av1_10_bit_in_mkv_with_opus_plays_as_8_bit_i420() {
+    check(AV1_10_MKV);
+}
+
+#[test]
 fn h264_in_mp4_plays_as_i420() {
     check(H264_MP4);
 }
@@ -498,7 +589,8 @@ fn hevc_main10_in_mkv_plays_as_8_bit_i420() {
 }
 
 /// BT.709 full-range clips keep their matrix and range through the 8-bit
-/// copy (H.264) and the 10-bit conversion (HEVC Main10).
+/// copy (AV1 8-bit, H.264) and the 10-bit conversion (AV1 10-bit, HEVC
+/// Main10).
 #[test]
 fn bt709_full_range_tags_pass_through() {
     let small = |clip: Clip| Clip {
@@ -509,7 +601,16 @@ fn bt709_full_range_tags_pass_through() {
         full_range: true,
         ..clip
     };
-    for clip in [small(H264_MKV), small(HEVC_MAIN10)] {
+    for clip in [
+        small(AV1_WEBM),
+        small(AV1_10_MKV),
+        small(H264_MKV),
+        small(HEVC_MAIN10),
+    ] {
+        if let Some(why) = clip.codec.missing() {
+            println!("skipped {} at BT.709 full range: {why}", clip.name);
+            continue;
+        }
         let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let path = match make(&clip, dir.path()) {

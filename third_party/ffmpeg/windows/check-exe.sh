@@ -1,7 +1,8 @@
 #!/bin/sh
 # Checks that a Windows build of the game carries FFmpeg inside it: the
 # executable names no FFmpeg DLL (avcodec, avformat, avutil, swscale,
-# swresample) among the DLLs it loads, and holds FFmpeg's version string.
+# swresample) and no dav1d DLL among the DLLs it loads, and holds FFmpeg's
+# version string.
 #
 #   sh third_party/ffmpeg/windows/check-exe.sh [target/release/rusty-claw.exe]
 #
@@ -16,8 +17,8 @@ command -v dumpbin.exe >/dev/null 2>&1 ||
 
 dlls=$(dumpbin.exe -nologo -dependents "$exe" | tr -d '\r' | grep -i '\.dll' | sed 's/^ *//')
 printf 'DLLs %s loads:\n%s\n' "$exe" "$dlls"
-if printf '%s\n' "$dlls" | grep -i -q -E '^(avcodec|avformat|avutil|swscale|swresample)(-[0-9]+)?\.dll$'; then
-    echo "FAIL: $exe loads an FFmpeg DLL; it must link FFmpeg statically" >&2
+if printf '%s\n' "$dlls" | grep -i -q -E '^(avcodec|avformat|avutil|swscale|swresample|(lib)?dav1d)(-[0-9]+)?\.dll$'; then
+    echo "FAIL: $exe loads an FFmpeg or dav1d DLL; it must link them statically" >&2
     exit 1
 fi
 if ! grep -a -q 'Lavc%d' "$exe"; then

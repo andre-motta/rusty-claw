@@ -38,16 +38,22 @@ channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' /src/rust-toolchain.toml)
 [ -n "$channel" ] || fail "no channel in rust-toolchain.toml"
 rustup toolchain install "$channel" --profile minimal >/dev/null
 
-# FFmpeg: the same pinned build as on any Linux, made with the SDK's
-# compiler and glibc, in this cache rather than the host's.
+# FFmpeg and dav1d: the same pinned build as on any Linux, made with the
+# SDK's compiler and glibc, in this cache rather than the host's (meson and
+# ninja from the SDK, or from pip into the cache when it lacks them). The
+# Deck build must decode AV1, the upscaled movies' format.
 nice -n 10 sh /src/third_party/ffmpeg/build.sh
+record="$(sh /src/third_party/ffmpeg/build.sh --prefix)/share/rusty-claw/ffmpeg-build.txt"
+if grep -q '^dav1d none$' "$record"; then
+    fail "FFmpeg was built without AV1 (dav1d); see the build's message above"
+fi
 
 # The game, with movies: a build without FFmpeg is an error here.
 RUSTY_CLAW_FFMPEG=require nice -n 10 cargo build --release --locked -p claw-game
 
 bin="$CARGO_TARGET_DIR/release/rusty-claw"
-if ldd "$bin" | grep -E 'libav|libsw'; then
-    fail "the binary loads FFmpeg libraries; it must carry FFmpeg inside"
+if ldd "$bin" | grep -E 'libav|libsw|libdav1d'; then
+    fail "the binary loads FFmpeg or dav1d libraries; it must carry them inside"
 fi
 sh /src/third_party/ffmpeg/deck/glibc-floor.sh "$bin" "${DECK_GLIBC_MAX:-2.31}"
 cp "$bin" /src/target/deck/rusty-claw

@@ -9,7 +9,7 @@ use crate::source::{FileKind, MovieMode, Roots, Source};
 
 /// The extensions of the copies in the player's movie folder, in
 /// preference order.
-const UPSCALED_EXTENSIONS: [&str; 4] = ["mkv", "mp4", "mov", "avi"];
+const UPSCALED_EXTENSIONS: [&str; 5] = ["mkv", "webm", "mp4", "mov", "avi"];
 /// The extensions of the install's movie files, in preference order.
 const ORIGINAL_EXTENSIONS: [&str; 2] = ["avi", "vob"];
 /// The install's folder of movies copied from the CD.
@@ -25,7 +25,7 @@ const ARCHIVE_EXTENSION: [&str; 1] = ["fec"];
 /// case, the order is:
 ///
 /// 1. In [`MovieMode::Upscaled`] only: the movie folder's `STEM.mkv`,
-///    `STEM.mp4`, `STEM.mov` and `STEM.avi`.
+///    `STEM.webm`, `STEM.mp4`, `STEM.mov` and `STEM.avi`.
 /// 2. Unless in [`MovieMode::Archive`]: the install's `STEM.avi` and
 ///    `STEM.vob`, then the same in its `Movies` folder.
 /// 3. The movie's archive clip ([`MovieIndex::fec_entry`]) in the
