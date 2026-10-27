@@ -19,6 +19,17 @@ use crate::{MovieError, ReadSeek, VideoFrame};
 
 /// Pictures decoded ahead of the one showing.
 pub(super) const QUEUE_FRAMES: usize = 4;
+/// While an audio engine plays the soundtrack and its ring holds less than
+/// this, the decoder does not wait for room in a full picture queue: in a
+/// file whose pictures come well before their sound (as in many VOB files),
+/// the sound it needs lies further on, behind more pictures.
+const SOUND_LOW_WATER: Duration = Duration::from_millis(250);
+/// How far the picture queue may then reach, from its oldest picture to
+/// its newest.
+const QUEUE_MAX_SPAN: Duration = Duration::from_secs(2);
+/// How many bytes of pictures the queue may then hold (about 25 pictures of
+/// 2560x1920).
+const QUEUE_MAX_BYTES: usize = 192 << 20;
 /// How long a waiting decoder sleeps before it looks at the stop flag
 /// again.
 const POLL: Duration = Duration::from_millis(5);
@@ -255,6 +266,19 @@ pub(super) struct Sound {
     pub started: bool,
 }
 
+impl Sound {
+    /// An audio engine plays the soundtrack on its clock and the ring holds
+    /// less than [`SOUND_LOW_WATER`] of it.
+    fn starving(&self) -> bool {
+        if !self.link.worth_waiting() {
+            return false;
+        }
+        let held = self.ring.buffer().capacity() - self.ring.slots();
+        let low = SOUND_LOW_WATER.as_secs_f64() * f64::from(self.link.rate) * 2.0;
+        (held as f64) < low
+    }
+}
+
 /// Everything the decoding thread owns.
 pub(super) struct Job {
     pub input: Input,
@@ -344,6 +368,7 @@ impl Job {
         if index == self.video.stream {
             let Job {
                 video,
+                sound,
                 converter,
                 start,
                 frame_time,
@@ -359,7 +384,7 @@ impl Job {
                     match converter.convert(f, pts) {
                         Ok(picture) => {
                             *last_pts = Some(pts);
-                            push_picture(shared, picture)
+                            push_picture(shared, picture, sound.as_ref())
                         }
                         // A picture that cannot be converted is skipped.
                         Err(_) => Ok(()),
@@ -431,13 +456,20 @@ unsafe fn picture_time(
     }
 }
 
-fn push_picture(shared: &Shared, picture: VideoFrame) -> Result<(), Stop> {
+/// Queues `picture`, waiting while the queue is full. A full queue takes
+/// more pictures, up to [`QUEUE_MAX_SPAN`] and [`QUEUE_MAX_BYTES`], while
+/// the soundtrack is starving (see [`SOUND_LOW_WATER`]): waiting then would
+/// hold back the sound the movie's clock runs on, and the clock would fall
+/// to the wall clock for the rest of the movie.
+fn push_picture(shared: &Shared, picture: VideoFrame, sound: Option<&Sound>) -> Result<(), Stop> {
     let mut q = shared.lock();
     loop {
         if shared.stopping() {
             return Err(Stop);
         }
-        if q.frames.len() < QUEUE_FRAMES {
+        if q.frames.len() < QUEUE_FRAMES
+            || (sound.is_some_and(Sound::starving) && room_beyond_full(&q.frames, &picture))
+        {
             break;
         }
         q = shared
@@ -449,6 +481,20 @@ fn push_picture(shared: &Shared, picture: VideoFrame) -> Result<(), Stop> {
     q.frames.push_back(picture);
     shared.cond.notify_all();
     Ok(())
+}
+
+/// Whether `next` fits in a queue past its usual length: the queue then
+/// spans at most [`QUEUE_MAX_SPAN`] and holds at most [`QUEUE_MAX_BYTES`].
+fn room_beyond_full(frames: &VecDeque<VideoFrame>, next: &VideoFrame) -> bool {
+    let span = frames
+        .front()
+        .map_or(Duration::ZERO, |f| next.pts.saturating_sub(f.pts));
+    let bytes: usize = frames
+        .iter()
+        .chain([next])
+        .flat_map(|f| f.planes.iter().map(Vec::len))
+        .sum();
+    span <= QUEUE_MAX_SPAN && bytes <= QUEUE_MAX_BYTES
 }
 
 fn push_sound(shared: &Shared, s: &mut Sound, samples: &[f32]) -> Result<(), Stop> {

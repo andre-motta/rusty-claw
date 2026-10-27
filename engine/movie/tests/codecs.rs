@@ -12,12 +12,15 @@
 //! each 2560x1920 at 29.97 pictures a second, tagged BT.601, limited range.
 //! The first pictures are a moving test pattern under fresh grain in every
 //! picture, so the encoder spends its whole bit rate (16 Mb/s, as a
-//! detailed upscale would), and the last ones a flat colour. Each test checks the picture count, the size, the I420 layout
-//! and the flat colour after conversion, and measures how fast the player
-//! decodes and converts the clip with every core and with four (through
-//! `taskset -c 0-3`, as a child process): at least 1.5 times real time with
-//! every core. A clip whose encoder the system lacks is skipped with the
-//! reason printed. Run with `--nocapture` to see the table.
+//! detailed upscale would), and the last ones a flat colour. Each test
+//! checks the picture count, the size, the I420 layout and the flat colour
+//! after conversion. An optimised test build (`--release`), or any build
+//! with `CLAW_CODECS_BENCH=1`, also measures how fast the player decodes
+//! and converts the clip with every core and with four (through `taskset
+//! -c 0-3`, as a child process) and asks for at least 1.5 times real time
+//! with every core; a plain debug `cargo test`, as in `make check`, checks
+//! the pictures only. A clip whose encoder the system lacks is skipped with
+//! the reason printed. Run with `--nocapture` to see the table.
 #![cfg(feature = "ffmpeg")]
 
 use std::path::{Path, PathBuf};
@@ -40,6 +43,14 @@ const OUT_RATE: u32 = 48000;
 const MIN_SPEED: f64 = 1.5;
 /// Set in the child that measures a clip on four cores.
 const MEASURE_ENV: &str = "CLAW_CODECS_MEASURE";
+/// Set to measure speeds in a debug build too.
+const BENCH_ENV: &str = "CLAW_CODECS_BENCH";
+
+/// Whether this run measures speeds: in an optimised build, or when
+/// [`BENCH_ENV`] is 1.
+fn measuring() -> bool {
+    !cfg!(debug_assertions) || std::env::var_os(BENCH_ENV).is_some_and(|v| v == "1")
+}
 
 /// One test decodes at a time, so the speeds are measured on an idle
 /// machine.
@@ -389,6 +400,15 @@ fn check(clip: Clip) {
         );
     }
     let all = clip.frames as f64 / took.as_secs_f64();
+    if !measuring() {
+        println!(
+            "| {:<24} | {:<11} | {} | speeds measured with --release or {BENCH_ENV}=1 |",
+            clip.name,
+            encoder,
+            pictures.len()
+        );
+        return;
+    }
     let four = speed_on_four_cores(&path);
     let four_text = match &four {
         Ok(v) => format!("{v:7.1} fps ({:4.2}x)", v / fps()),
