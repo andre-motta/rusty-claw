@@ -1245,6 +1245,81 @@ reference = "level14/pair-original"
 clock = "c18"
 tolerance = "exact"
 
+# The whole game, the first level to the fourteenth, played as one game
+# (`routes/game/`): every level's route starts from the progress the level
+# before hands on, through every end-of-level screen, to the credits. Each
+# level's part of each repeat is equal on every compared row, the random
+# stream included.
+[[compare]]
+reference = "game-original/level1"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level2"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level3"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level4"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level5"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level6"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level7"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level8"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level9"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level10"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level11"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level12"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level13"
+clock = "c18"
+tolerance = "exact"
+
+[[compare]]
+reference = "game-original/level14"
+clock = "c18"
+tolerance = "exact"
+
 # The bot's route of the tenth level (default tuning) at 60 frames per
 # second. It leaves the feel tolerance at 1184 ms in Claw's height (the
 # default tuning's movement, as on the earlier levels), then the runs go
