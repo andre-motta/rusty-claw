@@ -82,6 +82,10 @@ else
 fi
 config_hash=$(stamp_text | sha256sum | cut -c1-12)
 if [ -n "${FFMPEG_PREFIX:-}" ]; then
+    case "$FFMPEG_PREFIX" in
+        /* | [A-Za-z]:[/\\]*) ;;
+        *) fail "FFMPEG_PREFIX must be an absolute path, not '$FFMPEG_PREFIX'" ;;
+    esac
     prefix=$FFMPEG_PREFIX
     if command -v cygpath >/dev/null 2>&1; then prefix=$(cygpath -u "$prefix"); fi
 else
@@ -134,7 +138,7 @@ cl.exe 2>&1 | grep -q 'x64' ||
     fail "cl.exe does not build for x64: use the x64 Native Tools Command Prompt, not the x86 one"
 for tool in make gcc curl tar xz sha256sum cmp; do
     command -v "$tool" >/dev/null 2>&1 ||
-        fail "$tool is missing: in MSYS2, run pacman -S --needed make gcc diffutils tar xz curl pkgconf"
+        fail "$tool is missing: in MSYS2, run pacman -S --needed make gcc diffutils tar xz curl"
 done
 
 mkdir -p "$cache_root/downloads" "$cache_root/build"

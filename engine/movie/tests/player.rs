@@ -6,6 +6,8 @@
 
 use std::f32::consts::TAU;
 use std::io::Cursor;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use claw_movie::{FileKind, FrameLayout, MovieError, Player, Source, VideoFrame};
@@ -54,6 +56,12 @@ fn le(v: &mut Vec<u8>, words: &[u32]) {
 
 /// The test movie as AVI bytes.
 fn movie() -> Vec<u8> {
+    movie_with(FRAMES, 0)
+}
+
+/// A test movie of `frames` pictures as AVI bytes, each picture's sound
+/// stored `audio_delay` pictures after it in the file.
+fn movie_with(frames: u32, audio_delay: u32) -> Vec<u8> {
     let row = (W * 3) as usize;
     let image = row * H as usize;
     let per_frame = SOUND_RATE / FPS;
@@ -66,7 +74,7 @@ fn movie() -> Vec<u8> {
             0,
             0,
             0x10 | 0x100,
-            FRAMES,
+            frames,
             0,
             2,
             image as u32,
@@ -89,7 +97,7 @@ fn movie() -> Vec<u8> {
             1,
             FPS,
             0,
-            FRAMES,
+            frames,
             image as u32,
             u32::MAX,
             0,
@@ -114,7 +122,7 @@ fn movie() -> Vec<u8> {
             block,
             SOUND_RATE * block,
             0,
-            FRAMES * per_frame,
+            frames * per_frame,
             per_frame * block,
             u32::MAX,
             block,
@@ -144,7 +152,17 @@ fn movie() -> Vec<u8> {
     // The pictures and the sound, interleaved, and their index.
     let mut movi = b"movi".to_vec();
     let mut idx = Vec::new();
-    for i in 0..FRAMES {
+    let sound_chunk = |i: u32| {
+        let mut sound = Vec::new();
+        for n in i * per_frame..(i + 1) * per_frame {
+            let s = (tone(n) * 32767.0) as i16;
+            sound.extend_from_slice(&s.to_le_bytes());
+            sound.extend_from_slice(&(-s).to_le_bytes());
+        }
+        sound
+    };
+    let mut next_sound = 0;
+    for i in 0..frames {
         let mut pixels = Vec::with_capacity(image);
         // Bottom-up rows of blue, green, red.
         for y in (0..H).rev() {
@@ -156,15 +174,20 @@ fn movie() -> Vec<u8> {
         let at = chunk(&mut movi, b"00db", &pixels);
         idx.extend_from_slice(b"00db");
         le(&mut idx, &[0x10, at as u32, pixels.len() as u32]);
-        let mut sound = Vec::new();
-        for n in i * per_frame..(i + 1) * per_frame {
-            let s = (tone(n) * 32767.0) as i16;
-            sound.extend_from_slice(&s.to_le_bytes());
-            sound.extend_from_slice(&(-s).to_le_bytes());
+        // The sound of the picture `audio_delay` pictures back, and all
+        // that is left after the last picture.
+        let upto = if i + 1 == frames {
+            frames
+        } else {
+            (i + 1).saturating_sub(audio_delay)
+        };
+        while next_sound < upto {
+            let sound = sound_chunk(next_sound);
+            let at = chunk(&mut movi, b"01wb", &sound);
+            idx.extend_from_slice(b"01wb");
+            le(&mut idx, &[0x10, at as u32, sound.len() as u32]);
+            next_sound += 1;
         }
-        let at = chunk(&mut movi, b"01wb", &sound);
-        idx.extend_from_slice(b"01wb");
-        le(&mut idx, &[0x10, at as u32, sound.len() as u32]);
     }
 
     let mut body = b"AVI ".to_vec();
@@ -300,6 +323,72 @@ fn without_an_engine_the_movie_plays_on_the_wall_clock() {
             "{pts:?} shown at {at:?}"
         );
     }
+}
+
+/// Sound stored well behind its pictures (1.2 s here, more than the
+/// picture queue's usual few pictures) still reaches the audio engine in
+/// time: the decoder reads on past a full picture queue while the sound is
+/// starving, so the movie's clock follows the sound to the end and never
+/// falls to the wall clock (which would leave the sound behind the
+/// pictures by the gap for the rest of the movie).
+#[test]
+fn sound_stored_behind_its_pictures_keeps_the_movie_on_the_sound_clock() {
+    const LONG: u32 = 30;
+    const DELAY: u32 = 12;
+    let mut p = Player::open_reader(
+        Box::new(Cursor::new(movie_with(LONG, DELAY))),
+        "late-sound.avi",
+        OUT_RATE,
+    )
+    .unwrap();
+    let mut audio = p.take_audio().expect("the movie has sound");
+    // An audio engine: 10 ms of sound every 10 ms, on a thread of its own.
+    let stop = Arc::new(AtomicBool::new(false));
+    let engine = {
+        let stop = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let mut out = vec![0.0f32; 2 * (OUT_RATE as usize / 100)];
+            while !stop.load(Ordering::Relaxed) {
+                out.fill(0.0);
+                audio.render(&mut out, OUT_RATE);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        })
+    };
+    let video = Duration::from_secs_f64(f64::from(LONG) / f64::from(FPS));
+    let start = Instant::now();
+    let mut shown = Vec::new();
+    let mut worst = Duration::ZERO;
+    while !p.finished() {
+        assert!(start.elapsed() < Duration::from_secs(15), "never finished");
+        let clock = p.clock();
+        let sound = p.audio_position().unwrap();
+        // Up to the soundtrack's last moments (where it hands over to the
+        // wall clock, as every finished soundtrack does), the clock is the
+        // sound's position, give or take one 10 ms block the engine plays
+        // between the two readings.
+        if sound + Duration::from_millis(100) < video {
+            worst = worst.max(clock.abs_diff(sound));
+        }
+        if let Some(f) = p.next_frame() {
+            shown.push(f.pts);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    stop.store(true, Ordering::Relaxed);
+    engine.join().unwrap();
+    assert!(
+        worst < Duration::from_millis(60),
+        "the clock left the sound by {worst:?}"
+    );
+    let sound = p.audio_position().unwrap();
+    assert!(
+        sound.abs_diff(video) < Duration::from_millis(50),
+        "the whole soundtrack played: {sound:?} of {video:?}"
+    );
+    assert!(shown.len() >= LONG as usize - 3, "{} shown", shown.len());
+    assert!(shown.windows(2).all(|w| w[0] < w[1]));
+    assert_eq!(p.error(), None);
 }
 
 #[test]

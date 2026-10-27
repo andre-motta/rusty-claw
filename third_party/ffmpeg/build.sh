@@ -9,9 +9,11 @@
 # The prefix is ${XDG_CACHE_HOME:-~/.cache}/rusty-claw/ffmpeg/<version>-<hash>,
 # where the hash covers the pins and the configure line, so a change to either
 # builds into a new prefix and an unchanged pin reuses the old one in seconds.
-# FFMPEG_PREFIX overrides the prefix. Downloads, the pinned nasm and the build
-# tree live next to it in the cache; the build tree is removed on success.
+# FFMPEG_PREFIX, an absolute path, overrides the prefix (empty is the same as
+# unset). Downloads, the pinned nasm and the build tree live next to it in
+# the cache; the build tree is removed on success.
 # FFMPEG_JOBS sets the parallel compile jobs (default: the CPU count, at most 8).
+# The compilers run under `nice -n 10` where nice exists.
 set -eu
 
 FFMPEG_VERSION=8.1.3
@@ -30,11 +32,14 @@ NASM_SHA256=87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d
 # copies in MP4, MOV or MKV with H.264 or HEVC video. Names are FFmpeg's
 # configure names: `smacker` is the Smacker video decoder (registered as
 # smackvid), and the mpeg4 decoder brings the h263 decoder it is built on.
+# `mpegps` reads VOB files and leaves the codec of their picture stream to
+# the probes of the raw demuxers, so a VOB's MPEG video is recognised only
+# with the raw `mpegvideo` demuxer built in.
 CONFIGURE_FLAGS="--disable-gpl --disable-nonfree --disable-everything --disable-autodetect \
 --disable-programs --disable-doc --disable-network --disable-avdevice --disable-avfilter \
 --enable-static --disable-shared --enable-pic --enable-pthreads \
 --enable-decoder=mpeg4,h264,hevc,mpeg2video,mp3,mp3float,mp2,ac3,aac,smacker,smackaud,pcm_s16le,rawvideo \
---enable-demuxer=avi,smacker,mov,matroska,mpegps \
+--enable-demuxer=avi,smacker,mov,matroska,mpegps,mpegvideo \
 --enable-parser=mpeg4video,h264,hevc,mpegvideo,mpegaudio,ac3,aac \
 --enable-protocol=file \
 --enable-swscale --enable-swresample"
@@ -67,6 +72,10 @@ stamp_text() {
     printf 'configure %s\n' "$CONFIGURE_FLAGS"
 }
 config_hash=$(stamp_text | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12)
+case "${FFMPEG_PREFIX:-/}" in
+    /*) ;;
+    *) fail "FFMPEG_PREFIX must be an absolute path, not '$FFMPEG_PREFIX'" ;;
+esac
 prefix="${FFMPEG_PREFIX:-$cache_root/$FFMPEG_VERSION-$config_hash}"
 stamp="$prefix/share/rusty-claw/ffmpeg-build.txt"
 
@@ -100,6 +109,13 @@ fi
 jobs="${FFMPEG_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 if [ -z "${FFMPEG_JOBS:-}" ] && [ "$jobs" -gt 8 ]; then jobs=8; fi
 
+# The builds run at a lower priority, so the desktop stays responsive.
+if command -v nice >/dev/null 2>&1; then
+    nice="nice -n 10"
+else
+    nice=
+fi
+
 # fetch URL SHA256: downloads into the cache once and checks the checksum.
 fetch() {
     dest="$cache_root/downloads/${1##*/}"
@@ -130,9 +146,9 @@ if [ "$use_nasm" = yes ]; then
         tar -xJf "$cache_root/downloads/nasm-$NASM_VERSION.tar.xz" -C "$work"
         (
             cd "$work/nasm-$NASM_VERSION"
-            ./configure --prefix="$cache_root/nasm-$NASM_VERSION" >"$work/nasm-configure.log" 2>&1 ||
+            $nice ./configure --prefix="$cache_root/nasm-$NASM_VERSION" >"$work/nasm-configure.log" 2>&1 ||
                 { tail -n 20 "$work/nasm-configure.log" >&2; exit 1; }
-            make -j"$jobs" nasm >"$work/nasm-make.log" 2>&1 ||
+            $nice make -j"$jobs" nasm >"$work/nasm-make.log" 2>&1 ||
                 { tail -n 20 "$work/nasm-make.log" >&2; exit 1; }
             mkdir -p "$cache_root/nasm-$NASM_VERSION/bin"
             cp nasm "$nasm_bin.part" && mv "$nasm_bin.part" "$nasm_bin"
@@ -152,7 +168,7 @@ stage="$work/stage"
 (
     cd "$src"
     # shellcheck disable=SC2086 # the flags are words without spaces
-    ./configure --prefix="$prefix" $CONFIGURE_FLAGS "$nasm_flag" >"$work/configure.log" 2>&1 ||
+    $nice ./configure --prefix="$prefix" $CONFIGURE_FLAGS "$nasm_flag" >"$work/configure.log" 2>&1 ||
         { tail -n 20 ffbuild/config.log >&2; exit 1; }
     # configure skips a misspelt component quietly; every listed one must be on.
     for flag in $CONFIGURE_FLAGS; do
@@ -168,7 +184,7 @@ stage="$work/stage"
                 ;;
         esac
     done
-    make -j"$jobs" >"$work/make.log" 2>&1 || { tail -n 30 "$work/make.log" >&2; exit 1; }
+    $nice make -j"$jobs" >"$work/make.log" 2>&1 || { tail -n 30 "$work/make.log" >&2; exit 1; }
     make install DESTDIR="$stage" >"$work/install.log" 2>&1 || { tail -n 20 "$work/install.log" >&2; exit 1; }
 ) || fail "FFmpeg build failed (logs in $work)"
 

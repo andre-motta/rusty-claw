@@ -9,6 +9,16 @@
 //! that fell behind). Once on the wall clock it stays there. A movie
 //! without sound, or played without an audio engine, runs on the wall
 //! clock from the start.
+//!
+//! Latency: the soundtrack's position counts the samples the audio engine
+//! has taken from the ring, and the device plays them about one output
+//! period later (the engine's buffer, a few to some tens of milliseconds
+//! with the device's default size). So pictures lead their sound by that
+//! output latency. It is not subtracted: cpal reports it only inside its
+//! output callback (the playback instant minus the callback instant in
+//! `OutputCallbackInfo`), which the audio engine's `MusicSource` interface
+//! does not pass on, and one period is usually less than a picture of a 30 pictures
+//! a second movie.
 
 // Only the player, built with the `ffmpeg` feature, feeds a soundtrack.
 #![cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]

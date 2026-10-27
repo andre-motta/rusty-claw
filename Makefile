@@ -19,21 +19,32 @@ SOUNDFONT_DIR ?= $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/rusty-claw/soundfon
 
 # The pinned FFmpeg the movie player links against: `make ffmpeg` builds it
 # from source into your cache (third_party/ffmpeg/build.sh; see its README),
-# and FFMPEG_PREFIX overrides where it lives. When that prefix holds a
-# finished build, run-game, check, check-movie, check-game and test-install
-# build with movies (the claw-movie/ffmpeg and claw-game/movies features);
-# otherwise they build without them. Each says which.
-ifeq ($(origin FFMPEG_PREFIX),undefined)
-FFMPEG_PREFIX := $(shell sh third_party/ffmpeg/build.sh --prefix)
+# and FFMPEG_PREFIX, an absolute path, overrides where it lives (empty is the
+# same as unset). When that prefix holds a finished build, run-game, bench,
+# check, check-movie, check-game and test-install build with movies (the
+# claw-movie/ffmpeg and claw-game/movies features); otherwise they build
+# without them. Each says which.
+#
+# FFMPEG_PREFIX reaches cargo only when you set it: unset, the FFmpeg binding's
+# build script asks build.sh for the same default prefix, so `make` and plain
+# `cargo` see the same environment and do not rebuild it in turn.
+ifeq ($(strip $(FFMPEG_PREFIX)),)
+unexport FFMPEG_PREFIX
+ffmpeg_prefix := $(shell sh third_party/ffmpeg/build.sh --prefix)
+else
+ifeq ($(filter /%,$(firstword $(FFMPEG_PREFIX))),)
+$(error FFMPEG_PREFIX must be an absolute path, not '$(FFMPEG_PREFIX)')
 endif
 export FFMPEG_PREFIX
-ifneq ($(wildcard $(FFMPEG_PREFIX)/share/rusty-claw/ffmpeg-build.txt),)
-movie_note = @echo "movies: on, with FFmpeg from $(FFMPEG_PREFIX)"
+ffmpeg_prefix := $(FFMPEG_PREFIX)
+endif
+ifneq ($(wildcard $(ffmpeg_prefix)/share/rusty-claw/ffmpeg-build.txt),)
+movie_note = @echo "movies: on, with FFmpeg from $(ffmpeg_prefix)"
 movie_features_all := --features claw-movie/ffmpeg,claw-game/movies
 movie_feature_movie := --features ffmpeg
 movie_feature_game := --features movies
 else
-movie_note = @echo "movies: off, no FFmpeg build in $(FFMPEG_PREFIX) (\`make ffmpeg\` builds one)"
+movie_note = @echo "movies: off, no FFmpeg build in $(ffmpeg_prefix) (\`make ffmpeg\` builds one)"
 endif
 
 .PHONY: help check fmt test-install compare run-viewer run-game bench replay soundfont ffmpeg
@@ -60,7 +71,7 @@ help:
 	@echo "make replay ARGS=...           run the replay tool"
 	@echo "make soundfont                 fetch the music SoundFont into your data directory"
 	@echo "make ffmpeg                    build the pinned FFmpeg for movies into your cache (once;"
-	@echo "                               run-game, check and test-install then build with movies)"
+	@echo "                               run-game, bench, check and test-install then build with movies)"
 
 check:
 	$(movie_note)
@@ -147,8 +158,11 @@ run-game:
 	$(movie_note)
 	$(CARGO) run --release --locked -p claw-game --bin rusty-claw $(movie_feature_game) -- $(ARGS)
 
+# The same features as run-game, so the two share one release build (a
+# benchmark never plays a movie).
 bench:
-	$(CARGO) run --release --locked -p claw-game --bin rusty-claw -- $(ARGS)
+	$(movie_note)
+	$(CARGO) run --release --locked -p claw-game --bin rusty-claw $(movie_feature_game) -- $(ARGS)
 
 replay:
 	$(CARGO) run --release --locked -p claw-replay -- $(ARGS)

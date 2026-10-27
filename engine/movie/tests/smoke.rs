@@ -30,12 +30,13 @@ const DECODERS: [&str; 14] = [
 ];
 
 /// The demuxers it enables, by the names FFmpeg registers them under (avi,
-/// smacker, mov, matroska and mpegps in the configure line).
-const DEMUXERS: [&str; 5] = [
+/// smacker, mov, matroska, mpegps and mpegvideo in the configure line).
+const DEMUXERS: [&str; 6] = [
     "avi",
     "matroska,webm",
     "mov,mp4,m4a,3gp,3g2,mj2",
     "mpeg",
+    "mpegvideo",
     "smk",
 ];
 
