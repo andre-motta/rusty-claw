@@ -133,6 +133,7 @@ fn upscaled_copies_come_first_then_the_install_files_then_the_archives() {
         s.find(-1, MovieMode::Upscaled),
         [
             "up:upscaled/LOGO.MKV",
+            "up:upscaled/LOGO.webm",
             "up:upscaled/Logo.mp4",
             "up:upscaled/logo.MOV",
             "up:upscaled/LOGO.avi",
@@ -298,6 +299,7 @@ fn the_credits_movie_is_the_folder_copy_then_archive_clip_eleven() {
         find(MovieMode::Upscaled),
         [
             "up:upscaled/CREDITS.mkv",
+            "up:upscaled/credits.webm",
             "up:upscaled/Credits.MP4",
             "up:upscaled/CREDITS.avi",
             "fec:game/CLAW.FEC#11",
@@ -313,6 +315,7 @@ fn the_credits_movie_is_the_folder_copy_then_archive_clip_eleven() {
         find(MovieMode::Upscaled),
         [
             "up:upscaled/CREDITS.mkv",
+            "up:upscaled/credits.webm",
             "up:upscaled/Credits.MP4",
             "up:upscaled/CREDITS.avi",
         ]

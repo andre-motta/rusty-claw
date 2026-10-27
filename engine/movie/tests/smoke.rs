@@ -1,6 +1,12 @@
 //! The linked FFmpeg is the pinned LGPL build with exactly the components the
 //! movies need: every decoder, demuxer and parser on the list is there and
 //! nothing else is (no other decoder, no encoder, muxer or network protocol).
+//!
+//! The lists depend on the build: AV1 through dav1d is in every build that
+//! could build dav1d (`claw_ffmpeg_av1`, which the default build on a
+//! system with meson or pip has), and the H.264 and HEVC decoders and
+//! parsers only in a build made with RUSTY_CLAW_FFMPEG_H26X=on
+//! (`claw_ffmpeg_h26x`); without the switch they must be absent.
 #![cfg(claw_ffmpeg)]
 
 use std::collections::BTreeSet;
@@ -9,25 +15,46 @@ use std::ptr;
 
 use rusty_ffmpeg::ffi;
 
-/// The decoders third_party/ffmpeg/build.sh enables, by the names FFmpeg
-/// registers them under (its `smacker` is smackvid here), plus h263, which
-/// the mpeg4 decoder is built on and always brings.
-const DECODERS: [&str; 14] = [
+/// The decoders third_party/ffmpeg/build.sh always enables, by the names
+/// FFmpeg registers them under (its `smacker` is smackvid here), plus h263,
+/// which the mpeg4 decoder is built on and always brings.
+const DECODERS: [&str; 13] = [
     "aac",
     "ac3",
     "h263",
-    "h264",
-    "hevc",
     "mp2",
     "mp3",
     "mp3float",
     "mpeg2video",
     "mpeg4",
+    "opus",
     "pcm_s16le",
     "rawvideo",
     "smackaud",
     "smackvid",
 ];
+
+/// The AV1 decoder, with dav1d.
+const AV1_DECODERS: [&str; 1] = ["libdav1d"];
+
+/// The decoders RUSTY_CLAW_FFMPEG_H26X=on adds.
+const H26X_DECODERS: [&str; 2] = ["h264", "hevc"];
+
+/// Whether this build has AV1 and the H.264 and HEVC decoders.
+const AV1: bool = cfg!(claw_ffmpeg_av1);
+const H26X: bool = cfg!(claw_ffmpeg_h26x);
+
+/// The decoders this build must have, and no others.
+fn expected_decoders() -> BTreeSet<String> {
+    let mut out = names(&DECODERS);
+    if AV1 {
+        out.extend(names(&AV1_DECODERS));
+    }
+    if H26X {
+        out.extend(names(&H26X_DECODERS));
+    }
+    out
+}
 
 /// The demuxers it enables, by the names FFmpeg registers them under (avi,
 /// smacker, mov, matroska, mpegps and mpegvideo in the configure line).
@@ -79,8 +106,11 @@ fn exactly_the_listed_decoders_are_registered_and_no_encoder() {
             encoders.insert(name);
         }
     }
-    assert_eq!(decoders, names(&DECODERS));
+    assert_eq!(decoders, expected_decoders());
     assert!(encoders.is_empty(), "encoders: {encoders:?}");
+    if !AV1 {
+        println!("this FFmpeg was built without AV1 (no dav1d)");
+    }
 }
 
 #[test]
@@ -103,10 +133,8 @@ fn exactly_the_listed_parsers_are_registered() {
         .flat_map(|parser| unsafe { (*parser).codec_ids })
         .filter(|&id| id != ffi::AV_CODEC_ID_NONE as c_int)
         .collect();
-    let expected: BTreeSet<c_int> = [
+    let mut expected: Vec<ffi::AVCodecID> = vec![
         ffi::AV_CODEC_ID_MPEG4,      // mpeg4video
-        ffi::AV_CODEC_ID_H264,       // h264
-        ffi::AV_CODEC_ID_HEVC,       // hevc
         ffi::AV_CODEC_ID_MPEG1VIDEO, // mpegvideo
         ffi::AV_CODEC_ID_MPEG2VIDEO, // mpegvideo
         ffi::AV_CODEC_ID_MP1,        // mpegaudio
@@ -116,12 +144,21 @@ fn exactly_the_listed_parsers_are_registered() {
         ffi::AV_CODEC_ID_AC3,        // ac3
         ffi::AV_CODEC_ID_EAC3,       // ac3
         ffi::AV_CODEC_ID_AAC,        // aac
-    ]
-    .into_iter()
-    .map(|id| id as c_int)
-    .collect();
+        ffi::AV_CODEC_ID_OPUS,       // opus
+    ];
+    let mut count = 6;
+    if AV1 {
+        expected.push(ffi::AV_CODEC_ID_AV1); // av1
+        count += 1;
+    }
+    if H26X {
+        expected.push(ffi::AV_CODEC_ID_H264); // h264
+        expected.push(ffi::AV_CODEC_ID_HEVC); // hevc
+        count += 2;
+    }
+    let expected: BTreeSet<c_int> = expected.into_iter().map(|id| id as c_int).collect();
     assert_eq!(served, expected);
-    assert_eq!(iterate(ffi::av_parser_iterate).len(), 7);
+    assert_eq!(iterate(ffi::av_parser_iterate).len(), count);
 }
 
 #[test]
@@ -163,6 +200,9 @@ fn it_is_the_pinned_lgpl_build() {
             "{flag} missing from {configuration}"
         );
     }
+    assert_eq!(configuration.contains("--enable-libdav1d"), AV1);
+    // FFmpeg keeps the lists quoted: --enable-decoder='h264,hevc'.
+    assert_eq!(configuration.contains("h264,hevc"), H26X);
     for licence in licences {
         assert_eq!(licence, "LGPL version 2.1 or later");
     }

@@ -2,11 +2,14 @@
 # Builds the pinned FFmpeg for Windows with Microsoft's compiler (MSVC), as
 # static .lib files that cargo links into one rusty-claw.exe.
 #
-# The version, the checksums and the list of decoders, demuxers and parsers
-# are read from ../build.sh, the Linux build, so both build the same FFmpeg.
-# Only the platform parts of the configure line change: MSVC instead of gcc,
-# Windows threads instead of POSIX threads, and the DLL C runtime (-MD) that
-# Rust's MSVC builds use.
+# The versions, the checksums and the list of decoders, demuxers and parsers
+# are read from ../build.sh, the Linux build, so both build the same FFmpeg
+# and the same dav1d (the AV1 decoder, built with meson and ninja). Only the
+# platform parts of the configure line change: MSVC instead of gcc, Windows
+# threads instead of POSIX threads, and the DLL C runtime (-MD) that Rust's
+# MSVC builds use. RUSTY_CLAW_FFMPEG_H26X=on adds the H.264 and HEVC
+# decoders, as on Linux; set it for the cargo build too, or cargo does not
+# find this build.
 #
 # Run it from an MSYS2 shell opened inside the "x64 Native Tools Command
 # Prompt for VS" (see ../README.md, "Windows 11"), so cl.exe and link.exe are
@@ -15,6 +18,7 @@
 #   sh third_party/ffmpeg/windows/build.sh            build, or reuse a finished build
 #   sh third_party/ffmpeg/windows/build.sh --prefix   print the prefix as a Windows path
 #   sh third_party/ffmpeg/windows/build.sh --configure  print the configure line
+#   sh third_party/ffmpeg/windows/build.sh --stamp      print the build record it writes
 #
 # The prefix is %LOCALAPPDATA%\rusty-claw\ffmpeg\<version>-<hash>-msvc, where
 # the hash covers the pins and the configure line. FFMPEG_PREFIX (a Windows
@@ -29,21 +33,22 @@ here=$(cd "$(dirname "$0")" && pwd)
 main="$here/../build.sh"
 [ -f "$main" ] || fail "cannot find $main"
 
-# The pins: the lines of ../build.sh from FFMPEG_VERSION= to the end of the
-# CONFIGURE_FLAGS string. They are plain assignments and comments; anything
+# The pins: the lines of ../build.sh from FFMPEG_VERSION= to the comment
+# "# End of the pins.". They are plain assignments and comments; anything
 # else stops the build rather than run.
 pins=$(awk '
     /^FFMPEG_VERSION=/ { on = 1 }
+    on && /^# End of the pins\.$/ { exit }
     on { print }
-    on && /^CONFIGURE_FLAGS="/ { flags = 1 }
-    flags && /"$/ { exit }
 ' "$main")
 unexpected=$(printf '%s\n' "$pins" | grep -v -E '^(#.*|[A-Z0-9_]+=.*|--.*|)$' || true)
 unexpected="$unexpected$(printf '%s\n' "$pins" | grep -v '^#' | grep -E '`|\$\(|[;&|<>]' || true)"
 [ -z "$unexpected" ] || fail "unexpected lines among the pins in $main: $unexpected"
-FFMPEG_VERSION='' FFMPEG_URL='' FFMPEG_SHA256='' NASM_VERSION='' NASM_URL='' NASM_SHA256='' CONFIGURE_FLAGS=''
+FFMPEG_VERSION='' FFMPEG_URL='' FFMPEG_SHA256='' NASM_VERSION='' NASM_URL='' NASM_SHA256=''
+DAV1D_VERSION='' DAV1D_URL='' DAV1D_SHA256='' CONFIGURE_FLAGS='' AV1_FLAGS='' H26X_FLAGS=''
 eval "$pins"
-for v in FFMPEG_VERSION FFMPEG_URL FFMPEG_SHA256 NASM_VERSION NASM_URL NASM_SHA256 CONFIGURE_FLAGS; do
+for v in FFMPEG_VERSION FFMPEG_URL FFMPEG_SHA256 NASM_VERSION NASM_URL NASM_SHA256 \
+    DAV1D_VERSION DAV1D_URL DAV1D_SHA256 CONFIGURE_FLAGS AV1_FLAGS H26X_FLAGS; do
     eval "[ -n \"\${$v}\" ]" || fail "$v is not set in $main"
 done
 case "$CONFIGURE_FLAGS" in
@@ -51,11 +56,20 @@ case "$CONFIGURE_FLAGS" in
     *) fail "the configure line in $main is not the expected LGPL allowlist" ;;
 esac
 
-# Windows threads replace POSIX threads; position-independent code is a
-# Linux notion. Everything else, the allowlist included, stays as it is.
+case "${RUSTY_CLAW_FFMPEG_H26X:-off}" in
+    on) h26x=yes ;;
+    off | "") h26x=no ;;
+    *) fail "RUSTY_CLAW_FFMPEG_H26X must be on or off, not '$RUSTY_CLAW_FFMPEG_H26X'" ;;
+esac
+
+# Windows always builds dav1d (MSYS2 has meson and ninja). Windows threads
+# replace POSIX threads; position-independent code is a Linux notion.
+# Everything else, the allowlist included, stays as it is.
 WINDOWS_FLAGS="--toolchain=msvc --target-os=win64 --arch=x86_64 --extra-cflags=-MD"
+unix_flags="$CONFIGURE_FLAGS $AV1_FLAGS"
+if [ "$h26x" = yes ]; then unix_flags="$unix_flags $H26X_FLAGS"; fi
 flags=
-for flag in $CONFIGURE_FLAGS; do
+for flag in $unix_flags; do
     case "$flag" in
         --enable-pthreads) flags="$flags --enable-w32threads" ;;
         --enable-pic) ;;
@@ -71,6 +85,7 @@ stamp_text() {
     printf 'source %s\n' "$FFMPEG_URL"
     printf 'sha256 %s\n' "$FFMPEG_SHA256"
     printf 'nasm %s sha256 %s\n' "$NASM_VERSION" "$NASM_SHA256"
+    printf 'dav1d %s sha256 %s\n' "$DAV1D_VERSION" "$DAV1D_SHA256"
     printf 'licence LGPL-2.1-or-later\n'
     printf 'configure %s\n' "$CONFIGURE_FLAGS_MSVC"
 }
@@ -100,8 +115,9 @@ windows_path() {
 case "${1:-}" in
     --prefix) windows_path "$prefix"; exit 0 ;;
     --configure) printf '%s\n' "$CONFIGURE_FLAGS_MSVC"; exit 0 ;;
+    --stamp) stamp_text; exit 0 ;;
     "") ;;
-    *) fail "unknown option '$1' (expected --prefix, --configure or nothing)" ;;
+    *) fail "unknown option '$1' (expected --prefix, --configure, --stamp or nothing)" ;;
 esac
 
 case "$prefix" in
@@ -147,9 +163,9 @@ command -v cl.exe >/dev/null 2>&1 ||
     fail "MSVC's link.exe is not next to cl.exe; repair the Visual Studio Build Tools"
 cl.exe 2>&1 | grep -q 'x64' ||
     fail "cl.exe does not build for x64: use the x64 Native Tools Command Prompt, not the x86 one"
-for tool in make gcc curl tar xz sha256sum cmp; do
+for tool in make gcc curl tar xz sha256sum cmp meson ninja pkg-config; do
     command -v "$tool" >/dev/null 2>&1 ||
-        fail "$tool is missing: in MSYS2, run pacman -S --needed make gcc diffutils tar xz curl"
+        fail "$tool is missing: in MSYS2, run pacman -S --needed make gcc diffutils tar xz curl meson ninja pkgconf"
 done
 
 mkdir -p "$cache_root/downloads" "$cache_root/build"
@@ -196,6 +212,32 @@ fi
 PATH="$nasm_dir/bin:$PATH"
 export PATH
 
+# dav1d, with MSVC, into a folder of the build tree (as a Windows path, which
+# MSVC reads), where FFmpeg's configure finds it through its pkg-config
+# file; its library and headers are copied into the prefix afterwards.
+# Meson names a static library libdav1d.a; MSVC's link step looks for
+# dav1d.lib, so it is renamed.
+fetch "$DAV1D_URL" "$DAV1D_SHA256"
+say "building dav1d $DAV1D_VERSION for MSVC"
+tar -xJf "$cache_root/downloads/dav1d-$DAV1D_VERSION.tar.xz" -C "$work"
+dav1d_dir="$work/dav1d"
+(
+    cd "$work/dav1d-$DAV1D_VERSION"
+    CC=cl CC_LD="$(dirname "$(command -v cl.exe)")/link.exe" \
+        meson setup "$work/dav1d-build" . --prefix="$(cygpath -m "$dav1d_dir")" --libdir=lib \
+        --buildtype=release --default-library=static --wrap-mode=nodownload -Db_vscrt=md \
+        -Denable_tools=false -Denable_tests=false -Denable_examples=false -Denable_docs=false \
+        >"$work/dav1d-setup.log" 2>&1 || { tail -n 20 "$work/dav1d-setup.log" >&2; exit 1; }
+    meson compile -C "$work/dav1d-build" -j "$jobs" >"$work/dav1d-make.log" 2>&1 ||
+        { tail -n 30 "$work/dav1d-make.log" >&2; exit 1; }
+    meson install -C "$work/dav1d-build" >"$work/dav1d-install.log" 2>&1 ||
+        { tail -n 20 "$work/dav1d-install.log" >&2; exit 1; }
+) || fail "dav1d build failed (logs in $work)"
+if [ -f "$dav1d_dir/lib/libdav1d.a" ]; then mv "$dav1d_dir/lib/libdav1d.a" "$dav1d_dir/lib/dav1d.lib"; fi
+[ -f "$dav1d_dir/lib/dav1d.lib" ] || fail "the dav1d build made no library (logs in $work)"
+PKG_CONFIG_LIBDIR="$dav1d_dir/lib/pkgconfig"
+export PKG_CONFIG_LIBDIR
+
 fetch "$FFMPEG_URL" "$FFMPEG_SHA256"
 say "building FFmpeg $FFMPEG_VERSION for MSVC with $jobs jobs into $prefix"
 tar -xJf "$cache_root/downloads/ffmpeg-$FFMPEG_VERSION.tar.xz" -C "$work"
@@ -226,6 +268,10 @@ stage="$work/stage"
 
 staged="$stage$prefix"
 [ -f "$staged/lib/avcodec.lib" ] || fail "the build made no avcodec.lib (logs in $work)"
+mkdir -p "$staged/include" "$staged/lib/pkgconfig" "$staged/share/licenses/dav1d"
+cp "$dav1d_dir/lib/dav1d.lib" "$staged/lib/"
+cp -R "$dav1d_dir/include/dav1d" "$staged/include/"
+cp "$work/dav1d-$DAV1D_VERSION/COPYING" "$staged/share/licenses/dav1d/"
 
 # MSVC names system libraries `bcrypt.lib`; the game's link step reads them
 # from the pkg-config files as `-lbcrypt`, as on Linux, and would take an

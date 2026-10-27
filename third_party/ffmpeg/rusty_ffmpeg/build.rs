@@ -4,7 +4,10 @@
 //!
 //! Whether FFmpeg was linked reaches the crates that use this one as the
 //! links metadata `found` (`DEP_FFMPEG_FOUND`, `1` or `0`); claw-movie's
-//! build script turns it into the `claw_ffmpeg` cfg.
+//! build script turns it into the `claw_ffmpeg` cfg. Two more, `av1` (the
+//! linked build has dav1d, by its record) and `h26x` (the build was asked
+//! for the H.264 and HEVC decoders), become the `claw_ffmpeg_av1` and
+//! `claw_ffmpeg_h26x` cfgs there.
 //!
 //! RUSTY_CLAW_FFMPEG chooses what happens:
 //! - unset, empty or `auto`: link the finished build in the prefix; when
@@ -18,10 +21,16 @@
 //! The prefix is FFMPEG_PREFIX when set (an absolute path; empty counts as
 //! unset), else the one `build.sh --prefix` names for the pinned version and
 //! configure line, in the user's cache, so a build survives `cargo clean`
-//! and is shared by every checkout. Windows builds never build FFmpeg here
-//! (that needs MSYS2 and MSVC together, see ../README.md): without
-//! FFMPEG_PREFIX they use the newest finished build of windows/build.sh in
-//! %LOCALAPPDATA%\rusty-claw\ffmpeg whose record names the pinned version.
+//! and is shared by every checkout.
+//!
+//! RUSTY_CLAW_FFMPEG_H26X=on asks for the build with the H.264 and HEVC
+//! decoders (off by default; build.sh reads it too, and its prefix differs).
+//!
+//! Windows builds never build FFmpeg here (that needs MSYS2 and MSVC
+//! together, see ../README.md): without FFMPEG_PREFIX they use the newest
+//! finished build of windows/build.sh in %LOCALAPPDATA%\rusty-claw\ffmpeg
+//! whose record is exactly the one windows/build.sh writes for the current
+//! pins and switch.
 //! The FFI declarations are committed in src/binding.rs, so nothing is
 //! generated here.
 
@@ -70,6 +79,7 @@ fn main() {
     println!("cargo::rerun-if-changed={}", script.display());
     for var in [
         "RUSTY_CLAW_FFMPEG",
+        "RUSTY_CLAW_FFMPEG_H26X",
         "FFMPEG_PREFIX",
         "XDG_CACHE_HOME",
         "HOME",
@@ -87,16 +97,28 @@ fn main() {
             process::exit(0)
         }
     };
+    let h26x = match env::var("RUSTY_CLAW_FFMPEG_H26X")
+        .unwrap_or_default()
+        .trim()
+    {
+        "" | "off" => false,
+        "on" => true,
+        other => {
+            println!("cargo::error=RUSTY_CLAW_FFMPEG_H26X must be on or off, not '{other}'");
+            process::exit(0)
+        }
+    };
+    println!("cargo::metadata=h26x={}", u8::from(h26x));
     if mode == Mode::Off {
         println!("cargo::metadata=found=0");
         return;
     }
 
-    let search = search(&script);
+    let search = search(&script, h26x);
     if let Some(prefix) = &search.prefix {
         let stamp = prefix.join(STAMP);
         if stamp.is_file() {
-            link(prefix);
+            link(prefix, search.watch.as_deref());
             return;
         }
         if search.may_build {
@@ -107,7 +129,7 @@ fn main() {
                          RUSTY_CLAW_FFMPEG=off builds the game without it)",
                         prefix.display()
                     );
-                    link(prefix);
+                    link(prefix, search.watch.as_deref());
                     return;
                 }
                 Err(why) => {
@@ -123,19 +145,44 @@ fn main() {
     without(mode, &search.missing, search.watch.as_deref())
 }
 
-/// Links the finished build in `prefix`.
-fn link(prefix: &Path) {
-    println!("cargo::rerun-if-changed={}", prefix.join(STAMP).display());
+/// Links the finished build in `prefix`. A build that appears later in
+/// another prefix (after a pin change, or once meson is installed for
+/// AV1) rewrites `watch`, which runs this script again.
+fn link(prefix: &Path, watch: Option<&Path>) {
+    let stamp = prefix.join(STAMP);
+    println!("cargo::rerun-if-changed={}", stamp.display());
+    if let Some(file) = watch.filter(|f| f.is_file()) {
+        println!("cargo::rerun-if-changed={}", file.display());
+    }
     let lib = prefix.join("lib");
     println!("cargo::rustc-link-search=native={}", lib.display());
     for name in LIBS {
         println!("cargo::rustc-link-lib=static={name}");
     }
-    for name in system_libs(&lib) {
+    // The libraries FFmpeg uses: those in the prefix (dav1d) are static and
+    // come first, before the system ones they use in turn.
+    let (ours, system): (Vec<String>, Vec<String>) = system_libs(&lib)
+        .into_iter()
+        .partition(|name| in_prefix(&lib, name));
+    for name in ours {
+        println!("cargo::rustc-link-lib=static={name}");
+    }
+    for name in system {
         println!("cargo::rustc-link-lib={name}");
     }
+    let record = fs::read_to_string(&stamp).unwrap_or_default();
+    let av1 = record
+        .lines()
+        .any(|l| l.starts_with("dav1d ") && l.trim() != "dav1d none");
+    println!("cargo::metadata=av1={}", u8::from(av1));
     println!("cargo::metadata=prefix={}", prefix.display());
     println!("cargo::metadata=found=1");
+}
+
+/// Whether the static library `name` is in `lib` (`libNAME.a`, or MSVC's
+/// `NAME.lib`).
+fn in_prefix(lib: &Path, name: &str) -> bool {
+    lib.join(format!("lib{name}.a")).is_file() || lib.join(format!("{name}.lib")).is_file()
 }
 
 /// Links nothing: one warning in `auto` mode, an error in `require` mode.
@@ -169,7 +216,7 @@ fn without(mode: Mode, why: &str, watch: Option<&Path>) {
 }
 
 /// Where the build is, for the target being built.
-fn search(script: &Path) -> Search {
+fn search(script: &Path, h26x: bool) -> Search {
     let target = env::var("TARGET").unwrap_or_default();
     let host = env::var("HOST").unwrap_or_default();
     let windows = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
@@ -218,13 +265,23 @@ fn search(script: &Path) -> Search {
 
     if windows {
         let root = windows_cache_root();
-        let found = root.as_deref().and_then(|r| windows_build(r, script));
+        let windows_script = script.with_file_name("windows").join("build.sh");
+        println!("cargo::rerun-if-changed={}", windows_script.display());
+        let found = root
+            .as_deref()
+            .and_then(|r| windows_build(r, script, &windows_script, h26x));
+        let switch = if h26x {
+            " with RUSTY_CLAW_FFMPEG_H26X=on"
+        } else {
+            ""
+        };
         return Search {
             prefix: found,
             may_build: false,
-            missing: "no FFmpeg build for Windows was found (run \
-                      third_party/ffmpeg/windows/build.sh in MSYS2 first, or set FFMPEG_PREFIX)"
-                .to_string(),
+            missing: format!(
+                "no FFmpeg build for Windows with the current pins was found (run \
+                 third_party/ffmpeg/windows/build.sh{switch} in MSYS2 first, or set FFMPEG_PREFIX)"
+            ),
             watch: root.map(|r| r.join(SIGNAL)),
         };
     }
@@ -366,29 +423,14 @@ fn build(script: &Path, prefix: &Path) -> Result<(), String> {
 }
 
 /// The newest finished build of windows/build.sh under `root` whose record
-/// names the pinned version and source checksum of `script`, the LGPL
-/// configuration and every decoder, demuxer and parser it lists.
-fn windows_build(root: &Path, script: &Path) -> Option<PathBuf> {
+/// is exactly the one windows/build.sh writes for the pins of `script` (its
+/// version, checksums and configure line, with the H.264 and HEVC decoders
+/// when `h26x`) and the Windows flags of `windows_script`.
+fn windows_build(root: &Path, script: &Path, windows_script: &Path, h26x: bool) -> Option<PathBuf> {
     let pins = fs::read_to_string(script).ok()?;
-    let value = |name: &str| {
-        pins.lines()
-            .find_map(|l| l.strip_prefix(name)?.strip_prefix('='))
-            .map(|v| v.trim().trim_matches('"').to_string())
-    };
-    let version = value("FFMPEG_VERSION")?;
-    let sha = value("FFMPEG_SHA256")?;
-    let flags = pins.split("CONFIGURE_FLAGS=\"").nth(1)?.split('"').next()?;
-    let wanted: Vec<&str> = flags
-        .split_whitespace()
-        .filter(|f| *f != "\\")
-        .filter(|f| {
-            f.starts_with("--enable-decoder=")
-                || f.starts_with("--enable-demuxer=")
-                || f.starts_with("--enable-parser=")
-                || f.starts_with("--disable-gpl")
-                || f.starts_with("--disable-nonfree")
-        })
-        .collect();
+    let windows = fs::read_to_string(windows_script).ok()?;
+    let expected = windows_record(&pins, &windows, h26x)?;
+    let version = shell_value(&pins, "FFMPEG_VERSION")?;
     let mut best: Option<(SystemTime, PathBuf)> = None;
     for entry in fs::read_dir(root).ok()?.flatten() {
         let name = entry.file_name();
@@ -400,16 +442,7 @@ fn windows_build(root: &Path, script: &Path) -> Option<PathBuf> {
         let Ok(record) = fs::read_to_string(&stamp) else {
             continue;
         };
-        let has = |line: &str| record.lines().any(|l| l.trim() == line);
-        let configure = record
-            .lines()
-            .find_map(|l| l.strip_prefix("configure "))
-            .unwrap_or_default();
-        let words: Vec<&str> = configure.split_whitespace().collect();
-        if !has(&format!("FFmpeg {version}"))
-            || !has(&format!("sha256 {sha}"))
-            || !wanted.iter().all(|w| words.contains(w))
-        {
+        if record.replace("\r\n", "\n").trim_end() != expected {
             continue;
         }
         let when = fs::metadata(&stamp)
@@ -420,6 +453,83 @@ fn windows_build(root: &Path, script: &Path) -> Option<PathBuf> {
         }
     }
     best.map(|(_, path)| path)
+}
+
+/// The record windows/build.sh writes (`--stamp`), without its last line
+/// break: the pins of build.sh (`pins`), the configure line turned for MSVC
+/// as windows/build.sh (`windows`) turns it, and its WINDOWS_FLAGS.
+fn windows_record(pins: &str, windows: &str, h26x: bool) -> Option<String> {
+    let value = |name: &str| shell_value(pins, name);
+    let mut unix = format!("{} {}", value("CONFIGURE_FLAGS")?, value("AV1_FLAGS")?);
+    if h26x {
+        unix = format!("{unix} {}", value("H26X_FLAGS")?);
+    }
+    let mut flags: Vec<&str> = Vec::new();
+    for flag in unix.split_whitespace() {
+        match flag {
+            "--enable-pthreads" => flags.push("--enable-w32threads"),
+            "--enable-pic" => {}
+            other => flags.push(other),
+        }
+    }
+    let windows_flags = shell_value(windows, "WINDOWS_FLAGS")?;
+    Some(format!(
+        "FFmpeg {}\nsource {}\nsha256 {}\nnasm {} sha256 {}\ndav1d {} sha256 {}\n\
+         licence LGPL-2.1-or-later\nconfigure {} {windows_flags}",
+        value("FFMPEG_VERSION")?,
+        value("FFMPEG_URL")?,
+        value("FFMPEG_SHA256")?,
+        value("NASM_VERSION")?,
+        value("NASM_SHA256")?,
+        value("DAV1D_VERSION")?,
+        value("DAV1D_SHA256")?,
+        flags.join(" "),
+    ))
+}
+
+/// The value of the shell assignment `NAME=...` at the start of a line of
+/// `text`, as sh reads it: a double-quoted value may span lines joined by
+/// a backslash at their end, and `$NAME` of an earlier assignment is
+/// replaced by its value.
+fn shell_value(text: &str, name: &str) -> Option<String> {
+    let start = text
+        .lines()
+        .position(|l| l.starts_with(&format!("{name}=")))?;
+    let first = &text.lines().nth(start)?[name.len() + 1..];
+    let raw = if let Some(rest) = first.strip_prefix('"') {
+        let mut joined = String::new();
+        let mut line = rest;
+        let mut next = start + 1;
+        loop {
+            if let Some(end) = line.find('"') {
+                joined.push_str(&line[..end]);
+                break;
+            }
+            joined.push_str(line.strip_suffix('\\')?);
+            line = text.lines().nth(next)?;
+            next += 1;
+        }
+        joined
+    } else {
+        first.trim_end().to_string()
+    };
+    let mut out = String::new();
+    let mut rest = raw.as_str();
+    while let Some(at) = rest.find('$') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at + 1..];
+        let len = tail
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(tail.len());
+        let var = &tail[..len];
+        out.push_str(&shell_value(
+            &text[..text.find(&format!("\n{name}="))?],
+            var,
+        )?);
+        rest = &tail[len..];
+    }
+    out.push_str(rest);
+    Some(out)
 }
 
 /// The system libraries FFmpeg's pkg-config files ask for (for example `m`

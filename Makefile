@@ -17,12 +17,15 @@ SOUNDFONT_SHA256 := 9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a515268
 SOUNDFONT_FILE := GeneralUser-GS.sf2
 SOUNDFONT_DIR ?= $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/rusty-claw/soundfonts
 
-# The pinned FFmpeg the movie player links against: cargo itself builds it
-# from source into your cache the first time it builds the game, where it
-# can (third_party/ffmpeg/build.sh; see its README), and `make ffmpeg` builds
-# it beforehand. FFMPEG_PREFIX, an absolute path, overrides where it lives
-# (empty is the same as unset); RUSTY_CLAW_FFMPEG=off builds without it and
-# RUSTY_CLAW_FFMPEG=require fails without it. run-game, bench, check,
+# The pinned FFmpeg (with dav1d for AV1) the movie player links against:
+# cargo itself builds it from source into your cache the first time it
+# builds the game, where it can (third_party/ffmpeg/build.sh; see its
+# README), and `make ffmpeg` builds it beforehand. FFMPEG_PREFIX, an
+# absolute path, overrides where it lives (empty is the same as unset);
+# RUSTY_CLAW_FFMPEG=off builds without it and RUSTY_CLAW_FFMPEG=require
+# fails without it. RUSTY_CLAW_FFMPEG_H26X=on, for builds you keep to
+# yourself, adds the H.264 and HEVC decoders in a prefix of its own (set
+# it for every make and cargo command alike). run-game, bench, check,
 # check-movie, check-game and test-install say which way movies go.
 #
 # FFMPEG_PREFIX reaches cargo only when you set it: unset, the FFmpeg binding's
@@ -38,10 +41,13 @@ endif
 export FFMPEG_PREFIX
 ffmpeg_prefix := $(FFMPEG_PREFIX)
 endif
+ifeq ($(strip $(RUSTY_CLAW_FFMPEG_H26X)),on)
+h26x_note := , with the H.264 and HEVC decoders (RUSTY_CLAW_FFMPEG_H26X=on)
+endif
 ifeq ($(strip $(RUSTY_CLAW_FFMPEG)),off)
 movie_note = @echo "movies: off, RUSTY_CLAW_FFMPEG=off"
 else ifneq ($(wildcard $(ffmpeg_prefix)/share/rusty-claw/ffmpeg-build.txt),)
-movie_note = @echo "movies: on, with FFmpeg from $(ffmpeg_prefix)"
+movie_note = @echo "movies: on, with FFmpeg from $(ffmpeg_prefix)$(h26x_note)"
 else
 movie_note = @echo "movies: on once cargo has built FFmpeg into $(ffmpeg_prefix) (once, about a minute; if it cannot, cargo warns and builds without movies)"
 endif
@@ -74,8 +80,9 @@ help:
 	@echo "                               with --bench-route FILE.csv --headless"
 	@echo "make replay ARGS=...           run the replay tool"
 	@echo "make soundfont                 fetch the music SoundFont into your data directory"
-	@echo "make ffmpeg                    build the pinned FFmpeg for movies into your cache now (the"
-	@echo "                               first cargo build of the game does it too, where it can)"
+	@echo "make ffmpeg                    build the pinned FFmpeg (and dav1d, for AV1) for movies into"
+	@echo "                               your cache now (the first cargo build of the game does it too,"
+	@echo "                               where it can; RUSTY_CLAW_FFMPEG_H26X=on adds H.264 and HEVC)"
 
 check:
 	$(movie_note)

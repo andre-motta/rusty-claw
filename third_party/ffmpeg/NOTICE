@@ -14,12 +14,18 @@ directory downloads its source release, checks it and builds it.
               --disable-autodetect --disable-programs --disable-doc
               --disable-network --disable-avdevice --disable-avfilter
               --enable-static --disable-shared --enable-pic --enable-pthreads
-              --enable-decoder=mpeg4,h264,hevc,mpeg2video,mp3,mp3float,mp2,ac3,aac,smacker,smackaud,pcm_s16le,rawvideo
+              --enable-decoder=mpeg4,mpeg2video,mp3,mp3float,mp2,ac3,aac,opus,smacker,smackaud,pcm_s16le,rawvideo
               --enable-demuxer=avi,smacker,mov,matroska,mpegps,mpegvideo
-              --enable-parser=mpeg4video,h264,hevc,mpegvideo,mpegaudio,ac3,aac
+              --enable-parser=mpeg4video,mpegvideo,mpegaudio,ac3,aac,opus
               --enable-protocol=file
               --enable-swscale --enable-swresample
-              (and --enable-x86asm on x86, assembled with nasm 3.02)
+              --enable-libdav1d --enable-decoder=libdav1d --enable-parser=av1
+              --pkg-config-flags=--static
+              (and --enable-x86asm on x86, assembled with nasm 3.02; a
+              system without meson, pip or pkg-config builds it without the
+              dav1d line, and RUSTY_CLAW_FFMPEG_H26X=on adds
+              --enable-decoder=h264,hevc --enable-parser=h264,hevc, which
+              no published build has)
 
 The configuration enables no GPL and no non-free part of FFmpeg, so the
 libraries are under the LGPL only. FFmpeg's own record of it is in the built
@@ -39,8 +45,53 @@ Whoever distributes a rusty-claw binary built with movies distributes FFmpeg
 too, and passes on these terms: the LGPL text, this notice, and the FFmpeg
 source release named above (or a written offer of it).
 
+dav1d in rusty-claw
+===================
+
+FFmpeg decodes AV1 video with dav1d (https://code.videolan.org/videolan/dav1d),
+VideoLAN's AV1 decoder, which build.sh builds from its source release as a
+static library into the same prefix and links into the game with FFmpeg.
+
+  Version:    dav1d 1.5.4
+  Source:     https://downloads.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz
+  SHA-256:    686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
+  Licence:    BSD 2-Clause ("Simplified") License (BSD-2-Clause)
+  Options:    --buildtype=release --default-library=static
+              -Denable_tools=false -Denable_tests=false
+              -Denable_examples=false -Denable_docs=false
+
+Its licence text (COPYING in the source release) is installed with the
+libraries in share/licenses/dav1d. Whoever distributes a rusty-claw binary
+built with movies distributes dav1d too, and passes on this notice:
+
+  Copyright © 2018-2025, VideoLAN and dav1d authors
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+
+  1. Redistributions of source code must retain the above copyright notice, this
+     list of conditions and the following disclaimer.
+
+  2. Redistributions in binary form must reproduce the above copyright notice,
+     this list of conditions and the following disclaimer in the documentation
+     and/or other materials provided with the distribution.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 nasm (https://www.nasm.us, BSD-2-Clause) is only a build tool for FFmpeg's
-assembly; it is not part of the game.
+and dav1d's assembly, and meson and ninja (installed with pip into the cache
+when the system has none) only build tools for dav1d; none of them is part of
+the game.
 
 The Rust declarations of FFmpeg's interface in rusty_ffmpeg/ come from
 rusty_ffmpeg 0.17.0+ffmpeg.8.1 (https://github.com/CCExtractor/rusty_ffmpeg)
