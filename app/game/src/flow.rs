@@ -70,7 +70,8 @@
 //! left out then, and the credits keep their timing, text, music and
 //! inputs. When the movie cannot play or stops on an error the window says
 //! so ([`Flow::credits_movie_failed`]) and the parchment shows at once,
-//! for the rest of that visit.
+//! for the rest of that visit; when that happens before the text rises,
+//! the unroll sound left out for the movie plays then.
 //!
 //! End life asks for a confirmation; its question is the low-lives one
 //! when Claw has fewer than 2 lives left, since that death ends the game.
@@ -154,8 +155,8 @@ use claw_ui::menu::draw::{self, FontArt, MenuState};
 use claw_ui::menu::{MenuAction, MenuInput, MenuTree, Navigator};
 use claw_ui::screens::credits::{self, Click, DELAYED_UNROLL_SOUND, UNROLL_SOUND};
 use claw_ui::screens::{
-    BootyScreen, BootyStats, CreditsEntry, CreditsScreen, CreditsTune, GameOverScreen, HelpScreen,
-    TitleScreen,
+    BootyScreen, BootyStats, CreditsEntry, CreditsPhase, CreditsScreen, CreditsTune,
+    GameOverScreen, HelpScreen, TitleScreen,
 };
 use winit::keyboard::KeyCode;
 
@@ -616,6 +617,10 @@ pub struct Flow {
     background: bool,
     /// The credits on screen show the credits movie behind their text.
     credits_movie: bool,
+    /// The parchment's unroll sound, left out while the credits movie
+    /// shows; it plays after all when the movie fails before the text
+    /// rises ([`Flow::credits_movie_failed`]).
+    held_unroll: Option<AudioCue>,
 }
 
 impl std::fmt::Debug for Flow {
@@ -706,6 +711,7 @@ impl Flow {
             idle_movie: true,
             background: false,
             credits_movie: false,
+            held_unroll: None,
         };
         if let Some(tree) = main {
             flow.main = Some(flow.prepare(tree));
@@ -798,8 +804,22 @@ impl Flow {
 
     /// The credits movie could not play, could not be shown or stopped on
     /// an error: the credits go on over the parchment, at once and for the
-    /// rest of this visit.
+    /// rest of this visit. While the parchment is still black or unrolling,
+    /// its unroll sound, left out for the movie, plays now (the delayed one
+    /// after the last level), so the parchment sounds as it does without a
+    /// movie.
     pub fn credits_movie_failed(&mut self) {
+        let unrolling = self
+            .credits
+            .as_ref()
+            .is_some_and(|c| c.phase() != CreditsPhase::Text);
+        let held = self.held_unroll.take();
+        if self.credits_movie()
+            && unrolling
+            && let Some(cue) = held
+        {
+            self.effects.push(Effect::Sound(cue));
+        }
         self.credits_movie = false;
     }
 
@@ -1315,6 +1335,7 @@ impl Flow {
                 self.game_over = None;
                 self.credits = None;
                 self.credits_movie = false;
+                self.held_unroll = None;
                 self.ending = false;
                 self.cut_left = None;
                 if let Some(n) = self.main.as_mut() {
@@ -2261,6 +2282,7 @@ impl Flow {
         self.cut_left = None;
         self.credits = None;
         self.credits_movie = self.movie_available(MovieIndex::CREDITS);
+        self.held_unroll = None;
         if self.bed_volume > 0 || self.bed.is_some() {
             self.effects.push(Effect::Sound(AudioCue::Stop {
                 voice: MENU_BED_VOICE,
@@ -2279,10 +2301,11 @@ impl Flow {
         let audio = c.take_audio();
         let music = c.take_music();
         // Over the movie the parchment does not unroll, so neither does its
-        // sound play.
+        // sound play (unless the movie fails while it would still unroll).
         let movie = self.credits_movie();
         for a in audio {
             if movie && is_unroll(&a) {
+                self.held_unroll = Some(a);
                 continue;
             }
             self.effects.push(Effect::Sound(a));
