@@ -94,9 +94,8 @@ built with movies distributes dav1d too, and passes on this notice:
   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 nasm (https://www.nasm.us, BSD-2-Clause) is only a build tool for FFmpeg's
-and dav1d's assembly, and meson and ninja (installed with pip into the cache
-when the system has none) only build tools for dav1d; none of them is part of
-the game.
+and dav1d's assembly, as meson and ninja (above) are for dav1d; none of them
+is part of the game.
 
 The Rust declarations of FFmpeg's interface in rusty_ffmpeg/ come from
 rusty_ffmpeg 0.17.0+ffmpeg.8.1 (https://github.com/CCExtractor/rusty_ffmpeg)
