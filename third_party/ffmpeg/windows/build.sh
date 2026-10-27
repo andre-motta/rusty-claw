@@ -223,7 +223,11 @@ tar -xJf "$cache_root/downloads/dav1d-$DAV1D_VERSION.tar.xz" -C "$work"
 dav1d_dir="$work/dav1d"
 (
     cd "$work/dav1d-$DAV1D_VERSION"
-    CC=cl CC_LD="$(dirname "$(command -v cl.exe)")/link.exe" \
+    # MSYS2's /usr/bin/link would shadow MSVC's link.exe, and meson splits a
+    # CC_LD path on its spaces, so MSVC's folder goes first on PATH instead.
+    PATH="$(dirname "$(command -v cl.exe)"):$PATH"
+    export PATH
+    CC=cl CC_LD=link \
         meson setup "$work/dav1d-build" . --prefix="$(cygpath -m "$dav1d_dir")" --libdir=lib \
         --buildtype=release --default-library=static --wrap-mode=nodownload -Db_vscrt=md \
         -Denable_tools=false -Denable_tests=false -Denable_examples=false -Denable_docs=false \

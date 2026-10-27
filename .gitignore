@@ -1,3 +1,4 @@
 # Build outputs
 /target
 **/*.rs.bk
+/third_party/ffmpeg/rusty_ffmpeg/Cargo.lock

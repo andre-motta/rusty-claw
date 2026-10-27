@@ -244,11 +244,14 @@ esac
 
 up_to_date() { [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(stamp_text)" ]; }
 
-# A finished or found build writes its prefix to last-build.txt in the cache
-# folder when it names another one: cargo builds watch that file, to link
-# the build next time (a rewrite of the same prefix would only rerun them).
+# A found build writes its prefix to last-build.txt in the cache folder when
+# it names another one, and a finished build always rewrites it: cargo
+# builds watch that file, to link the build next time (a rewrite of the same
+# prefix for a found build would only rerun them, but a rebuilt prefix that
+# was deleted must rerun a build that fell back to no movies).
 signal() {
-    if [ "$(cat "$cache_root/last-build.txt" 2>/dev/null || true)" != "$prefix" ]; then
+    if [ "${1:-}" = rebuilt ] ||
+        [ "$(cat "$cache_root/last-build.txt" 2>/dev/null || true)" != "$prefix" ]; then
         { mkdir -p "$cache_root" && printf '%s\n' "$prefix" >"$cache_root/last-build.txt"; } 2>/dev/null || true
     fi
 }
@@ -441,5 +444,5 @@ stamp_text >"$stage$prefix/share/rusty-claw/ffmpeg-build.txt"
 mkdir -p "$(dirname "$prefix")"
 mv "$stage$prefix" "$prefix"
 rm -rf "$work"
-signal
+signal rebuilt
 say "FFmpeg $FFMPEG_VERSION is built in $prefix, with $(extras)"
