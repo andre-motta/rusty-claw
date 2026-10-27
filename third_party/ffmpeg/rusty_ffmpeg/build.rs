@@ -5,32 +5,39 @@
 //! Whether FFmpeg was linked reaches the crates that use this one as the
 //! links metadata `found` (`DEP_FFMPEG_FOUND`, `1` or `0`); claw-movie's
 //! build script turns it into the `claw_ffmpeg` cfg. Two more, `av1` (the
-//! linked build has dav1d, by its record) and `h26x` (the build was asked
-//! for the H.264 and HEVC decoders), become the `claw_ffmpeg_av1` and
-//! `claw_ffmpeg_h26x` cfgs there.
+//! linked build has dav1d) and `h26x` (it has the H.264 and HEVC decoders),
+//! both read from the linked build's record, become the `claw_ffmpeg_av1`
+//! and `claw_ffmpeg_h26x` cfgs there.
 //!
 //! RUSTY_CLAW_FFMPEG chooses what happens:
 //! - unset, empty or `auto`: link the finished build in the prefix; when
 //!   there is none, build it with ../build.sh where that can work (a Unix
 //!   host building for itself, with sh, a C compiler, make, curl or wget,
-//!   tar and xz) and link it; when that cannot be done or fails, link
-//!   nothing and say why in one cargo warning;
+//!   tar and xz) and link the build it made; when that cannot be done or
+//!   fails, link nothing and say why in one cargo warning. A linked build
+//!   without AV1 gets a cargo warning with the reason too;
 //! - `off`: link nothing;
-//! - `require`: as `auto`, but linking nothing is a build error.
+//! - `require`: as `auto`, but linking nothing is a build error, and so is
+//!   linking a build without AV1 unless RUSTY_CLAW_FFMPEG_AV1=off.
 //!
 //! The prefix is FFMPEG_PREFIX when set (an absolute path; empty counts as
 //! unset), else the one `build.sh --prefix` names for the pinned version and
 //! configure line, in the user's cache, so a build survives `cargo clean`
-//! and is shared by every checkout.
+//! and is shared by every checkout. build.sh builds without AV1, into the
+//! prefix that build has, when AV1 cannot be had; this script then links
+//! the prefix `build.sh --prefix` names after the build.
 //!
 //! RUSTY_CLAW_FFMPEG_H26X=on asks for the build with the H.264 and HEVC
-//! decoders (off by default; build.sh reads it too, and its prefix differs).
+//! decoders (off by default; build.sh reads it too, and its prefix differs),
+//! and RUSTY_CLAW_FFMPEG_AV1=off for the one without AV1. A linked build
+//! that disagrees with the H.264 switch (through FFMPEG_PREFIX) gets a
+//! warning, or an error under `require`.
 //!
 //! Windows builds never build FFmpeg here (that needs MSYS2 and MSVC
 //! together, see ../README.md): without FFMPEG_PREFIX they use the newest
 //! finished build of windows/build.sh in %LOCALAPPDATA%\rusty-claw\ffmpeg
 //! whose record is exactly the one windows/build.sh writes for the current
-//! pins and switch.
+//! pins and switches (windows_record.rs).
 //! The FFI declarations are committed in src/binding.rs, so nothing is
 //! generated here.
 
@@ -51,6 +58,9 @@ const STAMP: &str = "share/rusty-claw/ffmpeg-build.txt";
 /// time they finish a build or find one finished.
 const SIGNAL: &str = "last-build.txt";
 
+/// The configure flag the H.264 and HEVC decoders come with.
+const H26X_FLAG: &str = "--enable-decoder=h264,hevc";
+
 /// What RUSTY_CLAW_FFMPEG asks for.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -59,10 +69,24 @@ enum Mode {
     Require,
 }
 
+/// What the environment asks for.
+#[derive(Clone, Copy)]
+struct Wish {
+    mode: Mode,
+    /// RUSTY_CLAW_FFMPEG_H26X=on.
+    h26x: bool,
+    /// RUSTY_CLAW_FFMPEG_AV1=off.
+    av1_off: bool,
+    /// Building for Windows.
+    windows: bool,
+}
+
 /// Where FFmpeg should be, or why it cannot be.
 struct Search {
     /// The prefix that holds, or would hold, the build.
     prefix: Option<PathBuf>,
+    /// The prefix is FFMPEG_PREFIX, not the one build.sh names.
+    chosen: bool,
     /// Whether ../build.sh may build into `prefix`.
     may_build: bool,
     /// Why there is no prefix to use, when `prefix` is `None` or holds no
@@ -76,10 +100,12 @@ fn main() {
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("set by cargo"));
     let script = manifest.join("../build.sh");
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=windows_record.rs");
     println!("cargo::rerun-if-changed={}", script.display());
     for var in [
         "RUSTY_CLAW_FFMPEG",
         "RUSTY_CLAW_FFMPEG_H26X",
+        "RUSTY_CLAW_FFMPEG_AV1",
         "FFMPEG_PREFIX",
         "XDG_CACHE_HOME",
         "HOME",
@@ -108,28 +134,58 @@ fn main() {
             process::exit(0)
         }
     };
-    println!("cargo::metadata=h26x={}", u8::from(h26x));
+    let av1_off = match env::var("RUSTY_CLAW_FFMPEG_AV1").unwrap_or_default().trim() {
+        "" | "auto" => false,
+        "off" => true,
+        other => {
+            println!("cargo::error=RUSTY_CLAW_FFMPEG_AV1 must be auto or off, not '{other}'");
+            process::exit(0)
+        }
+    };
+    let wish = Wish {
+        mode,
+        h26x,
+        av1_off,
+        windows: env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows"),
+    };
     if mode == Mode::Off {
         println!("cargo::metadata=found=0");
         return;
     }
 
-    let search = search(&script, h26x);
+    let search = search(&script, wish);
     if let Some(prefix) = &search.prefix {
         let stamp = prefix.join(STAMP);
         if stamp.is_file() {
-            link(prefix, search.watch.as_deref());
+            link(prefix, &script, wish, search.watch.as_deref());
             return;
         }
         if search.may_build {
-            match build(&script, prefix) {
-                Ok(()) => {
+            // build.sh builds without AV1, into another prefix, when AV1
+            // cannot be had; `--prefix` names that one afterwards.
+            let built = build(&script).and_then(|()| {
+                let built = if search.chosen {
+                    prefix.clone()
+                } else {
+                    default_prefix(&script)?
+                };
+                if built.join(STAMP).is_file() {
+                    Ok(built)
+                } else {
+                    Err(format!(
+                        "building FFmpeg left no build in {}",
+                        built.display()
+                    ))
+                }
+            });
+            match built {
+                Ok(built) => {
                     println!(
                         "cargo::warning=built FFmpeg for the movies into {} (once per machine; \
                          RUSTY_CLAW_FFMPEG=off builds the game without it)",
-                        prefix.display()
+                        built.display()
                     );
-                    link(prefix, search.watch.as_deref());
+                    link(&built, &script, wish, search.watch.as_deref());
                     return;
                 }
                 Err(why) => {
@@ -146,14 +202,60 @@ fn main() {
 }
 
 /// Links the finished build in `prefix`. A build that appears later in
-/// another prefix (after a pin change, or once meson is installed for
-/// AV1) rewrites `watch`, which runs this script again.
-fn link(prefix: &Path, watch: Option<&Path>) {
+/// another prefix (after a pin change, or once AV1 could be built) rewrites
+/// `watch`, which runs this script again. Says when the build lacks AV1
+/// (an error under `require` unless RUSTY_CLAW_FFMPEG_AV1=off) or
+/// disagrees with RUSTY_CLAW_FFMPEG_H26X.
+fn link(prefix: &Path, script: &Path, wish: Wish, watch: Option<&Path>) {
     let stamp = prefix.join(STAMP);
     println!("cargo::rerun-if-changed={}", stamp.display());
     if let Some(file) = watch.filter(|f| f.is_file()) {
         println!("cargo::rerun-if-changed={}", file.display());
     }
+    let record = fs::read_to_string(&stamp).unwrap_or_default();
+    let av1 = record
+        .lines()
+        .any(|l| l.starts_with("dav1d ") && l.trim() != "dav1d none");
+    let h26x = record
+        .lines()
+        .filter_map(|l| l.strip_prefix("configure "))
+        .any(|l| l.split_whitespace().any(|flag| flag == H26X_FLAG));
+    let require = wish.mode == Mode::Require;
+
+    if h26x != wish.h26x {
+        let (has, switch) = if h26x {
+            ("has", "off")
+        } else {
+            ("lacks", "on")
+        };
+        let message = format!(
+            "the FFmpeg build in {} {has} the H.264 and HEVC decoders, but \
+             RUSTY_CLAW_FFMPEG_H26X is {switch}",
+            prefix.display()
+        );
+        if require {
+            println!("cargo::error=RUSTY_CLAW_FFMPEG=require: {message}");
+            process::exit(0)
+        }
+        println!("cargo::warning={message}; the movie player follows the build");
+    }
+    if !av1 && !wish.av1_off {
+        let why = no_av1_reason(prefix, script, wish);
+        if require {
+            println!(
+                "cargo::error=RUSTY_CLAW_FFMPEG=require needs AV1, but the FFmpeg build in {} \
+                 has none: {why} (with RUSTY_CLAW_FFMPEG_AV1=off as well, it takes a build \
+                 without AV1)",
+                prefix.display()
+            );
+            process::exit(0)
+        }
+        println!(
+            "cargo::warning=this FFmpeg decodes no AV1, so upscaled AV1 movies will not play \
+             (the original movies do): {why}; see third_party/ffmpeg/README.md"
+        );
+    }
+
     let lib = prefix.join("lib");
     println!("cargo::rustc-link-search=native={}", lib.display());
     for name in LIBS {
@@ -170,13 +272,27 @@ fn link(prefix: &Path, watch: Option<&Path>) {
     for name in system {
         println!("cargo::rustc-link-lib={name}");
     }
-    let record = fs::read_to_string(&stamp).unwrap_or_default();
-    let av1 = record
-        .lines()
-        .any(|l| l.starts_with("dav1d ") && l.trim() != "dav1d none");
     println!("cargo::metadata=av1={}", u8::from(av1));
+    println!("cargo::metadata=h26x={}", u8::from(h26x));
     println!("cargo::metadata=prefix={}", prefix.display());
     println!("cargo::metadata=found=1");
+}
+
+/// Why the build in `prefix` has no AV1: build.sh's own reason (`--av1`)
+/// on Unix, when it has one.
+fn no_av1_reason(prefix: &Path, script: &Path, wish: Wish) -> String {
+    let made_without = format!("the build in {} was made without it", prefix.display());
+    if wish.windows || !cfg!(unix) {
+        return made_without;
+    }
+    let Ok(output) = Command::new("sh").arg(script).arg("--av1").output() else {
+        return made_without;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    match text.trim().strip_prefix("no: ") {
+        Some(why) if output.status.success() && !why.is_empty() => why.to_string(),
+        _ => made_without,
+    }
 }
 
 /// Whether the static library `name` is in `lib` (`libNAME.a`, or MSVC's
@@ -216,10 +332,10 @@ fn without(mode: Mode, why: &str, watch: Option<&Path>) {
 }
 
 /// Where the build is, for the target being built.
-fn search(script: &Path, h26x: bool) -> Search {
+fn search(script: &Path, wish: Wish) -> Search {
     let target = env::var("TARGET").unwrap_or_default();
     let host = env::var("HOST").unwrap_or_default();
-    let windows = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    let windows = wish.windows;
 
     // An empty FFMPEG_PREFIX is the same as none, as in build.sh and the
     // Makefile. A relative one would be read from the crate's directory, not
@@ -229,6 +345,7 @@ fn search(script: &Path, h26x: bool) -> Search {
         if !prefix.has_root() {
             return Search {
                 prefix: None,
+                chosen: true,
                 may_build: false,
                 missing: format!(
                     "FFMPEG_PREFIX must be an absolute path, not '{}'",
@@ -259,6 +376,7 @@ fn search(script: &Path, h26x: bool) -> Search {
             missing,
             may_build: can_build.is_ok(),
             prefix: Some(prefix),
+            chosen: true,
             watch,
         };
     }
@@ -269,14 +387,22 @@ fn search(script: &Path, h26x: bool) -> Search {
         println!("cargo::rerun-if-changed={}", windows_script.display());
         let found = root
             .as_deref()
-            .and_then(|r| windows_build(r, script, &windows_script, h26x));
-        let switch = if h26x {
-            " with RUSTY_CLAW_FFMPEG_H26X=on"
+            .and_then(|r| windows_build(r, script, &windows_script, wish.h26x, !wish.av1_off));
+        let mut switches = Vec::new();
+        if wish.h26x {
+            switches.push("RUSTY_CLAW_FFMPEG_H26X=on");
+        }
+        if wish.av1_off {
+            switches.push("RUSTY_CLAW_FFMPEG_AV1=off");
+        }
+        let switch = if switches.is_empty() {
+            String::new()
         } else {
-            ""
+            format!(" with {}", switches.join(" and "))
         };
         return Search {
             prefix: found,
+            chosen: false,
             may_build: false,
             missing: format!(
                 "no FFmpeg build for Windows with the current pins was found (run \
@@ -292,6 +418,7 @@ fn search(script: &Path, h26x: bool) -> Search {
         Err(why) => {
             return Search {
                 prefix: None,
+                chosen: false,
                 may_build: false,
                 missing: why,
                 watch,
@@ -304,6 +431,7 @@ fn search(script: &Path, h26x: bool) -> Search {
     };
     Search {
         prefix: Some(prefix),
+        chosen: false,
         may_build,
         missing,
         watch,
@@ -380,14 +508,16 @@ fn can_build_for(target: &str, host: &str) -> Result<(), String> {
     }
 }
 
-/// Builds FFmpeg into `prefix` with ../build.sh (about a minute; it runs
-/// its compilers under `nice` and takes a lock, so two builds at once wait
-/// for each other and build it once).
-fn build(script: &Path, prefix: &Path) -> Result<(), String> {
+/// Builds FFmpeg with ../build.sh, into the prefix `build.sh --prefix`
+/// names afterwards (or FFMPEG_PREFIX), in about a minute. It runs its
+/// compilers under `nice` and takes a lock, so two builds at once wait for
+/// each other and build it once. FFmpeg's make joins cargo's job server.
+fn build(script: &Path) -> Result<(), String> {
     let mut command = Command::new("sh");
-    command.arg(script).env("FFMPEG_PREFIX", prefix);
-    // Cargo's and an outer make's settings are not FFmpeg's: its own make
-    // must not join their job server, and configure must not read them.
+    command.arg(script);
+    // Cargo's and an outer make's settings are not FFmpeg's: configure must
+    // not read them. Cargo's job server is handed on as MAKEFLAGS, which
+    // build.sh's make joins (and ninja, which cannot, runs fewer jobs).
     for var in [
         "MAKEFLAGS",
         "MFLAGS",
@@ -402,6 +532,9 @@ fn build(script: &Path, prefix: &Path) -> Result<(), String> {
     ] {
         command.env_remove(var);
     }
+    if let Some(flags) = env::var_os("CARGO_MAKEFLAGS") {
+        command.env("MAKEFLAGS", flags);
+    }
     let output = command
         .output()
         .map_err(|e| format!("cannot run {} ({e})", script.display()))?;
@@ -409,7 +542,7 @@ fn build(script: &Path, prefix: &Path) -> Result<(), String> {
     eprint!("{}", String::from_utf8_lossy(&output.stdout));
     let errors = String::from_utf8_lossy(&output.stderr);
     eprint!("{errors}");
-    if output.status.success() && prefix.join(STAMP).is_file() {
+    if output.status.success() {
         return Ok(());
     }
     let last = errors
@@ -424,12 +557,19 @@ fn build(script: &Path, prefix: &Path) -> Result<(), String> {
 
 /// The newest finished build of windows/build.sh under `root` whose record
 /// is exactly the one windows/build.sh writes for the pins of `script` (its
-/// version, checksums and configure line, with the H.264 and HEVC decoders
-/// when `h26x`) and the Windows flags of `windows_script`.
-fn windows_build(root: &Path, script: &Path, windows_script: &Path, h26x: bool) -> Option<PathBuf> {
+/// version, checksums and configure line, with dav1d when `av1` and the
+/// H.264 and HEVC decoders when `h26x`) and the Windows flags of
+/// `windows_script`.
+fn windows_build(
+    root: &Path,
+    script: &Path,
+    windows_script: &Path,
+    h26x: bool,
+    av1: bool,
+) -> Option<PathBuf> {
     let pins = fs::read_to_string(script).ok()?;
     let windows = fs::read_to_string(windows_script).ok()?;
-    let expected = windows_record(&pins, &windows, h26x)?;
+    let expected = windows_record(&pins, &windows, h26x, av1)?;
     let version = shell_value(&pins, "FFMPEG_VERSION")?;
     let mut best: Option<(SystemTime, PathBuf)> = None;
     for entry in fs::read_dir(root).ok()?.flatten() {
@@ -455,82 +595,8 @@ fn windows_build(root: &Path, script: &Path, windows_script: &Path, h26x: bool) 
     best.map(|(_, path)| path)
 }
 
-/// The record windows/build.sh writes (`--stamp`), without its last line
-/// break: the pins of build.sh (`pins`), the configure line turned for MSVC
-/// as windows/build.sh (`windows`) turns it, and its WINDOWS_FLAGS.
-fn windows_record(pins: &str, windows: &str, h26x: bool) -> Option<String> {
-    let value = |name: &str| shell_value(pins, name);
-    let mut unix = format!("{} {}", value("CONFIGURE_FLAGS")?, value("AV1_FLAGS")?);
-    if h26x {
-        unix = format!("{unix} {}", value("H26X_FLAGS")?);
-    }
-    let mut flags: Vec<&str> = Vec::new();
-    for flag in unix.split_whitespace() {
-        match flag {
-            "--enable-pthreads" => flags.push("--enable-w32threads"),
-            "--enable-pic" => {}
-            other => flags.push(other),
-        }
-    }
-    let windows_flags = shell_value(windows, "WINDOWS_FLAGS")?;
-    Some(format!(
-        "FFmpeg {}\nsource {}\nsha256 {}\nnasm {} sha256 {}\ndav1d {} sha256 {}\n\
-         licence LGPL-2.1-or-later\nconfigure {} {windows_flags}",
-        value("FFMPEG_VERSION")?,
-        value("FFMPEG_URL")?,
-        value("FFMPEG_SHA256")?,
-        value("NASM_VERSION")?,
-        value("NASM_SHA256")?,
-        value("DAV1D_VERSION")?,
-        value("DAV1D_SHA256")?,
-        flags.join(" "),
-    ))
-}
-
-/// The value of the shell assignment `NAME=...` at the start of a line of
-/// `text`, as sh reads it: a double-quoted value may span lines joined by
-/// a backslash at their end, and `$NAME` of an earlier assignment is
-/// replaced by its value.
-fn shell_value(text: &str, name: &str) -> Option<String> {
-    let start = text
-        .lines()
-        .position(|l| l.starts_with(&format!("{name}=")))?;
-    let first = &text.lines().nth(start)?[name.len() + 1..];
-    let raw = if let Some(rest) = first.strip_prefix('"') {
-        let mut joined = String::new();
-        let mut line = rest;
-        let mut next = start + 1;
-        loop {
-            if let Some(end) = line.find('"') {
-                joined.push_str(&line[..end]);
-                break;
-            }
-            joined.push_str(line.strip_suffix('\\')?);
-            line = text.lines().nth(next)?;
-            next += 1;
-        }
-        joined
-    } else {
-        first.trim_end().to_string()
-    };
-    let mut out = String::new();
-    let mut rest = raw.as_str();
-    while let Some(at) = rest.find('$') {
-        out.push_str(&rest[..at]);
-        let tail = &rest[at + 1..];
-        let len = tail
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .unwrap_or(tail.len());
-        let var = &tail[..len];
-        out.push_str(&shell_value(
-            &text[..text.find(&format!("\n{name}="))?],
-            var,
-        )?);
-        rest = &tail[len..];
-    }
-    out.push_str(rest);
-    Some(out)
-}
+// windows_record() and shell_value(), shared with a test.
+include!("windows_record.rs");
 
 /// The system libraries FFmpeg's pkg-config files ask for (for example `m`
 /// on Linux, `bcrypt` on Windows), which a static link must name itself.

@@ -40,15 +40,18 @@ rustup toolchain install "$channel" --profile minimal >/dev/null
 
 # FFmpeg and dav1d: the same pinned build as on any Linux, made with the
 # SDK's compiler and glibc, in this cache rather than the host's (meson and
-# ninja from the SDK, or from pip into the cache when it lacks them). The
-# Deck build must decode AV1, the upscaled movies' format.
-nice -n 10 sh /src/third_party/ffmpeg/build.sh
-record="$(sh /src/third_party/ffmpeg/build.sh --prefix)/share/rusty-claw/ffmpeg-build.txt"
-if grep -q '^dav1d none$' "$record"; then
-    fail "FFmpeg was built without AV1 (dav1d); see the build's message above"
+# ninja from the SDK, or the pinned ones build.sh downloads, checks and
+# builds in the cache when it lacks them; never from pip). The Deck build
+# must decode AV1, the upscaled movies' format, so AV1 is always tried
+# again here, and a build without it stops the recipe.
+[ "${RUSTY_CLAW_FFMPEG_AV1:-auto}" != off ] || fail "the Deck build needs AV1; unset RUSTY_CLAW_FFMPEG_AV1"
+nice -n 10 sh /src/third_party/ffmpeg/build.sh --retry-av1
+if [ "$(sh /src/third_party/ffmpeg/build.sh --av1)" != yes ]; then
+    fail "FFmpeg was built without AV1 (dav1d): $(sh /src/third_party/ffmpeg/build.sh --av1)"
 fi
 
-# The game, with movies: a build without FFmpeg is an error here.
+# The game, with movies: a build without FFmpeg, or without AV1, is an
+# error here.
 RUSTY_CLAW_FFMPEG=require nice -n 10 cargo build --release --locked -p claw-game
 
 bin="$CARGO_TARGET_DIR/release/rusty-claw"

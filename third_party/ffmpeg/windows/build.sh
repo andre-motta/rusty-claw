@@ -8,8 +8,11 @@
 # platform parts of the configure line change: MSVC instead of gcc, Windows
 # threads instead of POSIX threads, and the DLL C runtime (-MD) that Rust's
 # MSVC builds use. RUSTY_CLAW_FFMPEG_H26X=on adds the H.264 and HEVC
-# decoders, as on Linux; set it for the cargo build too, or cargo does not
-# find this build.
+# decoders, as on Linux, and RUSTY_CLAW_FFMPEG_AV1=off leaves dav1d out
+# (then meson, ninja and pkg-config are not needed); set them for the cargo
+# build too, or cargo does not find this build. dav1d is built with MSYS2's
+# meson and ninja: the pinned meson and ninja of ../build.sh are for Linux
+# systems without them.
 #
 # Run it from an MSYS2 shell opened inside the "x64 Native Tools Command
 # Prompt for VS" (see ../README.md, "Windows 11"), so cl.exe and link.exe are
@@ -61,12 +64,22 @@ case "${RUSTY_CLAW_FFMPEG_H26X:-off}" in
     off | "") h26x=no ;;
     *) fail "RUSTY_CLAW_FFMPEG_H26X must be on or off, not '$RUSTY_CLAW_FFMPEG_H26X'" ;;
 esac
+case "${RUSTY_CLAW_FFMPEG_AV1:-auto}" in
+    auto | "") av1=yes ;;
+    off) av1=no ;;
+    *) fail "RUSTY_CLAW_FFMPEG_AV1 must be auto or off, not '$RUSTY_CLAW_FFMPEG_AV1'" ;;
+esac
 
-# Windows always builds dav1d (MSYS2 has meson and ninja). Windows threads
+# dav1d is built unless RUSTY_CLAW_FFMPEG_AV1=off (MSYS2 has meson and
+# ninja; a dav1d build that fails stops the build, with the reason, and
+# RUSTY_CLAW_FFMPEG_AV1=off then gives one without AV1). Windows threads
 # replace POSIX threads; position-independent code is a Linux notion.
 # Everything else, the allowlist included, stays as it is.
+# rusty_ffmpeg/windows_record.rs works out the same record (stamp_text)
+# for cargo, and a test compares the two.
 WINDOWS_FLAGS="--toolchain=msvc --target-os=win64 --arch=x86_64 --extra-cflags=-MD"
-unix_flags="$CONFIGURE_FLAGS $AV1_FLAGS"
+unix_flags="$CONFIGURE_FLAGS"
+if [ "$av1" = yes ]; then unix_flags="$unix_flags $AV1_FLAGS"; fi
 if [ "$h26x" = yes ]; then unix_flags="$unix_flags $H26X_FLAGS"; fi
 flags=
 for flag in $unix_flags; do
@@ -85,7 +98,11 @@ stamp_text() {
     printf 'source %s\n' "$FFMPEG_URL"
     printf 'sha256 %s\n' "$FFMPEG_SHA256"
     printf 'nasm %s sha256 %s\n' "$NASM_VERSION" "$NASM_SHA256"
-    printf 'dav1d %s sha256 %s\n' "$DAV1D_VERSION" "$DAV1D_SHA256"
+    if [ "$av1" = yes ]; then
+        printf 'dav1d %s sha256 %s\n' "$DAV1D_VERSION" "$DAV1D_SHA256"
+    else
+        printf 'dav1d none\n'
+    fi
     printf 'licence LGPL-2.1-or-later\n'
     printf 'configure %s\n' "$CONFIGURE_FLAGS_MSVC"
 }
@@ -163,7 +180,9 @@ command -v cl.exe >/dev/null 2>&1 ||
     fail "MSVC's link.exe is not next to cl.exe; repair the Visual Studio Build Tools"
 cl.exe 2>&1 | grep -q 'x64' ||
     fail "cl.exe does not build for x64: use the x64 Native Tools Command Prompt, not the x86 one"
-for tool in make gcc curl tar xz sha256sum cmp meson ninja pkg-config; do
+tools="make gcc curl tar xz sha256sum cmp"
+if [ "$av1" = yes ]; then tools="$tools meson ninja pkg-config"; fi
+for tool in $tools; do
     command -v "$tool" >/dev/null 2>&1 ||
         fail "$tool is missing: in MSYS2, run pacman -S --needed make gcc diffutils tar xz curl meson ninja pkgconf"
 done
@@ -217,30 +236,32 @@ export PATH
 # file; its library and headers are copied into the prefix afterwards.
 # Meson names a static library libdav1d.a; MSVC's link step looks for
 # dav1d.lib, so it is renamed.
-fetch "$DAV1D_URL" "$DAV1D_SHA256"
-say "building dav1d $DAV1D_VERSION for MSVC"
-tar -xJf "$cache_root/downloads/dav1d-$DAV1D_VERSION.tar.xz" -C "$work"
-dav1d_dir="$work/dav1d"
-(
-    cd "$work/dav1d-$DAV1D_VERSION"
-    # MSYS2's /usr/bin/link would shadow MSVC's link.exe, and meson splits a
-    # CC_LD path on its spaces, so MSVC's folder goes first on PATH instead.
-    PATH="$(dirname "$(command -v cl.exe)"):$PATH"
-    export PATH
-    CC=cl CC_LD=link \
-        meson setup "$work/dav1d-build" . --prefix="$(cygpath -m "$dav1d_dir")" --libdir=lib \
-        --buildtype=release --default-library=static --wrap-mode=nodownload -Db_vscrt=md \
-        -Denable_tools=false -Denable_tests=false -Denable_examples=false -Denable_docs=false \
-        >"$work/dav1d-setup.log" 2>&1 || { tail -n 20 "$work/dav1d-setup.log" >&2; exit 1; }
-    meson compile -C "$work/dav1d-build" -j "$jobs" >"$work/dav1d-make.log" 2>&1 ||
-        { tail -n 30 "$work/dav1d-make.log" >&2; exit 1; }
-    meson install -C "$work/dav1d-build" >"$work/dav1d-install.log" 2>&1 ||
-        { tail -n 20 "$work/dav1d-install.log" >&2; exit 1; }
-) || fail "dav1d build failed (logs in $work)"
-if [ -f "$dav1d_dir/lib/libdav1d.a" ]; then mv "$dav1d_dir/lib/libdav1d.a" "$dav1d_dir/lib/dav1d.lib"; fi
-[ -f "$dav1d_dir/lib/dav1d.lib" ] || fail "the dav1d build made no library (logs in $work)"
-PKG_CONFIG_LIBDIR="$dav1d_dir/lib/pkgconfig"
-export PKG_CONFIG_LIBDIR
+if [ "$av1" = yes ]; then
+    fetch "$DAV1D_URL" "$DAV1D_SHA256"
+    say "building dav1d $DAV1D_VERSION for MSVC"
+    tar -xJf "$cache_root/downloads/dav1d-$DAV1D_VERSION.tar.xz" -C "$work"
+    dav1d_dir="$work/dav1d"
+    (
+        cd "$work/dav1d-$DAV1D_VERSION"
+        # MSYS2's /usr/bin/link would shadow MSVC's link.exe, and meson splits a
+        # CC_LD path on its spaces, so MSVC's folder goes first on PATH instead.
+        PATH="$(dirname "$(command -v cl.exe)"):$PATH"
+        export PATH
+        CC=cl CC_LD=link \
+            meson setup "$work/dav1d-build" . --prefix="$(cygpath -m "$dav1d_dir")" --libdir=lib \
+            --buildtype=release --default-library=static --wrap-mode=nodownload -Db_vscrt=md \
+            -Denable_tools=false -Denable_tests=false -Denable_examples=false -Denable_docs=false \
+            >"$work/dav1d-setup.log" 2>&1 || { tail -n 20 "$work/dav1d-setup.log" >&2; exit 1; }
+        meson compile -C "$work/dav1d-build" -j "$jobs" >"$work/dav1d-make.log" 2>&1 ||
+            { tail -n 30 "$work/dav1d-make.log" >&2; exit 1; }
+        meson install -C "$work/dav1d-build" >"$work/dav1d-install.log" 2>&1 ||
+            { tail -n 20 "$work/dav1d-install.log" >&2; exit 1; }
+    ) || fail "dav1d build failed (logs in $work); RUSTY_CLAW_FFMPEG_AV1=off builds FFmpeg without AV1"
+    if [ -f "$dav1d_dir/lib/libdav1d.a" ]; then mv "$dav1d_dir/lib/libdav1d.a" "$dav1d_dir/lib/dav1d.lib"; fi
+    [ -f "$dav1d_dir/lib/dav1d.lib" ] || fail "the dav1d build made no library (logs in $work)"
+    PKG_CONFIG_LIBDIR="$dav1d_dir/lib/pkgconfig"
+    export PKG_CONFIG_LIBDIR
+fi
 
 fetch "$FFMPEG_URL" "$FFMPEG_SHA256"
 say "building FFmpeg $FFMPEG_VERSION for MSVC with $jobs jobs into $prefix"
@@ -272,10 +293,12 @@ stage="$work/stage"
 
 staged="$stage$prefix"
 [ -f "$staged/lib/avcodec.lib" ] || fail "the build made no avcodec.lib (logs in $work)"
-mkdir -p "$staged/include" "$staged/lib/pkgconfig" "$staged/share/licenses/dav1d"
-cp "$dav1d_dir/lib/dav1d.lib" "$staged/lib/"
-cp -R "$dav1d_dir/include/dav1d" "$staged/include/"
-cp "$work/dav1d-$DAV1D_VERSION/COPYING" "$staged/share/licenses/dav1d/"
+if [ "$av1" = yes ]; then
+    mkdir -p "$staged/include" "$staged/lib/pkgconfig" "$staged/share/licenses/dav1d"
+    cp "$dav1d_dir/lib/dav1d.lib" "$staged/lib/"
+    cp -R "$dav1d_dir/include/dav1d" "$staged/include/"
+    cp "$work/dav1d-$DAV1D_VERSION/COPYING" "$staged/share/licenses/dav1d/"
+fi
 
 # MSVC names system libraries `bcrypt.lib`; the game's link step reads them
 # from the pkg-config files as `-lbcrypt`, as on Linux, and would take an

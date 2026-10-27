@@ -151,8 +151,8 @@ the menus are written back to the config file; options given on the command
 line are not, unless changed in the menus.
 
 Movies play from the install, or from your own copies (for example upscaled
-ones, named LOGO and CLAW0 to CLAW8 with .mkv, .mp4, .mov or .avi) in
-$XDG_DATA_HOME/rusty-claw/movies/ (by default
+ones, named LOGO, CLAW0 to CLAW8 and CREDITS with .mkv, .webm, .mp4, .mov or
+.avi) in $XDG_DATA_HOME/rusty-claw/movies/ (by default
 ~/.local/share/rusty-claw/movies/, or %LOCALAPPDATA%\\rusty-claw\\movies\\
 on Windows; `movie_folder` in the config file moves it). Escape, or the
 pad's Back or Start button, skips a movie; any key, click or pad button skips

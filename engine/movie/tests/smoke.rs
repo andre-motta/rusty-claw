@@ -3,10 +3,11 @@
 //! nothing else is (no other decoder, no encoder, muxer or network protocol).
 //!
 //! The lists depend on the build: AV1 through dav1d is in every build that
-//! could build dav1d (`claw_ffmpeg_av1`, which the default build on a
-//! system with meson or pip has), and the H.264 and HEVC decoders and
-//! parsers only in a build made with RUSTY_CLAW_FFMPEG_H26X=on
-//! (`claw_ffmpeg_h26x`); without the switch they must be absent.
+//! could build dav1d (`claw_ffmpeg_av1`), and the H.264 and HEVC decoders
+//! and parsers only in a build made with RUSTY_CLAW_FFMPEG_H26X=on
+//! (`claw_ffmpeg_h26x`); without the switch they must be absent. With
+//! RUSTY_CLAW_FFMPEG=require (and RUSTY_CLAW_FFMPEG_AV1 not off), AV1 must
+//! be there.
 #![cfg(claw_ffmpeg)]
 
 use std::collections::BTreeSet;
@@ -43,6 +44,13 @@ const H26X_DECODERS: [&str; 2] = ["h264", "hevc"];
 /// Whether this build has AV1 and the H.264 and HEVC decoders.
 const AV1: bool = cfg!(claw_ffmpeg_av1);
 const H26X: bool = cfg!(claw_ffmpeg_h26x);
+
+/// Whether the run asks for AV1: RUSTY_CLAW_FFMPEG=require without
+/// RUSTY_CLAW_FFMPEG_AV1=off, as for the build itself.
+fn av1_required() -> bool {
+    let var = |name| std::env::var(name).unwrap_or_default();
+    var("RUSTY_CLAW_FFMPEG").trim() == "require" && var("RUSTY_CLAW_FFMPEG_AV1").trim() != "off"
+}
 
 /// The decoders this build must have, and no others.
 fn expected_decoders() -> BTreeSet<String> {
@@ -109,6 +117,10 @@ fn exactly_the_listed_decoders_are_registered_and_no_encoder() {
     assert_eq!(decoders, expected_decoders());
     assert!(encoders.is_empty(), "encoders: {encoders:?}");
     if !AV1 {
+        assert!(
+            !av1_required(),
+            "RUSTY_CLAW_FFMPEG=require, but this FFmpeg was built without AV1 (no dav1d)"
+        );
         println!("this FFmpeg was built without AV1 (no dav1d)");
     }
 }

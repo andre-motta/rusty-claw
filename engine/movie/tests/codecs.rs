@@ -25,8 +25,10 @@
 //! every core; run that in an optimised build (`--release`) on an otherwise
 //! idle machine. Without it, as in `make check` and `make test-install`,
 //! the tests check the pictures only. A clip whose encoder the system lacks
-//! is skipped with the reason printed. Run with `--nocapture` to see the
-//! table.
+//! is skipped with the reason printed, and so is an AV1 clip in a build
+//! without AV1, except with RUSTY_CLAW_FFMPEG=require (and
+//! RUSTY_CLAW_FFMPEG_AV1 not off), where that fails. Run with `--nocapture`
+//! to see the table.
 #![cfg(claw_ffmpeg)]
 
 use std::path::{Path, PathBuf};
@@ -113,6 +115,13 @@ impl Codec {
     fn missing(self) -> Option<&'static str> {
         match self {
             Codec::Av1 if !cfg!(claw_ffmpeg_av1) => {
+                // A build that must have AV1 fails here instead of skipping.
+                let var = |name| std::env::var(name).unwrap_or_default();
+                assert!(
+                    var("RUSTY_CLAW_FFMPEG").trim() != "require"
+                        || var("RUSTY_CLAW_FFMPEG_AV1").trim() == "off",
+                    "RUSTY_CLAW_FFMPEG=require, but this FFmpeg was built without AV1 (no dav1d)"
+                );
                 Some("this FFmpeg was built without AV1 (no dav1d)")
             }
             Codec::H26x if !cfg!(claw_ffmpeg_h26x) => Some(
