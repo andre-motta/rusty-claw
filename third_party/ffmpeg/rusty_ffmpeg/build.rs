@@ -37,7 +37,9 @@
 //! together, see ../README.md): without FFMPEG_PREFIX they use the newest
 //! finished build of windows/build.sh in %LOCALAPPDATA%\rusty-claw\ffmpeg
 //! whose record is exactly the one windows/build.sh writes for the current
-//! pins and switches (windows_record.rs).
+//! pins and switches (windows_record.rs); in `auto` mode, when no build has
+//! AV1, the one without it, with the same warning as on Linux. When none
+//! is there, the warning names the switches that select a build that is.
 //! The FFI declarations are committed in src/binding.rs, so nothing is
 //! generated here.
 
@@ -170,13 +172,23 @@ fn main() {
                     default_prefix(&script)?
                 };
                 if built.join(STAMP).is_file() {
-                    Ok(built)
-                } else {
-                    Err(format!(
-                        "building FFmpeg left no build in {}",
-                        built.display()
-                    ))
+                    return Ok(built);
                 }
+                // An attempt with AV1 that failed in FFmpeg's make (which
+                // may not happen again) is not recorded, so `--prefix` still
+                // names the build with AV1, and a later build tries it
+                // again; the build without AV1 that build.sh made instead
+                // is the one to link now.
+                if !search.chosen && !wish.av1_off {
+                    let without = default_prefix_without_av1(&script)?;
+                    if without.join(STAMP).is_file() {
+                        return Ok(without);
+                    }
+                }
+                Err(format!(
+                    "building FFmpeg left no build in {}",
+                    built.display()
+                ))
             });
             match built {
                 Ok(built) => {
@@ -282,7 +294,13 @@ fn link(prefix: &Path, script: &Path, wish: Wish, watch: Option<&Path>) {
 /// on Unix, when it has one.
 fn no_av1_reason(prefix: &Path, script: &Path, wish: Wish) -> String {
     let made_without = format!("the build in {} was made without it", prefix.display());
-    if wish.windows || !cfg!(unix) {
+    if wish.windows {
+        return format!(
+            "{made_without} (third_party/ffmpeg/windows/build.sh makes one with it; `set \
+             RUSTY_CLAW_FFMPEG_AV1=off` takes this one without this warning)"
+        );
+    }
+    if !cfg!(unix) {
         return made_without;
     }
     let Ok(output) = Command::new("sh").arg(script).arg("--av1").output() else {
@@ -291,6 +309,12 @@ fn no_av1_reason(prefix: &Path, script: &Path, wish: Wish) -> String {
     let text = String::from_utf8_lossy(&output.stdout);
     match text.trim().strip_prefix("no: ") {
         Some(why) if output.status.success() && !why.is_empty() => why.to_string(),
+        // build.sh would try AV1 here, for example after an attempt that
+        // failed for a reason it does not keep (FFmpeg's make; see build.sh).
+        _ if output.status.success() && text.trim() == "yes" => format!(
+            "{made_without}, though AV1 can be tried here: `make ffmpeg` builds it with AV1 \
+             (an attempt that fails leaves its log in av1-failed.log in the cache folder)"
+        ),
         _ => made_without,
     }
 }
@@ -385,9 +409,27 @@ fn search(script: &Path, wish: Wish) -> Search {
         let root = windows_cache_root();
         let windows_script = script.with_file_name("windows").join("build.sh");
         println!("cargo::rerun-if-changed={}", windows_script.display());
-        let found = root
-            .as_deref()
-            .and_then(|r| windows_build(r, script, &windows_script, wish.h26x, !wish.av1_off));
+        let picked = root.as_deref().map(|r| {
+            windows_pick(
+                wish.h26x,
+                wish.av1_off,
+                wish.mode == Mode::Require,
+                |h26x, av1| windows_build(r, script, &windows_script, h26x, av1),
+            )
+        });
+        let (found, other) = match picked {
+            Some(Ok(found)) => (Some(found), None),
+            Some(Err(other)) => (None, other),
+            None => (None, None),
+        };
+        let other = other
+            .map(|settings| {
+                format!(
+                    "; one made with other switches is there, which `set {settings}` in the \
+                     Developer prompt selects"
+                )
+            })
+            .unwrap_or_default();
         let mut switches = Vec::new();
         if wish.h26x {
             switches.push("RUSTY_CLAW_FFMPEG_H26X=on");
@@ -405,8 +447,9 @@ fn search(script: &Path, wish: Wish) -> Search {
             chosen: false,
             may_build: false,
             missing: format!(
-                "no FFmpeg build for Windows with the current pins was found (run \
-                 third_party/ffmpeg/windows/build.sh{switch} in MSYS2 first, or set FFMPEG_PREFIX)"
+                "no FFmpeg build for Windows with the current pins and switches was found (run \
+                 third_party/ffmpeg/windows/build.sh{switch} in MSYS2 first, or set \
+                 FFMPEG_PREFIX){other}"
             ),
             watch: root.map(|r| r.join(SIGNAL)),
         };
@@ -457,9 +500,23 @@ fn windows_cache_root() -> Option<PathBuf> {
 
 /// The prefix `build.sh --prefix` prints.
 fn default_prefix(script: &Path) -> Result<PathBuf, String> {
-    let output = Command::new("sh")
-        .arg(script)
-        .arg("--prefix")
+    prefix_from(Command::new("sh").arg(script).arg("--prefix"), script)
+}
+
+/// The prefix `build.sh --prefix` prints for the build without AV1.
+fn default_prefix_without_av1(script: &Path) -> Result<PathBuf, String> {
+    prefix_from(
+        Command::new("sh")
+            .arg(script)
+            .arg("--prefix")
+            .env("RUSTY_CLAW_FFMPEG_AV1", "off"),
+        script,
+    )
+}
+
+/// The prefix `command`, a `build.sh --prefix`, prints.
+fn prefix_from(command: &mut Command, script: &Path) -> Result<PathBuf, String> {
+    let output = command
         .output()
         .map_err(|e| format!("cannot run {} ({e})", script.display()))?;
     let text = String::from_utf8_lossy(&output.stdout);
