@@ -242,6 +242,36 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_that_cannot_be_converted_still_gives_the_old_contexts_last_samples() {
+        super::super::quiet_ffmpeg();
+        let mut r = Resampler::new(48000);
+        // 44.1 kHz to 48 kHz: the context holds a tail of samples back.
+        let mut out = Vec::new();
+        for _ in 0..5 {
+            out.extend(convert(&mut r, &TestFrame::new(44100, 441, 8000)).unwrap());
+        }
+        assert!(out.len() < 2 * 2400, "the context holds some back");
+        // A frame no context can be made for, without a flush first: the
+        // old context's tail comes out and no context is left.
+        let tail = convert(&mut r, &TestFrame::new(0, 64, 1000))
+            .expect("the old context's samples, not an error");
+        assert!(!tail.is_empty());
+        assert!(r.swr.is_null());
+        assert_eq!(r.key, None);
+        let level = 8000.0 / 32768.0;
+        assert!(
+            tail.iter().all(|s| (s - level).abs() < 0.02),
+            "the first sound's last samples"
+        );
+        assert!(
+            (out.len() + tail.len()).abs_diff(2 * 2400) <= 4,
+            "{} frames for 50 ms at 48 kHz",
+            (out.len() + tail.len()) / 2
+        );
+        assert!(r.flush().unwrap().is_empty());
+    }
+
+    #[test]
     fn a_change_of_rate_mid_stream_keeps_the_old_contexts_last_samples() {
         let mut r = Resampler::new(48000);
         let mut out = Vec::new();

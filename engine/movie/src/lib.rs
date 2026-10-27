@@ -40,7 +40,7 @@ use std::io::{Read, Seek};
 
 pub use audio::MovieAudio;
 pub use clock::Clock;
-pub use frame::{ChromaSiting, FrameLayout, Matrix, VideoFrame};
+pub use frame::{ChromaSiting, FrameLayout, MAX_PICTURE_SIDE, Matrix, VideoFrame};
 pub use index::{MovieIndex, MovieSet};
 pub use lookup::locate_all;
 pub use player::Player;

@@ -122,21 +122,23 @@ their palette colours are exact.
 `engine/movie/tests/codecs.rs` makes H.264 (MP4 and MKV, with AAC sound) and
 HEVC Main and Main10 (MKV, with AAC sound) clips of 2560x1920 at 29.97
 pictures a second at test time, with the system's `ffmpeg` tool, plays them
-through the player, and prints how fast they decode with every core and with
-four:
+through the player and checks their pictures. With `CLAW_CODECS_BENCH=1` it
+also prints how fast they decode with every core and with four, and asks for
+at least 1.5 times real time with every core:
 
 ```sh
-cargo test --release -p claw-movie --features ffmpeg --test codecs -- --nocapture
+CLAW_CODECS_BENCH=1 cargo test --release -p claw-movie --features ffmpeg --test codecs -- --nocapture
 ```
 
-Run it while the machine is otherwise idle: it measures speed, and the
-release build encodes the HEVC clips on the GPU. The H.264 clips need the
-libopenh264 encoder and the HEVC clips hevc_nvenc or hevc_vaapi; a clip whose
-encoder is missing is skipped with the reason printed. A debug build, as in
-`make check`, checks the pictures only: it skips the GPU encoders unless
-`CLAW_GPU_TESTS=1` is set, and the speed measurements (at least 1.5 times
-real time with every core, and the four-core run) unless
-`CLAW_CODECS_BENCH=1` is set.
+Run it while the machine is otherwise idle, since it measures speed. The
+H.264 clips need the libopenh264 encoder and the HEVC clips hevc_nvenc or
+hevc_vaapi; a clip whose encoder is missing is skipped with the reason
+printed. The HEVC clips encode on the GPU, so they are made only when
+`CLAW_GPU_TESTS=1` is set as well; run that while no other GPU work or
+benchmark runs, so neither skews the other. Without `CLAW_CODECS_BENCH=1`,
+as in `make check`, the test checks the pictures of the clips it can make
+without the GPU, and `make test-install MODULE=movie` runs only the movie
+module's install tests.
 
 ## Windows 11 (MSVC)
 

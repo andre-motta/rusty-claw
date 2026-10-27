@@ -23,7 +23,19 @@ use std::time::Duration;
 use rusty_ffmpeg::ffi;
 
 use crate::MovieError;
-use crate::frame::{ChromaSiting, FrameLayout, Matrix, VideoFrame};
+use crate::frame::{ChromaSiting, FrameLayout, MAX_PICTURE_SIDE, Matrix, VideoFrame};
+
+/// Refuses pictures of `width` x `height` with a side over
+/// [`MAX_PICTURE_SIDE`], before any buffer is made for them.
+pub(super) fn check_size(width: c_int, height: c_int) -> Result<(), MovieError> {
+    let max = i64::from(MAX_PICTURE_SIDE);
+    if i64::from(width) > max || i64::from(height) > max {
+        return Err(MovieError::Unsupported(format!(
+            "pictures of {width}x{height}, over {max} pixels on a side"
+        )));
+    }
+    Ok(())
+}
 
 /// What a scaler was made for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +75,8 @@ impl Converter {
         if f.width <= 0 || f.height <= 0 {
             return Err(MovieError::Decode("a picture without a size".into()));
         }
+        // The size can change in the middle of a stream.
+        check_size(f.width, f.height)?;
         // SAFETY: plain lookups of static tables.
         let yuv = unsafe { yuv_details(f) };
         match yuv {
@@ -400,5 +414,64 @@ mod tests {
             siting_of(ffi::AVCHROMA_LOC_LEFT, ffi::AV_PIX_FMT_YUVJ420P),
             ChromaSiting::Left
         );
+    }
+
+    /// A video frame of `width` x `height` in 8-bit 4:2:0, with buffers
+    /// only when `buffers` is set.
+    struct TestFrame(*mut ffi::AVFrame);
+
+    impl TestFrame {
+        fn new(width: c_int, height: c_int, buffers: bool) -> TestFrame {
+            // SAFETY: a fresh frame, given a size and a format before its
+            // buffers are made.
+            unsafe {
+                let f = ffi::av_frame_alloc();
+                assert!(!f.is_null());
+                (*f).width = width;
+                (*f).height = height;
+                (*f).format = ffi::AV_PIX_FMT_YUV420P;
+                if buffers {
+                    assert!(ffi::av_frame_get_buffer(f, 0) >= 0);
+                }
+                TestFrame(f)
+            }
+        }
+    }
+
+    impl Drop for TestFrame {
+        fn drop(&mut self) {
+            // SAFETY: allocated with av_frame_alloc.
+            unsafe { ffi::av_frame_free(&mut self.0) };
+        }
+    }
+
+    #[test]
+    fn pictures_over_the_largest_side_are_refused_before_any_buffer() {
+        let max = MAX_PICTURE_SIDE as c_int;
+        assert!(check_size(max, max).is_ok());
+        assert!(check_size(1, 1).is_ok());
+        for (w, h) in [
+            (max + 1, 16),
+            (16, max + 1),
+            (16000, 16000),
+            (c_int::MAX, 2),
+        ] {
+            assert!(
+                matches!(check_size(w, h), Err(MovieError::Unsupported(_))),
+                "{w}x{h}"
+            );
+            // The frame has no planes: had the converter gone on, it would
+            // have read them.
+            let f = TestFrame::new(w, h, false);
+            let mut c = Converter::new();
+            // SAFETY: a valid frame (with no buffers, which the size check
+            // stops before).
+            let got = unsafe { c.convert(f.0, Duration::ZERO) };
+            assert!(matches!(got, Err(MovieError::Unsupported(_))), "{got:?}");
+        }
+        let f = TestFrame::new(32, 16, true);
+        // SAFETY: a valid frame with its buffers.
+        let got = unsafe { Converter::new().convert(f.0, Duration::ZERO) }.unwrap();
+        assert_eq!((got.width, got.height), (32, 16));
     }
 }

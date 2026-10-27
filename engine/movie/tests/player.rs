@@ -1,7 +1,8 @@
 //! The player on a small movie made here: a 64x48 picture at 10 pictures a
 //! second (raw BGR) with stereo 16-bit sound at 8000 Hz, in an AVI file
 //! written by this test. Every picture has its own two colours, top and
-//! bottom, and the sound is a 440 Hz tone, opposite on the two sides.
+//! bottom, and the sound is a 440 Hz tone, opposite on the two sides. Some
+//! tests change the size, the picture rate or where the sound is stored.
 #![cfg(feature = "ffmpeg")]
 
 use std::f32::consts::TAU;
@@ -10,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use claw_movie::{FileKind, FrameLayout, MovieError, Player, Source, VideoFrame};
+use claw_movie::{FileKind, FrameLayout, MAX_PICTURE_SIDE, MovieError, Player, Source, VideoFrame};
 
 const W: u32 = 64;
 const H: u32 = 48;
@@ -18,6 +19,9 @@ const FPS: u32 = 10;
 const FRAMES: u32 = 20;
 const SOUND_RATE: u32 = 8000;
 const OUT_RATE: u32 = 48000;
+/// The pictures the player decodes ahead of the one showing, when the
+/// sound keeps up.
+const QUEUE_FRAMES: usize = 4;
 
 fn top(i: u32) -> [u8; 3] {
     [(i * 10) as u8, 200, 50]
@@ -62,15 +66,64 @@ fn movie() -> Vec<u8> {
 /// A test movie of `frames` pictures as AVI bytes, each picture's sound
 /// stored `audio_delay` pictures after it in the file.
 fn movie_with(frames: u32, audio_delay: u32) -> Vec<u8> {
-    let row = (W * 3) as usize;
-    let image = row * H as usize;
-    let per_frame = SOUND_RATE / FPS;
+    Avi {
+        frames,
+        audio_delay,
+        ..Avi::default()
+    }
+    .bytes()
+}
+
+/// How a test movie is made.
+#[derive(Debug, Clone, Copy)]
+struct Avi {
+    width: u32,
+    height: u32,
+    /// Pictures a second; it divides [`SOUND_RATE`].
+    fps: u32,
+    frames: u32,
+    /// Each picture's sound is stored this many pictures after it.
+    audio_delay: u32,
+}
+
+impl Default for Avi {
+    fn default() -> Avi {
+        Avi {
+            width: W,
+            height: H,
+            fps: FPS,
+            frames: FRAMES,
+            audio_delay: 0,
+        }
+    }
+}
+
+impl Avi {
+    /// The movie as AVI bytes.
+    fn bytes(self) -> Vec<u8> {
+        let Avi {
+            width,
+            height,
+            fps,
+            frames,
+            audio_delay,
+        } = self;
+        avi(width, height, fps, frames, audio_delay)
+    }
+}
+
+fn avi(width: u32, height: u32, fps: u32, frames: u32, audio_delay: u32) -> Vec<u8> {
+    assert_eq!(SOUND_RATE % fps, 0);
+    // Rows are padded to four bytes.
+    let row = (width * 3).next_multiple_of(4) as usize;
+    let image = row * height as usize;
+    let per_frame = SOUND_RATE / fps;
     // Headers.
     let mut avih = Vec::new();
     le(
         &mut avih,
         &[
-            1_000_000 / FPS,
+            1_000_000 / fps,
             0,
             0,
             0x10 | 0x100,
@@ -78,8 +131,8 @@ fn movie_with(frames: u32, audio_delay: u32) -> Vec<u8> {
             0,
             2,
             image as u32,
-            W,
-            H,
+            width,
+            height,
             0,
             0,
             0,
@@ -95,7 +148,7 @@ fn movie_with(frames: u32, audio_delay: u32) -> Vec<u8> {
             0,
             0,
             1,
-            FPS,
+            fps,
             0,
             frames,
             image as u32,
@@ -106,7 +159,7 @@ fn movie_with(frames: u32, audio_delay: u32) -> Vec<u8> {
         ],
     );
     let mut vstrf = Vec::new();
-    le(&mut vstrf, &[40, W, H]);
+    le(&mut vstrf, &[40, width, height]);
     vstrf.extend_from_slice(&1u16.to_le_bytes());
     vstrf.extend_from_slice(&24u16.to_le_bytes());
     le(&mut vstrf, &[0, image as u32, 0, 0, 0, 0]);
@@ -165,11 +218,12 @@ fn movie_with(frames: u32, audio_delay: u32) -> Vec<u8> {
     for i in 0..frames {
         let mut pixels = Vec::with_capacity(image);
         // Bottom-up rows of blue, green, red.
-        for y in (0..H).rev() {
-            let [r, g, b] = if y < H / 2 { top(i) } else { bottom(i) };
-            for _ in 0..W {
+        for y in (0..height).rev() {
+            let [r, g, b] = if y < height / 2 { top(i) } else { bottom(i) };
+            for _ in 0..width {
                 pixels.extend_from_slice(&[b, g, r]);
             }
+            pixels.resize(pixels.len().next_multiple_of(4), 0);
         }
         let at = chunk(&mut movi, b"00db", &pixels);
         idx.extend_from_slice(b"00db");
@@ -233,9 +287,14 @@ fn play_through(mut p: Player) {
         "the soundtrack is handed out once"
     );
 
-    // Let the decoder get ahead (it stops a few pictures ahead), then play
-    // 100 ms: the clock is the sound.
-    std::thread::sleep(Duration::from_millis(300));
+    // Let the decoder get ahead until its queue is full (each picture's
+    // sound, 100 ms, is in the ring before the next picture is decoded),
+    // then play 100 ms: the clock is the sound.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while p.decoded_ahead() < QUEUE_FRAMES {
+        assert!(Instant::now() < deadline, "the decoder never got ahead");
+        std::thread::sleep(Duration::from_millis(1));
+    }
     let mut out = vec![0.0f32; 2 * (OUT_RATE as usize / 10)];
     audio.render(&mut out, OUT_RATE);
     assert_eq!(p.audio_position(), Some(Duration::from_millis(100)));
@@ -325,12 +384,72 @@ fn without_an_engine_the_movie_plays_on_the_wall_clock() {
     }
 }
 
+/// An audio engine for a test: plays 10 ms of the soundtrack every 10 ms on
+/// a thread of its own, until stopped.
+struct Engine {
+    stop: Arc<AtomicBool>,
+    thread: std::thread::JoinHandle<Vec<Block>>,
+}
+
+/// What one 10 ms block the engine played held.
+#[derive(Debug, Clone, Copy)]
+struct Block {
+    /// Some of it is sound.
+    sound: bool,
+    /// Its last frames are silence: the ring ran dry before it was full.
+    silent_tail: bool,
+}
+
+impl Engine {
+    fn start(p: &mut Player) -> Engine {
+        let mut audio = p.take_audio().expect("the movie has sound");
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut blocks = Vec::new();
+                let mut out = vec![0.0f32; 2 * (OUT_RATE as usize / 100)];
+                while !stop.load(Ordering::Relaxed) {
+                    out.fill(0.0);
+                    audio.render(&mut out, OUT_RATE);
+                    // The tone is never exactly 0 for several output frames
+                    // in a row.
+                    blocks.push(Block {
+                        sound: out.iter().any(|s| *s != 0.0),
+                        silent_tail: out[out.len() - 8..].iter().all(|s| *s == 0.0),
+                    });
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                blocks
+            })
+        };
+        Engine { stop, thread }
+    }
+
+    /// Stops the engine; the blocks it played.
+    fn stop(self) -> Vec<Block> {
+        self.stop.store(true, Ordering::Relaxed);
+        self.thread.join().unwrap()
+    }
+}
+
+/// The blocks that ran dry while the soundtrack was playing: from its first
+/// sound to its last.
+fn underruns(blocks: &[Block]) -> usize {
+    let first = blocks.iter().position(|b| b.sound);
+    let last = blocks.iter().rposition(|b| b.sound);
+    let (Some(first), Some(last)) = (first, last) else {
+        return 0;
+    };
+    blocks[first..last].iter().filter(|b| b.silent_tail).count()
+}
+
 /// Sound stored well behind its pictures (1.2 s here, more than the
 /// picture queue's usual few pictures) still reaches the audio engine in
 /// time: the decoder reads on past a full picture queue while the sound is
-/// starving, so the movie's clock follows the sound to the end and never
-/// falls to the wall clock (which would leave the sound behind the
-/// pictures by the gap for the rest of the movie).
+/// starving, so the sound never runs dry, the movie's clock follows the
+/// sound to the end and never falls to the wall clock (which would leave
+/// the sound behind the pictures by the gap for the rest of the movie).
 #[test]
 fn sound_stored_behind_its_pictures_keeps_the_movie_on_the_sound_clock() {
     const LONG: u32 = 30;
@@ -341,20 +460,7 @@ fn sound_stored_behind_its_pictures_keeps_the_movie_on_the_sound_clock() {
         OUT_RATE,
     )
     .unwrap();
-    let mut audio = p.take_audio().expect("the movie has sound");
-    // An audio engine: 10 ms of sound every 10 ms, on a thread of its own.
-    let stop = Arc::new(AtomicBool::new(false));
-    let engine = {
-        let stop = Arc::clone(&stop);
-        std::thread::spawn(move || {
-            let mut out = vec![0.0f32; 2 * (OUT_RATE as usize / 100)];
-            while !stop.load(Ordering::Relaxed) {
-                out.fill(0.0);
-                audio.render(&mut out, OUT_RATE);
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        })
-    };
+    let engine = Engine::start(&mut p);
     let video = Duration::from_secs_f64(f64::from(LONG) / f64::from(FPS));
     let start = Instant::now();
     let mut shown = Vec::new();
@@ -375,11 +481,18 @@ fn sound_stored_behind_its_pictures_keeps_the_movie_on_the_sound_clock() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    stop.store(true, Ordering::Relaxed);
-    engine.join().unwrap();
+    let took = start.elapsed();
+    let blocks = engine.stop();
     assert!(
         worst < Duration::from_millis(60),
         "the clock left the sound by {worst:?}"
+    );
+    // The first block may come before the decoder has the sound ready.
+    let dry = underruns(&blocks);
+    assert!(dry <= 1, "the sound ran dry {dry} times while it played");
+    assert!(
+        took < video + Duration::from_millis(500),
+        "over after {took:?}, for {video:?} of movie"
     );
     let sound = p.audio_position().unwrap();
     assert!(
@@ -389,6 +502,79 @@ fn sound_stored_behind_its_pictures_keeps_the_movie_on_the_sound_clock() {
     assert!(shown.len() >= LONG as usize - 3, "{} shown", shown.len());
     assert!(shown.windows(2).all(|w| w[0] < w[1]));
     assert_eq!(p.error(), None);
+}
+
+/// In a file whose sound is stored next to its pictures, the sound keeps
+/// up by itself, so the decoder keeps its usual few pictures ahead while an
+/// engine plays the movie, at a picture rate whose queue holds less sound
+/// than a long low-water mark would ask for.
+#[test]
+fn a_well_interleaved_movie_keeps_a_short_picture_queue() {
+    let avi = Avi {
+        fps: 25,
+        frames: 50,
+        ..Avi::default()
+    };
+    let mut p =
+        Player::open_reader(Box::new(Cursor::new(avi.bytes())), "even.avi", OUT_RATE).unwrap();
+    let engine = Engine::start(&mut p);
+    let start = Instant::now();
+    let mut most = 0;
+    let mut shown = 0;
+    while !p.finished() {
+        assert!(start.elapsed() < Duration::from_secs(10), "never finished");
+        most = most.max(p.decoded_ahead());
+        if p.next_frame().is_some() {
+            shown += 1;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let blocks = engine.stop();
+    assert!(
+        most <= QUEUE_FRAMES + 1,
+        "up to {most} pictures decoded ahead"
+    );
+    assert!(shown >= 47, "{shown} shown");
+    let dry = underruns(&blocks);
+    assert!(dry <= 1, "the sound ran dry {dry} times while it played");
+    assert_eq!(p.error(), None);
+}
+
+/// Pictures over the largest side are refused when the movie opens, before
+/// anything is decoded; the largest side itself plays.
+#[test]
+fn pictures_over_the_largest_side_are_refused() {
+    let max = MAX_PICTURE_SIDE;
+    for (width, height) in [(max + 1, 2), (2, max + 1)] {
+        let avi = Avi {
+            width,
+            height,
+            frames: 2,
+            ..Avi::default()
+        };
+        let err = Player::open_reader(Box::new(Cursor::new(avi.bytes())), "big.avi", OUT_RATE)
+            .err()
+            .unwrap();
+        assert!(
+            matches!(err, MovieError::Unsupported(_)),
+            "{width}x{height}: {err:?}"
+        );
+    }
+    let avi = Avi {
+        width: max,
+        height: 2,
+        frames: 2,
+        ..Avi::default()
+    };
+    let mut p =
+        Player::open_reader(Box::new(Cursor::new(avi.bytes())), "wide.avi", OUT_RATE).unwrap();
+    assert_eq!(p.size(), (max, 2));
+    let f = p.decoded_frame(Duration::from_secs(10)).expect("a picture");
+    assert_eq!((f.width, f.height), (max, 2));
+    assert_eq!(
+        f.rgba(max - 1, 0),
+        Some([top(0)[0], top(0)[1], top(0)[2], 255])
+    );
 }
 
 #[test]

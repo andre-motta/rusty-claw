@@ -110,7 +110,6 @@ impl Player {
         let Some(video_index) = input.best(ffi::AVMEDIA_TYPE_VIDEO, -1) else {
             return Err(MovieError::Unsupported("no picture stream".into()));
         };
-        let video = Decoder::open(&input, video_index)?;
         let st = input.stream(video_index);
         // SAFETY: the stream belongs to the open input.
         let (size, aspect, frame_time) = unsafe {
@@ -119,6 +118,8 @@ impl Player {
             if w <= 0 || h <= 0 {
                 return Err(MovieError::Unsupported("a picture without a size".into()));
             }
+            // Before any decoder or picture is made for it.
+            convert::check_size(w, h)?;
             let sar = ffi::av_guess_sample_aspect_ratio(input.fmt, st, std::ptr::null_mut());
             let sar = if sar.num > 0 && sar.den > 0 {
                 f64::from(sar.num) / f64::from(sar.den)
@@ -133,9 +134,11 @@ impl Player {
             (
                 (w as u32, h as u32),
                 aspect,
-                Duration::from_secs_f64(1.0 / rate),
+                Duration::try_from_secs_f64(1.0 / rate)
+                    .unwrap_or(Duration::from_nanos(1_000_000_000 / 30)),
             )
         };
+        let video = Decoder::open(&input, video_index)?;
         let mut sound = None;
         let mut audio = None;
         let mut link = None;
@@ -263,6 +266,14 @@ impl Player {
                 .unwrap_or_else(|e| e.into_inner())
                 .0;
         }
+    }
+
+    /// How many pictures are decoded and not shown yet: those in the queue
+    /// and the next one, taken but not due. For tests of the queue's
+    /// length.
+    #[doc(hidden)]
+    pub fn decoded_ahead(&self) -> usize {
+        self.shared.lock().frames.len() + usize::from(self.pending.is_some())
     }
 
     /// Where the soundtrack is, from the movie's start: the sound frames
