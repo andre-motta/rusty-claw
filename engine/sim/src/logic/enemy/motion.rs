@@ -22,9 +22,10 @@
 //!    1 px lift being on its exact height only), and a later bounce that
 //!    starts with its feet a pixel above the peg lands on it again at once.
 //! 3. Each axis moves by `(v + a dt / 2) dt`, at most 24 px; the speed
-//!    then grows by `a dt` (after a capped step, it is what the energy of
-//!    the capped move gives). Across there is no acceleration; up and down
-//!    there is gravity. A standing enemy (not riding a platform) moves its
+//!    then grows by `a dt` (after a capped step, from the speed the energy
+//!    of the capped move gives, so a crab woken after a long sleep falls
+//!    faster than that energy alone gives). Across there is no
+//!    acceleration; up and down there is gravity. A standing enemy (not riding a platform) moves its
 //!    exact height too, but the tiles keep it on its floor pixel; after
 //!    the collision its exact height goes back onto that pixel once it has
 //!    left it, with the upward speed that move back implies, so it carries
@@ -129,18 +130,34 @@ pub fn axis_step(v: &mut f64, a: f64) -> f64 {
     axis_step_for(v, a, TICK_S)
 }
 
-/// [`axis_step`] over `dt` seconds.
+/// [`axis_step`] over `dt` seconds. The speed always grows by `a dt`;
+/// after a capped move it grows from the speed the energy of that move
+/// gives, `sign(v) * sqrt(max(0, v^2 + 2 a d))`, not from the speed before
+/// it. A hermit crab woken after 1.152 s asleep, falling at 1079 px/s
+/// under gravity 800, moves the capped 24 px and then falls at
+/// `sqrt(1079^2 + 2 * 800 * 24) + 800 * 1.152`, about 2018 px/s.
 pub fn axis_step_for(v: &mut f64, a: f64, dt: f64) -> f64 {
+    let (d, base) = axis_move(v, a, dt);
+    *v = base + a * dt;
+    d
+}
+
+/// The move of [`axis_step_for`] and the speed it starts the next one from
+/// before `a dt` is added: the speed before the step, or after the 24 px
+/// cap the speed the energy of the capped move gives (kept as it is when
+/// there is no acceleration). `v` is left as it was.
+fn axis_move(v: &f64, a: f64, dt: f64) -> (f64, f64) {
     let d = (*v + 0.5 * a * dt) * dt;
     if d.abs() > STEP_LIMIT {
         let d = STEP_LIMIT.copysign(d);
-        if a != 0.0 {
-            *v = v.signum() * (*v * *v + 2.0 * a * d).max(0.0).sqrt();
-        }
-        d
+        let base = if a == 0.0 {
+            *v
+        } else {
+            v.signum() * (*v * *v + 2.0 * a * d).max(0.0).sqrt()
+        };
+        (d, base)
     } else {
-        *v += a * dt;
-        d
+        (d, *v)
     }
 }
 
@@ -150,9 +167,9 @@ pub fn axis_step_for(v: &mut f64, a: f64, dt: f64) -> f64 {
 /// and its speed is the one the energy of the move to the limit gives,
 /// `sign(v) * sqrt(max(0, v^2 + 2 a (limit - p)))` (negative when `v` is
 /// 0), with no `a dt` added; `v` is the speed before the step, or the
-/// speed after the 24 px cap when that applied, and it is kept as it is
-/// when there is no acceleration. Only a move that stays between the
-/// limits adds `a dt` to the speed.
+/// speed the energy of the capped move gives when the 24 px cap applied,
+/// and it is kept as it is when there is no acceleration. Only a move that
+/// stays between the limits adds `a dt` to the speed, capped or not.
 ///
 /// So an object driven against a limit by its speed, with gravity pulling
 /// it away, stays on the limit: `limit - p` is the overshoot of the step,
@@ -160,17 +177,16 @@ pub fn axis_step_for(v: &mut f64, a: f64, dt: f64) -> f64 {
 /// in a high arc reaches the top of its range, its flight line, and stays
 /// on it to the end of the carry, Marrow hanging under it.
 fn bounded_axis_step(v: &mut f64, a: f64, dt: f64, from: f64, (min, max): (i32, i32)) -> f64 {
-    let before = *v;
-    let capped = ((before + 0.5 * a * dt) * dt).abs() > STEP_LIMIT;
-    let p = from + axis_step_for(v, a, dt);
+    let (d, base) = axis_move(v, a, dt);
+    let p = from + d;
     let limit = if p > f64::from(max) {
         f64::from(max)
     } else if p < f64::from(min) {
         f64::from(min)
     } else {
+        *v = base + a * dt;
         return p;
     };
-    let base = if capped { *v } else { before };
     *v = if a == 0.0 {
         base
     } else {
@@ -671,14 +687,41 @@ mod tests {
         let d = axis_step(&mut v, 2000.0);
         assert!((d - 0.324).abs() < 1e-12);
         assert!((v - 36.0).abs() < 1e-12);
-        // Fast: capped, the speed from the energy of the capped move.
+        // Fast: capped, the speed from the energy of the capped move, then
+        // a dt on top.
         let mut v = 2000.0;
         let d = axis_step(&mut v, 2000.0);
         assert_eq!(d, 24.0);
-        assert!((v - (2000.0f64 * 2000.0 + 2.0 * 2000.0 * 24.0).sqrt()).abs() < 1e-9);
+        let energy = (2000.0f64 * 2000.0 + 2.0 * 2000.0 * 24.0).sqrt();
+        assert!((v - (energy + 36.0)).abs() < 1e-9);
         let mut v = -2000.0;
         assert_eq!(axis_step(&mut v, 0.0), -24.0);
         assert_eq!(v, -2000.0);
+    }
+
+    #[test]
+    fn a_capped_step_after_a_sleep_adds_a_dt_to_the_energy_speed() {
+        // A hatched hermit crab falling at 1079 px/s under gravity 800,
+        // woken after 1.152 s asleep: the step is capped at 24 px and the
+        // crab then falls at the energy speed of that move plus a dt.
+        let mut v = 1079.0;
+        let d = axis_step_for(&mut v, 800.0, 1.152);
+        assert_eq!(d, STEP_LIMIT);
+        let energy = (1079.0f64 * 1079.0 + 2.0 * 800.0 * 24.0).sqrt();
+        assert_eq!(v, energy + 800.0 * 1.152);
+        assert!((v - 2018.25).abs() < 0.01);
+        // Inside its limits the bounded step gives the same speed.
+        let mut b = 1079.0;
+        let p = bounded_axis_step(&mut b, 800.0, 1.152, 7364.0, (0, 100_000));
+        assert_eq!((p, b), (7364.0 + STEP_LIMIT, v));
+        // Later, falling at 2213.16 px/s, one 18 ms step reaches the cap
+        // again: 24 px, where the energy speed alone (1164.58 px/s) gives
+        // about 21.
+        let mut v = 2213.16;
+        assert_eq!(axis_step_for(&mut v, 800.0, 0.018), STEP_LIMIT);
+        let mut v = 1164.58;
+        let d = axis_step_for(&mut v, 800.0, 0.018);
+        assert_eq!(d.trunc(), 21.0);
     }
 
     #[test]
@@ -851,15 +894,17 @@ mod tests {
             7287.0
         );
         assert!(v <= 0.0);
-        // After the 24 px cap, the energy speed of the capped move is the
-        // base of the limit's.
+        // After the 24 px cap, the energy speed of the capped move, with
+        // no a dt, is the base of the limit's.
         let mut v = 2000.0;
         let mut capped = 2000.0;
         let d = axis_step_for(&mut capped, 200.0, dt);
         assert_eq!(d, STEP_LIMIT);
+        let energy = (2000.0f64 * 2000.0 + 2.0 * 200.0 * d).sqrt();
+        assert_eq!(capped, energy + 200.0 * dt);
         let p = bounded_axis_step(&mut v, 200.0, dt, 7270.0, (7029, 7287));
         assert_eq!(p, 7287.0);
-        assert_eq!(v, speed_after(capped, 200.0, 7287.0 - (7270.0 + d)));
+        assert_eq!(v, speed_after(energy, 200.0, 7287.0 - (7270.0 + d)));
     }
 
     #[test]

@@ -1634,9 +1634,37 @@ pub fn census(level: &SimLevel) -> [u32; TREASURE_KINDS] {
     out
 }
 
+/// True when the end-of-level tally is perfect: every treasure row
+/// collected all of its kind. A row counts `collected` of a total that is
+/// the level's count of the kind ([`census`]), or what was collected when
+/// that is more, and it is complete when the two are equal. The booty
+/// screen gives its extra life on this test, and the one-game replay hands
+/// that life on by it.
+pub fn perfect_tally(collected: &[u32; TREASURE_KINDS], census: &[u32; TREASURE_KINDS]) -> bool {
+    collected.iter().zip(census).all(|(&c, &n)| c == c.max(n))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_perfect_tally_needs_every_row_complete() {
+        let mut census = [0; TREASURE_KINDS];
+        census[0] = 40;
+        census[3] = 2;
+        let mut collected = census;
+        assert!(perfect_tally(&collected, &census));
+        // More than the count (treasure from outside it): the row's total
+        // is what was collected, so it is still complete.
+        collected[0] = 41;
+        assert!(perfect_tally(&collected, &census));
+        // One short in any row is not perfect.
+        collected[3] = 1;
+        assert!(!perfect_tally(&collected, &census));
+        // A level with no treasure is perfect.
+        assert!(perfect_tally(&[0; TREASURE_KINDS], &[0; TREASURE_KINDS]));
+    }
 
     #[test]
     fn the_table_is_complete_and_consistent() {

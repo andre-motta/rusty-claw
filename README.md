@@ -596,7 +596,12 @@ An enemy's move up or down that would take it past the top or bottom
 of its range puts it there and keeps the speed the move's energy gives,
 with no gravity added, so the parrot carrying Marrow high across the
 room stays on its flight line to the carry's end, with Marrow hanging
-under it, level with Claw's ledge. After a death the game shows a frame
+under it, level with Claw's ledge. A move that stays within the range
+but is held to the 24 px a step allows still gains gravity's speed for
+the step on top of the speed the held move's energy gives, so a hermit
+crab hatched in the seventh level and woken after a long sleep falls as
+fast as in the original and makes its random roll on the same tick.
+After a death the game shows a frame
 of its own at the checkpoint once the respawn's passes are over (a warp
 does too), so an enemy that must be on screen to see Claw, as Marrow
 put back on his ledge must, sees him in the first tick after the

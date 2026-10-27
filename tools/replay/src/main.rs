@@ -205,6 +205,7 @@ use claw_sim::input::{
     DirectiveKind, ScriptCommand, ScriptTuning, script_checkpoint, script_health,
 };
 use claw_sim::logic::enemy::crab::CrabValues;
+use claw_sim::logic::pickup::perfect_tally;
 use claw_sim::player::hit::MAX_LIVES;
 use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::player::progress::{parse_start_lines, start_lines};
@@ -940,13 +941,12 @@ fn crab_values(
 /// game's flow carries it through the booty screen: Claw's progress at
 /// the level's end (play stops in the tick the level is won, see
 /// [`Sim::level_ended`]), with one more life when the tally was perfect
-/// (every treasure row collected everything the level holds of its kind)
-/// and Claw has fewer than the most lives.
+/// (every treasure row collected everything the level holds of its kind,
+/// the booty screen's test, see [`perfect_tally`]) and Claw has fewer
+/// than the most lives.
 pub fn hands_on(sim: &Sim) -> Carry {
     let mut carry = sim.carry();
-    let collected = sim.stats().treasure_level;
-    let census = sim.treasure_census();
-    let perfect = collected.iter().zip(census).all(|(&c, n)| c >= n);
+    let perfect = perfect_tally(&sim.stats().treasure_level, &sim.treasure_census());
     if perfect && carry.lives < MAX_LIVES {
         carry.lives += 1;
     }
