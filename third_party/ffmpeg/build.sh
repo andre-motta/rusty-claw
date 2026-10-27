@@ -685,8 +685,16 @@ if [ "$replace" = yes ] && [ -e "$prefix" ]; then
     # The build without AV1 in FFMPEG_PREFIX goes only now that this one is
     # ready.
     mv "$prefix" "$work/replaced" || fail "cannot move the build in $prefix aside"
+    # Moving across file systems copies, which can fail partway (a full
+    # disk): the build without AV1 then goes back.
+    if ! mv "$stage$prefix" "$prefix"; then
+        rm -rf "$prefix"
+        mv "$work/replaced" "$prefix" || fail "cannot move the new build into $prefix, nor the build without AV1 back (it is in $work/replaced)"
+        fail "cannot move the new build into $prefix; the build without AV1 is back"
+    fi
+else
+    mv "$stage$prefix" "$prefix"
 fi
-mv "$stage$prefix" "$prefix"
 if [ "$av1" = yes ]; then rm -f "$av1_record" "$av1_log"; fi
 rm -rf "$work"
 signal rebuilt
