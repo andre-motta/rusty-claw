@@ -1,4 +1,4 @@
-//! Eight rules of the seventh level's play and one value of its crabs on
+//! Nine rules of the seventh level's play and one value of its crabs on
 //! your own install (skipped without `CLAW_INSTALL`), each pinned to a
 //! moment of an earlier route where the original game showed it.
 //!
@@ -54,7 +54,14 @@
 //!   refused when that spot is past its patrol limit by any fraction: the
 //!   pirate of record 2399, walking back at x 16002.1 with its limit at
 //!   16102, stays on the floor when Claw swings at tick 4830, and the
-//!   swing's blow hits it at tick 4838.
+//!   swing's blow hits it at tick 4838;
+//! - an enemy's step held to the 24 px a step allows, within its range,
+//!   still gains gravity's speed for the step on top of the speed the
+//!   held move's energy gives: in the level's part of the whole game in
+//!   `routes/game/` (from the progress and the crabs' values of its
+//!   header), the third crab of the nest of record 286, woken at tick
+//!   6524 after 1.152 s asleep, falls at 2018.25 px/s and makes its
+//!   random roll at tick 6566.
 
 use std::path::Path;
 
@@ -156,6 +163,11 @@ struct Run {
 
 impl Run {
     fn new(level: &SimLevel, text: &str, crabs: &str) -> Run {
+        Run::with_values(level, text, CrabValues::parse(crabs).unwrap())
+    }
+
+    /// [`Run::new`] with the crabs' values already read.
+    fn with_values(level: &SimLevel, text: &str, crabs: CrabValues) -> Run {
         let script = InputScript::parse(text).unwrap();
         let seed = script.header.seed.expect("the route names its seed");
         let cfg = route::sim_config(TuningName::Original, seed);
@@ -170,7 +182,6 @@ impl Run {
             ),
             None => Sim::new(level.clone(), cfg),
         };
-        let crabs = CrabValues::parse(crabs).unwrap();
         crabs.apply(&mut sim);
         Run {
             sim,
@@ -916,5 +927,76 @@ fn install_a_hop_back_a_fraction_past_its_limit_is_refused() {
     println!(
         "the pirate of record 2399 at x {exact:.2} does not hop back past its limit 16102 and is hit at tick 4838; random state after it {}",
         run.rng[4838]
+    );
+}
+
+/// The third crab of the nest of record 286.
+const NEST_286_THIRD: CrabKey = CrabKey::Hatched(Some(286), Some(3));
+
+/// The seventh level's route of the whole game in `routes/game/`, played
+/// from the progress it starts with and the crabs' values of its header.
+fn game_level7(level: &SimLevel) -> Run {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("routes/game/level1-original.level7.csv");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let crabs = CrabValues::from_header(&text).unwrap();
+    Run::with_values(level, &text, crabs)
+}
+
+#[test]
+fn install_a_crab_woken_after_a_sleep_falls_on_with_gravity() {
+    let Some(root) = install() else { return };
+    let level = level7(&root);
+    let mut run = game_level7(&level);
+    let speed = |run: &Run, c: ObjectId| {
+        enemy::data_of(run.sim.objects().get(c).unwrap())
+            .expect("an enemy")
+            .vy
+    };
+    run.to(6359);
+    assert!(run.crab(NEST_286_THIRD).is_none(), "not hatched yet");
+    run.to(6360);
+    let c = run.crab(NEST_286_THIRD).expect("hatched at tick 6360");
+    assert_eq!(run.at(c), (20342, 6784));
+    assert_eq!(speed(&run, c), -361.0);
+    // It flies to (20667, 7364), falling at 1079 px/s, and sleeps there
+    // out of the active area.
+    run.to(6523);
+    assert_eq!(run.at(c), (20667, 7364));
+    assert!((speed(&run, c) - 1079.0).abs() < 1e-6);
+    // Woken at tick 6524 after 1.152 s: a step held to 24 px, then the
+    // speed that move's energy gives and gravity's 800 px/s^2 for the
+    // whole sleep.
+    run.to(6524);
+    assert_eq!(run.at(c), (20691, 7388));
+    let energy = (1079.0f64 * 1079.0 + 2.0 * 800.0 * 24.0).sqrt();
+    assert!((speed(&run, c) - (energy + 800.0 * 1.152)).abs() < 1e-3);
+    // Fast enough by tick 6536 that one 18 ms step is held to 24 px too
+    // (21 px with the energy speed alone), so it is 3 px lower from then.
+    run.to(6535);
+    assert_eq!(run.at(c), (20727, 7484));
+    run.to(6536);
+    assert_eq!(run.at(c), (20730, 7508));
+    // Woken on a pulse tick at 6566 it makes its random roll there, as in
+    // the original, and the random state matches the original's on every
+    // tick through 6599.
+    run.to(6565);
+    assert_eq!(run.at(c), (20774, 7556));
+    run.to(6566);
+    assert_eq!(run.at(c), (20787, 7580), "awake at tick 6566");
+    run.to(6599);
+    for (t, rng) in [
+        (6524, 3_541_396_923),
+        (6536, 2_742_980_805),
+        (6565, 3_217_337_277),
+        (6566, 1_695_562_387),
+        (6598, 450_333_034),
+        (6599, 3_896_235_064),
+    ] {
+        assert_eq!(run.rng[t], rng, "tick {t}");
+    }
+    println!(
+        "the third crab of nest 286, woken at tick 6524 falling at {:.2} px/s, makes its roll at tick 6566; random state after it {}",
+        energy + 800.0 * 1.152,
+        run.rng[6566]
     );
 }
