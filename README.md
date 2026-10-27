@@ -225,12 +225,24 @@ one run, and `--movie INDEX|FILE` plays one movie and exits. INDEX is one
 of `-2` (the attract clip), `-1` (the logo), `0` (the intro), `2`, `4`,
 `6`, `8`, `10`, `12`, `13` (after those levels) and `14` (the ending);
 the odd numbers 1 to 11 name no movie and are refused. FILE is any movie
-file.
+file. `--movie` exits with status 0 when the movie played to its end or
+was skipped, and with status 1 and a one-line message when it was not
+found, could not be opened or shown, or stopped before its first picture,
+so a script can check your own copies with it.
 
 Escape, or the gamepad's Back or Start button, skips a movie file; any
-key, click or gamepad button skips a clip of the movie archive. Keys
-pressed during a movie do nothing on the screen after it. Pictures show
-ahead of the sound by the sound output's latency.
+key, click or gamepad button skips a clip of the movie archive. The
+window's own keys (F11 fullscreen, F10 window size, F9 aspect and F8
+scaling, or the keys you bound to them) work during a movie and never
+skip it. Keys pressed during a movie do nothing on the screen after it.
+Pictures show ahead of the sound by the sound output's latency.
+
+While the game's window is in the background a movie holds, its picture
+and its sound, and goes on from where it was when the window is back in
+front, as play pauses. A movie without sound has no soundtrack to
+hold it: it shows no new picture in the background and goes on at its
+own time. The main menu's idle time does not count in the background
+either, so the intro never starts while nobody sees it.
 
 Where movies come from, best first:
 
@@ -260,10 +272,12 @@ No movie file comes with the source, and the game never writes one.
 The Display page's movie interlacing switch is kept for the run only and
 changes nothing: movies always show whole.
 
-Building FFmpeg for the movies is one command, `make ffmpeg`, once per
-machine; [third_party/ffmpeg/README.md](third_party/ffmpeg/README.md) has
-the details. A game built without it plays no movies, says so once at
-start-up, and goes on as if the install had none.
+Movies need FFmpeg and a game built with the `movies` feature;
+[third_party/ffmpeg/README.md](third_party/ffmpeg/README.md) has the
+details for every platform. On Linux, `make ffmpeg` builds FFmpeg once per
+machine and `make run-game` then builds the game with movies. A game
+built without them plays no movies, says so once at start-up (pointing at
+that README), and goes on as if the install had none.
 
 ## Settings and saved games
 

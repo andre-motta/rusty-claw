@@ -15,18 +15,34 @@
 //! Skipping: a movie file skips on Escape or a pad's Back or Start button;
 //! a clip of the movie archive on any key, mouse click or pad button
 //! ([`skips`]). Every input while a movie plays is the movie's: none of it
-//! reaches the screen that follows.
+//! reaches the screen that follows. The keys of the window's own commands
+//! (fullscreen, window size, aspect and scaling) are the exception: they
+//! run their command and never skip ([`movie_key`]).
+//!
+//! In the background: while the window is in the background a playing
+//! movie holds, its pictures and its sound, and goes on from there when the
+//! window is back in front ([`MoviePlayback::hold`]), as play pauses. A
+//! movie runs on its soundtrack's clock while an audio engine plays it, so
+//! holding the sound holds the movie; a movie without sound runs on the
+//! wall clock, which no hold stops: it shows no new picture in the
+//! background and goes on at its own time when the window comes back.
 //!
 //! Only the game with its menus plays movies ([`movies_allowed`]): from
 //! the title, or straight in a level. Replays, traces, benchmarks and the
 //! tools never do, so movies change no recorded or measured run. `--movie
 //! INDEX|FILE` plays one movie and ends the program ([`MOVIE_INDICES`] are
-//! the indices it takes); `--no-movies` turns them off for the run.
+//! the indices it takes), with an error when the movie did not play or
+//! could not be shown ([`MovieEnd::Failed`]); `--no-movies` turns them off
+//! for the run.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
+use claw_audio::MusicSource;
 use claw_movie::{
     ChromaSiting, FileKind, FrameLayout, Matrix, MovieError, MovieIndex, MovieSet, Player, Roots,
     SkipRule, Source, VideoFrame, locate_all, open_first,
@@ -36,8 +52,8 @@ use winit::keyboard::KeyCode;
 
 use crate::audio::AudioBridge;
 use crate::flow::{Flow, MovieShelf};
-use crate::input::{GilrsSource, PadEvent, PadEventKind, PadSource};
-use crate::keymap::PadButton;
+use crate::input::{GilrsSource, InputRouter, PadEvent, PadEventKind, PadSource};
+use crate::keymap::{Action, Command, PadButton};
 use crate::settings::{Mode, Settings};
 
 /// Rate of a movie's soundtrack when no audio engine plays it.
@@ -81,6 +97,24 @@ impl MovieTarget {
                     )
                 }),
             Err(_) => Ok(MovieTarget::File(PathBuf::from(s))),
+        }
+    }
+
+    /// The movie as the command line named it: its index or its file.
+    pub fn name(&self) -> String {
+        match self {
+            MovieTarget::Index(i) => i.to_string(),
+            MovieTarget::File(path) => path.display().to_string(),
+        }
+    }
+
+    /// How a `--movie` run of this movie ends once the movie ended: well
+    /// when it played to its end or was skipped, with an error (a one-line
+    /// message) when it failed, so the program's exit status says so.
+    pub fn result(&self, end: MovieEnd) -> Result<(), String> {
+        match end {
+            MovieEnd::Finished | MovieEnd::Skipped => Ok(()),
+            MovieEnd::Failed => Err(format!("{} did not play", self.name())),
         }
     }
 
@@ -159,9 +193,15 @@ pub fn shelf(roots: &Roots) -> MovieShelf {
     }
 }
 
-/// The one line a build without the movie player prints at start-up.
-pub const NO_PLAYER: &str = "this build plays no movies; `make ffmpeg` builds FFmpeg, then \
-                             `make run-game` builds the game with them";
+/// The one line a build without the movie player prints at start-up (and
+/// the error of `--movie` in such a build).
+pub const NO_PLAYER: &str = "this build plays no movies: build FFmpeg and the game with the \
+                             `movies` feature, see third_party/ffmpeg/README.md (on Linux, \
+                             `make ffmpeg`, then `make run-game`)";
+
+/// How long a movie that goes on after a hold waits for its soundtrack to
+/// move before it reads its clock again (see [`MoviePlayback::hold`]).
+const RESUME_WAIT: Duration = Duration::from_millis(500);
 
 /// An input while a movie plays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +225,109 @@ pub fn skips(rule: SkipRule, event: &RawInput) -> bool {
         ),
         SkipRule::AnyInput => true,
     }
+}
+
+/// The window command a key bound to `action` runs while a movie plays:
+/// fullscreen, the next window size, the next aspect or the scaling.
+pub fn window_command(action: Option<Action>) -> Option<Command> {
+    match action? {
+        Action::Command(
+            c @ (Command::ToggleFullscreen
+            | Command::NextWindowSize
+            | Command::NextAspect
+            | Command::ToggleScale),
+        ) => Some(c),
+        _ => None,
+    }
+}
+
+/// What a key does while a movie plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MovieKey {
+    /// It went down and runs this window command; the movie never sees it,
+    /// so it never skips.
+    Window(Command),
+    /// It went down and is the movie's (see [`skips`]).
+    Movie(RawInput),
+    /// It went up: nothing to do.
+    Released,
+}
+
+impl MovieKey {
+    /// Whether it skips a movie with `rule`: only a key that is the
+    /// movie's can.
+    pub fn skips(&self, rule: SkipRule) -> bool {
+        matches!(self, MovieKey::Movie(input) if skips(rule, input))
+    }
+}
+
+/// Routes a key while a movie plays. The router follows the keys held, but
+/// what they mean is not the screens' (see the module documentation): a
+/// key the keymap binds to a window command ([`window_command`]) runs it,
+/// and every other key that goes down is the movie's.
+pub fn movie_key(router: &mut InputRouter, code: KeyCode, down: bool) -> MovieKey {
+    let _ = router.key(code, down);
+    if !down {
+        return MovieKey::Released;
+    }
+    match window_command(router.keymap().action(code)) {
+        Some(c) => MovieKey::Window(c),
+        None => MovieKey::Movie(RawInput::Key(code)),
+    }
+}
+
+/// A movie's soundtrack as the audio engine plays it, with a switch that
+/// holds it: while held it plays silence and takes none of its samples, so
+/// the movie's clock, which counts them, stands still.
+pub struct HeldSound {
+    sound: Box<dyn MusicSource>,
+    held: Arc<AtomicBool>,
+}
+
+impl HeldSound {
+    /// `sound` with its switch, off (playing).
+    pub fn new(sound: Box<dyn MusicSource>) -> (HeldSound, Arc<AtomicBool>) {
+        let held = Arc::new(AtomicBool::new(false));
+        let s = HeldSound {
+            sound,
+            held: Arc::clone(&held),
+        };
+        (s, held)
+    }
+}
+
+impl std::fmt::Debug for HeldSound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HeldSound")
+            .field("held", &self.held.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
+}
+
+impl MusicSource for HeldSound {
+    fn render(&mut self, out: &mut [f32], rate: u32) {
+        // `out` comes zeroed: held, it stays silent.
+        if !self.held.load(Ordering::Acquire) {
+            self.sound.render(out, rate);
+        }
+    }
+}
+
+/// Whether a playing movie holds (see [`MoviePlayback::hold`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hold {
+    /// It plays.
+    Playing,
+    /// It holds: its clock is not read and its sound is held.
+    Held,
+    /// It goes on: its sound plays again, and its clock is read once the
+    /// soundtrack moved from `from` (or after [`RESUME_WAIT`] from `since`),
+    /// so it goes on from where it held rather than leaving its soundtrack
+    /// for the wall clock as if the sound had stalled.
+    Resuming {
+        from: Option<Duration>,
+        since: Instant,
+    },
 }
 
 /// The renderer's view of a decoded picture, for either layout.
@@ -273,6 +416,9 @@ pub struct MoviePlayback {
     source: Source,
     rule: SkipRule,
     progress: MovieProgress,
+    /// The switch that holds the soundtrack, when an audio engine plays it.
+    sound: Option<Arc<AtomicBool>>,
+    hold: Hold,
 }
 
 impl MoviePlayback {
@@ -284,16 +430,21 @@ impl MoviePlayback {
         let rate = audio.as_ref().map_or(SILENT_RATE, |a| a.out_rate());
         match open_first(candidates, rate) {
             Ok((mut player, source)) => {
+                let mut switch = None;
                 if let Some(a) = audio
                     && let Some(sound) = player.take_audio()
                 {
-                    a.set_movie(Some(sound));
+                    let (sound, held) = HeldSound::new(sound);
+                    a.set_movie(Some(Box::new(sound)));
+                    switch = Some(held);
                 }
                 Some(MoviePlayback {
                     rule: source.skip_rule(),
                     player,
                     source,
                     progress: MovieProgress::default(),
+                    sound: switch,
+                    hold: Hold::Playing,
                 })
             }
             Err(e) => {
@@ -310,9 +461,68 @@ impl MoviePlayback {
         }
     }
 
+    /// Holds the movie (`true`), pictures and sound, or lets it go on from
+    /// where it held (`false`); the window holds it while it is in the
+    /// background. Held, no new picture is due and the movie does not end
+    /// by itself; a skip or a picture that cannot be shown still ends it.
+    /// Holding a held movie, or letting a playing one go on, changes
+    /// nothing.
+    pub fn hold(&mut self, on: bool) {
+        match (on, self.hold) {
+            (true, Hold::Playing | Hold::Resuming { .. }) => {
+                if let Some(s) = &self.sound {
+                    s.store(true, Ordering::Release);
+                }
+                self.hold = Hold::Held;
+            }
+            (false, Hold::Held) => {
+                // Where the held soundtrack stands, before it plays again.
+                let from = self.player.audio_position();
+                if let Some(s) = &self.sound {
+                    s.store(false, Ordering::Release);
+                }
+                self.hold = Hold::Resuming {
+                    from,
+                    since: Instant::now(),
+                };
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether the movie's clock can be read: not while it holds, and
+    /// after a hold once its soundtrack moved again (or there is none
+    /// playing, or it did not move in [`RESUME_WAIT`]).
+    fn clock_ready(&self) -> bool {
+        match self.hold {
+            Hold::Playing => true,
+            Hold::Held => false,
+            Hold::Resuming { from, since } => {
+                self.sound.is_none()
+                    || self.player.audio_position() != from
+                    || since.elapsed() >= RESUME_WAIT
+            }
+        }
+    }
+
+    /// The movie's time, while it plays (`None` while it holds).
+    pub fn clock(&self) -> Option<Duration> {
+        self.clock_ready().then(|| self.player.clock())
+    }
+
+    /// Where the soundtrack is, from the movie's start (`None` without
+    /// sound).
+    pub fn sound_position(&self) -> Option<Duration> {
+        self.player.audio_position()
+    }
+
     /// The picture to upload now: the newest one due, when there is one
-    /// not shown yet.
+    /// not shown yet. None while the movie holds.
     pub fn frame(&mut self) -> Option<MoviePicture<'_>> {
+        if !self.clock_ready() {
+            return None;
+        }
+        self.hold = Hold::Playing;
         let frame = self.player.next_frame()?;
         self.progress.shown = true;
         Some(picture(frame))
@@ -336,7 +546,8 @@ impl MoviePlayback {
     /// How the movie ended, or `None` while it plays (see
     /// [`MovieProgress::end`]).
     pub fn end(&self) -> Option<MovieEnd> {
-        self.progress.end(self.player.finished())
+        let stream_over = self.clock_ready() && self.player.finished();
+        self.progress.end(stream_over)
     }
 
     /// Whether the movie is over, however it ended.
