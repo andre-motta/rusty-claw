@@ -43,9 +43,13 @@
 //! set otherwise), so the game never draws thousands of frames a second.
 //!
 //! Movies (see [`crate::movie`]): with its menus the window plays the
-//! movies the flow asks for, full screen with their sound, and
-//! [`run_movie`] opens it for one movie only. A playing movie takes every
-//! input; the screen after it sees none of them.
+//! movies the flow asks for, full screen with their sound, from the
+//! folders and sources the movie settings name
+//! ([`Settings::movie_roots`]), and [`run_movie`] opens it for one movie
+//! only. It hands the flow the movies it found, with whether the intro was
+//! seen and the logo is to be skipped ([`crate::flow::MovieShelf`]), unless
+//! movies are off (`--no-movies`, `movies = off`). A playing movie takes
+//! every input; the screen after it sees none of them.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -97,7 +101,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::audio::{AudioBridge, ViewInfo};
 use crate::bench::{Combat, PresentDetail, Report, Samples, Summary, WARMUP_S, combat_route};
-use crate::flow::{self, Effect, Flow, Screen, Start};
+use crate::flow::{self, Effect, Flow, MovieShelf, Screen, Start};
 use crate::input::{InputContext, InputRouter, Routed};
 use crate::keymap::{Action, Command, PadButton};
 use crate::load::{
@@ -1073,7 +1077,7 @@ impl App {
             Some(m) => eprintln!("rusty-claw: playing {}", m.source().describe()),
             None => {
                 if let Some(f) = self.flow.as_mut() {
-                    f.movie_finished();
+                    f.movie_missing();
                 }
             }
         }
@@ -1431,6 +1435,8 @@ impl App {
                 }
             }
             Effect::PlayMovie(index) => self.start_movie(index),
+            // The flow wrote it to the config file already.
+            Effect::RecordIntroSeen => {}
             Effect::Quit => event_loop.exit(),
         }
     }
@@ -2418,12 +2424,12 @@ fn run_app(
     let mut flow = None;
     let mut audio = None;
     let run_mode = RunMode::of(&settings);
-    let movie_roots = movie::roots(&settings);
+    let movie_roots = settings.movie_roots(&UserDirs::from_env());
     let movie_only = match &menus {
         Some(Start::Movie(target)) => Some(target.clone()),
         _ => None,
     };
-    let movies = movies_allowed(&run_mode) && settings.movies;
+    let movies = movies_allowed(&run_mode) && settings.movies_on();
     if movies && !claw_movie::available() {
         eprintln!("rusty-claw: {}", movie::NO_PLAYER);
     }
@@ -2452,8 +2458,14 @@ fn run_app(
             };
         let mut f = Flow::new(settings.clone(), saves, main, font, start);
         if movies && claw_movie::available() {
-            // Before the first effects, so the logo comes before the title.
-            f.set_movies(movie::shelf(&movie_roots));
+            // Before the first effects, so the start-up movies come before
+            // the title.
+            let shelf = MovieShelf {
+                intro_seen: settings.intro_seen,
+                skip_logo: settings.skip_logo,
+                ..movie::shelf(&movie_roots)
+            };
+            f.set_movies(shelf);
         }
         if let Some(why) = saves_off {
             // Shown on screen at start-up (and written to the terminal).

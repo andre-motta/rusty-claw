@@ -17,7 +17,8 @@ use claw_frame::{AudioCue, Buttons, GameEvent, SoundChannel, SoundCue, Weapon};
 use claw_game::Session;
 use claw_game::audio::{AudioBridge, ViewInfo};
 use claw_game::flow::{
-    self, Effect, FADE_MS, Flow, MENU_BED, Progress, START_SLOT, Screen, Start, control_row,
+    self, Effect, FADE_MS, Flow, IDLE_ROOT_MS, MENU_BED, MENU_BED_VOICE, MovieShelf, Progress,
+    START_SLOT, Screen, Start, control_row, replay_movie_index,
 };
 use claw_game::keymap::{Keymap, PadMap};
 use claw_game::load::start_override;
@@ -25,6 +26,7 @@ use claw_game::pause::{PauseInput, Pauses};
 use claw_game::saves::{SaveRecord, SaveStore, retail_level_name};
 use claw_game::session::{GameRecording, LevelRecording, Span, recorded_game_files, start_sim};
 use claw_game::settings::{LevelChoice, Settings};
+use claw_movie::{MovieIndex, MovieSet};
 use claw_sim::level::ObjectSpec;
 use claw_sim::logic::checkpoint::{MESSAGE_NOT_SAVED, MESSAGE_SAVED};
 use claw_sim::trace::TraceRow;
@@ -36,7 +38,7 @@ use claw_ui::menu::command::{
 use claw_ui::menu::draw::FontArt;
 use claw_ui::menu::nav::PRESS_MS;
 use claw_ui::menu::{MenuInput, MenuTree};
-use claw_ui::screens::booty::{BootyArt, BootyScreen};
+use claw_ui::screens::booty::{BootyArt, BootyPhase, BootyScreen};
 use claw_ui::screens::credits::{
     self, BLACK_MS, CreditsArt, CreditsEntry, CreditsPhase, CreditsScreen, FontMetrics, UNROLL_MS,
 };
@@ -146,6 +148,12 @@ struct Rig {
     ended: usize,
     paused: bool,
     quit: bool,
+    /// Movies asked for, in order.
+    movies: Vec<MovieIndex>,
+    /// How many times the intro was recorded as seen.
+    intro_records: usize,
+    /// Stops of the menu's loop.
+    bed_stops: usize,
     _dir: TempDir,
     saves: PathBuf,
     config: PathBuf,
@@ -163,6 +171,22 @@ impl Rig {
     }
 
     fn build(start: Start, level: LevelChoice, menu: MenuTree, prepare: impl FnOnce(&Path)) -> Rig {
+        Rig::build_with(start, level, menu, None, prepare)
+    }
+
+    /// A rig whose window found the movies of `shelf` (handed over before
+    /// the first effects, as the window does).
+    fn with_movies(start: Start, level: LevelChoice, menu: MenuTree, shelf: MovieShelf) -> Rig {
+        Rig::build_with(start, level, menu, Some(shelf), |_| {})
+    }
+
+    fn build_with(
+        start: Start,
+        level: LevelChoice,
+        menu: MenuTree,
+        shelf: Option<MovieShelf>,
+        prepare: impl FnOnce(&Path),
+    ) -> Rig {
         let dir = TempDir::new().unwrap();
         let saves = dir.path().join("saves");
         fs::create_dir_all(&saves).unwrap();
@@ -172,13 +196,16 @@ impl Rig {
         let mut settings = Settings::new(dir.path().join("install"), level);
         settings.config_path = Some(config.clone());
         let store = SaveStore::open(&saves).unwrap();
-        let flow = Flow::new(
+        let mut flow = Flow::new(
             settings,
             Some(store),
             Some(menu),
             FontArt::uniform(8, 10),
             start,
         );
+        if let Some(shelf) = shelf {
+            flow.set_movies(shelf);
+        }
         let mut rig = Rig {
             flow,
             sim: None,
@@ -189,6 +216,9 @@ impl Rig {
             ended: 0,
             paused: false,
             quit: false,
+            movies: Vec::new(),
+            intro_records: 0,
+            bed_stops: 0,
             _dir: dir,
             saves,
             config,
@@ -248,6 +278,11 @@ impl Rig {
                     }
                     Effect::Quit => self.quit = true,
                     Effect::Capture { action, pad } => self.captures.push((action, pad)),
+                    Effect::PlayMovie(index) => self.movies.push(index),
+                    Effect::RecordIntroSeen => self.intro_records += 1,
+                    Effect::Sound(AudioCue::Stop {
+                        voice: MENU_BED_VOICE,
+                    }) => self.bed_stops += 1,
                     _ => {}
                 }
             }
@@ -2452,4 +2487,520 @@ fn recording_a_game_again_lists_only_its_files_and_removes_nothing() {
     let level2 = LevelRecording::read(&second[1]).unwrap();
     assert_eq!(level2.level(), Some(2));
     assert_eq!(level2.start, carried);
+}
+
+// Movies.
+
+/// A shelf holding `movies`; `intro_seen` and `skip_logo` as given.
+fn shelf_of(movies: impl IntoIterator<Item = i8>, intro_seen: bool, skip_logo: bool) -> MovieShelf {
+    MovieShelf {
+        available: movies
+            .into_iter()
+            .map(|i| MovieIndex::new(i).unwrap())
+            .collect::<MovieSet>(),
+        intro_seen,
+        skip_logo,
+    }
+}
+
+/// Every movie of the game.
+fn every_movie() -> Vec<i8> {
+    vec![-1, 0, 2, 4, 6, 8, 10, 12, 13, 14]
+}
+
+/// The movie playing, failing when none is.
+fn playing(r: &Rig) -> MovieIndex {
+    match r.flow.screen() {
+        Screen::Movie(i) => {
+            assert_eq!(r.flow.playing_movie(), Some(i));
+            i
+        }
+        other => panic!("no movie plays: {other:?}"),
+    }
+}
+
+/// The window says the movie ended (or was skipped).
+fn movie_ends(r: &mut Rig) {
+    r.flow.movie_finished();
+    r.effects();
+}
+
+#[test]
+fn each_level_with_a_movie_plays_it_before_its_map_screen() {
+    for n in 1..=14u32 {
+        let mut r = Rig::with_movies(
+            Start::Play,
+            LevelChoice::Retail(n),
+            main_menu(),
+            shelf_of(every_movie(), true, false),
+        );
+        assert!(r.movies.is_empty(), "level {n}: no movie at the start");
+        r.update(300.0);
+        r.events(&[GameEvent::LevelComplete { after_ms: 100 }]);
+        let sounds = r.sounds.len();
+        r.update(200.0);
+        let expected = MovieIndex::after_level(n);
+        assert_eq!(
+            expected.is_some(),
+            [2, 4, 6, 8, 10, 12, 13, 14].contains(&n),
+            "level {n}"
+        );
+        assert_eq!(
+            r.movies,
+            expected.into_iter().collect::<Vec<_>>(),
+            "level {n}"
+        );
+        assert_eq!(r.ended, 1, "level {n}: the level ended first");
+        let Some(index) = expected else {
+            assert_eq!(r.flow.screen(), Screen::Booty, "level {n}");
+            assert!(!r.flow.cut_screen(), "level {n}");
+            continue;
+        };
+        assert_eq!(playing(&r), index, "level {n}");
+        assert!(!r.flow.cut_screen(), "level {n}: the movie, not the black");
+        assert!(r.flow.booty().is_some(), "level {n}: the map screen waits");
+        assert_eq!(r.music.last(), Some(&None), "level {n}: the music stopped");
+        // The map screen's sounds wait for the movie, however long it is,
+        // and the keys pressed during it stay the movie's.
+        for _ in 0..3 {
+            r.input(MenuInput::Confirm);
+        }
+        r.input(MenuInput::Back);
+        r.update(60_000.0);
+        assert_eq!(playing(&r), index, "level {n}");
+        assert_eq!(
+            r.sounds.len(),
+            sounds,
+            "level {n}: {:?}",
+            &r.sounds[sounds..]
+        );
+        movie_ends(&mut r);
+        assert_eq!(r.flow.screen(), Screen::Booty, "level {n}");
+        assert!(
+            r.flow.brightness() < 0.01,
+            "level {n}: the map screen fades in"
+        );
+        assert!(
+            r.sounds.len() > sounds,
+            "level {n}: the map screen's sounds"
+        );
+        assert_eq!(
+            r.flow.booty().unwrap().phase(),
+            BootyPhase::Map,
+            "level {n}: no key of the movie skipped the map screen"
+        );
+        // Then the tally as always: the next level, or the credits.
+        for _ in 0..3 {
+            r.input(MenuInput::Confirm);
+        }
+        let mut guard = 0;
+        while r.flow.screen() == Screen::Booty {
+            r.update(100.0);
+            guard += 1;
+            assert!(guard < 200, "level {n}: stuck at the tally");
+        }
+        if n < 14 {
+            assert_eq!(
+                r.flow.level(),
+                Some(&LevelChoice::Retail(n + 1)),
+                "level {n}"
+            );
+        } else {
+            assert_eq!(r.flow.screen(), Screen::Credits);
+        }
+        assert_eq!(r.movies.len(), 1, "level {n}: one movie only");
+    }
+}
+
+#[test]
+fn the_last_level_plays_its_movie_in_place_of_the_black_hold_or_holds_black_without_it() {
+    // Without the movie: the black hold, as without movies.
+    let mut r = Rig::with_movies(
+        Start::Play,
+        LevelChoice::Retail(14),
+        main_menu(),
+        shelf_of([-1, 0, 2, 13], true, false),
+    );
+    finish_the_game(&mut r);
+    assert!(r.movies.is_empty());
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    // With it: the movie, then the map screen at once, the tally and the
+    // credits.
+    let mut r = Rig::with_movies(
+        Start::Play,
+        LevelChoice::Retail(14),
+        main_menu(),
+        shelf_of([14], true, false),
+    );
+    r.update(300.0);
+    r.events(&[GameEvent::LevelComplete { after_ms: 100 }]);
+    r.update(200.0);
+    assert_eq!(playing(&r), MovieIndex::new(14).unwrap());
+    assert!(!r.flow.cut_screen());
+    assert!(r.flow.next_level().is_none());
+    r.update(flow::CUT_SCREEN_MS * 3.0);
+    assert_eq!(playing(&r), MovieIndex::new(14).unwrap());
+    let sounds = r.sounds.len();
+    movie_ends(&mut r);
+    assert_eq!(r.flow.screen(), Screen::Booty);
+    assert!(!r.flow.cut_screen(), "no black hold after the movie");
+    assert!(r.sounds.len() > sounds, "the map screen's sounds");
+    for _ in 0..3 {
+        r.input(MenuInput::Confirm);
+    }
+    let mut guard = 0;
+    while r.flow.screen() == Screen::Booty {
+        r.update(50.0);
+        guard += 1;
+        assert!(guard < 100, "stuck at the tally");
+    }
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert_eq!(r.started.len(), 1);
+    // A movie that cannot play leaves the map screen to follow at once.
+    let mut r = Rig::with_movies(
+        Start::Play,
+        LevelChoice::Retail(14),
+        main_menu(),
+        shelf_of([14], true, false),
+    );
+    r.update(300.0);
+    r.events(&[GameEvent::LevelComplete { after_ms: 100 }]);
+    r.update(200.0);
+    r.flow.movie_missing();
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::Booty);
+    assert!(!r.flow.cut_screen());
+}
+
+#[test]
+fn community_custom_levels_and_runs_without_movies_play_none() {
+    let mut r = Rig::with_movies(
+        Start::Play,
+        LevelChoice::Custom("X.WWD".into()),
+        main_menu(),
+        shelf_of(every_movie(), false, false),
+    );
+    r.update(300.0);
+    r.events(&[GameEvent::LevelComplete { after_ms: 100 }]);
+    r.update(200.0);
+    assert_eq!(r.flow.screen(), Screen::Booty);
+    assert!(r.movies.is_empty(), "no movie, at the start or after it");
+    // Without a shelf the window never hands over, and no movie is ever
+    // asked for: the start, the end of a level, the idle menu.
+    let mut r = Rig::new(Start::Title, |_| {});
+    r.reach_main_menu();
+    r.update(IDLE_ROOT_MS + FADE_MS + 100.0);
+    assert_eq!(r.flow.screen(), Screen::Title);
+    let mut r = Rig::with_level(Start::Play, LevelChoice::Retail(2), |_| {});
+    r.update(300.0);
+    win_and_skip_the_tally(&mut r);
+    assert!(r.movies.is_empty());
+    assert!(r.flow.movies().is_none());
+}
+
+#[test]
+fn a_first_run_plays_the_logo_then_the_intro_and_records_the_intro() {
+    // skip_logo does not count before the intro was seen.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of(every_movie(), false, true),
+    );
+    assert_eq!(r.movies, [MovieIndex::LOGO]);
+    assert!(r.flow.title().is_none(), "no title yet");
+    r.update(10_000.0);
+    assert_eq!(playing(&r), MovieIndex::LOGO);
+    movie_ends(&mut r);
+    assert_eq!(r.movies, [MovieIndex::LOGO, MovieIndex::INTRO]);
+    assert_eq!(playing(&r), MovieIndex::INTRO);
+    assert!(r.flow.title().is_none(), "no title between the movies");
+    assert_eq!(r.intro_records, 0);
+    assert!(!r.flow.settings().intro_seen);
+    // Skipped (or watched to its end): recorded, and the title follows.
+    movie_ends(&mut r);
+    assert_eq!(r.flow.screen(), Screen::Title);
+    assert!(r.flow.title().is_some());
+    assert!(r.sounds.contains(&"TITLE".to_string()));
+    assert_eq!(r.intro_records, 1);
+    assert!(r.flow.settings().intro_seen);
+    assert!(r.flow.movies().unwrap().intro_seen);
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(text.starts_with(CONFIG), "{text}");
+    assert!(text.lines().any(|l| l == "intro_seen = yes"), "{text}");
+    // The title plays out as usual.
+    r.reach_main_menu();
+    assert_eq!(r.movies.len(), 2);
+}
+
+#[test]
+fn later_runs_play_the_logo_only_unless_it_is_skipped() {
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of(every_movie(), true, false),
+    );
+    assert_eq!(r.movies, [MovieIndex::LOGO]);
+    movie_ends(&mut r);
+    assert_eq!(r.flow.screen(), Screen::Title);
+    assert_eq!(r.movies, [MovieIndex::LOGO], "no intro");
+    assert_eq!(r.intro_records, 0);
+    let text = fs::read_to_string(&r.config).unwrap();
+    assert!(!text.contains("intro_seen"), "{text}");
+    // skip_logo: straight to the title.
+    let r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of(every_movie(), true, true),
+    );
+    assert!(r.movies.is_empty());
+    assert_eq!(r.flow.screen(), Screen::Title);
+    assert!(r.flow.title().is_some());
+    // A run straight in a level plays neither, first run or not.
+    for seen in [false, true] {
+        let r = Rig::with_movies(
+            Start::Play,
+            LevelChoice::Retail(3),
+            main_menu(),
+            shelf_of(every_movie(), seen, false),
+        );
+        assert!(r.movies.is_empty());
+        assert_eq!(r.flow.screen(), Screen::Play);
+    }
+}
+
+#[test]
+fn a_missing_intro_is_not_recorded_as_seen() {
+    let nothing_recorded = |r: &Rig| {
+        assert_eq!(r.intro_records, 0);
+        assert!(!r.flow.settings().intro_seen);
+        assert!(!r.flow.movies().unwrap().intro_seen);
+        let text = fs::read_to_string(&r.config).unwrap();
+        assert!(!text.contains("intro_seen"), "{text}");
+    };
+    // Not on the shelf: the logo, then the title.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of([-1, 2], false, false),
+    );
+    assert_eq!(r.movies, [MovieIndex::LOGO]);
+    movie_ends(&mut r);
+    assert_eq!(r.flow.screen(), Screen::Title);
+    assert_eq!(r.movies, [MovieIndex::LOGO]);
+    nothing_recorded(&r);
+    // On the shelf but it could not play.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of([-1, 0], false, false),
+    );
+    movie_ends(&mut r);
+    assert_eq!(playing(&r), MovieIndex::INTRO);
+    r.flow.movie_missing();
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::Title);
+    nothing_recorded(&r);
+    // Only the intro, a first run: it plays alone.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of([0], false, false),
+    );
+    assert_eq!(r.movies, [MovieIndex::INTRO]);
+    movie_ends(&mut r);
+    assert_eq!(r.flow.screen(), Screen::Title);
+    assert_eq!(r.intro_records, 1);
+}
+
+#[test]
+fn the_idle_menu_shows_the_intro_movie_and_the_title_in_turn() {
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of(every_movie(), true, true),
+    );
+    r.reach_main_menu();
+    let stops = r.bed_stops;
+    // First the movie, after the menu rolls up; the menu's loop stops.
+    r.update(IDLE_ROOT_MS - 100.0);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    r.update(100.0);
+    r.update(FADE_MS + 50.0);
+    assert_eq!(playing(&r), MovieIndex::INTRO);
+    assert_eq!(r.movies, [MovieIndex::INTRO]);
+    assert!(r.bed_stops > stops, "the menu's loop stops for the movie");
+    assert_eq!(r.music.last(), Some(&None));
+    // No idle time runs while it plays.
+    r.update(IDLE_ROOT_MS * 2.0);
+    assert_eq!(playing(&r), MovieIndex::INTRO);
+    assert_eq!(r.intro_records, 0, "seen already");
+    // Then the main menu, with its loop again.
+    let sounds = r.sounds.len();
+    movie_ends(&mut r);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert!(r.sounds[sounds..].contains(&MENU_BED.to_string()));
+    r.update(FADE_MS);
+    // Next time the title, then the movie again.
+    r.update(IDLE_ROOT_MS + FADE_MS + 50.0);
+    assert_eq!(r.flow.screen(), Screen::Title);
+    assert_eq!(r.movies.len(), 1);
+    r.reach_main_menu();
+    r.update(IDLE_ROOT_MS + FADE_MS + 50.0);
+    assert_eq!(playing(&r), MovieIndex::INTRO);
+    assert_eq!(r.movies.len(), 2);
+    // Without the intro, the title every time.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of([-1, 2], true, true),
+    );
+    for _ in 0..2 {
+        r.reach_main_menu();
+        r.update(IDLE_ROOT_MS + FADE_MS + 50.0);
+        assert_eq!(r.flow.screen(), Screen::Title);
+    }
+    assert!(r.movies.is_empty());
+}
+
+/// The main menu with its Replay Movies page (the logo, the intro and the
+/// eight later movies, then back) beside single player and quit.
+fn main_menu_with_movies() -> MenuTree {
+    let movies = (15001..=15011).map(leaf).collect();
+    let root = node(
+        10000,
+        vec![
+            node(10001, vec![node(11001, vec![leaf(11101)]), leaf(11006)]),
+            node(10003, movies),
+            node(10006, vec![leaf(14001), leaf(14002)]),
+        ],
+    );
+    MenuTree::from_ifc(root, &CommandCatalogue::new(MenuKind::Main))
+}
+
+/// The sounds of `played` other than the menu's loop rising.
+fn interface(played: &[String]) -> Vec<&str> {
+    played
+        .iter()
+        .map(String::as_str)
+        .filter(|s| *s != MENU_BED)
+        .collect()
+}
+
+/// Whether the main menu's entry with command number `id` is enabled.
+fn enabled(r: &Rig, id: u32) -> bool {
+    let tree = &r.flow.main_menu().unwrap().tree;
+    tree.items.iter().find(|i| i.id == id).unwrap().enabled
+}
+
+#[test]
+fn the_replay_movies_entries_follow_the_movies_found() {
+    assert_eq!(replay_movie_index(1), Some(MovieIndex::LOGO));
+    assert_eq!(replay_movie_index(2), Some(MovieIndex::INTRO));
+    let later: Vec<Option<MovieIndex>> = (3..=10).map(replay_movie_index).collect();
+    let levels: Vec<Option<MovieIndex>> = [2, 4, 6, 8, 10, 12, 13, 14]
+        .into_iter()
+        .map(MovieIndex::after_level)
+        .collect();
+    assert_eq!(later, levels);
+    assert_eq!(replay_movie_index(0), None);
+    assert_eq!(replay_movie_index(11), None);
+    // No shelf, or an empty one: the page is greyed out.
+    for shelf in [None, Some(shelf_of([], true, true))] {
+        let mut r = Rig::build_with(
+            Start::Title,
+            LevelChoice::Retail(1),
+            main_menu_with_movies(),
+            shelf,
+            |_| {},
+        );
+        r.reach_main_menu();
+        assert!(!enabled(&r, 10003));
+        assert!((15001..=15010).all(|id| !enabled(&r, id)));
+        assert!(enabled(&r, 15011), "back");
+    }
+    // Some movies: the page, and exactly their entries.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu_with_movies(),
+        shelf_of([-1, 4, 13], true, true),
+    );
+    r.reach_main_menu();
+    assert!(enabled(&r, 10003));
+    let on: Vec<u32> = (15001..=15010).filter(|&id| enabled(&r, id)).collect();
+    assert_eq!(on, [15001, 15004, 15009]);
+}
+
+#[test]
+fn a_replayed_movie_returns_to_its_page() {
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu_with_movies(),
+        shelf_of([-1, 0, 4], true, true),
+    );
+    r.reach_main_menu();
+    // Replay Movies, then the movie after level 4 (the fourth entry).
+    r.flow.hotkey('R');
+    r.update(PRESS_MS + 1.0);
+    assert_eq!(r.page(), Page::Movies);
+    for _ in 0..3 {
+        r.input(MenuInput::Down);
+    }
+    let entry = r.flow.main_menu().unwrap().selected().unwrap();
+    assert_eq!(r.flow.main_menu().unwrap().tree.items[entry].id, 15004);
+    let sounds = r.sounds.len();
+    r.choose();
+    assert_eq!(interface(&r.sounds[sounds..]), ["SELECT"]);
+    assert_eq!(r.movies, [MovieIndex::new(4).unwrap()]);
+    assert_eq!(playing(&r), MovieIndex::new(4).unwrap());
+    assert!(r.bed_stops > 0, "the menu's loop stops");
+    // Keys and time during the movie change nothing after it: no page up,
+    // no idle title.
+    r.input(MenuInput::Back);
+    r.input(MenuInput::Down);
+    r.flow.hotkey('B');
+    r.update(IDLE_ROOT_MS * 2.0);
+    assert_eq!(playing(&r), MovieIndex::new(4).unwrap());
+    movie_ends(&mut r);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert_eq!(r.page(), Page::Movies);
+    assert_eq!(r.flow.main_menu().unwrap().selected(), Some(entry));
+    assert!(r.sounds.contains(&MENU_BED.to_string()));
+    r.update(FADE_MS);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    // A greyed-out entry plays the disabled sound and no movie; the logo's
+    // entry plays the logo, by its hotkey.
+    r.input(MenuInput::Down);
+    r.input(MenuInput::Down);
+    let grey = r.flow.main_menu().unwrap().selected().unwrap();
+    assert_eq!(r.flow.main_menu().unwrap().tree.items[grey].id, 15006);
+    let sounds = r.sounds.len();
+    r.choose();
+    assert_eq!(interface(&r.sounds[sounds..]), ["DISABLE"]);
+    assert_eq!(r.movies.len(), 1);
+    r.flow.hotkey('U');
+    r.update(PRESS_MS + 1.0);
+    assert_eq!(playing(&r), MovieIndex::LOGO);
+    // The window could not play it: the page again.
+    r.flow.movie_missing();
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert_eq!(r.page(), Page::Movies);
+    // The intro replayed records nothing more: it was seen.
+    r.update(FADE_MS);
+    r.flow.hotkey('I');
+    r.update(PRESS_MS + 1.0);
+    assert_eq!(playing(&r), MovieIndex::INTRO);
+    movie_ends(&mut r);
+    assert_eq!(r.intro_records, 0);
+    assert_eq!(r.page(), Page::Movies);
 }

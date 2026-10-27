@@ -35,6 +35,10 @@
 //! soundfont = "/path/to/a/soundfont.sf2"
 //! gamepad = on              # on or off
 //! pad_dead_zone = 0.34      # stick dead zone, 0.05 to 0.95
+//! movies = upscaled         # original, archive or off
+//! skip_logo = off           # on: no logo movie at start-up once the intro was seen
+//! movie_folder = "/path/to/your/upscaled/movies"
+//! intro_seen = no           # the game sets it once the intro movie played
 //! key_jump = "Space"        # key_<action>: key names, comma separated
 //! pad_jump = "South"        # pad_<action>: pad button names
 //! ```
@@ -111,6 +115,19 @@
 //! The front layer switch (`front_layer`, also in the Display menu) only
 //! changes what is drawn: off, the level's front plane is left out.
 //!
+//! Movies (see [`crate::movie`]): `movies` says where they play from:
+//! `upscaled` (the default) prefers copies in the movie folder and falls
+//! back to the install's own movies, `original` plays only the install's
+//! movie files and then its movie archive, `archive` only the movie archive
+//! (`CLAW.FEC`), as the original does with its DVD movies off, and `off`
+//! plays none. `movie_folder` is where the copies are looked for (by
+//! default `<data home>/rusty-claw/movies`, see [`UserDirs::movies_dir`]).
+//! `skip_logo` leaves out the logo movie at start-up, except on a run that
+//! also plays the intro movie; the game writes `intro_seen = yes` once the
+//! intro movie has played (watched or skipped), and from then on starts
+//! with the logo movie only. The Display menu's movie interlacing switch is
+//! kept for the run only and changes nothing.
+//!
 //! The smooth rope swing (`smooth_rope`, `--smooth-rope`, on by default)
 //! also only changes what is drawn: on, Claw, the rope he hangs from and
 //! the view following him move smoothly between the rope's frames at the
@@ -136,6 +153,8 @@ use claw_sim::input::{POWERUP_KEY, ScriptTuning};
 use claw_sim::player::powerup_aid::AidPowerup;
 use claw_sim::tuning::{FuseClock, PlayAids};
 use claw_sim::{ScriptHeader, SimConfig};
+
+use claw_movie::{MovieMode, Roots};
 
 use crate::keymap::{Action, Keymap, PadMap};
 use crate::movie::MovieTarget;
@@ -214,6 +233,73 @@ impl Scale {
             Scale::Fit => Scale::Integer,
             Scale::Integer => Scale::Fit,
         }
+    }
+}
+
+/// Where the game's movies play from (the `movies` config key).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum MovieSetting {
+    /// Copies in the movie folder first (for example upscaled ones), then
+    /// the install's own movies.
+    #[default]
+    Upscaled,
+    /// The install's movie files, then its movie archive.
+    Original,
+    /// The install's movie archive (`CLAW.FEC`) only.
+    Archive,
+    /// No movies.
+    Off,
+}
+
+impl MovieSetting {
+    /// Every value, in the order of the settings file's documentation.
+    pub const ALL: [MovieSetting; 4] = [
+        MovieSetting::Upscaled,
+        MovieSetting::Original,
+        MovieSetting::Archive,
+        MovieSetting::Off,
+    ];
+
+    /// Name as written in settings.
+    pub fn name(self) -> &'static str {
+        match self {
+            MovieSetting::Upscaled => "upscaled",
+            MovieSetting::Original => "original",
+            MovieSetting::Archive => "archive",
+            MovieSetting::Off => "off",
+        }
+    }
+
+    /// The value named `name` (in any case).
+    pub fn from_name(name: &str) -> Option<MovieSetting> {
+        MovieSetting::ALL
+            .into_iter()
+            .find(|m| m.name().eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// The sources movies play from, `None` when movies are off.
+    pub fn mode(self) -> Option<MovieMode> {
+        match self {
+            MovieSetting::Upscaled => Some(MovieMode::Upscaled),
+            MovieSetting::Original => Some(MovieMode::Original),
+            MovieSetting::Archive => Some(MovieMode::Archive),
+            MovieSetting::Off => None,
+        }
+    }
+}
+
+/// Parses `movies`: `upscaled`, `original`, `archive` or `off`.
+pub fn parse_movie_setting(s: &str) -> Result<MovieSetting, String> {
+    MovieSetting::from_name(s)
+        .ok_or_else(|| format!("expected upscaled, original, archive or off, got {s:?}"))
+}
+
+/// Parses `yes` or `no`.
+pub fn parse_yes_no(s: &str) -> Result<bool, String> {
+    match s.trim() {
+        "yes" => Ok(true),
+        "no" => Ok(false),
+        _ => Err(format!("expected yes or no, got {s:?}")),
     }
 }
 
@@ -552,6 +638,17 @@ pub struct Settings {
     pub movies: bool,
     /// The one movie a `--movie` run plays.
     pub movie: Option<MovieTarget>,
+    /// Where movies play from (`movies`), or no movies.
+    pub movie_setting: MovieSetting,
+    /// Leave out the logo movie at start-up on runs that do not play the
+    /// intro movie (`skip_logo`).
+    pub skip_logo: bool,
+    /// The folder of the player's own movie copies (`movie_folder`);
+    /// `None` for the default, [`UserDirs::movies_dir`].
+    pub movie_folder: Option<PathBuf>,
+    /// The intro movie has played on an earlier run (`intro_seen`, written
+    /// by the game).
+    pub intro_seen: bool,
 }
 
 /// Default radial dead zone of the sticks, as a fraction of a full
@@ -625,6 +722,10 @@ impl Settings {
             from_command_line: BTreeSet::new(),
             movies: true,
             movie: None,
+            movie_setting: MovieSetting::default(),
+            skip_logo: false,
+            movie_folder: None,
+            intro_seen: false,
         }
     }
 
@@ -891,6 +992,24 @@ impl Settings {
         Ok(())
     }
 
+    /// Whether this run plays the game's movies: not with `--no-movies` or
+    /// `movies = off`.
+    pub fn movies_on(&self) -> bool {
+        self.movies && self.movie_setting != MovieSetting::Off
+    }
+
+    /// Where this run looks for movies: the install, and the movie folder
+    /// (`movie_folder`, else the default under `dirs`), with the sources
+    /// `movies` names (with `movies = off`, those of the default, for a
+    /// `--movie` run).
+    pub fn movie_roots(&self, dirs: &UserDirs) -> Roots {
+        Roots {
+            install: self.install.clone(),
+            user_folder: self.movie_folder.clone().or_else(|| dirs.movies_dir()),
+            mode: self.movie_setting.mode().unwrap_or_default(),
+        }
+    }
+
     /// The view for an output of `size` pixels: the original 640x480 game
     /// view presented by the aspect and scaling settings.
     pub fn view(&self, size: (u32, u32)) -> ViewConfig {
@@ -954,6 +1073,10 @@ impl Settings {
             "soundfont" => path(&self.soundfont)?,
             "gamepad" => on_off(self.pad.enabled),
             "pad_dead_zone" => format!("{}", self.pad.dead_zone),
+            "movies" => self.movie_setting.name().to_string(),
+            "skip_logo" => on_off(self.skip_logo),
+            "movie_folder" => path(&self.movie_folder)?,
+            "intro_seen" => if self.intro_seen { "yes" } else { "no" }.to_string(),
             k => {
                 if let Some(a) = k.strip_prefix("key_").and_then(Action::from_name) {
                     self.keymap.config_value(a)
@@ -1163,6 +1286,12 @@ impl UserDirs {
         )
     }
 
+    /// The default folder of the player's own movie copies:
+    /// `<data home>/rusty-claw/movies`.
+    pub fn movies_dir(&self) -> Option<PathBuf> {
+        Some(self.data_home.as_ref()?.join("rusty-claw").join("movies"))
+    }
+
     /// The saved games of the default profile:
     /// `<data home>/rusty-claw/saves/default`.
     pub fn saves_dir(&self) -> Option<PathBuf> {
@@ -1192,7 +1321,7 @@ pub struct ConfigFile {
 
 /// Keys a config file may hold, besides the `key_<action>` and
 /// `pad_<action>` bindings.
-pub const CONFIG_KEYS: [&str; 28] = [
+pub const CONFIG_KEYS: [&str; 32] = [
     "install",
     "level",
     "custom",
@@ -1221,6 +1350,10 @@ pub const CONFIG_KEYS: [&str; 28] = [
     "soundfont",
     "gamepad",
     "pad_dead_zone",
+    "movies",
+    "skip_logo",
+    "movie_folder",
+    "intro_seen",
 ];
 
 /// True when a config file may hold `key`.
@@ -1347,6 +1480,15 @@ impl ConfigFile {
                 "ambient" => s.ambient = flag(key, v)?,
                 "soundfont" => s.soundfont = Some(PathBuf::from(v)),
                 "gamepad" => s.pad.enabled = flag(key, v)?,
+                "movies" => s.movie_setting = parse_movie_setting(v).map_err(|e| err(key, e))?,
+                "skip_logo" => s.skip_logo = flag(key, v)?,
+                "movie_folder" => {
+                    if v.trim().is_empty() {
+                        return Err(err(key, "expected a folder, got nothing".into()));
+                    }
+                    s.movie_folder = Some(PathBuf::from(v));
+                }
+                "intro_seen" => s.intro_seen = parse_yes_no(v).map_err(|e| err(key, e))?,
                 "pad_dead_zone" => {
                     s.pad.dead_zone = match v.parse::<f32>() {
                         Ok(z) if PAD_DEAD_ZONE_RANGE.contains(&z) => z,

@@ -175,6 +175,11 @@ fn the_main_menu_parses_resolves_fits_and_reaches_every_command() {
         want.push(MenuCommand::Toggle(t));
     }
     want.push(MenuCommand::Adjust(claw_ui::menu::Slider::PlayArea));
+    // The Replay Movies page and each of its movies.
+    want.push(MenuCommand::Open(Page::Movies));
+    for entry in 1..=claw_ui::menu::command::MOVIE_ENTRIES {
+        want.push(MenuCommand::ReplayMovie(entry));
+    }
     for n in 1..=14 {
         want.push(MenuCommand::NewGame { level: n });
         want.push(MenuCommand::Open(Page::LoadEntries { level: n }));

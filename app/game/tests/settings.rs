@@ -11,9 +11,10 @@ use clap::Parser;
 use claw_game::keymap::{Action, Command, Keymap, PadButton};
 use claw_game::saves::{SaveRecord, SaveStore};
 use claw_game::settings::{
-    Args, ConfigFile, FolderRules, Settings, UserDirs, WriteHooks, WriteStep, backup_path,
-    write_atomic,
+    Args, ConfigFile, FolderRules, MovieSetting, Settings, UserDirs, WriteHooks, WriteStep,
+    backup_path, write_atomic,
 };
+use claw_movie::MovieMode;
 use claw_sim::{Buttons, Carry, SavePos};
 
 /// A realistic hand-edited config: comments, alignment, quotes, blank
@@ -911,4 +912,148 @@ fn the_play_test_aids_are_settings_off_by_default_and_off_for_replays() {
     let mut s = resolve("invincible = on\n", &["--replay", "r.csv"]);
     s.follow_header(&header("0,0,0\n"));
     assert_eq!(aids(&s), PlayAids::NONE);
+}
+
+#[test]
+fn the_movie_settings_parse_validate_and_survive_a_reload() {
+    let parse = |text: &str| ConfigFile::parse(text, "test").and_then(|f| f.check().map(|_| f));
+    let args = || Args::try_parse_from(["x", "--install", "/i"]).unwrap();
+    let resolve = |text: &str| Settings::resolve(&args(), Some(&parse(text).unwrap())).unwrap();
+    // The defaults: upscaled copies first, the logo plays, the default
+    // folder, the intro not seen.
+    let s = resolve("");
+    assert_eq!(s.movie_setting, MovieSetting::Upscaled);
+    assert!(!s.skip_logo && !s.intro_seen && s.movie_folder.is_none());
+    assert!(s.movies_on());
+    for (text, setting, mode) in [
+        (
+            "movies = upscaled\n",
+            MovieSetting::Upscaled,
+            Some(MovieMode::Upscaled),
+        ),
+        (
+            "movies = original\n",
+            MovieSetting::Original,
+            Some(MovieMode::Original),
+        ),
+        (
+            "movies = \"archive\"\n",
+            MovieSetting::Archive,
+            Some(MovieMode::Archive),
+        ),
+        ("movies = OFF\n", MovieSetting::Off, None),
+    ] {
+        let s = resolve(text);
+        assert_eq!(s.movie_setting, setting, "{text}");
+        assert_eq!(setting.mode(), mode, "{text}");
+        assert_eq!(s.movies_on(), mode.is_some(), "{text}");
+    }
+    let s = resolve("skip_logo = on\nintro_seen = yes\nmovie_folder = \"/my movies\"\n");
+    assert!(s.skip_logo && s.intro_seen);
+    assert_eq!(s.movie_folder, Some(PathBuf::from("/my movies")));
+    for bad in [
+        "movies = sometimes\n",
+        "movies = 1\n",
+        "skip_logo = maybe\n",
+        "intro_seen = on\n",
+        "intro_seen = true\n",
+        "movie_folder = \"\"\n",
+    ] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+    // `--no-movies` turns them off for the run, whatever the file says.
+    let s = Settings::resolve(
+        &Args::try_parse_from(["x", "--install", "/i", "--no-movies"]).unwrap(),
+        Some(&parse("movies = original\n").unwrap()),
+    )
+    .unwrap();
+    assert!(!s.movies_on());
+    assert_eq!(s.movie_setting, MovieSetting::Original);
+
+    // Each value written back is read back the same, keeping the file's
+    // other lines.
+    let root = tempfile::tempdir().unwrap();
+    let path = config_in(root.path(), REALISTIC);
+    let mut s = Settings::resolve(&args(), Some(&ConfigFile::load(&path).unwrap())).unwrap();
+    s.config_path = Some(path.clone());
+    s.movie_setting = MovieSetting::Archive;
+    s.skip_logo = true;
+    s.movie_folder = Some(root.path().join("up scaled"));
+    s.intro_seen = true;
+    let keys = ["movies", "skip_logo", "movie_folder", "intro_seen"];
+    assert_eq!(s.write_back(&keys).unwrap(), keys);
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with(REALISTIC), "{text}");
+    assert!(text.lines().any(|l| l == "movies = archive"), "{text}");
+    assert!(text.lines().any(|l| l == "skip_logo = on"), "{text}");
+    assert!(text.lines().any(|l| l == "intro_seen = yes"), "{text}");
+    let again = Settings::resolve(&args(), Some(&ConfigFile::load(&path).unwrap())).unwrap();
+    assert_eq!(again.movie_setting, MovieSetting::Archive);
+    assert!(again.skip_logo && again.intro_seen);
+    assert_eq!(again.movie_folder, s.movie_folder);
+    for key in keys {
+        assert_eq!(again.config_value(key), s.config_value(key), "{key}");
+    }
+    s.intro_seen = false;
+    assert_eq!(s.config_value("intro_seen").as_deref(), Some("no"));
+    s.movie_folder = None;
+    assert_eq!(
+        s.config_value("movie_folder"),
+        None,
+        "the default is not written"
+    );
+    // Movies change nothing in play.
+    assert_eq!(
+        again.sim_config((1280, 960)),
+        resolve("").sim_config((1280, 960))
+    );
+}
+
+#[test]
+fn movies_are_looked_for_in_the_install_and_the_movie_folder() {
+    let d = UserDirs::from_lookup(|k| match k {
+        "HOME" => Some("/h".into()),
+        _ => None,
+    });
+    assert_eq!(
+        d.movies_dir(),
+        Some(PathBuf::from("/h/.local/share/rusty-claw/movies"))
+    );
+    let d = UserDirs::from_lookup(|k| match k {
+        "XDG_DATA_HOME" => Some("/d".into()),
+        _ => None,
+    });
+    assert_eq!(d.movies_dir(), Some(PathBuf::from("/d/rusty-claw/movies")));
+    assert_eq!(UserDirs::from_lookup(|_| None).movies_dir(), None);
+    // The standard Windows folder for data, when XDG_DATA_HOME is unset.
+    let local = std::env::temp_dir().join("local");
+    let w = UserDirs::from_lookup_with(
+        FolderRules::Windows,
+        vars(vec![("LOCALAPPDATA", local.clone().into_os_string())]),
+    );
+    assert_eq!(
+        w.movies_dir(),
+        Some(local.join("rusty-claw").join("movies"))
+    );
+
+    let mut s = Settings::new("/games/claw", claw_game::LevelChoice::Retail(1));
+    let roots = s.movie_roots(&d);
+    assert_eq!(roots.install, PathBuf::from("/games/claw"));
+    assert_eq!(
+        roots.user_folder,
+        Some(PathBuf::from("/d/rusty-claw/movies"))
+    );
+    assert_eq!(roots.mode, MovieMode::Upscaled);
+    s.movie_folder = Some(PathBuf::from("/mine"));
+    s.movie_setting = MovieSetting::Original;
+    let roots = s.movie_roots(&d);
+    assert_eq!(roots.user_folder, Some(PathBuf::from("/mine")));
+    assert_eq!(roots.mode, MovieMode::Original);
+    s.movie_setting = MovieSetting::Archive;
+    assert_eq!(s.movie_roots(&d).mode, MovieMode::Archive);
+    // With movies off the flow gets none; a `--movie` run still finds its
+    // movie the default way.
+    s.movie_setting = MovieSetting::Off;
+    assert!(!s.movies_on());
+    assert_eq!(s.movie_roots(&d).mode, MovieMode::Upscaled);
 }

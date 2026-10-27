@@ -16,10 +16,11 @@
 //! ```
 //!
 //! With only `--install` (and options), the game starts at the title and
-//! its main menu, after the logo movie when the build plays movies and the
-//! install has it (`--no-movies` skips it). `--level` and `--custom` start straight into that level
-//! with the in-game menu, the end-of-level tally and the main menu after
-//! it; `--replay` and `--bench` play one level without menus. A replay in
+//! its main menu, after the start-up movies when the build plays movies
+//! and finds them: the logo then the intro on a first run, the logo only
+//! later (none with `skip_logo = on`). `--level` and `--custom` start
+//! straight into that level with the in-game menu, the end-of-level tally
+//! and the main menu after it; `--replay` and `--bench` play one level without menus. A replay in
 //! the window plays the game's sound and music as play does (silent with
 //! `--no-audio`); the window benchmark and a replay with `--trace` are
 //! silent. Run
@@ -74,6 +75,14 @@
 //! Back or Start button, skips it. A build without the movie player says
 //! so and fails.
 //!
+//! In a game with its menus the movies play where the original's do: at
+//! start-up, before the map screen after levels 2, 4, 6, 8, 10, 12, 13 and
+//! 14, now and then when the main menu is left alone, and from its Replay
+//! Movies page. `--no-movies` turns them off for one run; the `movies`,
+//! `skip_logo` and `movie_folder` settings choose where they play from,
+//! whether the logo plays and where upscaled copies are (see the
+//! `settings` module).
+//!
 //! A benchmark prints its report as one line of JSON on standard output and
 //! a one-line PASS or FAIL verdict naming each budget on standard error. It
 //! exits with status [`BUDGET_FAILED`] when a measured budget is missed.
@@ -111,8 +120,8 @@ How a run starts:
                                      intro, 2 to 14 after those levels, or
                                      any movie file; Escape or the pad's Back
                                      or Start button skips it
-  --no-movies                        no movie this run (the logo before the
-                                     title is one)
+  --no-movies                        no movie this run (at start-up, after
+                                     levels, in the menus)
 
 Play-test aids, off by default, for trying out hard levels:
   --invincible                       Claw takes no damage (death tiles and pits
@@ -136,7 +145,15 @@ Saved games are kept in $XDG_DATA_HOME/rusty-claw/saves/default/ (by default
 ~/.local/share/rusty-claw/saves/default/, or
 %LOCALAPPDATA%\\rusty-claw\\saves\\default\\ on Windows). Options changed in
 the menus are written back to the config file; options given on the command
-line are not, unless changed in the menus.";
+line are not, unless changed in the menus.
+
+Movies play from the install, or from your own copies (for example upscaled
+ones, named LOGO and CLAW0 to CLAW8 with .mkv, .mp4, .mov or .avi) in
+$XDG_DATA_HOME/rusty-claw/movies/ (by default
+~/.local/share/rusty-claw/movies/, or %LOCALAPPDATA%\\rusty-claw\\movies\\
+on Windows; `movie_folder` in the config file moves it). Escape, or the
+pad's Back or Start button, skips a movie; any key, click or pad button skips
+a clip of the movie archive (CLAW.FEC).";
 
 /// What a run ended with.
 enum Outcome {

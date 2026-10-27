@@ -287,14 +287,15 @@ fn every_in_scope_command_maps_to_its_action() {
         (13505, C::Toggle(Toggle::MovieInterlace)),
         (13504, C::Adjust(Slider::PlayArea)),
         (10002, C::Unavailable(Unavailable::Multiplayer)),
-        (10003, C::Unavailable(Unavailable::Movies)),
+        (10003, C::Open(Page::Movies)),
         (10005, C::Unavailable(Unavailable::Help)),
         (10007, C::Unavailable(Unavailable::Credits)),
         (11003, C::Unavailable(Unavailable::CustomLevels)),
         (11005, C::Unavailable(Unavailable::UploadScores)),
         (13001, C::Unavailable(Unavailable::Players)),
-        (15001, C::Unavailable(Unavailable::Movies)),
-        (15010, C::Unavailable(Unavailable::Movies)),
+        (15001, C::ReplayMovie(1)),
+        (15002, C::ReplayMovie(2)),
+        (15010, C::ReplayMovie(10)),
         (15011, C::Back),
         (13101, C::Nothing),
         (13201, C::Nothing),
@@ -378,6 +379,66 @@ fn hotkeys_follow_the_table() {
         .map(|id| game.entry(id).hotkey.unwrap())
         .collect();
     assert_eq!(keys, "RLOHE");
+}
+
+#[test]
+fn the_replay_movies_page_lists_one_entry_per_movie() {
+    use claw_ui::menu::command::MOVIE_ENTRIES;
+    let main = CommandCatalogue::new(MenuKind::Main);
+    let keys: String = (15001..=15010)
+        .map(|id| main.entry(id).hotkey.unwrap())
+        .collect();
+    assert_eq!(keys, "UIEOTHRGWC");
+    let entries: Vec<MenuCommand> = (15001..=15010).map(|id| main.entry(id).command).collect();
+    let want: Vec<MenuCommand> = (1..=MOVIE_ENTRIES).map(MenuCommand::ReplayMovie).collect();
+    assert_eq!(entries, want);
+    assert_eq!(main.entry(15011).command, MenuCommand::Back);
+    // The root entry opens the page; a movie entry reports its command, and
+    // the page's back entry returns to the root entry.
+    let movies = (15001..=15011)
+        .map(|id| leaf(id, "001_replay_x", "002_replay_x"))
+        .collect();
+    let root = node(
+        10000,
+        "001_main_x",
+        "002_main_x",
+        vec![
+            node(10003, "005_main_replay", "006_main_replay", movies),
+            leaf(10006, "001_main_q", "002_main_q"),
+        ],
+    );
+    let mut n = nav(root, MenuKind::Main);
+    assert_eq!(
+        choose(&mut n),
+        vec![MenuAction::Command(MenuCommand::Open(Page::Movies))]
+    );
+    assert_eq!(n.page(), Page::Movies);
+    assert_eq!(n.entries().len(), 11);
+    n.input(MenuInput::Down);
+    assert_eq!(
+        choose(&mut n),
+        vec![MenuAction::Command(MenuCommand::ReplayMovie(2))]
+    );
+    assert_eq!(n.page(), Page::Movies, "a movie entry opens nothing");
+    // Greyed out, an entry plays nothing and the page cannot open.
+    n.tree.set_enabled_by(|i| i.id != 15003 && i.id != 10003);
+    n.input(MenuInput::Down);
+    assert_eq!(
+        choose(&mut n),
+        vec![MenuAction::Disabled(MenuCommand::ReplayMovie(3))]
+    );
+    assert!(
+        n.hotkey('E').is_empty() && !n.pressing(),
+        "no hotkey either"
+    );
+    n.input(MenuInput::Back);
+    assert_eq!(n.page(), Page::Root);
+    assert_eq!(selected_id(&n), 10003);
+    assert_eq!(
+        choose(&mut n),
+        vec![MenuAction::Disabled(MenuCommand::Open(Page::Movies))]
+    );
+    assert_eq!(n.page(), Page::Root);
 }
 
 #[test]

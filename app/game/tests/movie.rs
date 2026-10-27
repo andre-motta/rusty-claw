@@ -188,9 +188,12 @@ impl Rig {
     }
 }
 
+/// The movies of a later run: the intro was seen on an earlier one, so
+/// only the logo plays at start-up.
 fn shelf(movies: &[MovieIndex]) -> MovieShelf {
     MovieShelf {
         available: movies.iter().copied().collect::<MovieSet>(),
+        intro_seen: true,
         ..MovieShelf::default()
     }
 }
