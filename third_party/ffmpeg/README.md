@@ -32,12 +32,18 @@ make run-game ARGS='--install /path/to/your/install'
    `~/.cache/rusty-claw/ffmpeg/downloads` and checks their SHA-256;
 2. builds nasm into `~/.cache/rusty-claw/ffmpeg/nasm-<version>` (x86 only);
 3. configures FFmpeg with the line in `build.sh` (LGPL only, static, the
-   listed decoders, demuxers and parsers and nothing else), builds it with up
-   to 8 jobs and installs it into the prefix,
+   listed decoders, demuxers and parsers and nothing else; [NOTICE](NOTICE)
+   repeats it), builds it with up to 8 jobs at a lower priority (`nice -n
+   10`) and installs it into the prefix,
    `~/.cache/rusty-claw/ffmpeg/<version>-<hash>`, where the hash covers the
    pins and the configure line;
 4. records the build in `<prefix>/share/rusty-claw/ffmpeg-build.txt` and
    removes the build tree.
+
+The demuxers are `avi`, `smacker`, `mov`, `matroska`, `mpegps` and
+`mpegvideo`: `mpegps` reads VOB files but leaves the codec of their picture
+stream to the raw demuxers' probes, so a VOB opens only with the raw
+`mpegvideo` demuxer built in too.
 
 Running it again with the same pins does nothing. Changing a pin or the
 configure line builds into a new prefix; old prefixes can be deleted.
@@ -46,7 +52,11 @@ configure line builds into a new prefix; old prefixes can be deleted.
 Settings, all optional:
 
 - `FFMPEG_PREFIX=/some/dir` builds into, and links from, that directory
-  instead (for `make` and for plain `cargo` alike);
+  instead (for `make` and for plain `cargo` alike). It must be an absolute
+  path; `build.sh` and the `rusty_ffmpeg` build script stop on a relative
+  one, and an empty `FFMPEG_PREFIX` is the same as none. The Makefile passes
+  it on to cargo only when you set it, so switching between `make` and plain
+  `cargo` does not rebuild FFmpeg's binding;
 - `FFMPEG_JOBS=N` sets the parallel compile jobs.
 
 ## How the game links it
@@ -122,8 +132,11 @@ cargo test --release -p claw-movie --features ffmpeg --test codecs -- --nocaptur
 Run it while the machine is otherwise idle: it measures speed, and the
 release build encodes the HEVC clips on the GPU. The H.264 clips need the
 libopenh264 encoder and the HEVC clips hevc_nvenc or hevc_vaapi; a clip whose
-encoder is missing is skipped with the reason printed (a debug build, as in
-`make check`, skips the GPU encoders unless `CLAW_GPU_TESTS=1` is set).
+encoder is missing is skipped with the reason printed. A debug build, as in
+`make check`, checks the pictures only: it skips the GPU encoders unless
+`CLAW_GPU_TESTS=1` is set, and the speed measurements (at least 1.5 times
+real time with every core, and the four-core run) unless
+`CLAW_CODECS_BENCH=1` is set.
 
 ## Windows 11 (MSVC)
 

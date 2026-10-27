@@ -1,7 +1,10 @@
 //! Links the static FFmpeg that `make ffmpeg` (../build.sh) builds.
 //!
-//! The prefix is FFMPEG_PREFIX when set, else the one `build.sh --prefix`
-//! names for the pinned version and configure line. The FFI declarations are
+//! The prefix is FFMPEG_PREFIX when set (an absolute path; empty counts as
+//! unset), else the one `build.sh --prefix` names for the pinned version and
+//! configure line. The Makefile sets FFMPEG_PREFIX for cargo only when its
+//! user did, so `make` and plain `cargo` see the same environment and do not
+//! rebuild this crate in turn. The FFI declarations are
 //! committed in src/binding.rs, so nothing is generated here.
 
 use std::collections::BTreeSet;
@@ -50,8 +53,18 @@ fn fail(message: &str) -> ! {
 }
 
 fn prefix(script: &Path) -> Result<PathBuf, String> {
+    // An empty FFMPEG_PREFIX is the same as none, as in build.sh and the
+    // Makefile. A relative one would be read from the crate's directory, not
+    // from where the build was started, so it is refused.
     if let Some(prefix) = env::var_os("FFMPEG_PREFIX").filter(|p| !p.is_empty()) {
-        return Ok(PathBuf::from(prefix));
+        let prefix = PathBuf::from(prefix);
+        if !prefix.has_root() {
+            return Err(format!(
+                "FFMPEG_PREFIX must be an absolute path, not '{}'",
+                prefix.display()
+            ));
+        }
+        return Ok(prefix);
     }
     let output = Command::new("sh")
         .arg(script)

@@ -15,7 +15,7 @@ directory downloads its source release, checks it and builds it.
               --disable-network --disable-avdevice --disable-avfilter
               --enable-static --disable-shared --enable-pic --enable-pthreads
               --enable-decoder=mpeg4,h264,hevc,mpeg2video,mp3,mp3float,mp2,ac3,aac,smacker,smackaud,pcm_s16le,rawvideo
-              --enable-demuxer=avi,smacker,mov,matroska,mpegps
+              --enable-demuxer=avi,smacker,mov,matroska,mpegps,mpegvideo
               --enable-parser=mpeg4video,h264,hevc,mpegvideo,mpegaudio,ac3,aac
               --enable-protocol=file
               --enable-swscale --enable-swresample

@@ -352,9 +352,8 @@ mod playing {
     }
 
     // FFmpeg recognises the picture stream of a program stream through
-    // its raw MPEG video demuxer, which the pinned build leaves out.
+    // its raw MPEG video demuxer, which the pinned build includes for this.
     #[test]
-    #[ignore = "the pinned FFmpeg build needs the mpegvideo demuxer"]
     fn a_program_stream_plays_from_the_movies_folder() {
         let dir = tempfile::tempdir().unwrap();
         let movies = dir.path().join("Movies");
