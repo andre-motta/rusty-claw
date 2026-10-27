@@ -89,3 +89,17 @@
 # level9-original.level10.csv: stretches 1 to 13 as above, each also with
 # --carry naming the progress level9-original.csv ends with (its
 # `# start_score = ...` lines: 35 health, no dynamite).
+#
+# The tenth level of the whole game (tests/acceptance/routes/game/
+# level1-original.level10.csv) starts with the progress that game's ninth
+# level ends with: 11 health, five pistol shots and the dynamite
+# selected. It plays level9-original.level10.csv's rows with a tap of the
+# key that changes weapon (0x8, route ticks 16 and 17), which selects the
+# pistol the route shoots with. They play as that route plays to route
+# tick 8478, where Claw is hit (with the other progress the game carries
+# in, the level's random draws differ from route tick 7846 on), so the bot
+# searched again from stretch 8 (route tick 8181) with --carry naming its
+# start lines and --health-cost 25: stretches 8 to 12 as above (1929,
+# 5282, 47296, 9442 and 24276 nodes) and stretch 13, Marrow's fight, with
+# --intro play and --tick-cost 0 (27965 nodes). The level ends with 100
+# health.

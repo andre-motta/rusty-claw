@@ -455,7 +455,64 @@ on to the block past the fifth level's last stack of pegs), and
 level of the game the route before starts, which begin with the progress
 that game carries in (their
 `# start_score = ...` lines, which replays, `claw-replay` and the
-comparison apply). `claw-bot --seed level` uses the
+comparison apply).
+
+The folder `tests/acceptance/routes/game/` holds one game played from
+the first level on through every booty screen, named as a recorded game
+names its files: `level1-original.csv` (the same route as
+`routes/level1-original.csv`), then `level1-original.level2.csv` and on,
+one file per level, up to `level1-original.level14.csv`, the end of
+the game. Each later level starts
+with the progress the game's level before it ends with (more score and
+other health, ammunition and weapon than a two-level game brings in). It
+plays its two-level game's rows where they still win from there (the
+second, third, fourth, sixth, eleventh, twelfth, thirteenth and
+fourteenth levels, the last with its one End Life), and rows the bot
+searched again
+from that start where they do not: from the third checkpoint on in the
+fifth level, from the tenth stretch on in the seventh (which first
+selects the pistol, as the game it comes from carries in the dynamite)
+and from the start's dock on in the eighth (the game carries in no pistol
+shots, so Claw clears the docks with his sword) and from the eighth
+stretch on in the tenth (which first changes weapon to the pistol). The
+ninth level, which has no two-level game, takes another way than
+`level9-original.csv`: that route needs more health than the game brings
+in and a pistol shot at a powder keg, so Claw first breaks the stacked
+crates by the start for their bottle of health and picks up more on the
+way up, and climbs the shaft on four sticks of dynamite with the help
+screen, the fourth in place of the keg's shot
+(`tools/bot/hints/level9-original.txt` gives its parts). Where a stretch needs
+the level's clock where the earlier route had it (the toggling pegs and
+the dynamite boost of the fifth level, the air carts of the seventh, the
+swinging ropes and the Catnip of the eighth, the ropes of the ninth),
+the route first waits
+until then and plays the earlier route's rows of that stretch. No level
+of it loses a life but the fourteenth level's End Life. `claw-replay
+--next` plays such a chain:
+
+```sh
+claw-replay --install PATH --script game/level1-original.csv \
+    --next game/level1-original.level2.csv ... --next game/level1-original.level14.csv \
+    --trace out/game.csv --expect-complete
+```
+
+Each level starts with the progress the level before hands on (with
+the perfect tally's extra life, as the booty screen gives it); a route
+whose `# start_...` lines name other progress is reported, with the
+lines the game carries in, and the run writes one trace per level
+(`out/game.csv`, `out/game.level2.csv`, ...), so each level's part can
+be compared on its own. `--carry-out FILE` writes the progress the last
+level hands on as start lines, for `claw-bot --carry`. The install test
+`install_routes_play_the_whole_game_through_every_booty_screen` plays
+that game through the game's flow, level after level, and on through
+the last booty screen to the credits (a few seconds in a release build):
+
+```sh
+CLAW_INSTALL=PATH cargo test --release --locked -p claw-acceptance --test install_routes -- \
+    install_routes_play_the_whole_game --nocapture
+```
+
+`claw-bot --seed level` uses the
 random state the level's set-up leaves, as the routes do, and
 `--hints-on-foot` counts a hint point as reached only with Claw on his
 feet, on a ladder or on a rope (a point written `x,y foot` in the hints

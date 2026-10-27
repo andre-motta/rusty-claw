@@ -167,3 +167,20 @@
 #       151-946  the earlier route's ticks 11568 to 12363
 # 24. Down the long ladder through the ledge, past the pirates on the
 #     floor below and to the gem: no goal.
+#
+# The seventh level of the whole game (tests/acceptance/routes/game/
+# level1-original.level7.csv) starts with the progress that game's sixth
+# level ends with, the dynamite selected and 29 health. It plays
+# level6-original.level7.csv's rows with a tap of the pistol key
+# (0x40, route ticks 10 and 11) that selects the pistol the earlier game
+# carried in; Claw takes a health pickup that the earlier game, at full
+# health, left (route tick 4747), and the game plays otherwise from
+# there, so the bot searched again from stretch 10 (route tick 4360)
+# with --carry naming its start lines: stretches 10 to 14 as above, a
+# wait to route tick 8584 (the cart's time, one round earlier than
+# level6-original.level7.csv's), stretches 15 to 18, stretch 19 with
+# --fragile-cost 0 and --health-cost 6, stretches 20 to 22, stretch 23
+# as written above (route ticks 11250 to 12365: the climb and the step
+# of level6-original.level7.csv's stretch, a wait to route tick 11569
+# and that route's ticks 12236 to 13031) and stretch 24 from route tick
+# 12366.
