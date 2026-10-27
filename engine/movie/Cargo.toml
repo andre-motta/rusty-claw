@@ -1,0 +1,19 @@
+[package]
+name = "claw-movie"
+description = "The game's movies: finding them and, with the ffmpeg feature, decoding them through a pinned FFmpeg build."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Off by default: it links the static FFmpeg that `make ffmpeg` builds, and
+# the Makefile turns it on when that build exists (third_party/ffmpeg).
+ffmpeg = ["dep:rusty_ffmpeg"]
+
+[dependencies]
+rusty_ffmpeg = { workspace = true, optional = true }
+
+[lints]
+workspace = true

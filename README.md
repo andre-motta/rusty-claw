@@ -74,6 +74,9 @@ make run-game ARGS='--install /path/to/your/install'
 On Debian and Ubuntu the packages are `build-essential git curl
 libvulkan1 mesa-vulkan-drivers libasound2-dev libudev-dev`.
 
+Movies need FFmpeg, which `make ffmpeg` builds from source once per machine
+(no root needed); see [third_party/ffmpeg/README.md](third_party/ffmpeg/README.md).
+
 The first build downloads the pinned Rust version from `rust-toolchain.toml`
 and the dependencies, and takes a few minutes. The game binary is
 `target/release/rusty-claw`; `make run-game ARGS=...` builds and runs it.

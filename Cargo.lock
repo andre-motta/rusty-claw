@@ -450,6 +450,7 @@ dependencies = [
  "claw-assets",
  "claw-audio",
  "claw-frame",
+ "claw-movie",
  "claw-render",
  "claw-sim",
  "claw-ui",
@@ -465,6 +466,13 @@ dependencies = [
  "anyhow",
  "clap",
  "claw-assets",
+]
+
+[[package]]
+name = "claw-movie"
+version = "0.1.0"
+dependencies = [
+ "rusty_ffmpeg",
 ]
 
 [[package]]
@@ -2029,6 +2037,10 @@ dependencies = [
  "tempfile",
  "wait-timeout",
 ]
+
+[[package]]
+name = "rusty_ffmpeg"
+version = "0.17.0+ffmpeg.8.1"
 
 [[package]]
 name = "rustysynth"

@@ -15,10 +15,16 @@ path = "src/lib.rs"
 name = "rusty-claw"
 path = "src/main.rs"
 
+[features]
+# Plays the game's movies through the pinned FFmpeg (`make ffmpeg`); off by
+# default, and the Makefile turns it on when that build exists.
+movies = ["claw-movie/ffmpeg"]
+
 [dependencies]
 claw-assets.workspace = true
 claw-audio.workspace = true
 claw-frame.workspace = true
+claw-movie.workspace = true
 claw-render.workspace = true
 claw-sim.workspace = true
 claw-ui.workspace = true

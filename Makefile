@@ -17,7 +17,26 @@ SOUNDFONT_SHA256 := 9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a515268
 SOUNDFONT_FILE := GeneralUser-GS.sf2
 SOUNDFONT_DIR ?= $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/rusty-claw/soundfonts
 
-.PHONY: help check fmt test-install compare run-viewer run-game bench replay soundfont
+# The pinned FFmpeg the movie player links against: `make ffmpeg` builds it
+# from source into your cache (third_party/ffmpeg/build.sh; see its README),
+# and FFMPEG_PREFIX overrides where it lives. When that prefix holds a
+# finished build, run-game, check, check-movie, check-game and test-install
+# build with movies (the claw-movie/ffmpeg and claw-game/movies features);
+# otherwise they build without them. Each says which.
+ifeq ($(origin FFMPEG_PREFIX),undefined)
+FFMPEG_PREFIX := $(shell sh third_party/ffmpeg/build.sh --prefix)
+endif
+export FFMPEG_PREFIX
+ifneq ($(wildcard $(FFMPEG_PREFIX)/share/rusty-claw/ffmpeg-build.txt),)
+movie_note = @echo "movies: on, with FFmpeg from $(FFMPEG_PREFIX)"
+movie_features_all := --features claw-movie/ffmpeg,claw-game/movies
+movie_feature_movie := --features ffmpeg
+movie_feature_game := --features movies
+else
+movie_note = @echo "movies: off, no FFmpeg build in $(FFMPEG_PREFIX) (\`make ffmpeg\` builds one)"
+endif
+
+.PHONY: help check fmt test-install compare run-viewer run-game bench replay soundfont ffmpeg
 
 help:
 	@echo "make check                     format check, clippy and all unit tests"
@@ -40,11 +59,14 @@ help:
 	@echo "                               with --bench-route FILE.csv --headless"
 	@echo "make replay ARGS=...           run the replay tool"
 	@echo "make soundfont                 fetch the music SoundFont into your data directory"
+	@echo "make ffmpeg                    build the pinned FFmpeg for movies into your cache (once;"
+	@echo "                               run-game, check and test-install then build with movies)"
 
 check:
+	$(movie_note)
 	$(CARGO) fmt --all --check
-	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings
-	$(CARGO) test --workspace --locked
+	$(CARGO) clippy --workspace --all-targets --locked $(movie_features_all) -- -D warnings
+	$(CARGO) test --workspace --locked $(movie_features_all)
 
 fmt:
 	$(CARGO) fmt --all
@@ -52,8 +74,9 @@ fmt:
 check-%:
 	@dir="$(call module_dir,$*)"; \
 	if [ -z "$$dir" ]; then echo "unknown module '$*'" >&2; exit 2; fi; \
-	echo "$(CARGO) test --locked --manifest-path $$dir/Cargo.toml"; \
-	$(CARGO) test --locked --manifest-path $$dir/Cargo.toml
+	$(if $(filter movie game,$*),$(subst @,,$(movie_note));) \
+	echo "$(CARGO) test --locked --manifest-path $$dir/Cargo.toml $(movie_feature_$*)"; \
+	$(CARGO) test --locked --manifest-path $$dir/Cargo.toml $(movie_feature_$*)
 
 test-install:
 	@if [ -z "$(CLAW_INSTALL)" ]; then echo "CLAW_INSTALL is not set; point it at your own install" >&2; exit 2; fi
@@ -61,8 +84,9 @@ test-install:
 	@dir="$(call module_dir,$(MODULE))"; \
 	if [ -z "$$dir" ]; then echo "unknown module '$(MODULE)'" >&2; exit 2; fi; \
 	if ! ls $$dir/tests/install_*.rs >/dev/null 2>&1; then echo "module '$(MODULE)' has no install tests" >&2; exit 2; fi; \
-	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --tests"; \
-	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --tests
+	$(if $(filter movie game,$(MODULE)),$(subst @,,$(movie_note));) \
+	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --tests $(movie_feature_$(MODULE))"; \
+	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --tests $(movie_feature_$(MODULE))
 
 # Replays $(CLAW_REFERENCE)/$(REF)/route.csv with the tuning, random state
 # and start point (teleport) its meta.toml names for each clock (or only
@@ -120,7 +144,8 @@ run-viewer:
 	$(CARGO) run --release --locked -p claw-viewer -- $(ARGS)
 
 run-game:
-	$(CARGO) run --release --locked -p claw-game --bin rusty-claw -- $(ARGS)
+	$(movie_note)
+	$(CARGO) run --release --locked -p claw-game --bin rusty-claw $(movie_feature_game) -- $(ARGS)
 
 bench:
 	$(CARGO) run --release --locked -p claw-game --bin rusty-claw -- $(ARGS)
@@ -141,3 +166,6 @@ soundfont:
 		rm -f "$$part"; echo "the download does not match SHA-256 $(SOUNDFONT_SHA256); nothing was installed" >&2; exit 1; \
 	fi; \
 	mv "$$part" "$$dest" && echo "installed $$dest"
+
+ffmpeg:
+	sh third_party/ffmpeg/build.sh
