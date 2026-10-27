@@ -282,6 +282,69 @@ fn every_movie_finds_its_file_and_its_clip() {
 }
 
 #[test]
+fn the_credits_movie_is_the_folder_copy_then_archive_clip_eleven() {
+    let s = setup();
+    for name in ["Credits.MP4", "CREDITS.mkv", "credits.webm", "CREDITS.avi"] {
+        touch(&s.user.join(name));
+    }
+    // The install's own files of that name are never looked at.
+    for name in ["CREDITS.avi", "CREDITS.vob"] {
+        touch(&s.install.join(name));
+        touch(&s.install.join("mOvIeS").join(name));
+    }
+    let find = |mode| names(&locate_all(MovieIndex::CREDITS, &s.roots(mode)), &s.base);
+    // The CD folder's archive has two clips only, so no clip 11.
+    assert_eq!(
+        find(MovieMode::Upscaled),
+        [
+            "up:upscaled/CREDITS.mkv",
+            "up:upscaled/Credits.MP4",
+            "up:upscaled/CREDITS.avi",
+            "fec:game/CLAW.FEC#11",
+        ]
+    );
+    assert_eq!(find(MovieMode::Original), ["fec:game/CLAW.FEC#11"]);
+    assert_eq!(find(MovieMode::Archive), ["fec:game/CLAW.FEC#11"]);
+    // An archive of ten clips, like a plain movie archive without the
+    // long clip, offers nothing.
+    fs::write(s.install.join("CLAW.FEC"), archive(10)).unwrap();
+    assert_eq!(find(MovieMode::Original), Vec::<String>::new());
+    assert_eq!(
+        find(MovieMode::Upscaled),
+        [
+            "up:upscaled/CREDITS.mkv",
+            "up:upscaled/Credits.MP4",
+            "up:upscaled/CREDITS.avi",
+        ]
+    );
+    // The archive clip skips on any input, a copy on Escape; the credits
+    // follow their own input rules whichever plays.
+    let roots = s.roots(MovieMode::Upscaled);
+    assert!(
+        locate_all(MovieIndex::CREDITS, &roots)
+            .iter()
+            .all(|src| src.skip_rule() == SkipRule::Back)
+    );
+}
+
+#[test]
+fn the_numbered_movies_never_find_the_credits_movie() {
+    let s = setup();
+    touch(&s.user.join("CREDITS.mkv"));
+    for mode in [MovieMode::Upscaled, MovieMode::Original, MovieMode::Archive] {
+        for i in MovieIndex::all() {
+            let found = names(&locate_all(i, &s.roots(mode)), &s.base);
+            assert!(
+                found
+                    .iter()
+                    .all(|n| !n.contains("CREDITS") && !n.ends_with("#11")),
+                "{i} in {mode:?}: {found:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_malformed_or_short_archive_offers_no_clip() {
     let dir = tempfile::tempdir().unwrap();
     let install = dir.path();

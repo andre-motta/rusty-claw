@@ -154,6 +154,9 @@ struct Rig {
     intro_records: usize,
     /// Stops of the menu's loop.
     bed_stops: usize,
+    /// The window cannot play the credits movie: it says so when the
+    /// credits open, before it hands them over.
+    credits_movie_fails: bool,
     _dir: TempDir,
     saves: PathBuf,
     config: PathBuf,
@@ -219,6 +222,7 @@ impl Rig {
             movies: Vec::new(),
             intro_records: 0,
             bed_stops: 0,
+            credits_movie_fails: false,
             _dir: dir,
             saves,
             config,
@@ -254,6 +258,9 @@ impl Rig {
                     Effect::Sound(AudioCue::StopMusic) => self.music.push(None),
                     Effect::Music { track, looped } => self.music.push(Some((track, looped))),
                     Effect::ShowCredits(entry) => {
+                        if self.credits_movie_fails {
+                            self.flow.credits_movie_failed();
+                        }
                         let mut art = CreditsArt::plain(FontMetrics::uniform(8));
                         art.tune_ms = Some(5000.0);
                         self.flow.set_credits(CreditsScreen::new(
@@ -3107,4 +3114,235 @@ fn a_replayed_movie_returns_to_its_page() {
     movie_ends(&mut r);
     assert_eq!(r.intro_records, 0);
     assert_eq!(r.page(), Page::Movies);
+}
+
+// The credits' background movie.
+
+/// A shelf with the credits movie and the movies of `movies` (no logo at
+/// start-up).
+fn shelf_with_credits(movies: impl IntoIterator<Item = i8>) -> MovieShelf {
+    let mut shelf = shelf_of(movies, true, true);
+    shelf.available.insert(MovieIndex::CREDITS);
+    shelf
+}
+
+/// Whether any of `sounds` is the parchment's unroll.
+fn unrolls(sounds: &[String]) -> bool {
+    sounds
+        .iter()
+        .any(|s| *s == credits::UNROLL_SOUND || *s == credits::DELAYED_UNROLL_SOUND)
+}
+
+#[test]
+fn after_the_last_level_the_credits_show_their_movie_behind_the_same_text() {
+    let mut r = Rig::with_movies(
+        Start::Play,
+        LevelChoice::Retail(14),
+        main_menu(),
+        shelf_with_credits([]),
+    );
+    assert!(!r.flow.credits_movie(), "only while the credits show");
+    finish_the_game(&mut r);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert!(r.flow.credits_movie());
+    // It is no movie screen: no movie is asked for, the screen stays the
+    // credits.
+    assert!(r.movies.is_empty());
+    assert_eq!(r.flow.playing_movie(), None);
+    // The parchment does not unroll, so its sound does not play; the rest
+    // keeps its timing: the black, the opening, then the text and its
+    // music.
+    assert!(!unrolls(&r.sounds), "{:?}", r.sounds);
+    let c = r.flow.credits().unwrap();
+    assert_eq!(c.entry(), CreditsEntry::AfterGame);
+    assert_eq!(c.phase(), CreditsPhase::Black);
+    assert_eq!(r.flow.brightness(), 0.0);
+    r.input(MenuInput::Confirm);
+    r.update(BLACK_MS);
+    assert_eq!(r.flow.credits().unwrap().phase(), CreditsPhase::Unroll);
+    r.update(UNROLL_MS + 20.0);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert_eq!(r.flow.credits().unwrap().phase(), CreditsPhase::Text);
+    assert_eq!(r.music, vec![Some((Track::Credits, true))]);
+    let top = r.flow.credits().unwrap().text_top();
+    r.update(1000.0);
+    assert_eq!(
+        top - r.flow.credits().unwrap().text_top(),
+        25,
+        "25 px a second"
+    );
+    // The corner extra and the inputs are as without the movie.
+    r.flow.click(20, 20);
+    r.effects();
+    assert!(r.flow.credits().unwrap().monolith());
+    assert!(r.flow.credits_movie());
+    r.update(5000.0);
+    r.input(MenuInput::Down);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert!(r.flow.credits_movie());
+    r.input(MenuInput::Confirm);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert_eq!(r.music.last(), Some(&None), "the credits music stops");
+    assert!(!r.flow.credits_movie(), "the window stops the movie");
+    assert!(r.movies.is_empty());
+}
+
+#[test]
+fn without_the_credits_movie_the_parchment_unrolls_as_before() {
+    for shelf in [None, Some(shelf_of(every_movie(), true, false))] {
+        let mut r = Rig::build_with(
+            Start::Play,
+            LevelChoice::Retail(14),
+            main_menu(),
+            shelf.clone(),
+            |_| {},
+        );
+        let had_ending = shelf.is_some();
+        r.update(300.0);
+        r.events(&[GameEvent::LevelComplete { after_ms: 100 }]);
+        r.update(200.0);
+        if had_ending {
+            movie_ends(&mut r);
+        } else {
+            r.update(flow::CUT_SCREEN_MS);
+        }
+        r.update(FADE_MS);
+        for _ in 0..3 {
+            r.input(MenuInput::Confirm);
+        }
+        let mut guard = 0;
+        while r.flow.screen() == Screen::Booty {
+            r.update(50.0);
+            guard += 1;
+            assert!(guard < 100, "stuck at the tally");
+        }
+        assert_eq!(r.flow.screen(), Screen::Credits);
+        assert!(!r.flow.credits_movie());
+        assert!(
+            r.sounds
+                .contains(&credits::DELAYED_UNROLL_SOUND.to_string())
+        );
+    }
+}
+
+#[test]
+fn the_main_menu_credits_show_the_movie_after_the_menu_rolls_up() {
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu_with_credits(),
+        shelf_with_credits([-1]),
+    );
+    r.reach_main_menu();
+    let at = main_entries(&r)
+        .iter()
+        .position(|&c| c == MenuCommand::Unavailable(Unavailable::Credits))
+        .expect("a Credits entry");
+    for _ in 0..at {
+        r.input(MenuInput::Down);
+    }
+    r.update(100.0);
+    r.sounds.clear();
+    r.choose();
+    // The menu still rolls up as it leaves.
+    assert!(r.sounds.contains(&"ROLLUP".to_string()));
+    r.update(FADE_MS);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert!(r.flow.credits_movie());
+    assert_eq!(r.flow.credits().unwrap().entry(), CreditsEntry::FromMenu);
+    assert!(!unrolls(&r.sounds), "{:?}", r.sounds);
+    r.update(UNROLL_MS + 20.0);
+    assert_eq!(r.music, vec![Some((Track::Credits, true))]);
+    r.input(MenuInput::Back);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert!(!r.flow.credits_movie());
+    // Opened again, the movie is wanted again.
+    r.update(FADE_MS);
+    for _ in 0..at {
+        r.input(MenuInput::Down);
+    }
+    r.update(100.0);
+    r.choose();
+    r.update(FADE_MS);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert!(r.flow.credits_movie());
+}
+
+#[test]
+fn a_credits_movie_that_fails_leaves_the_parchment_and_the_credits_go_on() {
+    // It stops while the text rises: the parchment at once, nothing else
+    // changes.
+    let mut r = Rig::with_movies(
+        Start::Play,
+        LevelChoice::Retail(14),
+        main_menu(),
+        shelf_with_credits([]),
+    );
+    finish_the_game(&mut r);
+    r.update(BLACK_MS + UNROLL_MS + 3000.0);
+    assert!(r.flow.credits_movie());
+    let before = r.flow.credits().unwrap().clone();
+    let effects = r.flow.take_effects();
+    assert!(effects.is_empty(), "{effects:?}");
+    r.flow.credits_movie_failed();
+    assert!(!r.flow.credits_movie());
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert_eq!(
+        r.flow.credits(),
+        Some(&before),
+        "the text goes on as it was"
+    );
+    assert!(
+        r.flow.take_effects().is_empty(),
+        "no sound, no music change"
+    );
+    r.update(1000.0);
+    assert_eq!(before.text_top() - r.flow.credits().unwrap().text_top(), 25);
+    assert!(!r.flow.credits_movie(), "for the rest of the visit");
+    r.flow.credits_press();
+    r.effects();
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+
+    // It cannot play at all: the window says so before it hands the
+    // credits over, and the parchment unrolls with its sound.
+    let mut r = Rig::with_movies(
+        Start::Play,
+        LevelChoice::Retail(14),
+        main_menu(),
+        shelf_with_credits([]),
+    );
+    r.credits_movie_fails = true;
+    finish_the_game(&mut r);
+    assert_eq!(r.flow.screen(), Screen::Credits);
+    assert!(!r.flow.credits_movie());
+    assert!(
+        r.sounds
+            .contains(&credits::DELAYED_UNROLL_SOUND.to_string())
+    );
+}
+
+#[test]
+fn the_credits_movie_is_not_on_the_replay_movies_page() {
+    // The credits movie alone: the page stays greyed out.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu_with_movies(),
+        shelf_with_credits([]),
+    );
+    r.reach_main_menu();
+    assert!(!enabled(&r, 10003));
+    assert!((15001..=15010).all(|id| !enabled(&r, id)));
+    // With other movies the page shows theirs only.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu_with_movies(),
+        shelf_with_credits([-1, 14]),
+    );
+    r.reach_main_menu();
+    assert!(enabled(&r, 10003));
+    let on: Vec<u32> = (15001..=15010).filter(|&id| enabled(&r, id)).collect();
+    assert_eq!(on, [15001, 15010]);
+    assert!(r.movies.is_empty(), "nothing played by itself");
 }

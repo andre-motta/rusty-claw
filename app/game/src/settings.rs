@@ -39,6 +39,7 @@
 //! skip_logo = off           # on: no logo movie at start-up unless the intro plays
 //! movie_folder = "/path/to/your/upscaled/movies"
 //! intro_seen = no           # the game sets it once the intro movie played
+//! credits_movie = on        # off: the credits show over the parchment
 //! key_jump = "Space"        # key_<action>: key names, comma separated
 //! pad_jump = "South"        # pad_<action>: pad button names
 //! ```
@@ -126,8 +127,12 @@
 //! also plays the intro movie (a first run whose install has no intro skips
 //! it too); the game writes `intro_seen = yes` once the intro movie has
 //! played (watched to its end or skipped, not when it failed), and from
-//! then on starts with the logo movie only. The Display menu's movie
-//! interlacing switch is kept for the run only and changes nothing.
+//! then on starts with the logo movie only. `credits_movie` (on by
+//! default) shows a looping movie behind the credits when there is one (the
+//! movie folder's `CREDITS` copy, else the movie archive's long clip);
+//! off, or without one, the credits show over the parchment. The Display
+//! menu's movie interlacing switch is kept for the run only and changes
+//! nothing.
 //!
 //! The smooth rope swing (`smooth_rope`, `--smooth-rope`, on by default)
 //! also only changes what is drawn: on, Claw, the rope he hangs from and
@@ -651,6 +656,9 @@ pub struct Settings {
     /// The intro movie has played on an earlier run (`intro_seen`, written
     /// by the game).
     pub intro_seen: bool,
+    /// Show a looping movie behind the credits when there is one
+    /// (`credits_movie`, on by default).
+    pub credits_movie: bool,
 }
 
 /// Default radial dead zone of the sticks, as a fraction of a full
@@ -728,6 +736,7 @@ impl Settings {
             skip_logo: false,
             movie_folder: None,
             intro_seen: false,
+            credits_movie: true,
         }
     }
 
@@ -1079,6 +1088,7 @@ impl Settings {
             "skip_logo" => on_off(self.skip_logo),
             "movie_folder" => path(&self.movie_folder)?,
             "intro_seen" => if self.intro_seen { "yes" } else { "no" }.to_string(),
+            "credits_movie" => on_off(self.credits_movie),
             k => {
                 if let Some(a) = k.strip_prefix("key_").and_then(Action::from_name) {
                     self.keymap.config_value(a)
@@ -1323,7 +1333,7 @@ pub struct ConfigFile {
 
 /// Keys a config file may hold, besides the `key_<action>` and
 /// `pad_<action>` bindings.
-pub const CONFIG_KEYS: [&str; 32] = [
+pub const CONFIG_KEYS: [&str; 33] = [
     "install",
     "level",
     "custom",
@@ -1356,6 +1366,7 @@ pub const CONFIG_KEYS: [&str; 32] = [
     "skip_logo",
     "movie_folder",
     "intro_seen",
+    "credits_movie",
 ];
 
 /// True when a config file may hold `key`.
@@ -1491,6 +1502,7 @@ impl ConfigFile {
                     s.movie_folder = Some(PathBuf::from(v));
                 }
                 "intro_seen" => s.intro_seen = parse_yes_no(v).map_err(|e| err(key, e))?,
+                "credits_movie" => s.credits_movie = flag(key, v)?,
                 "pad_dead_zone" => {
                     s.pad.dead_zone = match v.parse::<f32>() {
                         Ok(z) if PAD_DEAD_ZONE_RANGE.contains(&z) => z,
