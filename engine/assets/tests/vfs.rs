@@ -3,7 +3,9 @@
 mod common;
 
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
 
 use claw_assets::name::{TYPE_PAL, TYPE_PID};
@@ -256,6 +258,7 @@ fn logical_paths_cannot_escape() {
 }
 
 #[test]
+#[cfg(unix)]
 fn links_never_leave_the_root() {
     let tmp = tempfile::tempdir().unwrap();
     let outside = put(tmp.path(), "outside/secret.txt", b"secret");
@@ -290,6 +293,7 @@ fn links_never_leave_the_root() {
 }
 
 #[test]
+#[cfg(unix)]
 fn names_that_are_not_single_byte_are_skipped() {
     let tmp = tempfile::tempdir().unwrap();
     put(tmp.path(), "GOOD.TXT", b"ok");
@@ -388,12 +392,15 @@ fn install_layout_and_custom_level_paths() {
         assert!(install.custom_level_path(bad).is_err(), "{bad:?} accepted");
     }
     // A custom level file that links out of the folder is refused.
-    symlink(
-        tmp.path().join("Secret.WWD"),
-        tmp.path().join("Custom/Link.WWD"),
-    )
-    .unwrap();
-    assert!(install.custom_level_path("Link.WWD").is_err());
+    #[cfg(unix)]
+    {
+        symlink(
+            tmp.path().join("Secret.WWD"),
+            tmp.path().join("Custom/Link.WWD"),
+        )
+        .unwrap();
+        assert!(install.custom_level_path("Link.WWD").is_err());
+    }
 
     let empty = tempfile::tempdir().unwrap();
     assert!(Install::open(empty.path()).is_err());
@@ -419,6 +426,7 @@ fn install_with_archive_and_folder() {
 }
 
 #[test]
+#[cfg(unix)]
 fn install_parts_may_be_links() {
     let tmp = tempfile::tempdir().unwrap();
     let library = tmp.path().join("library");

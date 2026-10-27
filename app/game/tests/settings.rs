@@ -11,7 +11,8 @@ use clap::Parser;
 use claw_game::keymap::{Action, Command, Keymap, PadButton};
 use claw_game::saves::{SaveRecord, SaveStore};
 use claw_game::settings::{
-    Args, ConfigFile, Settings, UserDirs, WriteHooks, WriteStep, backup_path, write_atomic,
+    Args, ConfigFile, FolderRules, Settings, UserDirs, WriteHooks, WriteStep, backup_path,
+    write_atomic,
 };
 use claw_sim::{Buttons, Carry, SavePos};
 
@@ -100,6 +101,68 @@ fn user_dirs_follow_the_xdg_rules() {
         Some(PathBuf::from("/d/rusty-claw/saves/default"))
     );
     assert_eq!(UserDirs::from_lookup(|_| None).config_file(), None);
+}
+
+/// A lookup of the variables `vars` and no other.
+fn vars(vars: Vec<(&'static str, OsString)>) -> impl Fn(&str) -> Option<OsString> {
+    move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone())
+}
+
+#[test]
+fn user_dirs_take_the_windows_folders_when_xdg_is_unset() {
+    // Absolute on every system.
+    let base = std::env::temp_dir().join("user-dirs");
+    let at = |p: &str| base.join(p).into_os_string();
+    let windows = |v| UserDirs::from_lookup_with(FolderRules::Windows, vars(v));
+    let d = windows(vec![
+        ("HOME", at("home")),
+        ("APPDATA", at("roaming")),
+        ("LOCALAPPDATA", at("local")),
+    ]);
+    assert_eq!(
+        d.config_file(),
+        Some(base.join("roaming").join("rusty-claw").join("config.toml"))
+    );
+    assert_eq!(
+        d.saves_dir(),
+        Some(
+            base.join("local")
+                .join("rusty-claw")
+                .join("saves")
+                .join("default")
+        )
+    );
+    // The XDG variables come first.
+    let d = windows(vec![
+        ("APPDATA", at("roaming")),
+        ("LOCALAPPDATA", at("local")),
+        ("XDG_CONFIG_HOME", at("c")),
+        ("XDG_DATA_HOME", at("d")),
+    ]);
+    assert_eq!(d.config_home, Some(base.join("c")));
+    assert_eq!(d.data_home, Some(base.join("d")));
+    // An empty or relative folder variable falls back to HOME's places.
+    let d = windows(vec![
+        ("HOME", at("home")),
+        ("APPDATA", "".into()),
+        ("LOCALAPPDATA", "relative".into()),
+    ]);
+    assert_eq!(d.config_home, Some(base.join("home").join(".config")));
+    assert_eq!(d.data_home, Some(base.join("home").join(".local/share")));
+    assert_eq!(windows(Vec::new()), UserDirs::default());
+    // The XDG rules never look at the Windows folders.
+    let d = UserDirs::from_lookup_with(
+        FolderRules::Xdg,
+        vars(vec![
+            ("HOME", at("home")),
+            ("APPDATA", at("roaming")),
+            ("LOCALAPPDATA", at("local")),
+        ]),
+    );
+    assert_eq!(d.config_home, Some(base.join("home").join(".config")));
+    assert_eq!(d.data_home, Some(base.join("home").join(".local/share")));
+    // The game follows the rules of the system it was built for.
+    assert_eq!(FolderRules::NATIVE == FolderRules::Windows, cfg!(windows));
 }
 
 #[test]
@@ -315,6 +378,7 @@ fn a_file_that_does_not_parse_is_never_written() {
 
 #[cfg(unix)]
 #[test]
+#[cfg(unix)]
 fn links_and_permissions_are_kept() {
     use std::os::unix::fs::{PermissionsExt, symlink};
     let root = tempfile::tempdir().unwrap();

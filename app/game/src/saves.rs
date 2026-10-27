@@ -6,7 +6,8 @@
 //! health, lives, ammunition, the selected weapon and the game's treasure
 //! counts) and the level's treasure counts. Saves live in
 //! `$XDG_DATA_HOME/rusty-claw/saves/default/` (by default
-//! `~/.local/share/rusty-claw/saves/default/`), one folder per profile with
+//! `~/.local/share/rusty-claw/saves/default/`, or
+//! `%LOCALAPPDATA%\rusty-claw\saves\default\` on Windows), one folder per profile with
 //! a single default profile, as text files in the config file's
 //! `key = value` style:
 //!
@@ -41,6 +42,7 @@
 //! saves but cannot write them. The store only ever touches its own folder.
 
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -393,6 +395,37 @@ pub struct SaveStore {
     unreadable: HashSet<PathBuf>,
 }
 
+/// True when folder `dir` is `install` or lies inside it, comparing the
+/// paths as written and their canonical forms (see [`canonical`]), so a
+/// link, a relative path or another spelling of the same folder is caught
+/// whether or not the folders exist yet.
+pub fn is_inside(dir: &Path, install: &Path) -> bool {
+    dir.starts_with(install) || canonical(dir).starts_with(canonical(install))
+}
+
+/// The canonical form of `path` (links resolved, absolute), as far as it
+/// exists: the nearest existing ancestor is made canonical and the rest
+/// of the path is put back after it. A path none of which exists is
+/// returned as written.
+pub fn canonical(path: &Path) -> PathBuf {
+    let mut base = path.to_path_buf();
+    let mut rest: Vec<OsString> = Vec::new();
+    loop {
+        if let Ok(c) = fs::canonicalize(&base) {
+            return rest.iter().rev().fold(c, |p, part| p.join(part));
+        }
+        let Some(name) = base.file_name() else {
+            return path.to_path_buf();
+        };
+        rest.push(name.to_os_string());
+        base.pop();
+        if base.as_os_str().is_empty() {
+            // A relative path: from the current folder.
+            base = PathBuf::from(".");
+        }
+    }
+}
+
 impl SaveStore {
     /// Opens the store in `dir`, creating the folder when missing, and
     /// takes its lock. When another running game holds the lock, or the
@@ -440,21 +473,23 @@ impl SaveStore {
     /// (see [`UserDirs::saves_dir`]). A data folder inside the game
     /// install is refused, so the install is never written.
     pub fn open_default(dirs: &UserDirs, install: Option<&Path>) -> Result<SaveStore> {
-        let dir = dirs
-            .saves_dir()
-            .ok_or_else(|| anyhow!("no folder for saved games: set HOME or XDG_DATA_HOME"))?;
-        if let Some(install) = install {
-            let canon = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-            let install = canon(install);
-            let mut probe = dir.clone();
-            // Compare against the nearest existing ancestor too.
-            while !probe.exists() && probe.pop() {}
-            if dir.starts_with(&install) || canon(&probe).starts_with(&install) {
-                bail!(
-                    "the saves folder {} is inside the game install; set XDG_DATA_HOME elsewhere",
-                    dir.display()
-                );
-            }
+        let dir = dirs.saves_dir().ok_or_else(|| {
+            anyhow!(
+                "no folder for saved games: set {}",
+                if cfg!(windows) {
+                    "LOCALAPPDATA, XDG_DATA_HOME or HOME"
+                } else {
+                    "HOME or XDG_DATA_HOME"
+                }
+            )
+        })?;
+        if let Some(install) = install
+            && is_inside(&dir, install)
+        {
+            bail!(
+                "the saves folder {} is inside the game install; set XDG_DATA_HOME elsewhere",
+                dir.display()
+            );
         }
         SaveStore::open(dir)
     }

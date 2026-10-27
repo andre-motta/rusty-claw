@@ -171,7 +171,8 @@ make soundfont
 ```
 
 fetches a pinned copy into `~/.local/share/rusty-claw/soundfonts/` (or under
-`$XDG_DATA_HOME`) and checks its SHA-256. The game takes the first usable
+`$XDG_DATA_HOME`) and checks its SHA-256. On Windows that user folder is
+`%LOCALAPPDATA%\rusty-claw\soundfonts\` unless `XDG_DATA_HOME` is set. The game takes the first usable
 bank from, in order: the `soundfont` setting, the `CLAW_SOUNDFONT`
 environment variable, a packaged game's `share/rusty-claw/soundfonts/`,
 that user folder, and the common system paths where distributions install
@@ -196,7 +197,8 @@ runs are always silent.
 ## Settings and saved games
 
 Settings live in a config file, `~/.config/rusty-claw/config.toml` (or under
-`$XDG_CONFIG_HOME`), or any file passed with `--config FILE`; command line
+`$XDG_CONFIG_HOME`; on Windows `%APPDATA%\rusty-claw\config.toml` unless
+`XDG_CONFIG_HOME` is set), or any file passed with `--config FILE`; command line
 options win over it. Options changed in the menus are written back to that
 file: only the changed lines change, every other line and comment stays as
 it is, the previous file is kept as `config.toml.bak`, and values given on
@@ -289,7 +291,8 @@ search bot and the comparisons with the original (`make compare`,
 why.
 
 Saved games are kept in `~/.local/share/rusty-claw/saves/default/` (or
-under `$XDG_DATA_HOME`). Touching one of a level's two save points saves
+under `$XDG_DATA_HOME`; on Windows `%LOCALAPPDATA%\rusty-claw\saves\default\`
+unless `XDG_DATA_HOME` is set). Touching one of a level's two save points saves
 the game there, and finishing a level saves the start of the next one with
 the score, health, lives, ammunition and treasure carried over. Every write
 is atomic and keeps the previous file; a damaged save is moved aside, never

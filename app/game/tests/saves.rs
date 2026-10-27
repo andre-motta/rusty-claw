@@ -7,10 +7,10 @@ use std::path::Path;
 
 use claw_frame::Weapon;
 use claw_game::saves::{
-    CARRY_KEYS, MAX_SAVE_BYTES, SAVE_VERSION, SaveError, SaveRecord, SaveStore, carry_fields,
-    carry_from_fields, check_level_name, retail_level_name,
+    CARRY_KEYS, MAX_SAVE_BYTES, SAVE_VERSION, SaveError, SaveRecord, SaveStore, canonical,
+    carry_fields, carry_from_fields, check_level_name, is_inside, retail_level_name,
 };
-use claw_game::settings::{WriteHooks, WriteStep, backup_path};
+use claw_game::settings::{UserDirs, WriteHooks, WriteStep, backup_path};
 use claw_sim::{Carry, SavePos};
 
 fn record(level: &str, slot: u8, score: u32) -> SaveRecord {
@@ -188,6 +188,7 @@ fn damaged_and_newer_saves_are_moved_aside_never_deleted() {
 
 #[cfg(unix)]
 #[test]
+#[cfg(unix)]
 fn a_save_that_cannot_be_read_is_left_where_it_is() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
@@ -356,4 +357,61 @@ fn a_save_written_before_the_level_change_still_loads() {
     fs::write(dir.path().join("LEVEL2-3.save"), old).unwrap();
     let mut store = SaveStore::open(dir.path()).unwrap();
     assert_eq!(store.read("LEVEL2", 3).unwrap(), Some(r));
+}
+
+#[test]
+fn a_saves_folder_inside_the_install_is_refused_however_it_is_spelled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let install = root.join("install");
+    fs::create_dir_all(&install).unwrap();
+    fs::create_dir_all(root.join("other")).unwrap();
+    // Another spelling of the install, through a folder and back up; the
+    // saves folder does not exist yet.
+    let roundabout = root.join("other").join("..").join("install").join("data");
+    assert!(!roundabout.starts_with(&install));
+    assert_eq!(
+        canonical(&roundabout),
+        canonical(&install).join("data"),
+        "the existing part is made canonical, the rest put back"
+    );
+    assert!(is_inside(&roundabout, &install));
+    assert!(is_inside(&install, &install));
+    assert!(!is_inside(&root.join("other").join("data"), &install));
+    let dirs = |data: &Path| UserDirs {
+        config_home: None,
+        data_home: Some(data.to_path_buf()),
+    };
+    assert!(SaveStore::open_default(&dirs(&roundabout), Some(&install)).is_err());
+    assert!(
+        !install.join("data").exists(),
+        "nothing written in the install"
+    );
+    let outside = root.join("other").join("data");
+    let store = SaveStore::open_default(&dirs(&outside), Some(&install)).unwrap();
+    assert!(store.dir().starts_with(&outside));
+}
+
+#[test]
+#[cfg(unix)]
+fn a_saves_folder_reached_through_a_link_into_the_install_is_refused() {
+    use std::os::unix::fs::symlink;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let install = root.join("install");
+    fs::create_dir_all(&install).unwrap();
+    symlink(&install, root.join("link")).unwrap();
+    let dirs = |data: &Path| UserDirs {
+        config_home: None,
+        data_home: Some(data.to_path_buf()),
+    };
+    // The saves folder through the link, the install named directly.
+    let through = root.join("link").join("data");
+    assert!(is_inside(&through, &install));
+    assert!(SaveStore::open_default(&dirs(&through), Some(&install)).is_err());
+    // The install through the link, the saves folder named directly.
+    let direct = install.join("data");
+    assert!(is_inside(&direct, &root.join("link")));
+    assert!(SaveStore::open_default(&dirs(&direct), Some(&root.join("link"))).is_err());
+    assert!(!install.join("data").exists());
 }
