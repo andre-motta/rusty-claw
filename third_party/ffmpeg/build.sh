@@ -19,9 +19,10 @@
 # where the hash covers the pins and the configure line, so a change to either
 # builds into a new prefix and an unchanged pin reuses the old one in seconds.
 # FFMPEG_PREFIX, an absolute path, overrides the prefix (empty is the same as
-# unset). Downloads, the pinned nasm, meson and ninja it may need and the
-# build tree live next to it in the cache; the build tree is removed on
-# success.
+# unset); a build there without AV1 gives way to the same build with AV1
+# once one succeeds (make ffmpeg after installing what AV1 needed).
+# Downloads, the pinned nasm, meson and ninja it may need and the build tree
+# live next to it in the cache; the build tree is removed on success.
 # FFMPEG_JOBS sets the parallel compile jobs (default: the CPU count, at most
 # 8; inside a make or cargo job server, FFmpeg's make takes its jobs from it
 # and ninja runs half as many). RUSTY_CLAW_FFMPEG_H26X=on adds the H.264 and
@@ -34,12 +35,13 @@
 # meson runs with python3 (3.7 or newer), and ninja is built with python3
 # and a C++ compiler. FFmpeg is built without AV1, into a prefix of its own,
 # when RUSTY_CLAW_FFMPEG_AV1=off, when pkg-config or those tools are
-# missing, or when getting the tools or building dav1d fails; the build says
-# why, and the original movies play either way. A failed attempt is kept in
-# av1-failed.txt in the cache folder together with what could change its
-# outcome (the pins, and the compilers, meson, ninja, python3 and pkg-config
-# found), and later builds go on without AV1 until one of those changes or
-# --retry-av1 tries again.
+# missing, or when getting the tools, building dav1d or building FFmpeg with
+# it fails; the build says why, and the original movies play either way. A
+# failed attempt is kept in av1-failed.txt in the cache folder together with
+# what could change its outcome (the pins, and the compilers, meson, ninja,
+# python3 and pkg-config found), and later builds go on without AV1 until
+# one of those changes or --retry-av1 tries again; a build with AV1 that is
+# already there is still used.
 set -eu
 
 FFMPEG_VERSION=8.1.3
@@ -65,6 +67,11 @@ DAV1D_SHA256=686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
 MESON_VERSION=1.10.2
 MESON_URL=https://github.com/mesonbuild/meson/releases/download/$MESON_VERSION/meson-$MESON_VERSION.tar.gz
 MESON_SHA256=7890287d911dd4ee1ebd0efb61ed0321bfcd87c725df923a837cf90c6508f96b
+# ninja publishes no source tarball of its own, so its source comes as the
+# archive GitHub makes of the release tag. Those bytes are not guaranteed to
+# stay the same: a SHA-256 mismatch on it means the pin needs refreshing
+# (see README.md), and until then builds without a system ninja go on
+# without AV1.
 NINJA_VERSION=1.13.2
 NINJA_URL=https://github.com/ninja-build/ninja/archive/v$NINJA_VERSION/ninja-$NINJA_VERSION.tar.gz
 NINJA_SHA256=974d6b2f4eeefa25625d34da3cb36bdcebe7fbce40f4c16ac0835fd1c0cbae17
@@ -263,12 +270,6 @@ av1_key() {
     } | sha256_text
 }
 
-if [ "$av1" = yes ] && [ "$retry_av1" = no ] && [ -f "$av1_record" ] &&
-    [ "$(sed -n 1p "$av1_record")" = "key $(av1_key)" ]; then
-    av1=no
-    av1_missing="$(sed -n 2p "$av1_record") (an earlier build found this; make ffmpeg tries again)"
-fi
-
 configure_flags() {
     printf '%s' "$CONFIGURE_FLAGS"
     if [ "$av1" = yes ]; then printf ' %s' "$AV1_FLAGS"; fi
@@ -303,7 +304,19 @@ choose_prefix() {
     prefix="${FFMPEG_PREFIX:-$cache_root/$FFMPEG_VERSION-$config_hash}"
     stamp="$prefix/share/rusty-claw/ffmpeg-build.txt"
 }
+up_to_date() { [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(stamp_text)" ]; }
 choose_prefix
+
+# An AV1 attempt that failed before with the same key is not made again
+# unless --retry-av1 asks, but a build with AV1 for these choices that is
+# already there (made before the failure, or in FFMPEG_PREFIX) is still the
+# one to use. Only the record and the stamp are read.
+if [ "$av1" = yes ] && [ "$retry_av1" = no ] && [ -f "$av1_record" ] &&
+    [ "$(sed -n 1p "$av1_record")" = "key $(av1_key)" ] && ! up_to_date; then
+    av1=no
+    av1_missing="$(sed -n 2p "$av1_record") (an earlier build found this; make ffmpeg tries again)"
+    choose_prefix
+fi
 
 case "$action" in
     prefix) printf '%s\n' "$prefix"; exit 0 ;;
@@ -312,8 +325,6 @@ case "$action" in
         exit 0
         ;;
 esac
-
-up_to_date() { [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(stamp_text)" ]; }
 
 # A found build writes its prefix to last-build.txt in the cache folder when
 # it names another one, and a finished build always rewrites it: cargo
@@ -342,8 +353,17 @@ if up_to_date; then
     say "FFmpeg $FFMPEG_VERSION is already built in $prefix, with $(extras)"
     exit 0
 fi
+# In FFMPEG_PREFIX, the same build without AV1 is replaced once one with
+# AV1 is ready (a failed attempt leaves it as it is); any other build there
+# is left alone.
+replace=no
 if [ -e "$prefix" ]; then
-    fail "$prefix exists but holds another build; remove it or set FFMPEG_PREFIX elsewhere"
+    if [ -n "${FFMPEG_PREFIX:-}" ] && [ "$av1" = yes ] && [ -f "$stamp" ] &&
+        [ "$(cat "$stamp")" = "$(av1=no; stamp_text)" ]; then
+        replace=yes
+    else
+        fail "$prefix exists but holds another build; remove it or set FFMPEG_PREFIX elsewhere"
+    fi
 fi
 
 mkdir -p "$cache_root/downloads" "$cache_root/build"
@@ -532,69 +552,118 @@ build_dav1d() {
         { keep_log "$work/dav1d.log"; av1_why="the dav1d build made no libdav1d.a (log in $av1_log)"; return 1; }
 }
 
+# AV1 is an extra: when an attempt fails, says why, keeps the reason $1 in
+# av1-failed.txt (later builds skip the attempt, see the top) and goes on
+# without AV1, in the prefix that build has; when that build is there
+# already, it is the result.
+without_av1() {
+    if printf 'key %s\n%s\n' "$attempt_key" "$1" >"$av1_record.part" 2>/dev/null; then
+        mv "$av1_record.part" "$av1_record" || true
+    fi
+    av1=no
+    av1_missing="$1; make ffmpeg tries again"
+    say "building without AV1: $av1_missing"
+    rm -rf "$stage"
+    choose_prefix
+    if up_to_date; then
+        rm -rf "$work"
+        signal
+        say "FFmpeg $FFMPEG_VERSION is already built in $prefix, with $(extras)"
+        exit 0
+    fi
+    if [ -e "$prefix" ]; then
+        fail "$prefix exists but holds another build; remove it or set FFMPEG_PREFIX elsewhere"
+    fi
+}
+
 if [ "$av1" = yes ]; then
     av1_why=
     # Before build_dav1d, which sets meson_cmd and ninja_cmd to what it got.
     attempt_key=$(av1_key)
     if build_dav1d; then
-        rm -f "$av1_record" "$av1_log"
         # FFmpeg looks for dav1d only in the staged prefix, never in the system.
         PKG_CONFIG_LIBDIR="$stage$prefix/lib/pkgconfig"
         PKG_CONFIG_SYSROOT_DIR="$stage"
         export PKG_CONFIG_LIBDIR PKG_CONFIG_SYSROOT_DIR
     else
-        # AV1 is an extra: FFmpeg is built without it, into the prefix that
-        # build has, and later builds skip the attempt (see the top).
-        if printf 'key %s\n%s\n' "$attempt_key" "$av1_why" >"$av1_record.part" 2>/dev/null; then
-            mv "$av1_record.part" "$av1_record" || true
-        fi
-        av1=no
-        av1_missing="$av1_why; make ffmpeg tries again"
-        say "building without AV1: $av1_missing"
-        rm -rf "$stage"
-        choose_prefix
-        if up_to_date; then
-            rm -rf "$work"
-            signal
-            say "FFmpeg $FFMPEG_VERSION is already built in $prefix, with $(extras)"
-            exit 0
-        fi
-        if [ -e "$prefix" ]; then
-            fail "$prefix exists but holds another build; remove it or set FFMPEG_PREFIX elsewhere"
-        fi
+        without_av1 "$av1_why"
     fi
 else
     say "building without AV1: $av1_missing"
 fi
 
-flags=$(configure_flags)
-fetch "$FFMPEG_URL" "$FFMPEG_SHA256"
-say "building FFmpeg $FFMPEG_VERSION with $jobs jobs into $prefix"
-tar -xJf "$cache_root/downloads/ffmpeg-$FFMPEG_VERSION.tar.xz" -C "$work"
 src="$work/ffmpeg-$FFMPEG_VERSION"
-(
-    cd "$src"
-    # shellcheck disable=SC2086 # the flags are words without spaces
-    $nice ./configure --prefix="$prefix" $flags "$nasm_flag" >"$work/configure.log" 2>&1 ||
-        { tail -n 20 ffbuild/config.log >&2; exit 1; }
-    # configure skips a misspelt component quietly; every listed one must be on.
-    for flag in $flags; do
-        case "$flag" in
-            --enable-decoder=* | --enable-demuxer=* | --enable-parser=* | --enable-protocol=*)
-                kind=${flag#--enable-}
-                kind=${kind%%=*}
-                for name in $(printf '%s' "${flag#*=}" | tr ',' ' '); do
-                    macro=$(printf 'CONFIG_%s_%s 1' "$name" "$kind" | tr '[:lower:]' '[:upper:]')
-                    grep -q "^#define $macro\$" config_components.h ||
-                        { echo "the $kind '$name' is not enabled" >&2; exit 1; }
-                done
-                ;;
-        esac
-    done
-    # shellcheck disable=SC2086 # empty when make joins a job server
-    $nice make $make_jobs >"$work/make.log" 2>&1 || { tail -n 30 "$work/make.log" >&2; exit 1; }
-    make install DESTDIR="$stage" >"$work/install.log" 2>&1 || { tail -n 20 "$work/install.log" >&2; exit 1; }
-) || fail "FFmpeg build failed (logs in $work)"
+
+# Run in build_ffmpeg's subshell: writes why the FFmpeg build failed ($1)
+# to ffmpeg-why in the build tree for build_ffmpeg, keeps the log $2 there
+# as ffmpeg-failed.log and shows the end of it.
+ffmpeg_failed() {
+    printf '%s\n' "$1" >"$work/ffmpeg-why"
+    cp "$2" "$work/ffmpeg-failed.log" 2>/dev/null || true
+    tail -n 20 "$2" >&2
+}
+
+# Configures, builds and installs FFmpeg into the stage with the current
+# choices, from a fresh copy of its source. Returns 1 on failure, with the
+# reason in ffmpeg_why.
+build_ffmpeg() {
+    flags=$(configure_flags)
+    say "building FFmpeg $FFMPEG_VERSION with $jobs jobs into $prefix"
+    rm -f "$work/ffmpeg-why"
+    if ! { rm -rf "$src" && tar -xJf "$cache_root/downloads/ffmpeg-$FFMPEG_VERSION.tar.xz" -C "$work"; }; then
+        ffmpeg_why="cannot unpack ffmpeg-$FFMPEG_VERSION.tar.xz"
+        return 1
+    fi
+    if (
+        cd "$src" || exit 1
+        # shellcheck disable=SC2086 # the flags are words without spaces
+        if ! $nice ./configure --prefix="$prefix" $flags "$nasm_flag" >"$work/configure.log" 2>&1; then
+            # config.log has the details, when configure got as far.
+            log=ffbuild/config.log
+            [ -f "$log" ] || log="$work/configure.log"
+            ffmpeg_failed "FFmpeg's configure failed" "$log"
+            exit 1
+        fi
+        # configure skips a misspelt component quietly (and leaves out one
+        # whose library it cannot use); every listed one must be on.
+        for flag in $flags; do
+            case "$flag" in
+                --enable-decoder=* | --enable-demuxer=* | --enable-parser=* | --enable-protocol=*)
+                    kind=${flag#--enable-}
+                    kind=${kind%%=*}
+                    for name in $(printf '%s' "${flag#*=}" | tr ',' ' '); do
+                        macro=$(printf 'CONFIG_%s_%s 1' "$name" "$kind" | tr '[:lower:]' '[:upper:]')
+                        grep -q "^#define $macro\$" config_components.h ||
+                            { ffmpeg_failed "FFmpeg's configure left out the $kind '$name'" ffbuild/config.log; exit 1; }
+                    done
+                    ;;
+            esac
+        done
+        # shellcheck disable=SC2086 # empty when make joins a job server
+        $nice make $make_jobs >"$work/make.log" 2>&1 ||
+            { ffmpeg_failed "building FFmpeg failed" "$work/make.log"; exit 1; }
+        make install DESTDIR="$stage" >"$work/install.log" 2>&1 ||
+            { ffmpeg_failed "installing FFmpeg failed" "$work/install.log"; exit 1; }
+    ); then
+        return 0
+    fi
+    ffmpeg_why=$(cat "$work/ffmpeg-why" 2>/dev/null || echo "the FFmpeg build failed")
+    return 1
+}
+
+fetch "$FFMPEG_URL" "$FFMPEG_SHA256"
+if ! build_ffmpeg; then
+    [ "$av1" = yes ] || fail "$ffmpeg_why (logs in $work)"
+    # With AV1 the failure may be dav1d's (its pkg-config file, or FFmpeg's
+    # libdav1d decoder), so FFmpeg is built once more without it. When that
+    # fails too, the failure was not AV1's, and no record of it is kept.
+    cp "$work/ffmpeg-failed.log" "$av1_log" 2>/dev/null || true
+    without_av1 "$ffmpeg_why with AV1 (log in $av1_log)"
+    build_ffmpeg || {
+        rm -f "$av1_record" "$av1_log"
+        fail "$ffmpeg_why, with AV1 and without (logs in $work)"
+    }
+fi
 
 # FFmpeg's pkg-config files name dav1d's folder as configure saw it, in the
 # stage; they move with the prefix.
@@ -612,7 +681,13 @@ fi
 stamp_text >"$stage$prefix/share/rusty-claw/ffmpeg-build.txt"
 
 mkdir -p "$(dirname "$prefix")"
+if [ "$replace" = yes ] && [ -e "$prefix" ]; then
+    # The build without AV1 in FFMPEG_PREFIX goes only now that this one is
+    # ready.
+    mv "$prefix" "$work/replaced" || fail "cannot move the build in $prefix aside"
+fi
 mv "$stage$prefix" "$prefix"
+if [ "$av1" = yes ]; then rm -f "$av1_record" "$av1_log"; fi
 rm -rf "$work"
 signal rebuilt
 say "FFmpeg $FFMPEG_VERSION is built in $prefix, with $(extras)"

@@ -12,6 +12,7 @@ the licence terms.
 | File | What it is |
 |---|---|
 | `build.sh` | Downloads, checks and builds dav1d and FFmpeg (and the nasm assembler they need, and meson and ninja for dav1d where the system has none) |
+| `av1-fallback-drill.sh` | A drill of `build.sh` going on without AV1 when FFmpeg's configure cannot use dav1d (see Updating FFmpeg) |
 | `NOTICE` | FFmpeg's and dav1d's versions, sources, configure line and licence terms |
 | `rusty_ffmpeg/` | FFmpeg's interface in Rust (rusty_ffmpeg 0.17.0, MIT) with a build script that finds or builds FFmpeg and links it (`windows_record.rs` is the part it shares with a test) |
 | `windows/` | The same FFmpeg built with Microsoft's compiler for Windows 11, and a check of the finished `.exe` |
@@ -35,10 +36,12 @@ later builds. Nothing is installed into the system, and nothing comes from
 PyPI.
 
 FFmpeg is built without AV1, into a prefix of its own, when any of that is
-missing, when `RUSTY_CLAW_FFMPEG_AV1=off`, or when downloading or building
-meson, ninja or dav1d fails. The original movies play either way; only
-upscaled AV1 copies need AV1. The build says why: `build.sh` in its output,
-and cargo in a warning, for example
+missing, when `RUSTY_CLAW_FFMPEG_AV1=off`, when downloading or building
+meson, ninja or dav1d fails, or when FFmpeg itself fails to configure or
+build with dav1d (it is then built once more without it; when that fails
+too, the build stops, since AV1 was not the cause). The original movies
+play either way; only upscaled AV1 copies need AV1. The build says why:
+`build.sh` in its output, and cargo in a warning, for example
 
 ```
 warning: rusty_ffmpeg@0.17.0+ffmpeg.8.1: this FFmpeg decodes no AV1, so upscaled AV1 movies will not play (the original movies do): pkg-config is missing (install it, then run make ffmpeg); see third_party/ffmpeg/README.md
@@ -48,12 +51,15 @@ A failed attempt is kept in `~/.cache/rusty-claw/ffmpeg/av1-failed.txt`
 (with the build log, when there is one, in `av1-failed.log`) together with
 what could change how it ends: the pins, and the compilers, meson, ninja,
 python3 and pkg-config found. Later builds go on without AV1, without
-trying again, until one of those changes; `make ffmpeg` always tries again
-(`sh third_party/ffmpeg/build.sh --retry-av1`). After installing what was
-missing, run `make ffmpeg`, and the next cargo build links the build with
-AV1. (Older checkouts installed meson and ninja into a `tools` folder in
-`~/.cache/rusty-claw/ffmpeg`; nothing uses it any more, and it can be
-deleted.)
+trying again, until one of those changes (a build with AV1 for the same
+pins and settings that is already there is still used); `make ffmpeg`
+always tries again (`sh third_party/ffmpeg/build.sh --retry-av1`). After
+installing what was missing, run `make ffmpeg`, and the next cargo build
+links the build with AV1. With `FFMPEG_PREFIX`, `make ffmpeg` replaces the
+build there without AV1 by the one with AV1 once that is built, and leaves
+it as it is when the attempt fails again. (Older checkouts installed meson
+and ninja into a `tools` folder in `~/.cache/rusty-claw/ffmpeg`; nothing
+uses it any more, and it can be deleted.)
 
 Movies come with a plain build:
 
@@ -83,7 +89,8 @@ example before an offline build.
 4. configures FFmpeg with the line in `build.sh` (LGPL only, static, the
    listed decoders, demuxers and parsers and nothing else; [NOTICE](NOTICE)
    repeats it), builds it with up to 8 jobs at a lower priority (`nice -n
-   10`) and installs it into the same prefix;
+   10`) and installs it into the same prefix (when that fails with dav1d,
+   it goes on without AV1 as in step 3);
 5. records the build in `<prefix>/share/rusty-claw/ffmpeg-build.txt`,
    writes the prefix to `~/.cache/rusty-claw/ffmpeg/last-build.txt` when it
    names another one (cargo builds watch that file, so their next build
@@ -230,6 +237,25 @@ claw-movie --test smoke` checks that build).
    change in `src/lib.rs` (`include!("binding.rs")`), and update the version
    in `rusty_ffmpeg/Cargo.toml` and `Cargo.lock`.
 4. Update `NOTICE`, run `make ffmpeg` and `make check`.
+
+ninja publishes no source tarball, so `NINJA_URL` is the archive GitHub
+makes of the release tag, and GitHub does not promise those bytes stay the
+same. If a build says `ninja-<version>.tar.gz has SHA-256 ..., expected
+...`, the pin needs refreshing: check the new archive against the release
+tag's source and update `NINJA_SHA256` (or move to a newer ninja). Until
+then, machines without a system ninja build FFmpeg without AV1, and the
+original movies still play.
+
+`av1-fallback-drill.sh` checks the fallback from FFmpeg's side: in a
+scratch cache, it hides dav1d from FFmpeg's configure (a `pkg-config` that
+knows no dav1d first on `PATH`), runs `build.sh`, and checks that the
+result is FFmpeg without AV1, with the reason recorded, and that a second
+run reuses it:
+
+```sh
+sh third_party/ffmpeg/av1-fallback-drill.sh ~/.cache/rusty-claw-drill
+FFMPEG_PREFIX=<the prefix it prints> cargo test -p claw-movie --test smoke
+```
 
 ## Upscaled movies: AV1 and Opus
 
