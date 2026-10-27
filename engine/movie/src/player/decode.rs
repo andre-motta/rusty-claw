@@ -1,8 +1,10 @@
 //! The demuxer and decoders, and the decoding thread that feeds the
 //! player's picture queue and the soundtrack's ring.
 
+use std::any::Any;
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString, c_int};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -35,6 +37,14 @@ const QUEUE_MAX_BYTES: usize = 192 << 20;
 /// How long a waiting decoder sleeps before it looks at the stop flag
 /// again.
 const POLL: Duration = Duration::from_millis(5);
+/// How far into a movie a time stamp may reach. A stamp beyond it (or one
+/// that is not a number) is damaged and counts as missing, so every time
+/// the player keeps stays far from the limits of [`Duration`].
+const MAX_TIME: Duration = Duration::from_secs(24 * 60 * 60);
+/// How many errors in a row a decoder may give for the frames it holds
+/// before the rest of them is given up. Each damaged frame gives one, and
+/// the frames behind it still come.
+const MAX_RECEIVE_ERRORS: u32 = 64;
 
 /// What the decoding thread and the player share.
 #[derive(Debug, Default)]
@@ -210,25 +220,54 @@ impl Decoder {
         mut each: impl FnMut(*mut ffi::AVFrame) -> Result<(), Stop>,
     ) -> Result<(), Stop> {
         let again = ffi::AVERROR(ffi::EAGAIN);
+        let ctx = self.ctx;
         for _ in 0..2 {
             // SAFETY: as documented above.
-            let sent = unsafe { ffi::avcodec_send_packet(self.ctx, pkt) };
-            loop {
+            let sent = unsafe { ffi::avcodec_send_packet(ctx, pkt) };
+            receive_all(
                 // SAFETY: as documented above.
-                let got = unsafe { ffi::avcodec_receive_frame(self.ctx, frame) };
-                if got < 0 {
-                    break;
-                }
-                let r = each(frame);
-                // SAFETY: the frame was filled by the decoder.
-                unsafe { ffi::av_frame_unref(frame) };
-                r?;
-            }
+                || unsafe { ffi::avcodec_receive_frame(ctx, frame) },
+                || {
+                    let r = each(frame);
+                    // SAFETY: the frame was filled by the decoder.
+                    unsafe { ffi::av_frame_unref(frame) };
+                    r
+                },
+            )?;
             if sent != again {
                 break;
             }
         }
         Ok(())
+    }
+}
+
+/// Hands every frame a decoder has ready to `each`: `receive` asks the
+/// decoder for the next one and returns what `avcodec_receive_frame` does.
+/// A damaged frame's error is skipped, so the frames behind it still come
+/// (a decoder working on several frames at once reports one bad frame and
+/// then gives the others, also while it is drained at the end), up to
+/// [`MAX_RECEIVE_ERRORS`] errors in a row. Only "send more input" (EAGAIN)
+/// and "nothing more" (EOF, once drained) end it otherwise.
+fn receive_all(
+    mut receive: impl FnMut() -> c_int,
+    mut each: impl FnMut() -> Result<(), Stop>,
+) -> Result<(), Stop> {
+    let again = ffi::AVERROR(ffi::EAGAIN);
+    let mut errors = 0;
+    loop {
+        let got = receive();
+        if got >= 0 {
+            errors = 0;
+            each()?;
+        } else if got == again || got == ffi::AVERROR_EOF {
+            return Ok(());
+        } else {
+            errors += 1;
+            if errors >= MAX_RECEIVE_ERRORS {
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -299,22 +338,16 @@ pub(super) struct Job {
 unsafe impl Send for Job {}
 
 impl Job {
-    /// Decodes until the end or a stop, then marks the queue done.
+    /// Decodes until the end or a stop, then marks the queue done. It does
+    /// so on every path: a panic while decoding ends the movie with an
+    /// error rather than leaving it on its last picture.
     pub(super) fn run(mut self, shared: &Shared) {
-        let error = match self.decode(shared) {
-            Ok(Ok(())) | Err(Stop) => None,
-            Ok(Err(e)) => Some(e),
-        };
-        if let Some(s) = &self.sound {
-            s.link.set_ended();
-        }
-        let mut q = shared.lock();
-        q.done = true;
-        q.end = self
+        let link = self.sound.as_ref().map(|s| Arc::clone(&s.link));
+        let error = settle(|| self.decode(shared));
+        let end = self
             .last_pts
-            .map_or(Duration::ZERO, |p| p + self.frame_time);
-        q.error = error;
-        shared.cond.notify_all();
+            .map_or(Duration::ZERO, |p| p.saturating_add(self.frame_time));
+        finish(shared, link.as_deref(), end, error);
     }
 
     fn decode(&mut self, shared: &Shared) -> Result<Result<(), String>, Stop> {
@@ -381,7 +414,9 @@ impl Job {
             // SAFETY: a packet of the video stream, or NULL.
             unsafe {
                 video.feed(pkt, frame, |f| {
-                    let pts = picture_time(f, tick, *start, *frame_time, *last_pts);
+                    // SAFETY: a decoded picture.
+                    let ts = frame_stamp(f);
+                    let pts = picture_time(ts, tick, *start, *frame_time, *last_pts);
                     // SAFETY: a decoded picture.
                     match converter.convert(f, pts) {
                         Ok(picture) => {
@@ -410,10 +445,8 @@ impl Job {
                 decoder.feed(pkt, frame, |f| {
                     if !*started {
                         *started = true;
-                        let ts = (*f).best_effort_timestamp;
-                        if ts != ffi::AV_NOPTS_VALUE {
-                            let secs = ts as f64 * tick - start;
-                            link.set_start(Duration::from_secs_f64(secs.max(0.0)));
+                        if let Some(t) = stamp_time((*f).best_effort_timestamp, tick, start) {
+                            link.set_start(t);
                         }
                     }
                     match resampler.convert(f) {
@@ -429,31 +462,86 @@ impl Job {
     }
 }
 
-/// When picture `f` shows: its time stamp from the container's start, or
-/// one picture after the last when it has none or does not move forward.
+/// Turns what decoding gave into how it ended: `None` when it reached the
+/// end or was stopped, else why it stopped early, a panic included.
+fn settle(decode: impl FnOnce() -> Result<Result<(), String>, Stop>) -> Option<String> {
+    match catch_unwind(AssertUnwindSafe(decode)) {
+        Ok(Ok(Ok(()))) | Ok(Err(Stop)) => None,
+        Ok(Ok(Err(e))) => Some(e),
+        Err(panic) => Some(format!("the decoder failed: {}", panic_text(&*panic))),
+    }
+}
+
+/// The message a panic carried.
+fn panic_text(panic: &(dyn Any + Send)) -> &str {
+    if let Some(s) = panic.downcast_ref::<&str>() {
+        s
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s
+    } else {
+        "an unexpected error"
+    }
+}
+
+/// Marks the queue done: decoding is over, the last picture stops showing
+/// at `end`, and `error` says why it stopped early. The soundtrack, if any,
+/// hears that no more samples come.
+fn finish(shared: &Shared, link: Option<&AudioLink>, end: Duration, error: Option<String>) {
+    if let Some(link) = link {
+        link.set_ended();
+    }
+    let mut q = shared.lock();
+    q.done = true;
+    q.end = end;
+    q.error = error;
+    shared.cond.notify_all();
+}
+
+/// The time stamp of frame `f`: its best effort one, else its own.
 ///
 /// # Safety
 /// `f` is a valid frame.
-unsafe fn picture_time(
-    f: *const ffi::AVFrame,
+unsafe fn frame_stamp(f: *const ffi::AVFrame) -> i64 {
+    // SAFETY: a valid frame.
+    let (best, pts) = unsafe { ((*f).best_effort_timestamp, (*f).pts) };
+    if best != ffi::AV_NOPTS_VALUE {
+        best
+    } else {
+        pts
+    }
+}
+
+/// Time stamp `ts`, in ticks of `tick` seconds, as a time from the
+/// container's `start` (in seconds); a time before the start is the start.
+/// `None` when there is no stamp, or it is not a number or lies beyond
+/// [`MAX_TIME`] (a damaged one).
+fn stamp_time(ts: i64, tick: f64, start: f64) -> Option<Duration> {
+    if ts == ffi::AV_NOPTS_VALUE {
+        return None;
+    }
+    let secs = ts as f64 * tick - start;
+    if secs.is_nan() {
+        return None;
+    }
+    Duration::try_from_secs_f64(secs.max(0.0))
+        .ok()
+        .filter(|t| *t <= MAX_TIME)
+}
+
+/// When a picture stamped `ts` (see [`stamp_time`]) shows: at its stamp,
+/// or one picture after the `last` one when it has none, a damaged one, or
+/// one that does not move forward.
+fn picture_time(
+    ts: i64,
     tick: f64,
     start: f64,
     frame_time: Duration,
     last: Option<Duration>,
 ) -> Duration {
-    // SAFETY: a valid frame.
-    let (best, pts) = unsafe { ((*f).best_effort_timestamp, (*f).pts) };
-    let ts = if best != ffi::AV_NOPTS_VALUE {
-        best
-    } else {
-        pts
-    };
-    let stamped = (ts != ffi::AV_NOPTS_VALUE)
-        .then(|| Duration::from_secs_f64((ts as f64 * tick - start).max(0.0)));
-    match (stamped, last) {
-        (Some(t), Some(l)) if t <= l => l + frame_time,
+    match (stamp_time(ts, tick, start), last) {
+        (Some(t), Some(l)) if t <= l => l.saturating_add(frame_time),
         (Some(t), _) => t,
-        (None, Some(l)) => l + frame_time,
+        (None, Some(l)) => l.saturating_add(frame_time),
         (None, None) => Duration::ZERO,
     }
 }
@@ -533,4 +621,164 @@ fn push_samples(
         left = &left[n..];
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn time_stamps_become_times_from_the_start() {
+        assert_eq!(
+            stamp_time(90, 1.0 / 30.0, 0.0),
+            Some(Duration::from_secs(3))
+        );
+        assert_eq!(stamp_time(5, 1.0, 2.0), Some(Duration::from_secs(3)));
+        // Before the start is the start.
+        assert_eq!(stamp_time(1, 1.0, 2.0), Some(Duration::ZERO));
+        assert_eq!(stamp_time(i64::MIN + 1, 1.0, 0.0), Some(Duration::ZERO));
+        assert_eq!(stamp_time(ffi::AV_NOPTS_VALUE, 1.0, 0.0), None);
+    }
+
+    #[test]
+    fn time_stamps_out_of_range_count_as_missing() {
+        // Far beyond what a Duration holds: 4 s ticks, 5e18 of them.
+        assert_eq!(stamp_time(5_000_000_000_000_000_000, 4.0, 0.0), None);
+        assert_eq!(stamp_time(i64::MAX, 1000.0, 0.0), None);
+        // Representable, but beyond any movie.
+        let day = MAX_TIME.as_secs() as i64;
+        assert_eq!(stamp_time(day, 1.0, 0.0), Some(MAX_TIME));
+        assert_eq!(stamp_time(day + 1, 1.0, 0.0), None);
+        // Not a number.
+        assert_eq!(stamp_time(1, f64::NAN, 0.0), None);
+        assert_eq!(stamp_time(1, 1.0, f64::NAN), None);
+        assert_eq!(stamp_time(i64::MAX, f64::INFINITY, 0.0), None);
+    }
+
+    #[test]
+    fn a_picture_with_a_damaged_stamp_shows_one_picture_after_the_last() {
+        let ft = Duration::from_millis(40);
+        let huge = 5_000_000_000_000_000_000;
+        assert_eq!(picture_time(huge, 4.0, 0.0, ft, None), Duration::ZERO);
+        assert_eq!(picture_time(huge, 4.0, 0.0, ft, Some(SECOND)), SECOND + ft);
+        // Stamps that do not move forward, and missing ones.
+        assert_eq!(picture_time(1, 1.0, 0.0, ft, Some(SECOND)), SECOND + ft);
+        assert_eq!(
+            picture_time(ffi::AV_NOPTS_VALUE, 1.0, 0.0, ft, Some(SECOND)),
+            SECOND + ft
+        );
+        assert_eq!(picture_time(2, 1.0, 0.0, ft, Some(SECOND)), 2 * SECOND);
+        // No overflow, whatever the last time and the picture's length.
+        assert_eq!(
+            picture_time(huge, 4.0, 0.0, Duration::MAX, Some(SECOND)),
+            Duration::MAX
+        );
+    }
+
+    /// Runs [`receive_all`] over the return codes `codes` (frames for
+    /// codes of 0 or more, then EAGAIN once they run out) and says how many
+    /// frames came and how many codes were read.
+    fn receive(codes: &[c_int]) -> (usize, usize) {
+        let next = Cell::new(0);
+        let mut frames = 0;
+        let r = receive_all(
+            || {
+                let i = next.get();
+                next.set(i + 1);
+                codes.get(i).copied().unwrap_or(ffi::AVERROR(ffi::EAGAIN))
+            },
+            || {
+                frames += 1;
+                Ok(())
+            },
+        );
+        assert!(r.is_ok());
+        (frames, next.get())
+    }
+
+    #[test]
+    fn a_damaged_frame_does_not_lose_the_frames_behind_it() {
+        let bad = ffi::AVERROR_INVALIDDATA;
+        let eof = ffi::AVERROR_EOF;
+        let again = ffi::AVERROR(ffi::EAGAIN);
+        // While draining: everything up to the end comes.
+        assert_eq!(receive(&[0, bad, 0, 0, bad, bad, 0, eof, 0]), (4, 8));
+        // While fed: up to the call for more input.
+        assert_eq!(receive(&[0, bad, 0, again, 0]), (2, 4));
+        assert_eq!(receive(&[again, 0]), (0, 1));
+        assert_eq!(receive(&[eof, 0]), (0, 1));
+    }
+
+    #[test]
+    fn a_decoder_that_only_fails_is_given_up() {
+        let mut codes = vec![0];
+        codes.extend([ffi::AVERROR_INVALIDDATA; 200]);
+        codes.push(0);
+        let (frames, read) = receive(&codes);
+        assert_eq!((frames, read), (1, 1 + MAX_RECEIVE_ERRORS as usize));
+        // Errors with frames between them are not in a row.
+        let mut codes = Vec::new();
+        for _ in 0..100 {
+            codes.extend([ffi::AVERROR_INVALIDDATA, 0]);
+        }
+        codes.push(ffi::AVERROR_EOF);
+        assert_eq!(receive(&codes).0, 100);
+    }
+
+    #[test]
+    fn a_stop_ends_receiving_at_once() {
+        let mut calls = 0;
+        let r = receive_all(
+            || {
+                calls += 1;
+                0
+            },
+            || Err(Stop),
+        );
+        assert!(r.is_err());
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn a_panic_while_decoding_still_ends_the_movie_with_an_error() {
+        assert_eq!(settle(|| Ok(Ok(()))), None);
+        assert_eq!(settle(|| Err(Stop)), None);
+        assert_eq!(settle(|| Ok(Err("bad".into()))), Some("bad".into()));
+        let error = settle(|| panic!("the stamp {} is too large", 7)).unwrap();
+        assert!(error.contains("the stamp 7 is too large"), "{error}");
+        assert!(error.starts_with("the decoder failed"), "{error}");
+
+        // The decoding thread's ending, as `Job::run` does it after a panic.
+        let shared = Shared::default();
+        let link = AudioLink::new(48000);
+        finish(&shared, Some(&link), SECOND, settle(|| panic!("boom")));
+        let q = shared.lock();
+        assert!(q.done);
+        assert_eq!(q.end, SECOND);
+        assert!(q.error.as_deref().is_some_and(|e| e.contains("boom")));
+    }
+
+    #[test]
+    fn a_panicking_decoding_thread_marks_the_queue_done() {
+        let shared = Arc::new(Shared::default());
+        let thread_shared = Arc::clone(&shared);
+        std::thread::spawn(move || {
+            // The conversion the decoder made before: it panics on this
+            // stamp.
+            let error = settle(|| {
+                let secs = 5_000_000_000_000_000_000_i64 as f64 * 4.0;
+                let _ = Duration::from_secs_f64(secs);
+                Ok(Ok(()))
+            });
+            finish(&thread_shared, None, Duration::ZERO, error);
+        })
+        .join()
+        .expect("the thread ends normally");
+        let q = shared.lock();
+        assert!(q.done && q.error.is_some());
+    }
 }

@@ -51,6 +51,12 @@ pub enum FrameLayout {
     },
 }
 
+/// The largest picture side the player decodes, in pixels: a movie or a
+/// picture with a wider or taller one is refused as unsupported before any
+/// picture is made for it. It is the usual largest texture side of the
+/// renderer's GPUs, far above any upscaled movie.
+pub const MAX_PICTURE_SIDE: u32 = 8192;
+
 /// One decoded picture and the time it shows.
 #[derive(Clone, PartialEq, Eq)]
 pub struct VideoFrame {

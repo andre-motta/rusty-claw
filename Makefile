@@ -47,6 +47,11 @@ else
 movie_note = @echo "movies: off, no FFmpeg build in $(ffmpeg_prefix) (\`make ffmpeg\` builds one)"
 endif
 
+# Modules whose `make test-install` runs only their install tests
+# (tests/install_*.rs): the movie module's other tests make and decode
+# clips of their own, which need no install.
+INSTALL_TESTS_ONLY := movie
+
 .PHONY: help check fmt test-install compare run-viewer run-game bench replay soundfont ffmpeg
 
 help:
@@ -96,8 +101,10 @@ test-install:
 	if [ -z "$$dir" ]; then echo "unknown module '$(MODULE)'" >&2; exit 2; fi; \
 	if ! ls $$dir/tests/install_*.rs >/dev/null 2>&1; then echo "module '$(MODULE)' has no install tests" >&2; exit 2; fi; \
 	$(if $(filter movie game,$(MODULE)),$(subst @,,$(movie_note));) \
-	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --tests $(movie_feature_$(MODULE))"; \
-	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml --tests $(movie_feature_$(MODULE))
+	tests=--tests; \
+	$(if $(filter $(INSTALL_TESTS_ONLY),$(MODULE)),tests=$$(echo $$(for f in $$dir/tests/install_*.rs; do echo "--test $$(basename $$f .rs)"; done));) \
+	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml $$tests $(movie_feature_$(MODULE))"; \
+	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml $$tests $(movie_feature_$(MODULE))
 
 # Replays $(CLAW_REFERENCE)/$(REF)/route.csv with the tuning, random state
 # and start point (teleport) its meta.toml names for each clock (or only

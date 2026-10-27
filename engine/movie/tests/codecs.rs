@@ -5,22 +5,23 @@
 //! - H.264 in MP4 and in MKV with AAC sound (the libopenh264 encoder);
 //! - HEVC Main (8-bit) and Main10 (10-bit) in MKV with AAC sound
 //!   (hevc_nvenc, else hevc_vaapi). Both encode on the GPU, so they run only
-//!   in an optimised test build (`--release`, the one to run under the bench
-//!   lock) or with `CLAW_GPU_TESTS=1`; a plain debug `cargo test` leaves the
-//!   GPU alone;
+//!   with `CLAW_CODECS_BENCH=1` and `CLAW_GPU_TESTS=1` both set, and then
+//!   under the bench lock; otherwise the tests leave the GPU alone;
 //!
 //! each 2560x1920 at 29.97 pictures a second, tagged BT.601, limited range.
 //! The first pictures are a moving test pattern under fresh grain in every
 //! picture, so the encoder spends its whole bit rate (16 Mb/s, as a
 //! detailed upscale would), and the last ones a flat colour. Each test
 //! checks the picture count, the size, the I420 layout and the flat colour
-//! after conversion. An optimised test build (`--release`), or any build
-//! with `CLAW_CODECS_BENCH=1`, also measures how fast the player decodes
-//! and converts the clip with every core and with four (through `taskset
-//! -c 0-3`, as a child process) and asks for at least 1.5 times real time
-//! with every core; a plain debug `cargo test`, as in `make check`, checks
-//! the pictures only. A clip whose encoder the system lacks is skipped with
-//! the reason printed. Run with `--nocapture` to see the table.
+//! after conversion, one picture at a time as they come. With
+//! `CLAW_CODECS_BENCH=1` it also measures how fast the player decodes and
+//! converts the clip with every core and with four (through `taskset -c
+//! 0-3`, as a child process) and asks for at least 1.5 times real time with
+//! every core; run that in an optimised build (`--release`) on an otherwise
+//! idle machine. Without it, as in `make check` and `make test-install`,
+//! the tests check the pictures only. A clip whose encoder the system lacks
+//! is skipped with the reason printed. Run with `--nocapture` to see the
+//! table.
 #![cfg(feature = "ffmpeg")]
 
 use std::path::{Path, PathBuf};
@@ -43,13 +44,24 @@ const OUT_RATE: u32 = 48000;
 const MIN_SPEED: f64 = 1.5;
 /// Set in the child that measures a clip on four cores.
 const MEASURE_ENV: &str = "CLAW_CODECS_MEASURE";
-/// Set to measure speeds in a debug build too.
+/// Set to 1 to measure speeds.
 const BENCH_ENV: &str = "CLAW_CODECS_BENCH";
+/// Set to 1, with [`BENCH_ENV`], to encode clips on the GPU too.
+const GPU_ENV: &str = "CLAW_GPU_TESTS";
 
-/// Whether this run measures speeds: in an optimised build, or when
-/// [`BENCH_ENV`] is 1.
+fn set(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|v| v == "1")
+}
+
+/// Whether this run measures speeds: when [`BENCH_ENV`] is 1.
 fn measuring() -> bool {
-    !cfg!(debug_assertions) || std::env::var_os(BENCH_ENV).is_some_and(|v| v == "1")
+    set(BENCH_ENV)
+}
+
+/// Whether this run may encode on the GPU: when [`BENCH_ENV`] and
+/// [`GPU_ENV`] are both 1.
+fn gpu_allowed() -> bool {
+    measuring() && set(GPU_ENV)
 }
 
 /// One test decodes at a time, so the speeds are measured on an idle
@@ -159,9 +171,9 @@ fn make(clip: &Clip, dir: &Path) -> Result<(PathBuf, &'static str), String> {
     let mut tried = Vec::new();
     for &encoder in clip.encoders {
         let gpu = encoder.ends_with("_nvenc") || encoder.ends_with("_vaapi");
-        if gpu && cfg!(debug_assertions) && std::env::var_os("CLAW_GPU_TESTS").is_none() {
+        if gpu && !gpu_allowed() {
             tried.push(format!(
-                "{encoder}: encodes on the GPU; run with --release under the bench lock, or set CLAW_GPU_TESTS=1"
+                "{encoder}: encodes on the GPU; set {BENCH_ENV}=1 and {GPU_ENV}=1 and run under the bench lock"
             ));
             continue;
         }
@@ -235,22 +247,67 @@ fn make(clip: &Clip, dir: &Path) -> Result<(PathBuf, &'static str), String> {
     Err(format!("no encoder could make it ({})", tried.join("; ")))
 }
 
-/// Every picture of `path`, as fast as the player decodes them, and the
-/// time that took from opening the file.
-fn decode_all(path: &Path) -> (Vec<VideoFrame>, Duration, Option<String>) {
+/// How decoding a clip went.
+#[derive(Debug)]
+struct Decoded {
+    /// The pictures that came.
+    count: usize,
+    /// From opening the file to the last picture.
+    took: Duration,
+    error: Option<String>,
+}
+
+/// Hands every picture of `path` to `each`, in order and as fast as the
+/// player decodes them; each is dropped after it, so only the queue's few
+/// pictures are held at once.
+fn decode_each(path: &Path, mut each: impl FnMut(usize, VideoFrame)) -> Decoded {
     let start = Instant::now();
     let source = Source::File {
         path: path.to_path_buf(),
         kind: FileKind::Upscaled,
     };
     let mut player = Player::open(&source, OUT_RATE).expect("the clip opens");
-    let mut pictures = Vec::new();
+    let mut count = 0;
     while let Some(f) = player.decoded_frame(Duration::from_secs(10)) {
-        pictures.push(f);
+        each(count, f);
+        count += 1;
     }
-    let took = start.elapsed();
-    let error = player.error();
-    (pictures, took, error)
+    Decoded {
+        count,
+        took: start.elapsed(),
+        error: player.error(),
+    }
+}
+
+/// What [`decode_and_check`] kept of a clip's pictures.
+struct Checked {
+    decoded: Decoded,
+    /// The picture asked for, if it came.
+    kept: Option<VideoFrame>,
+    /// When the last picture shows.
+    last_pts: Option<Duration>,
+}
+
+/// Decodes `path`, checking each picture's layout and that the times go
+/// forward, and keeps only picture `keep`.
+fn decode_and_check(clip: &Clip, path: &Path, keep: usize) -> Checked {
+    let mut kept = None;
+    let mut last_pts: Option<Duration> = None;
+    let decoded = decode_each(path, |i, f| {
+        check_layout(clip, &f);
+        if let Some(last) = last_pts {
+            assert!(f.pts > last, "{}: times go forward", clip.name);
+        }
+        last_pts = Some(f.pts);
+        if i == keep {
+            kept = Some(f);
+        }
+    });
+    Checked {
+        decoded,
+        kept,
+        last_pts,
+    }
 }
 
 /// The colour of a YUV sample, as the renderer would show it.
@@ -372,26 +429,18 @@ fn check(clip: Clip) {
             return;
         }
     };
-    let (pictures, took, error) = decode_all(&path);
+    let checked = decode_and_check(&clip, &path, (clip.flat_from + clip.frames) / 2);
+    let Decoded { count, took, error } = checked.decoded;
     assert_eq!(error, None, "{}", clip.name);
-    assert_eq!(pictures.len(), clip.frames, "{}: pictures", clip.name);
-    for f in &pictures {
-        check_layout(&clip, f);
-    }
-    assert!(
-        pictures.windows(2).all(|p| p[0].pts < p[1].pts),
-        "{}: times go forward",
-        clip.name
-    );
-    let last = pictures.last().unwrap();
+    assert_eq!(count, clip.frames, "{}: pictures", clip.name);
+    let last = checked.last_pts.unwrap();
     let want = Duration::from_secs_f64((clip.frames - 1) as f64 / fps());
     assert!(
-        last.pts.abs_diff(want) < Duration::from_millis(5),
-        "{}: the last picture shows at {:?}",
+        last.abs_diff(want) < Duration::from_millis(5),
+        "{}: the last picture shows at {last:?}",
         clip.name,
-        last.pts
     );
-    let got = flat_colour(&clip, &pictures[(clip.flat_from + clip.frames) / 2]);
+    let got = flat_colour(&clip, &checked.kept.unwrap());
     for (g, w) in got.iter().zip(FLAT) {
         assert!(
             (g - f64::from(w)).abs() <= 4.0,
@@ -402,10 +451,8 @@ fn check(clip: Clip) {
     let all = clip.frames as f64 / took.as_secs_f64();
     if !measuring() {
         println!(
-            "| {:<24} | {:<11} | {} | speeds measured with --release or {BENCH_ENV}=1 |",
-            clip.name,
-            encoder,
-            pictures.len()
+            "| {:<24} | {:<11} | {} | speeds measured with {BENCH_ENV}=1 |",
+            clip.name, encoder, count
         );
         return;
     }
@@ -418,7 +465,7 @@ fn check(clip: Clip) {
         "| {:<24} | {:<11} | {} | {:7.1} fps ({:4.2}x) | {} |",
         clip.name,
         encoder,
-        pictures.len(),
+        count,
         all,
         all / fps(),
         four_text
@@ -472,13 +519,10 @@ fn bt709_full_range_tags_pass_through() {
                 continue;
             }
         };
-        let (pictures, _, error) = decode_all(&path);
-        assert_eq!(error, None);
-        assert_eq!(pictures.len(), clip.frames, "{}", clip.name);
-        for f in &pictures {
-            check_layout(&clip, f);
-        }
-        let got = flat_colour(&clip, pictures.last().unwrap());
+        let checked = decode_and_check(&clip, &path, clip.frames - 1);
+        assert_eq!(checked.decoded.error, None);
+        assert_eq!(checked.decoded.count, clip.frames, "{}", clip.name);
+        let got = flat_colour(&clip, &checked.kept.unwrap());
         for (g, w) in got.iter().zip(FLAT) {
             assert!(
                 (g - f64::from(w)).abs() <= 4.0,
@@ -498,7 +542,10 @@ fn measure_in_child() {
         return;
     };
     let path = PathBuf::from(path);
-    let (pictures, took, error) = decode_all(&path);
-    assert_eq!(error, None);
-    println!("codecs-fps {}", pictures.len() as f64 / took.as_secs_f64());
+    let decoded = decode_each(&path, |_, _| {});
+    assert_eq!(decoded.error, None);
+    println!(
+        "codecs-fps {}",
+        decoded.count as f64 / decoded.took.as_secs_f64()
+    );
 }
