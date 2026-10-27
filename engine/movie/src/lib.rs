@@ -1,5 +1,5 @@
 //! The game's movies: which movie plays at which moment, where its file
-//! is, and, with the `ffmpeg` feature, playing it.
+//! is, and, where FFmpeg is linked, playing it.
 //!
 //! - [`MovieIndex`] numbers the movies as the game does (-2 to 14) and
 //!   names each one's file and archive entry; [`MovieSet`] is a set of
@@ -13,8 +13,9 @@
 //!
 //! Decoding goes through FFmpeg, built from source at a pinned version with
 //! only the decoders, demuxers and parsers the movies need (see
-//! `third_party/ffmpeg`). It is linked only with the `ffmpeg` feature;
-//! without it the crate still builds, [`available`] says that no decoder is
+//! `third_party/ffmpeg`). The build links it when it can find or build it
+//! (the `claw_ffmpeg` cfg, set by build.rs); without it the crate still
+//! builds, [`available`] says that no decoder is
 //! there and [`Player::open`] returns [`MovieError::NotBuilt`], so callers
 //! keep one code path and play no movie.
 
@@ -29,10 +30,10 @@ pub mod lookup;
 pub mod range;
 pub mod source;
 
-#[cfg(feature = "ffmpeg")]
+#[cfg(claw_ffmpeg)]
 #[allow(unsafe_code)]
 mod player;
-#[cfg(not(feature = "ffmpeg"))]
+#[cfg(not(claw_ffmpeg))]
 #[path = "player_stub.rs"]
 mod player;
 
@@ -56,8 +57,7 @@ impl<T: Read + Seek> ReadSeek for T {}
 /// Why a movie does not play.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MovieError {
-    /// This build has no movie decoder (it was built without the `ffmpeg`
-    /// feature).
+    /// This build has no movie decoder (it was built without FFmpeg).
     #[error("this build plays no movies (built without FFmpeg)")]
     NotBuilt,
     /// No source of the movie was found.
@@ -74,14 +74,13 @@ pub enum MovieError {
     Decode(String),
 }
 
-/// Whether this build can decode movies (it was built with the `ffmpeg`
-/// feature).
+/// Whether this build can decode movies (it was built with FFmpeg).
 pub fn available() -> bool {
-    cfg!(feature = "ffmpeg")
+    cfg!(claw_ffmpeg)
 }
 
-/// The version of the linked FFmpeg, for example `8.1.3`, or `None` without
-/// the `ffmpeg` feature.
+/// The version of the linked FFmpeg, for example `8.1.3`, or `None` in a
+/// build without FFmpeg.
 pub fn ffmpeg_version() -> Option<String> {
     player::ffmpeg_version()
 }

@@ -74,8 +74,15 @@ make run-game ARGS='--install /path/to/your/install'
 On Debian and Ubuntu the packages are `build-essential git curl
 libvulkan1 mesa-vulkan-drivers libasound2-dev libudev-dev`.
 
-Movies need FFmpeg, which `make ffmpeg` builds from source once per machine
-(no root needed); see [third_party/ffmpeg/README.md](third_party/ffmpeg/README.md).
+Movies come with a plain `cargo build` (and with `make run-game`) on Linux
+and the Steam Deck: the first build downloads FFmpeg's source and builds it
+once per machine into your cache (about a minute, no root needed; `make
+ffmpeg` does that step on its own). Where FFmpeg cannot be built, cargo
+prints one warning and the game builds without movies.
+`RUSTY_CLAW_FFMPEG=off` builds without FFmpeg on purpose, and
+`RUSTY_CLAW_FFMPEG=require` makes a build without it fail. On Windows, run
+FFmpeg's Windows build script once first, or the game builds without
+movies; see [third_party/ffmpeg/README.md](third_party/ffmpeg/README.md).
 
 The first build downloads the pinned Rust version from `rust-toolchain.toml`
 and the dependencies, and takes a few minutes. The game binary is
@@ -272,12 +279,14 @@ No movie file comes with the source, and the game never writes one.
 The Display page's movie interlacing switch is kept for the run only and
 changes nothing: movies always show whole.
 
-Movies need FFmpeg and a game built with the `movies` feature;
+Movies need FFmpeg, which the game's build links in;
 [third_party/ffmpeg/README.md](third_party/ffmpeg/README.md) has the
-details for every platform. On Linux, `make ffmpeg` builds FFmpeg once per
-machine and `make run-game` then builds the game with movies. A game
-built without them plays no movies, says so once at start-up (pointing at
-that README), and goes on as if the install had none.
+details for every platform. On Linux and the Steam Deck the first `cargo
+build` (or `make run-game`) builds FFmpeg once per machine and the game
+with movies; on Windows, FFmpeg's Windows build script runs first. A game
+built without FFmpeg (it could not be built, or `RUSTY_CLAW_FFMPEG=off`)
+plays no movies, says so once at start-up (pointing at that README), and
+goes on as if the install had none.
 
 ## Settings and saved games
 

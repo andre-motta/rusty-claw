@@ -1,8 +1,8 @@
 # rusty_ffmpeg 0.17.0+ffmpeg.8.1 (https://github.com/CCExtractor/rusty_ffmpeg,
 # MIT, see LICENSE): its FFI declarations for FFmpeg 8.1, unchanged in src/,
 # with the build script replaced so that it links the pinned static FFmpeg
-# from third_party/ffmpeg/build.sh and needs neither libclang nor environment
-# variables. See ../README.md.
+# from third_party/ffmpeg/build.sh (building it first where it can, and
+# linking nothing where it cannot) and needs no libclang. See ../README.md.
 [package]
 name = "rusty_ffmpeg"
 version = "0.17.0+ffmpeg.8.1"

@@ -3,7 +3,7 @@
 //! written by this test. Every picture has its own two colours, top and
 //! bottom, and the sound is a 440 Hz tone, opposite on the two sides. Some
 //! tests change the size, the picture rate or where the sound is stored.
-#![cfg(feature = "ffmpeg")]
+#![cfg(claw_ffmpeg)]
 
 use std::f32::consts::TAU;
 use std::io::Cursor;

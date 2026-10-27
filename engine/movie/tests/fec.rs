@@ -1,6 +1,6 @@
 //! The movie archive on archives built here: the walk, every way an archive
 //! can be malformed, the `SMK0` clips read as `SMK2`, the byte ranges the
-//! clips are read through, and (with the `ffmpeg` feature) a small movie
+//! clips are read through, and (in a build with FFmpeg) a small movie
 //! played from inside an archive.
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -434,7 +434,7 @@ fn a_range_without_a_patch_or_past_its_source() {
     assert!(PatchedRange::new(Cursor::new(data), u64::MAX, 2, None).is_err());
 }
 
-#[cfg(feature = "ffmpeg")]
+#[cfg(claw_ffmpeg)]
 mod playing {
     //! A small movie made here (a 32x24 raw BGR picture at 10 pictures a
     //! second, each with its own colour) plays the same from its own file

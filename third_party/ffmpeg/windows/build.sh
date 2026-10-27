@@ -111,6 +111,10 @@ esac
 print_next() {
     win=$(windows_path "$prefix")
     say "FFmpeg $FFMPEG_VERSION for MSVC is in $win"
+    if [ -z "${FFMPEG_PREFIX:-}" ]; then
+        say "cargo finds it there: in the Developer prompt, cargo build --release -p claw-game"
+        return 0
+    fi
     say "point cargo at it, in the Developer prompt you build from:"
     say "  cmd:        set FFMPEG_PREFIX=$win"
     say "  PowerShell: \$env:FFMPEG_PREFIX = '$win'"
@@ -119,7 +123,14 @@ print_next() {
 
 up_to_date() { [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(stamp_text)" ]; }
 
+# Each finished or found build rewrites last-build.txt in the cache folder:
+# a cargo build that found no FFmpeg watches it, to link the build next time.
+signal() {
+    { mkdir -p "$cache_root" && printf '%s\n' "$prefix" >"$cache_root/last-build.txt"; } 2>/dev/null || true
+}
+
 if up_to_date; then
+    signal
     print_next
     exit 0
 fi
@@ -234,4 +245,5 @@ stamp_text >"$staged/share/rusty-claw/ffmpeg-build.txt"
 mkdir -p "$(dirname "$prefix")"
 mv "$staged" "$prefix"
 rm -rf "$work"
+signal
 print_next

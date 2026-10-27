@@ -11,22 +11,30 @@ configure line and the licence terms.
 |---|---|
 | `build.sh` | Downloads, checks and builds FFmpeg (and the nasm assembler it needs) |
 | `NOTICE` | FFmpeg's version, source, configure line and LGPL terms |
-| `rusty_ffmpeg/` | FFmpeg's interface in Rust (rusty_ffmpeg 0.17.0, MIT) with a build script that links the build |
+| `rusty_ffmpeg/` | FFmpeg's interface in Rust (rusty_ffmpeg 0.17.0, MIT) with a build script that finds or builds FFmpeg and links it |
 | `windows/` | The same FFmpeg built with Microsoft's compiler for Windows 11, and a check of the finished `.exe` |
 | `deck/` | A build of the whole game for the Steam Deck in the Steam Runtime SDK container, and a glibc check |
 
 ## Linux
 
-You need what the game itself needs to build (a C compiler, `make`, `curl`)
-plus `tar` with xz support and `sha256sum`, which every desktop distribution
-has. No root access and no FFmpeg package are needed.
+You need what the game itself needs to build (a C compiler, `make`, `curl`
+or `wget`) plus `tar` with xz support and `sha256sum`, which every desktop
+distribution has. No root access and no FFmpeg package are needed.
+
+Movies come with a plain build:
 
 ```sh
-make ffmpeg            # once per machine: about a minute on a desktop
-make run-game ARGS='--install /path/to/your/install'
+cargo build --release -p claw-game     # or: make run-game ARGS='--install /path/to/your/install'
 ```
 
-`make ffmpeg` runs `build.sh`, which:
+The first time, the build finds no FFmpeg in your cache, runs `build.sh`
+itself (about a minute on a desktop, once per machine) and says so in a
+cargo warning; later builds, in this checkout or any other, link the same
+FFmpeg without building it again, and `cargo clean` does not remove it.
+`make ffmpeg` runs the same step on its own, with its progress shown, for
+example before an offline build.
+
+`build.sh` (run by cargo or by `make ffmpeg`):
 
 1. downloads the FFmpeg source release and nasm into
    `~/.cache/rusty-claw/ffmpeg/downloads` and checks their SHA-256;
@@ -37,8 +45,10 @@ make run-game ARGS='--install /path/to/your/install'
    10`) and installs it into the prefix,
    `~/.cache/rusty-claw/ffmpeg/<version>-<hash>`, where the hash covers the
    pins and the configure line;
-4. records the build in `<prefix>/share/rusty-claw/ffmpeg-build.txt` and
-   removes the build tree.
+4. records the build in `<prefix>/share/rusty-claw/ffmpeg-build.txt`,
+   writes the prefix to `~/.cache/rusty-claw/ffmpeg/last-build.txt` (which
+   a cargo build that found no FFmpeg watches, so its next build links
+   this one) and removes the build tree.
 
 The demuxers are `avi`, `smacker`, `mov`, `matroska`, `mpegps` and
 `mpegvideo`: `mpegps` reads VOB files but leaves the codec of their picture
@@ -51,47 +61,61 @@ configure line builds into a new prefix; old prefixes can be deleted.
 
 Settings, all optional:
 
+- `RUSTY_CLAW_FFMPEG` chooses what a build does about FFmpeg: `auto` (the
+  default, also when unset or empty) links it, building it first where it
+  can, and builds the game without movies where it cannot; `off` builds
+  without FFmpeg and never builds it; `require` makes a build without
+  FFmpeg an error, with the reason (the Steam Deck build uses it);
 - `FFMPEG_PREFIX=/some/dir` builds into, and links from, that directory
   instead (for `make` and for plain `cargo` alike). It must be an absolute
-  path; `build.sh` and the `rusty_ffmpeg` build script stop on a relative
-  one, and an empty `FFMPEG_PREFIX` is the same as none. The Makefile passes
-  it on to cargo only when you set it, so switching between `make` and plain
-  `cargo` does not rebuild FFmpeg's binding;
+  path; `build.sh` stops on a relative one and the `rusty_ffmpeg` build
+  script treats it as no FFmpeg, and an empty `FFMPEG_PREFIX` is the same
+  as none. The Makefile passes it on to cargo only when you set it, so
+  switching between `make` and plain `cargo` does not rebuild FFmpeg's
+  binding;
 - `FFMPEG_JOBS=N` sets the parallel compile jobs.
 
 ## How the game links it
 
-Movies are behind two cargo features, both off by default: `ffmpeg` on the
-`claw-movie` crate and `movies` on the game (`claw-game`), which turns on the
-first. A build without them has no FFmpeg in it and plays no movies.
+The `rusty_ffmpeg` build script decides, on every platform:
 
-The Makefile's `run-game`, `check`, `check-movie`, `check-game` and
-`test-install` turn the features on when the prefix holds a finished build
-and print which way they built (`movies: on` or `movies: off`). With cargo
-directly:
+1. It looks for a finished build in the prefix (`FFMPEG_PREFIX`, else the
+   one `build.sh --prefix` prints; on Windows, see below) and links FFmpeg's
+   static libraries from it.
+2. When there is none and the machine can build one (Linux, the Steam Deck
+   and other Unix systems, building for themselves, with `sh`, a C
+   compiler, `make`, `curl` or `wget`, `tar` and `xz`), it runs `build.sh`
+   into the prefix, prints a cargo warning that it did, and links it.
+3. Otherwise it links nothing and prints one warning, for example
 
-```sh
-cargo build --release -p claw-game --features movies
-```
+   ```
+   warning: rusty_ffmpeg@0.17.0+ffmpeg.8.1: this build plays no movies: building FFmpeg needs make, which this system lacks (install what is missing, run `make ffmpeg`, then build again); see third_party/ffmpeg/README.md
+   ```
 
-The `rusty_ffmpeg` build script finds the prefix (`FFMPEG_PREFIX`, else the
-one `build.sh --prefix` prints) and links FFmpeg's static libraries from it.
+   The game still builds and runs; it plays no movies and says so once at
+   start-up. Once a build appears in the prefix (`make ffmpeg`), the next
+   `cargo build` notices it and links it.
+
+The script tells the `claw-movie` crate whether it linked FFmpeg, and
+`claw-movie` builds either its player or a stand-in that plays nothing, so
+the rest of the game has one code path. The Makefile's `run-game`, `check`,
+`check-movie`, `check-game` and `test-install` print which way they build
+(`movies: on`, or `movies: off` with `RUSTY_CLAW_FFMPEG=off`).
+
+The cargo features `movies` (on `claw-game`) and `ffmpeg` (on `claw-movie`)
+that older instructions name are kept so those commands still work, and do
+nothing: `cargo build --features movies` is the same build as without it.
+
 The Rust declarations are committed (`rusty_ffmpeg/src/binding.rs`), so the
-build needs neither libclang nor FFmpeg's headers. Without a build it stops
-with one line:
-
-```
-error: rusty_ffmpeg@0.17.0+ffmpeg.8.1: no FFmpeg build in ...; run `make ffmpeg` to build it (or set FFMPEG_PREFIX to a finished build)
-```
-
-The game binary then needs no FFmpeg at run time: `ldd target/release/rusty-claw`
-lists no `libav*` or `libsw*` library.
+build needs neither libclang nor FFmpeg's headers. The game binary needs no
+FFmpeg at run time: `ldd target/release/rusty-claw` lists no `libav*` or
+`libsw*` library.
 
 To check the build is the LGPL one:
 
 ```sh
 grep configure "$(sh third_party/ffmpeg/build.sh --prefix)/share/rusty-claw/ffmpeg-build.txt"
-cargo test -p claw-movie --features ffmpeg --test smoke
+cargo test -p claw-movie --test smoke
 ```
 
 The smoke test checks that exactly the listed decoders, demuxers and parsers
@@ -127,7 +151,7 @@ also prints how fast they decode with every core and with four, and asks for
 at least 1.5 times real time with every core:
 
 ```sh
-CLAW_CODECS_BENCH=1 cargo test --release -p claw-movie --features ffmpeg --test codecs -- --nocapture
+CLAW_CODECS_BENCH=1 cargo test --release -p claw-movie --test codecs -- --nocapture
 ```
 
 Run it while the machine is otherwise idle, since it measures speed. The
@@ -151,6 +175,10 @@ threads, and the DLL C runtime (`-MD`) that Rust uses. FFmpeg's own build
 system needs a POSIX shell, which MSYS2 provides; the compiler is MSVC, so
 the result links into the Rust build. The game then carries FFmpeg inside
 `rusty-claw.exe`, with no FFmpeg DLL.
+
+On Windows the game's build never builds FFmpeg itself: that needs MSYS2
+and MSVC together, below. Without it, `cargo build` still builds the game,
+without movies, and prints a warning that says so.
 
 Once per machine:
 
@@ -190,7 +218,7 @@ To build FFmpeg (once per FFmpeg version; it takes several minutes):
    It downloads FFmpeg and nasm into `%LOCALAPPDATA%\rusty-claw\ffmpeg`,
    checks their SHA-256, builds nasm, then builds FFmpeg into
    `%LOCALAPPDATA%\rusty-claw\ffmpeg\<version>-<hash>-msvc`, and ends by
-   printing that folder as `FFMPEG_PREFIX`. A user folder with a space in its
+   printing that folder. A user folder with a space in its
    path cannot hold the build; set `FFMPEG_PREFIX=C:/rusty-claw/ffmpeg` (any
    folder without spaces) before running it. Running it again with the same
    pins does nothing but print the folder.
@@ -198,23 +226,26 @@ To build FFmpeg (once per FFmpeg version; it takes several minutes):
 
 To build the game:
 
-6. Tell cargo where FFmpeg is: the `rusty_ffmpeg` build script reads
-   `FFMPEG_PREFIX` (on Windows it cannot work the folder out itself). In the
-   Developer prompt, with the folder the script printed:
+6. The `rusty_ffmpeg` build script finds a build in the default folder
+   itself: the newest `%LOCALAPPDATA%\rusty-claw\ffmpeg\<version>-<hash>-msvc`
+   whose record names the pinned version, checksum and component list. If
+   you built into another folder (`FFMPEG_PREFIX` in step 4), tell cargo
+   too, in the Developer prompt, with the folder the script printed:
 
    ```bat
-   set FFMPEG_PREFIX=C:\Users\you\AppData\Local\rusty-claw\ffmpeg\8.1.3-...-msvc
+   set FFMPEG_PREFIX=C:\rusty-claw\ffmpeg
    ```
 
    (`setx FFMPEG_PREFIX "..."` keeps it for every new prompt; in PowerShell,
    `$env:FFMPEG_PREFIX = '...'`.)
-7. Build, in the same prompt, from the checkout:
+7. Build, in the Developer prompt, from the checkout:
 
    ```bat
-   cargo build --release -p claw-game --features movies
+   cargo build --release -p claw-game
    ```
 
-   (`cargo build --release --features claw-game/movies` is the same build.)
+   With `set RUSTY_CLAW_FFMPEG=require` first, a build that finds no FFmpeg
+   stops with the reason instead of building without movies.
    The result is `target\release\rusty-claw.exe`, one file.
 8. Check it carries FFmpeg and needs no FFmpeg DLL, from the MSYS2 shell of
    step 3:
@@ -248,10 +279,11 @@ Notes for whoever maintains this:
   and Windows. FFmpeg's structures use fixed-size fields, so their layout is
   the same on both; the one `unsigned long` field (`AVIOContext::checksum`,
   4 bytes on Windows) and the `va_list` logging functions are never used by
-  the player. `cargo check --target x86_64-pc-windows-msvc -p claw-game
-  --features movies`, with `FFMPEG_PREFIX` naming any folder that holds a
+  the player. `cargo check --target x86_64-pc-windows-msvc -p claw-game`,
+  with `FFMPEG_PREFIX` naming any folder that holds a
   `share/rusty-claw/ffmpeg-build.txt`, checks the Windows build compiles
-  without a Windows machine.
+  with the player without a Windows machine; without `FFMPEG_PREFIX` it
+  checks the build without movies and prints the warning.
 
 Status: these steps are reviewed and the game compiles for
 `x86_64-pc-windows-msvc`, but the FFmpeg build and the link have not been run

@@ -1,7 +1,7 @@
 //! Every movie of the install is found, every clip of its movie archive
 //! plays, and a movie whose file is missing plays from the archive.
 //! Reads the install named by `CLAW_INSTALL` and skips without it.
-#![cfg(feature = "ffmpeg")]
+#![cfg(claw_ffmpeg)]
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
