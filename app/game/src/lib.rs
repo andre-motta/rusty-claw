@@ -19,6 +19,7 @@
 //! - [`flow`]: the game flow: title, menus, play, the end-of-level tally
 //!   and the end of a game;
 //! - [`movie`]: the game's movies in the window;
+//! - [`credits_movie`]: the credits' looping background movie;
 //! - [`window`]: the game window;
 //! - [`bench`]: benchmarks in a window or offscreen;
 //! - [`replay_headless`]: replaying an input script without a window.
@@ -36,6 +37,7 @@ use claw_sim::trace::TraceRow;
 
 pub mod audio;
 pub mod bench;
+pub mod credits_movie;
 pub mod flow;
 pub mod input;
 pub mod keymap;

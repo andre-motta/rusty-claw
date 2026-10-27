@@ -567,6 +567,11 @@ impl MoviePlayback {
         &self.source
     }
 
+    /// Why decoding stopped before the end of the stream, if it did.
+    pub fn error(&self) -> Option<String> {
+        self.player.error()
+    }
+
     /// Stops the movie and its soundtrack; says why when decoding stopped
     /// early.
     pub fn stop(self, audio: Option<&mut AudioBridge>) {

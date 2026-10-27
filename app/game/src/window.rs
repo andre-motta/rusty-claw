@@ -55,6 +55,13 @@
 //! playing movie holds and the main menu's idle time stands still ([`MoviePlayback::hold`],
 //! [`Flow::set_background`]). A `--movie` run whose movie did not play or
 //! could not be shown ends with an error.
+//!
+//! The credits' movie (see [`crate::credits_movie`]): while the flow wants
+//! it behind the credits ([`Flow::credits_movie`]) the window plays it,
+//! muted and looping, paints the credits' text into each of its pictures
+//! and draws them through the movie presenter. Inputs go to the credits as
+//! always. When it cannot play or stops on an error the window tells the
+//! flow ([`Flow::credits_movie_failed`]) and draws the parchment.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -93,8 +100,8 @@ use claw_ui::screens::assets::{
 };
 use claw_ui::screens::booty::{self, BootyArt, BootyScreen, BootyStats};
 use claw_ui::screens::credits::{
-    CREDITS_PICTURE, CREDITS_SCREENS, CreditsArt, CreditsEntry, CreditsScreen, FontMetrics,
-    MESSAGE_FONT, STRIPS, TEXT_FONT, prepare_parchment, recolour,
+    CREDITS_PICTURE, CREDITS_SCREENS, CreditsArt, CreditsEntry, CreditsPhase, CreditsScreen,
+    FontMetrics, MESSAGE_FONT, STRIPS, TEXT_FONT, prepare_parchment, recolour,
 };
 use claw_ui::screens::title::{self, TitleScreen};
 use winit::application::ApplicationHandler;
@@ -106,6 +113,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::audio::{AudioBridge, ViewInfo};
 use crate::bench::{Combat, PresentDetail, Report, Samples, Summary, WARMUP_S, combat_route};
+use crate::credits_movie::{self, CreditsMovie, TextMask};
 use crate::flow::{self, Effect, Flow, MovieShelf, Screen, Start};
 use crate::input::{InputContext, InputRouter, Routed};
 use crate::keymap::{Action, Command, PadButton};
@@ -755,6 +763,8 @@ struct App {
     movie_roots: Roots,
     /// The movie playing.
     movie: Option<MoviePlayback>,
+    /// The movie behind the credits, while they show it.
+    credits_movie: Option<CreditsMovie>,
     /// The one movie of a `--movie` run.
     movie_only: Option<MovieTarget>,
     /// The pad buttons pressed since the last frame, for a playing movie
@@ -1104,6 +1114,9 @@ impl App {
         if let Some(m) = self.movie.as_mut() {
             m.hold(background);
         }
+        if let Some(m) = self.credits_movie.as_mut() {
+            m.hold(background);
+        }
         if let Some(f) = self.flow.as_mut() {
             f.set_background(background);
         }
@@ -1128,6 +1141,133 @@ impl App {
             movie::tell_flow(f, end);
             self.run_effects(event_loop);
         }
+    }
+
+    /// Starts the credits movie when the flow wants it behind the credits,
+    /// stops it when the credits close, loops it at its end, and tells the
+    /// flow when it cannot go on, so the parchment shows.
+    fn sync_credits_movie(&mut self) {
+        let want = self.flow.as_ref().is_some_and(Flow::credits_movie);
+        if !want {
+            if let Some(m) = self.credits_movie.take() {
+                m.stop();
+            }
+            return;
+        }
+        let failed = match self.credits_movie.as_mut() {
+            None => {
+                let candidates = locate_all(MovieIndex::CREDITS, &self.movie_roots);
+                self.credits_movie = CreditsMovie::start(&candidates);
+                match &self.credits_movie {
+                    Some(m) => {
+                        eprintln!(
+                            "rusty-claw: playing {} behind the credits",
+                            m.source().describe()
+                        );
+                        None
+                    }
+                    None => Some("no source played".to_string()),
+                }
+            }
+            Some(m) => m
+                .poll()
+                .err()
+                .map(|e| format!("{}: {e}", m.source().describe())),
+        };
+        if let Some(why) = failed {
+            self.fail_credits_movie(&why);
+        }
+        self.follow_background();
+    }
+
+    /// The credits movie cannot go on: it stops and the credits show over
+    /// the parchment.
+    fn fail_credits_movie(&mut self, why: &str) {
+        eprintln!(
+            "rusty-claw: the credits movie stopped ({why}); the credits show over the parchment"
+        );
+        if let Some(m) = self.credits_movie.take() {
+            m.stop();
+        }
+        if let Some(f) = self.flow.as_mut() {
+            f.credits_movie_failed();
+        }
+    }
+
+    /// Draws the credits over their movie; false when the credits do not
+    /// show it now (they are drawn as usual then).
+    fn draw_credits_movie(&mut self) -> bool {
+        let Some(flow) = self.flow.as_ref() else {
+            return false;
+        };
+        let brightness = flow.brightness();
+        // Black before the parchment would unroll: drawn as usual.
+        if !flow.credits_movie() || self.credits_movie.is_none() || brightness <= 0.0 {
+            return false;
+        }
+        let text_shows = flow
+            .credits()
+            .is_some_and(|c| c.phase() == CreditsPhase::Text);
+        let Some((mut scene, over)) = self.screen_scene() else {
+            return false;
+        };
+        // The text alone: no parchment, no unrolling strips, no fade (the
+        // brightness is applied to the whole picture).
+        scene.background = None;
+        scene.fade = None;
+        if !text_shows {
+            scene.sprites.clear();
+        }
+        let (Some(live), Some(m), Some(s)) = (
+            &mut self.live,
+            self.credits_movie.as_mut(),
+            self.screens.as_mut(),
+        ) else {
+            return false;
+        };
+        let pulled = m.pull();
+        let Live {
+            gpu,
+            config,
+            movie: presenter,
+            ..
+        } = live;
+        let presenter = presenter.get_or_insert_with(|| MoviePresenter::new(gpu, config.format));
+        let mut failed = pulled.err();
+        if failed.is_none() {
+            let graphics = &mut s.graphics;
+            if let Some(canvas) = m.compose(&scene, &over, brightness, |builder| {
+                let mut built = builder.build(graphics, &scene, 0.0);
+                draw::add_to_scene(&mut built, graphics, &over);
+                TextMask::from_scene(graphics, &built)
+            }) && let Err(e) = presenter.upload(gpu, &canvas.picture())
+            {
+                failed = Some(e.to_string());
+            }
+        }
+        if let Some(e) = failed {
+            let why = format!("{}: {e}", m.source().describe());
+            self.fail_credits_movie(&why);
+            return false;
+        }
+        let aspect = m.aspect();
+        let texture = match live.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                live.surface.configure(&live.gpu.device, &live.config);
+                return true;
+            }
+            _ => return true,
+        };
+        let size = (texture.texture.width(), texture.texture.height());
+        let target = texture.texture.create_view(&Default::default());
+        if let Some(p) = &live.movie {
+            p.render(&live.gpu, &target, size, aspect);
+        }
+        live.window.pre_present_notify();
+        live.gpu.queue.present(texture);
+        true
     }
 
     /// Draws the playing movie's newest picture, centred at its shape on
@@ -1451,6 +1591,9 @@ impl App {
                 }
             }
             Effect::ShowCredits(entry) => {
+                // The movie first: the flow leaves out the parchment's
+                // unroll sound only when the movie plays.
+                self.sync_credits_movie();
                 let tune_ms = self
                     .audio
                     .as_ref()
@@ -1975,6 +2118,7 @@ impl App {
         }
         self.run_effects(event_loop);
         self.finish_movie(event_loop);
+        self.sync_credits_movie();
         self.sync_context(event_loop);
         if let Some(s) = self.screens.as_mut()
             && self
@@ -2069,6 +2213,9 @@ impl App {
     fn draw_flow(&mut self) {
         if self.movie.is_some() {
             self.draw_movie();
+            return;
+        }
+        if self.credits_movie.is_some() && self.draw_credits_movie() {
             return;
         }
         let screen = self.screen_scene();
@@ -2490,11 +2637,14 @@ fn run_app(
         if movies && claw_movie::available() {
             // Before the first effects, so the start-up movies come before
             // the title.
-            let shelf = MovieShelf {
+            let mut shelf = MovieShelf {
                 intro_seen: settings.intro_seen,
                 skip_logo: settings.skip_logo,
                 ..movie::shelf(&movie_roots)
             };
+            if credits_movie::on_shelf(&settings, &movie_roots) {
+                shelf.available.insert(MovieIndex::CREDITS);
+            }
             f.set_movies(shelf);
         }
         if let Some(why) = saves_off {
@@ -2567,6 +2717,7 @@ fn run_app(
         announced_end: false,
         movie_roots,
         movie: None,
+        credits_movie: None,
         movie_only,
         pad_presses,
     };

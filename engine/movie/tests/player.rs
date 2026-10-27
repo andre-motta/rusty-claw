@@ -384,6 +384,53 @@ fn without_an_engine_the_movie_plays_on_the_wall_clock() {
     }
 }
 
+/// A looping background (the credits' movie) plays muted: nobody takes its
+/// soundtrack, so it runs on the wall clock, and once it is over the same
+/// source opens again and plays from its first picture, every time.
+#[test]
+fn a_muted_movie_loops_by_opening_its_source_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("CREDITS.avi");
+    std::fs::write(&path, movie_with(6, 0)).unwrap();
+    let source = Source::File {
+        path,
+        kind: FileKind::Upscaled,
+    };
+    let start = Instant::now();
+    let mut p = Player::open(&source, OUT_RATE).unwrap();
+    let mut passes = Vec::new();
+    let mut shown = Vec::new();
+    while passes.len() < 3 {
+        assert!(start.elapsed() < Duration::from_secs(10), "never looped");
+        if let Some(f) = p.next_frame() {
+            // A picture that fell behind may be dropped: name it by its time.
+            let i = (f.pts.as_millis() as u32 * FPS).div_ceil(1000);
+            check_picture(i, f);
+            shown.push(f.pts);
+        }
+        if p.finished() {
+            assert_eq!(p.error(), None);
+            assert_eq!(p.audio_position(), Some(Duration::ZERO), "muted");
+            passes.push(std::mem::take(&mut shown));
+            p = Player::open(&source, OUT_RATE).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // Each pass starts again from the first pictures and, on the wall
+    // clock, shows (nearly) all six in order.
+    for pass in &passes {
+        assert!(pass.len() >= 4, "{pass:?}");
+        assert!(pass[0] <= Duration::from_millis(100), "{pass:?}");
+        assert!(
+            *pass.last().unwrap() >= Duration::from_millis(400),
+            "{pass:?}"
+        );
+        assert!(pass.windows(2).all(|w| w[0] < w[1]), "{pass:?}");
+    }
+    // Three passes of 0.6 s each.
+    assert!(start.elapsed() >= Duration::from_millis(1800));
+}
+
 /// An audio engine for a test: plays 10 ms of the soundtrack every 10 ms on
 /// a thread of its own, until stopped.
 struct Engine {

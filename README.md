@@ -107,8 +107,9 @@ or the gamepad's Start button open the in-game menu: resume, options and
 end the game. Finishing a level shows the treasure tally, then the main
 menu; the next level is then open in the new game and load lists.
 Finishing the fourteenth level shows its map and tally, then the credits
-over the parchment; Escape, Enter, a game key or a click returns to the
-main menu, whose Credits entry shows them again. When the game is built
+over the parchment (or over a looping movie, see [Movies](#movies));
+Escape, Enter, a game key or a click returns to the main menu, whose
+Credits entry shows them again. When the game is built
 with FFmpeg it also plays the game's movies (see [Movies](#movies)).
 
 The game pauses when its window loses focus.
@@ -223,7 +224,17 @@ sound at the sound volume:
 - in the main menu when nobody touches it for two minutes (three in a
   submenu): the intro and the title in turn, the intro first;
 - from the main menu's Replay Movies page, one entry per movie; an entry is
-  greyed out when its movie is not found, and the page when none is.
+  greyed out when its movie is not found, and the page when none is;
+- behind the credits, looping and without its sound (the credits music
+  plays as before), in place of the parchment: your own copy named
+  `CREDITS` (see below), else the long clip of the install's movie
+  archive. The same clip plays after level 14 and from the main menu's
+  Credits; the archive's other clip for the end of the game holds only the
+  same short placeholder as its first ten clips, so it is not used. The
+  credits text, its pace, the corner extra and the keys stay as they are.
+  Without a credits movie, with `credits_movie = off` or with movies off,
+  or when the movie cannot play or stops on an error, the credits show
+  over the parchment.
 
 A run straight in a level (`--level`, `--custom`) skips the start-up
 movies, community custom levels have none, and replays, traces,
@@ -257,12 +268,13 @@ Where movies come from, best first:
    `~/.local/share/rusty-claw/movies/` (or under `$XDG_DATA_HOME`; on
    Windows `%LOCALAPPDATA%\rusty-claw\movies\` unless `XDG_DATA_HOME` is
    set), or the folder `movie_folder` names. Name them after the movie they
-   replace, `LOGO` and `CLAW0` to `CLAW8`, with the extension `.mkv`,
+   replace, `LOGO`, `CLAW0` to `CLAW8` and `CREDITS`, with the extension `.mkv`,
    `.mp4`, `.mov` or `.avi` (in any case); H.264 or H.265 video is the
    best choice.
 2. The install's own movie files, `LOGO` and `CLAW0` to `CLAW8` as `.avi`
    or `.vob`, in the install folder or its `Movies` folder.
-3. The install's movie archive, `CLAW.FEC`.
+3. The install's movie archive, `CLAW.FEC` (for the credits, only this
+   and your own copy count).
 
 No movie file comes with the source, and the game never writes one.
 
@@ -275,6 +287,7 @@ No movie file comes with the source, and the game never writes one.
 | `skip_logo = on` | no logo at start-up, once the intro has played or when there is no intro to play |
 | `movie_folder = "/path"` | where your copies are |
 | `intro_seen = yes` | written by the game once the intro played; `no` shows it again |
+| `credits_movie = off` | the credits show over the parchment even when a credits movie is found (`on`, the default, shows the movie behind them) |
 
 The Display page's movie interlacing switch is kept for the run only and
 changes nothing: movies always show whole.
@@ -326,6 +339,7 @@ movies = upscaled          # original, archive or off (see Movies)
 skip_logo = off            # on: no logo movie at start-up unless the intro plays
 movie_folder = "/path/to/your/movies"
 intro_seen = no            # the game sets it once the intro movie played
+credits_movie = on         # off: the credits show over the parchment
 key_jump = "Space"         # key_<action>: key names, comma separated
 pad_jump = "South"         # pad_<action>: pad button names
 ```
@@ -1065,8 +1079,8 @@ unless `--uncapped` is given.
   and other objects do not move or act yet.
 - Movies need a build with FFmpeg (see [Movies](#movies)); without one,
   or without the ending movie, a short black hold stands in for it after
-  the last level. The credits show over the parchment rather than over a
-  moving background, and the movie interlacing switch does nothing.
+  the last level, and the credits show over the parchment. The movie
+  interlacing switch does nothing.
 - No multiplayer (curses only act in multiplayer games, so they vanish in
   single player as in the original).
 - The credits text uses the game's bitmap font, which has capitals, digits

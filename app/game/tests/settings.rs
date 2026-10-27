@@ -1010,6 +1010,51 @@ fn the_movie_settings_parse_validate_and_survive_a_reload() {
 }
 
 #[test]
+fn the_credits_movie_setting_parses_validates_and_survives_a_reload() {
+    let parse = |text: &str| ConfigFile::parse(text, "test").and_then(|f| f.check().map(|_| f));
+    let args = || Args::try_parse_from(["x", "--install", "/i"]).unwrap();
+    let resolve = |text: &str| Settings::resolve(&args(), Some(&parse(text).unwrap())).unwrap();
+    // On by default, off when asked.
+    assert!(resolve("").credits_movie);
+    assert!(resolve("credits_movie = on\n").credits_movie);
+    assert!(!resolve("credits_movie = off\n").credits_movie);
+    assert!(!resolve("credits_movie = \"off\"\n").credits_movie);
+    assert!(!resolve("credits_movie = false\n").credits_movie);
+    for bad in [
+        "credits_movie = sometimes\n",
+        "credits_movie = OFF\n",
+        "credits_movie = 2\n",
+        "credits_movie = \"\"\n",
+    ] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+    // Movies off leaves the credits without one whatever this says (the
+    // window hands the flow no movies then).
+    let s = resolve("movies = off\ncredits_movie = on\n");
+    assert!(!s.movies_on() && s.credits_movie);
+
+    // Written back and read back the same, keeping the file's other lines.
+    let root = tempfile::tempdir().unwrap();
+    let path = config_in(root.path(), REALISTIC);
+    let mut s = Settings::resolve(&args(), Some(&ConfigFile::load(&path).unwrap())).unwrap();
+    s.config_path = Some(path.clone());
+    assert_eq!(s.config_value("credits_movie").as_deref(), Some("on"));
+    s.credits_movie = false;
+    assert_eq!(s.write_back(&["credits_movie"]).unwrap(), ["credits_movie"]);
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with(REALISTIC), "{text}");
+    assert!(text.lines().any(|l| l == "credits_movie = off"), "{text}");
+    let again = Settings::resolve(&args(), Some(&ConfigFile::load(&path).unwrap())).unwrap();
+    assert!(!again.credits_movie);
+    assert_eq!(again.config_value("credits_movie").as_deref(), Some("off"));
+    // It changes nothing in play.
+    assert_eq!(
+        again.sim_config((1280, 960)),
+        resolve("").sim_config((1280, 960))
+    );
+}
+
+#[test]
 fn movies_are_looked_for_in_the_install_and_the_movie_folder() {
     let d = UserDirs::from_lookup(|k| match k {
         "HOME" => Some("/h".into()),

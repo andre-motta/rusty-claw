@@ -33,7 +33,9 @@ const ARCHIVE_EXTENSION: [&str; 1] = ["fec"];
 ///    offered when it reads cleanly and holds that clip.
 ///
 /// A movie without a stem or a clip has none of those candidates; the odd
-/// indices 1 to 11 have neither and return nothing.
+/// indices 1 to 11 have neither and return nothing. The credits'
+/// background ([`MovieIndex::CREDITS`]) has no file of the install: only
+/// the movie folder's `CREDITS` copy (step 1) and archive clip 11 (step 3).
 pub fn locate_all(index: MovieIndex, roots: &Roots) -> Vec<Source> {
     let mut out: Vec<Source> = Vec::new();
     let movies = movies_folders(&roots.install);
@@ -50,7 +52,7 @@ pub fn locate_all(index: MovieIndex, roots: &Roots) -> Vec<Source> {
         {
             add_files(folder, stem, &UPSCALED_EXTENSIONS, FileKind::Upscaled);
         }
-        if roots.mode != MovieMode::Archive {
+        if roots.mode != MovieMode::Archive && !index.is_credits() {
             for dir in std::iter::once(&roots.install).chain(&movies) {
                 add_files(dir, stem, &ORIGINAL_EXTENSIONS, FileKind::Original);
             }
@@ -164,6 +166,23 @@ mod tests {
             ..Roots::default()
         };
         assert!(locate_all(MovieIndex::LOGO, &missing).is_empty());
+    }
+
+    #[test]
+    fn the_credits_movie_has_no_install_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("CREDITS.avi"), b"x").unwrap();
+        let roots = Roots {
+            install: dir.path().to_path_buf(),
+            ..Roots::default()
+        };
+        assert!(locate_all(MovieIndex::CREDITS, &roots).is_empty());
+        let roots = Roots {
+            user_folder: Some(dir.path().to_path_buf()),
+            mode: MovieMode::Upscaled,
+            ..roots
+        };
+        assert_eq!(locate_all(MovieIndex::CREDITS, &roots).len(), 1);
     }
 
     #[test]

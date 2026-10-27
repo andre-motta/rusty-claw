@@ -62,6 +62,16 @@
 //! more: there is no level after it. The main menu's Credits entry opens
 //! the same credits.
 //!
+//! The credits' background: when the credits movie is on the shelf
+//! ([`MovieIndex::CREDITS`], see below) the credits show it, looping and
+//! muted, behind their rising text in place of the parchment
+//! ([`Flow::credits_movie`]); the window plays it while the credits show
+//! and draws the text over it. The parchment's unroll and its sound are
+//! left out then, and the credits keep their timing, text, music and
+//! inputs. When the movie cannot play or stops on an error the window says
+//! so ([`Flow::credits_movie_failed`]) and the parchment shows at once,
+//! for the rest of that visit.
+//!
 //! End life asks for a confirmation; its question is the low-lives one
 //! when Claw has fewer than 2 lives left, since that death ends the game.
 //! Confirmed, the menu closes and Claw dies at the start of the next tick
@@ -126,6 +136,9 @@
 //!   ([`replay_movie_index`]); the page and each entry are greyed out
 //!   without one. After the movie the same page shows, the entry still
 //!   highlighted.
+//! - Behind the credits, looping: the credits movie, on the shelf only
+//!   when the window found one and `credits_movie` is on. It is not a
+//!   screen of its own and the Replay Movies page does not offer it.
 
 use std::collections::{BTreeSet, VecDeque};
 
@@ -139,7 +152,7 @@ use claw_ui::menu::command::{
 };
 use claw_ui::menu::draw::{self, FontArt, MenuState};
 use claw_ui::menu::{MenuAction, MenuInput, MenuTree, Navigator};
-use claw_ui::screens::credits::{self, Click};
+use claw_ui::screens::credits::{self, Click, DELAYED_UNROLL_SOUND, UNROLL_SOUND};
 use claw_ui::screens::{
     BootyScreen, BootyStats, CreditsEntry, CreditsScreen, CreditsTune, GameOverScreen, HelpScreen,
     TitleScreen,
@@ -344,6 +357,11 @@ struct Play {
     level: LevelChoice,
     checkpoint: Option<(i32, i32)>,
     complete_in: Option<f64>,
+}
+
+/// Whether `cue` starts the sound of the credits' parchment unrolling.
+fn is_unroll(cue: &AudioCue) -> bool {
+    matches!(cue, AudioCue::Play(c) if c.key == UNROLL_SOUND || c.key == DELAYED_UNROLL_SOUND)
 }
 
 /// The movie entry `entry` of the Replay Movies page replays (see
@@ -596,6 +614,8 @@ pub struct Flow {
     idle_movie: bool,
     /// The window is in the background: the idle time stands still.
     background: bool,
+    /// The credits on screen show the credits movie behind their text.
+    credits_movie: bool,
 }
 
 impl std::fmt::Debug for Flow {
@@ -685,6 +705,7 @@ impl Flow {
             after_movie: None,
             idle_movie: true,
             background: false,
+            credits_movie: false,
         };
         if let Some(tree) = main {
             flow.main = Some(flow.prepare(tree));
@@ -765,6 +786,21 @@ impl Flow {
     /// The movies this run can play, once [`Flow::set_movies`] was called.
     pub fn movies(&self) -> Option<&MovieShelf> {
         self.movies.as_ref()
+    }
+
+    /// True while the credits show and want the credits movie behind their
+    /// text ([`MovieIndex::CREDITS`], when it is on the shelf): the window
+    /// plays it, looping and muted, and draws the text over it, until this
+    /// turns false (the credits closed, or the movie failed).
+    pub fn credits_movie(&self) -> bool {
+        self.credits_movie && self.screen == Screen::Credits
+    }
+
+    /// The credits movie could not play, could not be shown or stopped on
+    /// an error: the credits go on over the parchment, at once and for the
+    /// rest of this visit.
+    pub fn credits_movie_failed(&mut self) {
+        self.credits_movie = false;
     }
 
     /// The movie showing, if any.
@@ -1278,6 +1314,7 @@ impl Flow {
                 self.next = None;
                 self.game_over = None;
                 self.credits = None;
+                self.credits_movie = false;
                 self.ending = false;
                 self.cut_left = None;
                 if let Some(n) = self.main.as_mut() {
@@ -1352,7 +1389,11 @@ impl Flow {
         let sound = self.state.switches.sound;
         let music = self.music_available;
         let shelf = self.movies.as_ref().map(|m| m.available.clone());
-        let any_movie = shelf.as_ref().is_some_and(|s| !s.is_empty());
+        // The credits movie plays behind the credits only, never from the
+        // Replay Movies page.
+        let any_movie = shelf
+            .as_ref()
+            .is_some_and(|s| s.iter().any(|i| !i.is_credits()));
         let rule = |item: &claw_ui::menu::MenuItem| match item.command {
             MenuCommand::Open(Page::Movies) => any_movie,
             MenuCommand::ReplayMovie(entry) => replay_movie_index(entry)
@@ -2219,6 +2260,7 @@ impl Flow {
         self.ending = false;
         self.cut_left = None;
         self.credits = None;
+        self.credits_movie = self.movie_available(MovieIndex::CREDITS);
         if self.bed_volume > 0 || self.bed.is_some() {
             self.effects.push(Effect::Sound(AudioCue::Stop {
                 voice: MENU_BED_VOICE,
@@ -2236,7 +2278,13 @@ impl Flow {
         };
         let audio = c.take_audio();
         let music = c.take_music();
+        // Over the movie the parchment does not unroll, so neither does its
+        // sound play.
+        let movie = self.credits_movie();
         for a in audio {
+            if movie && is_unroll(&a) {
+                continue;
+            }
             self.effects.push(Effect::Sound(a));
         }
         for tune in music {
@@ -2248,7 +2296,8 @@ impl Flow {
         }
     }
 
-    /// Leaves the credits for the main menu: their music stops.
+    /// Leaves the credits for the main menu: their music stops (and the
+    /// window stops their movie, see [`Flow::credits_movie`]).
     fn leave_credits(&mut self) {
         self.drain_credits();
         self.effects.push(Effect::Sound(AudioCue::StopMusic));

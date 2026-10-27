@@ -10,6 +10,11 @@
 //! | 14 | the end of the game, after level 14 | `CLAW8` | 10 |
 //!
 //! The odd indices 1 to 11 name no movie. Archive entries count from 1.
+//!
+//! The credits' looping background, [`MovieIndex::CREDITS`], is a movie
+//! of its own outside that numbering: its file stem is `CREDITS` and its
+//! archive entry 11 (the one long clip after the ten movies' entries).
+//! [`MovieIndex::new`] and [`MovieIndex::all`] never return it.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -25,6 +30,10 @@ impl MovieIndex {
     pub const LOGO: MovieIndex = MovieIndex(-1);
     /// The intro at start-up.
     pub const INTRO: MovieIndex = MovieIndex(0);
+    /// The credits' looping background: not one of the numbered movies
+    /// -2 to 14, so [`MovieIndex::new`] and [`MovieIndex::all`] never
+    /// return it. Its stem is `CREDITS` and its archive entry 11.
+    pub const CREDITS: MovieIndex = MovieIndex(15);
     /// The lowest index.
     pub const MIN: i8 = -2;
     /// The highest index.
@@ -57,6 +66,11 @@ impl MovieIndex {
         }
     }
 
+    /// Whether this is the credits' background ([`MovieIndex::CREDITS`]).
+    pub fn is_credits(self) -> bool {
+        self == MovieIndex::CREDITS
+    }
+
     /// The movie's file name without its extension, when it has a file.
     pub fn stem(self) -> Option<&'static str> {
         Some(match self.0 {
@@ -70,6 +84,7 @@ impl MovieIndex {
             12 => "CLAW6",
             13 => "CLAW7",
             14 => "CLAW8",
+            15 => "CREDITS",
             _ => return None,
         })
     }
@@ -88,6 +103,7 @@ impl MovieIndex {
             12 => 8,
             13 => 9,
             14 => 10,
+            15 => 11,
             _ => return None,
         })
     }
@@ -95,6 +111,9 @@ impl MovieIndex {
 
 impl fmt::Display for MovieIndex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_credits() {
+            return write!(f, "the credits movie (CREDITS)");
+        }
         match self.stem() {
             Some(stem) => write!(f, "movie {} ({stem})", self.0),
             None => write!(f, "movie {}", self.0),
@@ -200,6 +219,21 @@ mod tests {
                 (14, 14)
             ]
         );
+    }
+
+    #[test]
+    fn the_credits_movie_stands_outside_the_numbered_movies() {
+        let c = MovieIndex::CREDITS;
+        assert!(c.is_credits());
+        assert_eq!(c.stem(), Some("CREDITS"));
+        assert_eq!(c.fec_entry(), Some(11));
+        assert_eq!(c.to_string(), "the credits movie (CREDITS)");
+        assert!(MovieIndex::all().all(|i| i != c && !i.is_credits()));
+        assert!((-128..=127).filter_map(MovieIndex::new).all(|i| i != c));
+        assert!((0..=200).all(|l| MovieIndex::after_level(l) != Some(c)));
+        let mut set = MovieSet::default();
+        assert!(set.insert(c));
+        assert!(set.contains(c) && !set.contains(MovieIndex::new(14).unwrap()));
     }
 
     #[test]
