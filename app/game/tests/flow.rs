@@ -2934,6 +2934,46 @@ fn the_idle_menu_shows_the_intro_movie_and_the_title_in_turn() {
     assert!(r.movies.is_empty());
 }
 
+#[test]
+fn the_idle_time_stands_still_while_the_window_is_in_the_background() {
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of(every_movie(), true, true),
+    );
+    r.reach_main_menu();
+    r.update(IDLE_ROOT_MS / 2.0);
+    // In the background no idle time counts, however long: neither the
+    // intro nor the title starts unseen.
+    r.flow.set_background(true);
+    r.update(IDLE_ROOT_MS * 5.0);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert!(r.movies.is_empty());
+    // Back in front it counts on from where it was.
+    r.flow.set_background(false);
+    r.update(IDLE_ROOT_MS / 2.0 - 100.0);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    assert!(r.movies.is_empty());
+    r.update(100.0);
+    r.update(FADE_MS + 50.0);
+    assert_eq!(playing(&r), MovieIndex::INTRO);
+    // Without movies the title waits for the window too.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu(),
+        shelf_of([], true, true),
+    );
+    r.reach_main_menu();
+    r.flow.set_background(true);
+    r.update(IDLE_ROOT_MS * 2.0);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    r.flow.set_background(false);
+    r.update(IDLE_ROOT_MS + FADE_MS + 50.0);
+    assert_eq!(r.flow.screen(), Screen::Title);
+}
+
 /// The main menu with its Replay Movies page (the logo, the intro and the
 /// eight later movies, then back) beside single player and quit.
 fn main_menu_with_movies() -> MenuTree {

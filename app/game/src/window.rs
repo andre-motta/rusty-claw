@@ -49,7 +49,12 @@
 //! only. It hands the flow the movies it found, with whether the intro was
 //! seen and the logo is to be skipped ([`crate::flow::MovieShelf`]), unless
 //! movies are off (`--no-movies`, `movies = off`). A playing movie takes
-//! every input; the screen after it sees none of them.
+//! every input but the keys of the window's own commands (fullscreen,
+//! window size, aspect, scaling), which run them; the screen after it sees
+//! none of them. In the background a playing movie holds and the main
+//! menu's idle time stands still ([`MoviePlayback::hold`],
+//! [`Flow::set_background`]). A `--movie` run whose movie did not play or
+//! could not be shown ends with an error.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -57,7 +62,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use claw_assets::{Frame, Install, Palette};
 use claw_audio::AudioSettings;
 use claw_audio::music::Track;
@@ -107,7 +112,9 @@ use crate::keymap::{Action, Command, PadButton};
 use crate::load::{
     LevelBundle, SHADE_SET, SHADE_SIZE, load_graphics, load_level, preload, start_override,
 };
-use crate::movie::{self, MoviePlayback, MovieTarget, PadTap, RawInput, RunMode, movies_allowed};
+use crate::movie::{
+    self, MovieKey, MoviePlayback, MovieTarget, PadTap, RawInput, RunMode, movies_allowed,
+};
 use crate::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, ReplayedHolds, game_key};
 use crate::saves::SaveStore;
 use crate::session::{
@@ -1060,8 +1067,9 @@ impl App {
             self.movie = MoviePlayback::start(&candidates, self.audio.as_mut());
             match &self.movie {
                 Some(m) => eprintln!("rusty-claw: playing {}", m.source().describe()),
-                None => bail!("{} did not play", target_name(&target)),
+                None => bail!("{} did not play", target.name()),
             }
+            self.follow_background();
         }
         // The flow's first effects (the title, or the level to play).
         self.run_effects(event_loop);
@@ -1081,11 +1089,25 @@ impl App {
                 }
             }
         }
+        self.follow_background();
+    }
+
+    /// Holds a playing movie while the window is in the background and
+    /// lets it go on when the window is back, and tells the flow, whose
+    /// idle time stands still meanwhile.
+    fn follow_background(&mut self) {
+        let background = self.in_background();
+        if let Some(m) = self.movie.as_mut() {
+            m.hold(background);
+        }
+        if let Some(f) = self.flow.as_mut() {
+            f.set_background(background);
+        }
     }
 
     /// Ends the playing movie when it is over: its sound stops and the
     /// flow learns how it ended ([`movie::tell_flow`]) and goes on (a
-    /// `--movie` run ends).
+    /// `--movie` run ends, with an error when the movie failed).
     fn finish_movie(&mut self, event_loop: &ActiveEventLoop) {
         let Some(end) = self.movie.as_ref().and_then(MoviePlayback::end) else {
             return;
@@ -1093,7 +1115,10 @@ impl App {
         if let Some(m) = self.movie.take() {
             m.stop(self.audio.as_mut());
         }
-        if self.movie_only.is_some() {
+        if let Some(target) = &self.movie_only {
+            if let Err(e) = target.result(end) {
+                self.error = Some(anyhow!(e));
+            }
             event_loop.exit();
         } else if let Some(f) = self.flow.as_mut() {
             movie::tell_flow(f, end);
@@ -1722,12 +1747,17 @@ impl App {
     }
 
     fn key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, down: bool) {
-        if let Some(m) = self.movie.as_mut() {
-            // The router follows the keys held; what they mean is the
-            // movie's.
-            let _ = self.router.key(code, down);
-            if down {
-                m.input(&RawInput::Key(code));
+        if self.movie.is_some() {
+            // The window's own keys run their command; every other key is
+            // the movie's.
+            match movie::movie_key(&mut self.router, code, down) {
+                MovieKey::Window(cmd) => self.command(event_loop, cmd, false),
+                MovieKey::Movie(input) => {
+                    if let Some(m) = self.movie.as_mut() {
+                        m.input(&input);
+                    }
+                }
+                MovieKey::Released => {}
             }
             return;
         }
@@ -1890,6 +1920,7 @@ impl App {
             return;
         }
         self.poll_inputs(event_loop);
+        self.follow_background();
         if self.movie_only.is_some() {
             self.movie_frame(event_loop);
         } else if self.flow.is_some() {
@@ -2308,6 +2339,7 @@ impl ApplicationHandler for App {
                     self.route(event_loop, r, false);
                 }
                 self.update_pause();
+                self.follow_background();
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::KeyboardInput { event, .. } => {
@@ -2395,14 +2427,6 @@ pub fn run_movie(settings: Settings, target: MovieTarget, started: Instant) -> R
     .map(|_| ())
 }
 
-/// How `target` is named in messages.
-fn target_name(target: &MovieTarget) -> String {
-    match target {
-        MovieTarget::Index(i) => i.to_string(),
-        MovieTarget::File(path) => path.display().to_string(),
-    }
-}
-
 fn run_app(
     settings: Settings,
     mode: WindowMode,
@@ -2435,9 +2459,9 @@ fn run_app(
         eprintln!("rusty-claw: {}", movie::NO_PLAYER);
     }
     if movie_only.is_some() {
-        if settings.audio {
-            audio = Some(AudioBridge::without_music(settings.audio_settings()));
-        }
+        // With sound off too (silent): the movie runs on its soundtrack's
+        // clock, which holds it in the background.
+        audio = Some(AudioBridge::without_music(settings.audio_settings()));
     } else if let Some(start) = menus {
         let s = Screens::load(&settings.install)?;
         let main = match s.assets.menu(MenuKind::Main) {

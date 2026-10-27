@@ -120,7 +120,8 @@
 //!   Community custom levels have none.
 //! - In the main menu, when it is left alone: the idle time leads in turn
 //!   to the intro movie (first) and to the title; after the movie the main
-//!   menu shows again.
+//!   menu shows again. Time with the window in the background does not
+//!   count ([`Flow::set_background`]), so the intro never starts unseen.
 //! - From the Replay Movies page: each of its entries replays one movie
 //!   ([`replay_movie_index`]); the page and each entry are greyed out
 //!   without one. After the movie the same page shows, the entry still
@@ -593,6 +594,8 @@ pub struct Flow {
     /// The main menu's next idle time leads to the intro movie (rather
     /// than the title), when there is one.
     idle_movie: bool,
+    /// The window is in the background: the idle time stands still.
+    background: bool,
 }
 
 impl std::fmt::Debug for Flow {
@@ -681,6 +684,7 @@ impl Flow {
             movies: None,
             after_movie: None,
             idle_movie: true,
+            background: false,
         };
         if let Some(tree) = main {
             flow.main = Some(flow.prepare(tree));
@@ -2058,6 +2062,14 @@ impl Flow {
         }
     }
 
+    /// Tells the flow whether the window is in the background. The main
+    /// menu's idle time stands still there, so the idle intro (or title)
+    /// never starts while nobody can see it; it counts on from where it was
+    /// once the window is back in front.
+    pub fn set_background(&mut self, on: bool) {
+        self.background = on;
+    }
+
     /// Lets `dt_ms` pass, with the direction `held` held in a menu and the
     /// simulation in play (`None` without a level).
     pub fn update(&mut self, dt_ms: f64, held: Option<MenuInput>, sim: Option<&Sim>) {
@@ -2103,7 +2115,9 @@ impl Flow {
                 }
             }
             Screen::MainMenu => {
-                self.idle_ms += dt;
+                if !self.background {
+                    self.idle_ms += dt;
+                }
                 let limit = match self.main.as_ref().map(Navigator::page) {
                     Some(Page::Root) | None => IDLE_ROOT_MS,
                     _ => IDLE_SUBMENU_MS,

@@ -1,22 +1,28 @@
 //! Movies in the game: which runs play them, the logo before the title in
 //! the flow (played, skipped or failing to open), how a movie's end reaches
-//! the flow, the skip inputs, the picture handed to the renderer, the
-//! gamepads while movies are on, and the command line.
+//! the flow, the skip inputs, the window's keys during a movie, the picture
+//! handed to the renderer, the gamepads while movies are on, holding a
+//! movie in the background, the notice of a build without movies, and the
+//! command line.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
 use claw_assets::Palette;
+use claw_audio::MusicSource;
 use claw_frame::AudioCue;
 use claw_game::flow::{Effect, FADE_MS, Flow, MovieShelf, Screen, Start};
-use claw_game::input::{InputRouter, PadEvent, PadEventKind, PadSource};
-use claw_game::keymap::{Keymap, PadButton};
+use claw_game::input::{InputContext, InputRouter, PadEvent, PadEventKind, PadSource};
+use claw_game::keymap::{Action, Command, Keymap, PadButton};
 use claw_game::movie::{
-    MOVIE_INDICES, MovieEnd, MovieProgress, PadTap, RawInput, RunMode, picture, skips, tell_flow,
+    HeldSound, MOVIE_INDICES, MovieEnd, MovieKey, MovieProgress, NO_PLAYER, PadTap, RawInput,
+    RunMode, movie_key, picture, skips, tell_flow,
 };
 use claw_game::settings::{Args, LevelChoice, PadSettings, Settings};
 use claw_game::{MovieTarget, movies_allowed};
@@ -115,6 +121,127 @@ fn file_movies_skip_on_escape_back_or_start_and_clips_on_anything() {
         assert!(!skips(SkipRule::Back, e), "{e:?}");
         assert!(skips(SkipRule::AnyInput, e), "{e:?}");
     }
+}
+
+#[test]
+fn the_window_keys_run_their_command_during_a_movie_and_never_skip_it() {
+    let window = [
+        (KeyCode::F11, Command::ToggleFullscreen),
+        (KeyCode::F10, Command::NextWindowSize),
+        (KeyCode::F9, Command::NextAspect),
+        (KeyCode::F8, Command::ToggleScale),
+    ];
+    for context in [InputContext::Menu, InputContext::Play] {
+        let mut router = InputRouter::keyboard_only(Keymap::default());
+        router.set_context(context);
+        for (code, cmd) in window {
+            let k = movie_key(&mut router, code, true);
+            assert_eq!(k, MovieKey::Window(cmd), "{code:?} {context:?}");
+            // For a movie file and an archive clip alike.
+            assert!(!k.skips(SkipRule::Back), "{code:?}");
+            assert!(!k.skips(SkipRule::AnyInput), "{code:?}");
+            assert_eq!(movie_key(&mut router, code, false), MovieKey::Released);
+        }
+        // Every other key is the movie's, as before: Escape skips both, any
+        // key a clip (interpolation is not a window command).
+        for code in [KeyCode::Escape, KeyCode::Enter, KeyCode::F7, KeyCode::KeyX] {
+            let k = movie_key(&mut router, code, true);
+            assert_eq!(k, MovieKey::Movie(RawInput::Key(code)), "{code:?}");
+            assert!(k.skips(SkipRule::AnyInput), "{code:?}");
+            assert_eq!(k.skips(SkipRule::Back), code == KeyCode::Escape, "{code:?}");
+            assert_eq!(movie_key(&mut router, code, false), MovieKey::Released);
+        }
+    }
+    // The keymap decides: a window command moved to another key runs from
+    // there, and its old key is the movie's.
+    let mut keymap = Keymap::default();
+    keymap
+        .rebind(
+            Action::Command(Command::ToggleFullscreen),
+            Some(KeyCode::F11),
+            KeyCode::KeyG,
+        )
+        .unwrap();
+    let mut router = InputRouter::keyboard_only(keymap);
+    assert_eq!(
+        movie_key(&mut router, KeyCode::KeyG, true),
+        MovieKey::Window(Command::ToggleFullscreen)
+    );
+    let k = movie_key(&mut router, KeyCode::F11, true);
+    assert_eq!(k, MovieKey::Movie(RawInput::Key(KeyCode::F11)));
+    assert!(k.skips(SkipRule::AnyInput));
+}
+
+#[test]
+fn a_movie_run_fails_when_its_movie_failed_and_succeeds_when_it_played_or_was_skipped() {
+    for target in [
+        MovieTarget::Index(MovieIndex::LOGO),
+        MovieTarget::File(PathBuf::from("up/CLAW0.mkv")),
+    ] {
+        assert_eq!(target.result(MovieEnd::Finished), Ok(()));
+        assert_eq!(target.result(MovieEnd::Skipped), Ok(()));
+        // Opened but never shown: no picture before decoding stopped, or a
+        // picture that could not be shown.
+        for progress in [
+            MovieProgress::default(),
+            MovieProgress {
+                shown: true,
+                failed: true,
+                ..MovieProgress::default()
+            },
+        ] {
+            let end = progress.end(true).unwrap();
+            let e = target.result(end).unwrap_err();
+            assert_eq!(e, format!("{} did not play", target.name()));
+            assert!(!e.contains('\n'));
+        }
+    }
+    assert_eq!(
+        MovieTarget::Index(MovieIndex::LOGO).name(),
+        "movie -1 (LOGO)"
+    );
+}
+
+#[test]
+fn a_build_without_movies_points_at_the_platform_neutral_build() {
+    assert!(NO_PLAYER.contains("`movies` feature"), "{NO_PLAYER}");
+    assert!(
+        NO_PLAYER.contains("third_party/ffmpeg/README.md"),
+        "{NO_PLAYER}"
+    );
+    assert!(NO_PLAYER.contains("on Linux, `make ffmpeg`"), "{NO_PLAYER}");
+}
+
+/// A soundtrack that plays a constant and counts the frames it plays.
+struct Counting(Arc<AtomicUsize>);
+
+impl MusicSource for Counting {
+    fn render(&mut self, out: &mut [f32], _rate: u32) {
+        out.fill(0.5);
+        self.0.fetch_add(out.len() / 2, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn a_held_soundtrack_plays_silence_and_takes_none_of_its_samples() {
+    let played = Arc::new(AtomicUsize::new(0));
+    let (mut sound, held) = HeldSound::new(Box::new(Counting(Arc::clone(&played))));
+    let mut out = vec![0.0f32; 2 * 64];
+    sound.render(&mut out, 48000);
+    assert_eq!(played.load(Ordering::Relaxed), 64);
+    assert!(out.iter().all(|s| *s == 0.5));
+    held.store(true, Ordering::Release);
+    let mut out = vec![0.0f32; 2 * 64];
+    sound.render(&mut out, 48000);
+    assert_eq!(played.load(Ordering::Relaxed), 64, "its clock stands still");
+    assert!(out.iter().all(|s| *s == 0.0));
+    held.store(false, Ordering::Release);
+    sound.render(&mut out, 48000);
+    assert_eq!(
+        played.load(Ordering::Relaxed),
+        128,
+        "and goes on from there"
+    );
 }
 
 #[test]
