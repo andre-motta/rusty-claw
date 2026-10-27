@@ -2,12 +2,13 @@
 //!
 //! These functions compute, pixel by pixel, exactly what the shaders
 //! compute: the plane tile walk, sprite placement with mirror and invert,
-//! every draw mode, image replacements and the final palette and scaling
-//! pass. Tests compare the GPU output against them; they are far too slow
+//! every draw mode, image replacements, the final palette and scaling
+//! pass, and movie pictures (RGBA and I420). Tests compare the GPU output against them; they are far too slow
 //! to draw real frames.
 
 use crate::effects::{Effect, apply};
 use crate::images::{LevelGraphics, SLOT_EMPTY, SLOT_FILL};
+use crate::movie::{MoviePicture, PictureLayout, movie_rect, yuv_to_rgb};
 use crate::scene::{Item, PlaneParams, SPRITE_INVERT, SPRITE_MIRROR, Scene, SpriteParams};
 use crate::screen::Mask;
 use crate::view::{PLANE_X_WRAP, PLANE_Y_WRAP};
@@ -254,6 +255,84 @@ pub fn present(scene: &Scene, c: &Composed) -> Vec<u8> {
             let col = mix(mix(c00, c10, fx), mix(c01, c11, fx), fy);
             for i in 0..3 {
                 out[o + i] = (col[i].clamp(0.0, 1.0) * 255.0).round() as u8;
+            }
+        }
+    }
+    out
+}
+
+/// Channel `channel` of a plane of `channels` bytes per pixel, `size`
+/// pixels with rows `stride` bytes apart, sampled bilinearly at (u, v)
+/// (0 to 1 across the plane) with the edges repeated, as a 0 to 1 value:
+/// what the GPU's linear filter returns.
+fn sample_plane(
+    plane: &[u8],
+    stride: usize,
+    size: (u32, u32),
+    channels: usize,
+    channel: usize,
+    u: f32,
+    v: f32,
+) -> f32 {
+    let (w, h) = (size.0 as i32, size.1 as i32);
+    let x = u * size.0 as f32 - 0.5;
+    let y = v * size.1 as f32 - 0.5;
+    let (x0, y0) = (x.floor(), y.floor());
+    let (fx, fy) = (x - x0, y - y0);
+    let at = |x: i32, y: i32| {
+        let (x, y) = (x.clamp(0, w - 1) as usize, y.clamp(0, h - 1) as usize);
+        f32::from(plane[y * stride + x * channels + channel]) / 255.0
+    };
+    let (x0, y0) = (x0 as i32, y0 as i32);
+    let top = at(x0, y0) * (1.0 - fx) + at(x0 + 1, y0) * fx;
+    let bottom = at(x0, y0 + 1) * (1.0 - fx) + at(x0 + 1, y0 + 1) * fx;
+    top * (1.0 - fy) + bottom * fy
+}
+
+/// The colour the movie presenter draws for `picture` at (u, v) (0 to 1
+/// across the picture), as sRGB red, green and blue from 0 to 1: the RGBA
+/// texel, or Y, U and V each sampled from its plane and turned into colour
+/// by [`yuv_to_rgb`].
+pub fn movie_pixel(picture: &MoviePicture, u: f32, v: f32) -> [f32; 3] {
+    let (w, h) = (picture.width, picture.height);
+    let rgb = match picture.layout {
+        PictureLayout::Rgba => {
+            let s = |c| sample_plane(picture.planes[0], picture.strides[0], (w, h), 4, c, u, v);
+            [s(0), s(1), s(2)]
+        }
+        PictureLayout::I420 { bt709, full_range } => {
+            let chroma = (w.div_ceil(2), h.div_ceil(2));
+            let yuv = [
+                sample_plane(picture.planes[0], picture.strides[0], (w, h), 1, 0, u, v),
+                sample_plane(picture.planes[1], picture.strides[1], chroma, 1, 0, u, v),
+                sample_plane(picture.planes[2], picture.strides[2], chroma, 1, 0, u, v),
+            ];
+            let m = yuv_to_rgb(bt709, full_range);
+            let d = [0, 1, 2].map(|i| yuv[i] - m.offset[i]);
+            m.rows.map(|r| r[0] * d[0] + r[1] * d[1] + r[2] * d[2])
+        }
+    };
+    rgb.map(|c| c.clamp(0.0, 1.0))
+}
+
+/// What the movie presenter draws for `picture` into an output of `output`
+/// pixels at `aspect`: black, with the picture in [`movie_rect`]. Returns
+/// RGBA bytes of the output size.
+pub fn movie_frame(picture: &MoviePicture, output: (u32, u32), aspect: f32) -> Vec<u8> {
+    let (ow, oh) = output;
+    let mut out = vec![0u8; (ow * oh * 4) as usize];
+    for px in out.chunks_exact_mut(4) {
+        px[3] = 255;
+    }
+    let (x, y, w, h) = movie_rect(output, aspect);
+    for oy in 0..h {
+        for ox in 0..w {
+            let u = (ox as f32 + 0.5) / w as f32;
+            let v = (oy as f32 + 0.5) / h as f32;
+            let rgb = movie_pixel(picture, u, v);
+            let o = (((y as u32 + oy) * ow + x as u32 + ox) * 4) as usize;
+            for i in 0..3 {
+                out[o + i] = (rgb[i] * 255.0).round() as u8;
             }
         }
     }
