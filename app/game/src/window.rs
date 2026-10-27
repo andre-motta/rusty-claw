@@ -51,8 +51,8 @@
 //! movies are off (`--no-movies`, `movies = off`). A playing movie takes
 //! every input but the keys of the window's own commands (fullscreen,
 //! window size, aspect, scaling), which run them; the screen after it sees
-//! none of them. In the background a playing movie holds and the main
-//! menu's idle time stands still ([`MoviePlayback::hold`],
+//! none of them. In the background (once the window has had the focus) a
+//! playing movie holds and the main menu's idle time stands still ([`MoviePlayback::hold`],
 //! [`Flow::set_background`]). A `--movie` run whose movie did not play or
 //! could not be shown ends with an error.
 
@@ -733,6 +733,10 @@ struct App {
     interp: bool,
     pauses: Pauses,
     focused: bool,
+    /// The window has had the focus at least once. A window that never
+    /// had it (a display without a window manager) is not in the
+    /// background for movies and the idle time.
+    focused_once: bool,
     /// Where the mouse pointer is in the window, in pixels.
     cursor: Option<(f64, f64)>,
     /// Shift, Ctrl and Alt as last reported.
@@ -1096,7 +1100,7 @@ impl App {
     /// lets it go on when the window is back, and tells the flow, whose
     /// idle time stands still meanwhile.
     fn follow_background(&mut self) {
-        let background = self.in_background();
+        let background = self.focused_once && self.in_background();
         if let Some(m) = self.movie.as_mut() {
             m.hold(background);
         }
@@ -2335,6 +2339,7 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => self.resize(size),
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
+                self.focused_once |= focused;
                 for r in self.router.set_focused(focused) {
                     self.route(event_loop, r, false);
                 }
@@ -2547,6 +2552,7 @@ fn run_app(
         last_frame: Instant::now(),
         pauses: Pauses::default(),
         focused: true,
+        focused_once: false,
         cursor: None,
         modifiers: ModifiersState::empty(),
         size_index,
