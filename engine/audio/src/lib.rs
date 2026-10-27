@@ -22,7 +22,8 @@
 //! [`Mixer`] is the deterministic, allocation-free mixer and can be driven
 //! offline. [`AudioEngine`] runs it on an output device on its own thread, falls
 //! back to a silent output when there is no device or audio is off, and takes
-//! music through [`MusicSource`].
+//! music through [`MusicSource`], as well as a movie's soundtrack
+//! ([`AudioEngine::set_movie`]), mixed at the sound volume.
 //!
 //! [`music`] plays the game's music: it converts XMIDI sequences to Standard
 //! MIDI Files, finds and loads a General MIDI SoundFont, and synthesizes the

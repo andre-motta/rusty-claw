@@ -16,6 +16,7 @@
 //! - [`effects`] and [`palette`]: draw modes, lookup tables and fades;
 //! - [`gpu`]: the Vulkan renderer;
 //! - [`cpu`]: a pixel-exact reference of everything the shaders do;
+//! - [`movie`]: movie pictures, drawn centred at their display aspect;
 //! - [`pack`]: optional higher-resolution replacement images.
 //!
 //! [`ViewConfig`]: claw_frame::ViewConfig
@@ -26,6 +27,7 @@ pub mod cpu;
 pub mod effects;
 pub mod gpu;
 pub mod images;
+pub mod movie;
 pub mod pack;
 pub mod palette;
 pub mod scene;
@@ -34,6 +36,7 @@ pub mod view;
 
 pub use gpu::{Gpu, GpuError, Offscreen, Renderer};
 pub use images::{FrameInfo, ImageSource, LevelGraphics, MemoryImages, StoreImages};
+pub use movie::{MovieDrawError, MoviePicture, MoviePresenter, PictureLayout, movie_rect};
 pub use pack::HdPack;
 pub use scene::{Composition, FrameInput, Scene, SceneBuilder, SpriteInput};
 pub use screen::{Anchor, ImageId, ScreenBuilder, ScreenScene, ScreenSprite};

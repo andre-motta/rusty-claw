@@ -160,7 +160,8 @@ impl AudioEngine {
     }
 
     /// Starts a host thread with fresh queues and resends the current bank,
-    /// settings, pause state and music hold. A music source given earlier is not restored.
+    /// settings, pause state and music hold. A music source or movie
+    /// soundtrack given earlier is not restored.
     fn spawn_host(&mut self) {
         let (mut tx, rx) = RingBuffer::new(QUEUE);
         let (gtx, grx) = RingBuffer::new(GARBAGE_QUEUE);
@@ -352,6 +353,34 @@ impl AudioEngine {
     /// Sets or clears the music source, mixed at the music volume.
     pub fn set_music(&mut self, music: Option<Box<dyn MusicSource>>) {
         self.send(Command::Music(music));
+    }
+
+    /// Sets or clears the movie's soundtrack.
+    ///
+    /// It is mixed at the sound volume, plays through a game pause and a
+    /// music hold, and is rendered even at zero gain (sound off or a sound
+    /// volume of 0, and on the silent output), so a soundtrack that counts
+    /// the frames it renders keeps its clock running. A replaced soundtrack
+    /// comes back through the return queue and is dropped on this side,
+    /// never on the output thread. It is not restored after the output side
+    /// restarts (see [`AudioEngine::poll_device`]); the soundtrack is then
+    /// dropped, which a player can notice.
+    pub fn set_movie(&mut self, movie: Option<Box<dyn MusicSource>>) {
+        self.send(Command::Movie(movie));
+    }
+
+    /// The rate the output renders at now, in Hz: the device's while one is
+    /// open, otherwise the silent output's. A device can open, change or
+    /// close later, so a source should follow the rate its `render` is
+    /// called with.
+    pub fn out_rate(&self) -> u32 {
+        match (
+            self.output(),
+            self.shared.device_rate.load(Ordering::Relaxed),
+        ) {
+            (Output::Device, rate) if rate > 0 => rate,
+            _ => NULL_RATE,
+        }
     }
 
     /// Housekeeping to call once per frame: drops what the output side gave

@@ -41,8 +41,15 @@
 //! With vsync on, waiting for the display paces the frames. Otherwise each
 //! frame first waits for the frame-rate cap (300 frames per second unless
 //! set otherwise), so the game never draws thousands of frames a second.
+//!
+//! Movies (see [`crate::movie`]): with its menus the window plays the
+//! movies the flow asks for, full screen with their sound, and
+//! [`run_movie`] opens it for one movie only. A playing movie takes every
+//! input; the screen after it sees none of them.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -53,12 +60,13 @@ use claw_audio::music::Track;
 use claw_frame::{
     AudioCue, DrawMode, FrameClock, FramePacer, GameEvent, PaletteFade, ScreenTransition, TICK_MS,
 };
+use claw_movie::{MovieIndex, Roots, locate_all};
 use claw_render::gpu::COLOR_FORMAT;
 use claw_render::palette::{self, FULL_BRIGHTNESS};
 use claw_render::screen::transition_at;
 use claw_render::{
-    Anchor, FrameInput, Gpu, ImageId, ImageSource, LevelGraphics, Offscreen, Renderer, Scene,
-    SceneBuilder, ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
+    Anchor, FrameInput, Gpu, ImageId, ImageSource, LevelGraphics, MoviePresenter, Offscreen,
+    Renderer, Scene, SceneBuilder, ScreenBuilder, ScreenScene, ScreenSprite, wgpu,
 };
 use claw_sim::input::MenuScreen;
 use claw_sim::logic::enemy::crab::CrabValues;
@@ -91,10 +99,11 @@ use crate::audio::{AudioBridge, ViewInfo};
 use crate::bench::{Combat, PresentDetail, Report, Samples, Summary, WARMUP_S, combat_route};
 use crate::flow::{self, Effect, Flow, Screen, Start};
 use crate::input::{InputContext, InputRouter, Routed};
-use crate::keymap::{Action, Command};
+use crate::keymap::{Action, Command, PadButton};
 use crate::load::{
     LevelBundle, SHADE_SET, SHADE_SIZE, load_graphics, load_level, preload, start_override,
 };
+use crate::movie::{self, MoviePlayback, MovieTarget, PadTap, RawInput, RunMode, movies_allowed};
 use crate::pause::{Change, GameKey, KeyContext, PauseInput, Pauses, ReplayedHolds, game_key};
 use crate::saves::SaveStore;
 use crate::session::{
@@ -319,6 +328,8 @@ struct Live {
     /// Benchmark only: a second copy of every frame drawn offscreen at the
     /// requested size, when the window could not get that size.
     offscreen: Option<OffscreenCopy>,
+    /// Draws movie pictures, made for the first movie.
+    movie: Option<MoviePresenter>,
 }
 
 /// Every frame drawn again, offscreen, at the benchmark's requested size.
@@ -725,6 +736,15 @@ struct App {
     report: Option<Report>,
     error: Option<anyhow::Error>,
     announced_end: bool,
+    /// Where movies are looked for.
+    movie_roots: Roots,
+    /// The movie playing.
+    movie: Option<MoviePlayback>,
+    /// The one movie of a `--movie` run.
+    movie_only: Option<MovieTarget>,
+    /// The pad buttons pressed since the last frame, for a playing movie
+    /// (see [`PadTap`]).
+    pad_presses: Option<Rc<RefCell<Vec<PadButton>>>>,
 }
 
 /// Says when widened activation follows the first output's shape.
@@ -877,6 +897,7 @@ impl App {
             screen_builder,
             gpu,
             offscreen: None,
+            movie: None,
         };
         if let Some(s) = &self.screens {
             live.screen_renderer.set_level(&s.graphics);
@@ -888,7 +909,7 @@ impl App {
             .filter(|&mhz| mhz > 0)
             .map(|mhz| f64::from(mhz) / 1000.0);
 
-        if self.flow.is_none() {
+        if self.flow.is_none() && self.movie_only.is_none() {
             // Watching a script or the benchmark: one level, no menus.
             let first_output = self.first_output;
             let Some((bundle, mut graphics)) = self.first_level.take() else {
@@ -1013,9 +1034,11 @@ impl App {
         self.load_ms = self.started.elapsed().as_secs_f64() * 1000.0;
         eprintln!(
             "rusty-claw: {} at {}x{} on {}, {:?}, paced by {}, ready in {:.0} ms",
-            self.level
-                .as_ref()
-                .map_or("menus", |l| l.bundle.name.as_str()),
+            match (&self.level, &self.movie_only) {
+                (Some(l), _) => l.bundle.name.as_str(),
+                (None, Some(_)) => "a movie",
+                (None, None) => "menus",
+            },
             live.config.width,
             live.config.height,
             live.gpu.describe(),
@@ -1023,14 +1046,109 @@ impl App {
             self.pacing,
             self.load_ms,
         );
-        if !matches!(self.mode, WindowMode::Bench(_)) {
+        if !matches!(self.mode, WindowMode::Bench(_)) && self.movie_only.is_none() {
             eprintln!("rusty-claw: {}", self.router.help());
         }
         self.live = Some(live);
         self.clock.reset();
+        if let Some(target) = self.movie_only.clone() {
+            let candidates = target.candidates(&self.movie_roots);
+            self.movie = MoviePlayback::start(&candidates, self.audio.as_mut());
+            match &self.movie {
+                Some(m) => eprintln!("rusty-claw: playing {}", m.source().describe()),
+                None => bail!("{} did not play", target_name(&target)),
+            }
+        }
         // The flow's first effects (the title, or the level to play).
         self.run_effects(event_loop);
         Ok(())
+    }
+
+    /// Plays movie `index` for the flow; when it cannot play, the flow goes
+    /// on at once.
+    fn start_movie(&mut self, index: MovieIndex) {
+        let candidates = locate_all(index, &self.movie_roots);
+        self.movie = MoviePlayback::start(&candidates, self.audio.as_mut());
+        match &self.movie {
+            Some(m) => eprintln!("rusty-claw: playing {}", m.source().describe()),
+            None => {
+                if let Some(f) = self.flow.as_mut() {
+                    f.movie_finished();
+                }
+            }
+        }
+    }
+
+    /// Ends the playing movie when it is over: its sound stops and the
+    /// flow goes on (a `--movie` run ends).
+    fn finish_movie(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.movie.as_ref().is_some_and(MoviePlayback::done) {
+            return;
+        }
+        if let Some(m) = self.movie.take() {
+            m.stop(self.audio.as_mut());
+        }
+        if self.movie_only.is_some() {
+            event_loop.exit();
+        } else if let Some(f) = self.flow.as_mut() {
+            f.movie_finished();
+            self.run_effects(event_loop);
+        }
+    }
+
+    /// Draws the playing movie's newest picture, centred at its shape on
+    /// black.
+    fn draw_movie(&mut self) {
+        let (Some(live), Some(movie)) = (&mut self.live, &mut self.movie) else {
+            return;
+        };
+        let Live {
+            gpu,
+            config,
+            movie: presenter,
+            ..
+        } = live;
+        let presenter = presenter.get_or_insert_with(|| MoviePresenter::new(gpu, config.format));
+        if let Some(picture) = movie.frame()
+            && let Err(e) = presenter.upload(gpu, &picture)
+        {
+            eprintln!(
+                "rusty-claw: the movie {} cannot be shown: {e}",
+                movie.source().describe()
+            );
+            movie.end();
+            return;
+        }
+        let aspect = movie.aspect();
+        let texture = match live.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                live.surface.configure(&live.gpu.device, &live.config);
+                return;
+            }
+            _ => return,
+        };
+        let size = (texture.texture.width(), texture.texture.height());
+        let target = texture.texture.create_view(&Default::default());
+        if let Some(p) = &live.movie {
+            p.render(&live.gpu, &target, size, aspect);
+        }
+        live.window.pre_present_notify();
+        live.gpu.queue.present(texture);
+    }
+
+    /// A frame of a `--movie` run.
+    fn movie_frame(&mut self, event_loop: &ActiveEventLoop) {
+        self.pacer.wait();
+        let _ = self.clock.frame();
+        self.last_frame = Instant::now();
+        if self.movie.is_none() {
+            event_loop.exit();
+            return;
+        }
+        self.finish_movie(event_loop);
+        self.draw_movie();
     }
 
     /// Loads `choice` and starts playing it from `start`.
@@ -1312,6 +1430,7 @@ impl App {
                     a.play_track(track, looped);
                 }
             }
+            Effect::PlayMovie(index) => self.start_movie(index),
             Effect::Quit => event_loop.exit(),
         }
     }
@@ -1596,6 +1715,15 @@ impl App {
     }
 
     fn key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, down: bool) {
+        if let Some(m) = self.movie.as_mut() {
+            // The router follows the keys held; what they mean is the
+            // movie's.
+            let _ = self.router.key(code, down);
+            if down {
+                m.input(&RawInput::Key(code));
+            }
+            return;
+        }
         let routed = self.router.key(code, down);
         let menu = self.flow.as_ref().map(Flow::screen);
         if down
@@ -1651,6 +1779,10 @@ impl App {
     /// A left click: handed to the flow at its place on the 640x480
     /// screen, when a standalone screen shows.
     fn click(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(m) = self.movie.as_mut() {
+            m.input(&RawInput::Click);
+            return;
+        }
         let (Some((px, py)), Some(live)) = (self.cursor, &self.live) else {
             return;
         };
@@ -1666,7 +1798,21 @@ impl App {
 
     /// Polls the input devices other than the keyboard.
     fn poll_inputs(&mut self, event_loop: &ActiveEventLoop) {
-        for r in self.router.poll(Instant::now()) {
+        let routed = self.router.poll(Instant::now());
+        let presses = self
+            .pad_presses
+            .as_ref()
+            .map(|p| std::mem::take(&mut *p.borrow_mut()))
+            .unwrap_or_default();
+        if let Some(m) = self.movie.as_mut() {
+            // The pads are the movie's while it plays.
+            for b in presses {
+                m.input(&RawInput::Pad(b));
+            }
+            let _ = self.router.take_press();
+            return;
+        }
+        for r in routed {
             self.route(event_loop, r, true);
         }
         // A newly pressed game input other than a direction (the credits
@@ -1737,7 +1883,9 @@ impl App {
             return;
         }
         self.poll_inputs(event_loop);
-        if self.flow.is_some() {
+        if self.movie_only.is_some() {
+            self.movie_frame(event_loop);
+        } else if self.flow.is_some() {
             self.flow_frame(event_loop);
         } else {
             self.frame_inner(event_loop);
@@ -1784,6 +1932,7 @@ impl App {
             flow.update(dt_ms, held, sim);
         }
         self.run_effects(event_loop);
+        self.finish_movie(event_loop);
         self.sync_context(event_loop);
         if let Some(s) = self.screens.as_mut()
             && self
@@ -1876,6 +2025,10 @@ impl App {
     }
 
     fn draw_flow(&mut self) {
+        if self.movie.is_some() {
+            self.draw_movie();
+            return;
+        }
         let screen = self.screen_scene();
         let Some(live) = &mut self.live else { return };
         let scene;
@@ -2219,6 +2372,30 @@ pub fn run_menus(settings: Settings, started: Instant) -> Result<()> {
     .map(|_| ())
 }
 
+/// Opens the window for one movie, `target`, and closes it when the movie
+/// ends or is skipped. Fails when the movie cannot play.
+pub fn run_movie(settings: Settings, target: MovieTarget, started: Instant) -> Result<()> {
+    if !claw_movie::available() {
+        bail!("{}", movie::NO_PLAYER);
+    }
+    run_app(
+        settings,
+        WindowMode::Play,
+        Some(Start::Movie(target)),
+        None,
+        started,
+    )
+    .map(|_| ())
+}
+
+/// How `target` is named in messages.
+fn target_name(target: &MovieTarget) -> String {
+    match target {
+        MovieTarget::Index(i) => i.to_string(),
+        MovieTarget::File(path) => path.display().to_string(),
+    }
+}
+
 fn run_app(
     settings: Settings,
     mode: WindowMode,
@@ -2240,7 +2417,21 @@ fn run_app(
     let mut screens = None;
     let mut flow = None;
     let mut audio = None;
-    if let Some(start) = menus {
+    let run_mode = RunMode::of(&settings);
+    let movie_roots = movie::roots(&settings);
+    let movie_only = match &menus {
+        Some(Start::Movie(target)) => Some(target.clone()),
+        _ => None,
+    };
+    let movies = movies_allowed(&run_mode) && settings.movies;
+    if movies && !claw_movie::available() {
+        eprintln!("rusty-claw: {}", movie::NO_PLAYER);
+    }
+    if movie_only.is_some() {
+        if settings.audio {
+            audio = Some(AudioBridge::without_music(settings.audio_settings()));
+        }
+    } else if let Some(start) = menus {
         let s = Screens::load(&settings.install)?;
         let main = match s.assets.menu(MenuKind::Main) {
             Ok(ifc) => Some(MenuTree::from_ifc(
@@ -2260,6 +2451,10 @@ fn run_app(
                 Err(e) => (None, Some(format!("saved games are off: {e:#}"))),
             };
         let mut f = Flow::new(settings.clone(), saves, main, font, start);
+        if movies && claw_movie::available() {
+            // Before the first effects, so the logo comes before the title.
+            f.set_movies(movie::shelf(&movie_roots));
+        }
         if let Some(why) = saves_off {
             // Shown on screen at start-up (and written to the terminal).
             f.notify(why);
@@ -2274,13 +2469,23 @@ fn run_app(
     } else if let Some(a) = level_audio(&mode, &settings) {
         audio = Some(AudioBridge::new(a));
     }
+    let (pad_tap, pad_presses) =
+        if settings.pad.enabled && (movie_only.is_some() || (movies && claw_movie::available())) {
+            let (tap, presses) = PadTap::new();
+            (Some(tap), Some(presses))
+        } else {
+            (None, None)
+        };
     let mut app = App {
         aspect: settings.aspect,
         scale: settings.scale,
         interp: settings.interpolation,
-        // A benchmark reads the keyboard only, so no gamepad is opened.
+        // A benchmark reads the keyboard only, so no gamepad is opened. A
+        // movie needs the pad buttons themselves (see [`PadTap`]).
         router: if matches!(mode, WindowMode::Bench(_)) {
             InputRouter::keyboard_only(settings.keymap.clone())
+        } else if let Some(tap) = pad_tap {
+            InputRouter::with_source(settings.keymap.clone(), settings.pad.clone(), Box::new(tap))
         } else {
             InputRouter::from_settings(&settings)
         },
@@ -2317,6 +2522,10 @@ fn run_app(
         report: None,
         error: None,
         announced_end: false,
+        movie_roots,
+        movie: None,
+        movie_only,
+        pad_presses,
     };
     event_loop.run_app(&mut app).context("running the window")?;
     app.save_recording();

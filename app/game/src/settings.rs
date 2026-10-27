@@ -138,6 +138,7 @@ use claw_sim::tuning::{FuseClock, PlayAids};
 use claw_sim::{ScriptHeader, SimConfig};
 
 use crate::keymap::{Action, Keymap, PadMap};
+use crate::movie::MovieTarget;
 use crate::pause::PauseInput;
 
 /// Default window size: the original view at twice its size.
@@ -356,6 +357,26 @@ pub struct Args {
     /// `--uncapped` is given.
     #[arg(long, requires = "bench")]
     pub headless: bool,
+    /// Play one movie full screen, then exit: an index from -2 to 14 (-1
+    /// is the logo, 0 the intro, 14 the end of the game) from the install,
+    /// or any movie file. Escape, or a pad's Back or Start button, skips
+    /// it.
+    #[arg(
+        long,
+        value_name = "INDEX|FILE",
+        allow_hyphen_values = true,
+        value_parser = parse_movie,
+        conflicts_with_all = ["level", "custom", "replay", "bench", "record", "no_movies"]
+    )]
+    pub movie: Option<MovieTarget>,
+    /// Play no movie this run.
+    #[arg(long)]
+    pub no_movies: bool,
+}
+
+/// Reads `--movie INDEX|FILE` (see [`MovieTarget::parse`]).
+pub fn parse_movie(s: &str) -> Result<MovieTarget, String> {
+    MovieTarget::parse(s)
 }
 
 /// Parses `WIDTHxHEIGHT`.
@@ -527,6 +548,10 @@ pub struct Settings {
     /// Config keys whose value came from the command line; these are
     /// never written back.
     pub from_command_line: BTreeSet<&'static str>,
+    /// Play the game's movies (off with `--no-movies`).
+    pub movies: bool,
+    /// The one movie a `--movie` run plays.
+    pub movie: Option<MovieTarget>,
 }
 
 /// Default radial dead zone of the sticks, as a fraction of a full
@@ -598,6 +623,8 @@ impl Settings {
             pad: PadSettings::default(),
             config_path: None,
             from_command_line: BTreeSet::new(),
+            movies: true,
+            movie: None,
         }
     }
 
@@ -696,6 +723,8 @@ impl Settings {
         }
         s.from_command_line = cli;
         s.record.clone_from(&args.record);
+        s.movies = !args.no_movies;
+        s.movie.clone_from(&args.movie);
         let hz = |default: f64| -> Result<f64> {
             let hz = args.render_hz.unwrap_or(default);
             if !(hz.is_finite() && (1.0..=10_000.0).contains(&hz)) {

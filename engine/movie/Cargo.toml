@@ -13,7 +13,13 @@ publish.workspace = true
 ffmpeg = ["dep:rusty_ffmpeg"]
 
 [dependencies]
+claw-audio.workspace = true
+rtrb = "0.4"
 rusty_ffmpeg = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
