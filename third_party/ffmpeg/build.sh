@@ -22,10 +22,11 @@
 # `nice -n 10` where nice exists.
 #
 # dav1d is built with meson and ninja. When the system has no meson (0.54
-# or newer) or no ninja, they are installed with pip into a virtual
-# environment in the cache (never system-wide); when python3 cannot make
-# one either, or pkg-config is missing, FFmpeg is built without AV1 and the
-# build says so.
+# or newer) or no ninja (1.8.2 or newer), they are installed with pip into a
+# virtual environment in the cache (never system-wide), made the first time
+# the prefix is worked out; when python3 cannot make one (on Debian and
+# Ubuntu, without python3-venv), or pkg-config is missing, FFmpeg is built
+# without AV1 and the build says so.
 set -eu
 
 FFMPEG_VERSION=8.1.3
@@ -104,52 +105,106 @@ case "${RUSTY_CLAW_FFMPEG_H26X:-off}" in
     *) fail "RUSTY_CLAW_FFMPEG_H26X must be on or off, not '$RUSTY_CLAW_FFMPEG_H26X'" ;;
 esac
 
-# Whether a meson of at least 0.54 (dav1d's minimum) runs as "$@".
+# Whether the version $1 (as `--version` prints it) is at least $2.$3.$4.
+version_ge() {
+    rest=$1.0.0
+    va=${rest%%.*}
+    rest=${rest#*.}
+    vb=${rest%%.*}
+    rest=${rest#*.}
+    vc=${rest%%.*}
+    vc=${vc%%[!0-9]*}
+    case "$va" in *[!0-9]* | "") return 1 ;; esac
+    case "$vb" in *[!0-9]* | "") return 1 ;; esac
+    [ -n "$vc" ] || vc=0
+    if [ "$va" -ne "$2" ]; then [ "$va" -gt "$2" ]; return; fi
+    if [ "$vb" -ne "$3" ]; then [ "$vb" -gt "$3" ]; return; fi
+    [ "$vc" -ge "$4" ]
+}
+
+# Whether a meson of at least 0.54 (dav1d's minimum) runs as $1.
 meson_ok() {
-    v=$("$@" --version 2>/dev/null) || return 1
-    major=${v%%.*}
-    rest=${v#*.}
-    minor=${rest%%.*}
-    case "$major$minor" in
-        *[!0-9]* | "") return 1 ;;
-    esac
-    [ "$major" -gt 0 ] || [ "$minor" -ge 54 ]
+    v=$("$1" --version 2>/dev/null) || return 1
+    version_ge "$v" 0 54 0
+}
+
+# Whether a ninja of at least 1.8.2 (meson's minimum) runs as $1.
+ninja_ok() {
+    v=$("$1" --version 2>/dev/null) || return 1
+    version_ge "$v" 1 8 2
+}
+
+# Whether the virtual environment pip installs meson and ninja into is
+# there with a working pip, making it once when it is not. It is made for
+# real (not probed) because some python3 builds import venv and ensurepip
+# but cannot make one: Debian and Ubuntu without the python3-venv package.
+# A failed attempt leaves no folder behind.
+venv_ready() {
+    if [ -x "$tools/bin/python" ] && "$tools/bin/python" -m pip --version >/dev/null 2>&1; then
+        return 0
+    fi
+    command -v python3 >/dev/null 2>&1 || return 1
+    mkdir -p "$cache_root" 2>/dev/null || return 1
+    (
+        # One maker at a time; a second one waits, then finds it made.
+        if command -v flock >/dev/null 2>&1; then
+            exec 8>"$cache_root/.tools-lock"
+            flock 8
+        fi
+        if [ -x "$tools/bin/python" ] && "$tools/bin/python" -m pip --version >/dev/null 2>&1; then
+            exit 0
+        fi
+        rm -rf "$tools"
+        if python3 -m venv "$tools" >/dev/null 2>&1 &&
+            "$tools/bin/python" -m pip --version >/dev/null 2>&1; then
+            exit 0
+        fi
+        rm -rf "$tools"
+        exit 1
+    )
 }
 
 # How dav1d gets built, decided before anything is built because it is part
-# of the prefix: av1=yes when meson and ninja are there (or pip can install
-# them) and pkg-config is there for FFmpeg to find dav1d; else av1=no, with
-# the reason in av1_missing.
+# of the prefix: av1=yes when pkg-config is there for FFmpeg to find dav1d
+# and meson and ninja are there (or pip can install them into a virtual
+# environment that is made here); else av1=no, with the reason in
+# av1_missing. meson_cmd and ninja_cmd are the ones dav1d is built with;
+# an empty one is installed with pip before dav1d is built.
 av1=yes
 av1_missing=
 meson_cmd=
-if command -v meson >/dev/null 2>&1 && meson_ok meson; then
-    meson_cmd=meson
-elif [ -x "$tools/bin/meson" ] && meson_ok "$tools/bin/meson"; then
-    meson_cmd="$tools/bin/meson"
-fi
-ninja_found=no
-for n in ninja ninja-build samu "$tools/bin/ninja"; do
-    if command -v "$n" >/dev/null 2>&1; then ninja_found=yes; break; fi
-done
+ninja_cmd=
 need_pip=no
-if [ -z "$meson_cmd" ] || [ "$ninja_found" = no ]; then
-    need_pip=yes
-    if ! python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then
-        av1=no
-        if [ -z "$meson_cmd" ] && [ "$ninja_found" = no ]; then
-            av1_missing="meson and ninja are missing"
-        elif [ -z "$meson_cmd" ]; then
-            av1_missing="meson (0.54 or newer) is missing"
-        else
-            av1_missing="ninja is missing"
-        fi
-        av1_missing="$av1_missing and python3 cannot make a virtual environment with pip to install them"
-    fi
-fi
-if [ "$av1" = yes ] && ! command -v pkg-config >/dev/null 2>&1; then
+if ! command -v pkg-config >/dev/null 2>&1; then
     av1=no
     av1_missing="pkg-config is missing"
+else
+    for m in meson "$tools/bin/meson"; do
+        if command -v "$m" >/dev/null 2>&1 && meson_ok "$m"; then
+            meson_cmd=$(command -v "$m")
+            break
+        fi
+    done
+    for n in ninja ninja-build samu "$tools/bin/ninja"; do
+        if command -v "$n" >/dev/null 2>&1 && ninja_ok "$n"; then
+            ninja_cmd=$(command -v "$n")
+            break
+        fi
+    done
+    if [ -z "$meson_cmd" ] || [ -z "$ninja_cmd" ]; then
+        need_pip=yes
+        if ! venv_ready; then
+            av1=no
+            if [ -z "$meson_cmd" ] && [ -z "$ninja_cmd" ]; then
+                av1_missing="meson and ninja are missing"
+            elif [ -z "$meson_cmd" ]; then
+                av1_missing="meson (0.54 or newer) is missing"
+            else
+                av1_missing="ninja (1.8.2 or newer) is missing"
+            fi
+            av1_missing="$av1_missing and python3 cannot make a virtual environment with pip to install them, which the python3-venv package adds on Debian and Ubuntu"
+        fi
+    fi
 fi
 
 configure_flags() {
@@ -295,19 +350,22 @@ if [ "$av1" = yes ]; then
     if [ "$need_pip" = yes ]; then
         wanted=
         [ -n "$meson_cmd" ] || wanted="$MESON_PIP"
-        [ "$ninja_found" = yes ] || wanted="$wanted $NINJA_PIP"
+        [ -n "$ninja_cmd" ] || wanted="$wanted $NINJA_PIP"
         say "installing ${wanted# } with pip into $tools"
-        if [ ! -x "$tools/bin/python" ]; then
-            python3 -m venv "$tools" >"$work/pip.log" 2>&1 ||
-                { tail -n 20 "$work/pip.log" >&2; fail "python3 could not make a virtual environment in $tools"; }
-        fi
         # shellcheck disable=SC2086 # the requirements are words without spaces
-        "$tools/bin/python" -m pip install --disable-pip-version-check --no-input -q $wanted >>"$work/pip.log" 2>&1 ||
+        "$tools/bin/python" -m pip install --disable-pip-version-check --no-input -q $wanted >"$work/pip.log" 2>&1 ||
             { tail -n 20 "$work/pip.log" >&2; fail "pip could not install ${wanted# }; install meson and ninja yourself and run it again"; }
         [ -n "$meson_cmd" ] || meson_cmd="$tools/bin/meson"
-        PATH="$PATH:$tools/bin"
-        export PATH
+        [ -n "$ninja_cmd" ] || ninja_cmd="$tools/bin/ninja"
     fi
+    # meson looks for ninja by name on PATH (or in NINJA), so the chosen one,
+    # which may be pip's in the cache or a system ninja-build, goes first on
+    # PATH under the name ninja, for this build only.
+    mkdir -p "$work/bin"
+    ln -s "$ninja_cmd" "$work/bin/ninja"
+    PATH="$work/bin:$PATH"
+    NINJA="$work/bin/ninja"
+    export PATH NINJA
     fetch "$DAV1D_URL" "$DAV1D_SHA256"
     say "building dav1d $DAV1D_VERSION"
     tar -xJf "$cache_root/downloads/dav1d-$DAV1D_VERSION.tar.xz" -C "$work"

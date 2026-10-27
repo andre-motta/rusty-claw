@@ -22,12 +22,15 @@ the licence terms.
 You need what the game itself needs to build (a C compiler, `make`, `curl`
 or `wget`) plus `tar` with xz support, `sha256sum` and `pkg-config`, which
 every desktop distribution has. dav1d builds with meson (0.54 or newer) and
-ninja: when the system has neither, `build.sh` installs them with pip into a
-virtual environment in `~/.cache/rusty-claw/ffmpeg/tools` (never into the
-system), which needs `python3` with its `venv` module. Where none of that
-is there, or `pkg-config` is missing, FFmpeg is built without AV1, and the
-build says so; the original movies still play. No root access and no
-FFmpeg package are needed.
+ninja (1.8.2 or newer): when the system lacks either, `build.sh` installs
+it with pip into a virtual environment in `~/.cache/rusty-claw/ffmpeg/tools`
+(never into the system), which needs `python3` able to make one with pip
+(on Debian and Ubuntu that is the `python3-venv` package). The environment
+is made the first time the script works out its prefix, because whether
+AV1 is built is part of the prefix. Where none of that is there, or
+`pkg-config` is missing, FFmpeg is built without AV1, and the build says
+so; the original movies still play. No root access and no FFmpeg package
+are needed.
 
 Movies come with a plain build:
 

@@ -72,14 +72,16 @@ make run-game ARGS='--install /path/to/your/install'
 ```
 
 On Debian and Ubuntu the packages are `build-essential git curl
-libvulkan1 mesa-vulkan-drivers libasound2-dev libudev-dev`.
+libvulkan1 mesa-vulkan-drivers libasound2-dev libudev-dev pkg-config
+python3-venv` (the last two let the movie build decode AV1; see below).
 
 Movies come with a plain `cargo build` (and with `make run-game`) on Linux
 and the Steam Deck: the first build downloads the sources of FFmpeg and of
 dav1d (its AV1 decoder) and builds them once per machine into your cache
 (about a minute, no root needed; `make ffmpeg` does that step on its own;
 dav1d also needs `pkg-config`, and meson and ninja, which the build
-installs with pip into your cache when they are missing). Where FFmpeg
+installs with pip into your cache when they are missing, using python3's
+`venv` module; without those, the build goes on without AV1 and says so). Where FFmpeg
 cannot be built, cargo prints one warning and the game builds without
 movies.
 `RUSTY_CLAW_FFMPEG=off` builds without FFmpeg on purpose, and
