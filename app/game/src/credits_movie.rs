@@ -11,12 +11,22 @@
 //! when `credits_movie` is on ([`found`]).
 //!
 //! **Playing.** [`CreditsMovie`] plays it on the wall clock with its sound
-//! left out (the credits music plays as before), and when it ends opens
-//! the same source again, so it loops. While the window is in the
+//! left out (the credits music plays as before), and when it ends goes on
+//! with the same source opened again, so it loops. Opening a source takes
+//! the window thread about 14 ms for a 1080p H.264 file and its first
+//! picture about 10 ms more to decode (1.5 ms and under 1 ms for the
+//! archive's clip; release build), so the loop point would hitch: each
+//! pass opens the next one ahead, on a helper thread, once it shows its
+//! first picture; the next pass decodes its first pictures and waits
+//! (its clock starts when it is first read). The pass that ended is let
+//! go on a helper thread too, which leaves well under a millisecond at
+//! the loop point. While the window is in the
 //! background it holds like every movie ([`CreditsMovie::hold`]). A source
-//! that cannot open again, a stream that stops on an error or ends before
+//! that cannot open again, a stream that ends (on an error or not) before
 //! any picture, or a picture that cannot be shown ends it
-//! ([`CreditsMovie::poll`]); the credits then go on over the parchment.
+//! ([`CreditsMovie::poll`]); the credits then go on over the parchment. A
+//! pass that showed pictures and then stops on a decoding error (a damaged
+//! tail) loops like one that played to its end ([`after_pass`]).
 //!
 //! **Drawing.** The movie presenter draws one picture, so the text goes
 //! into the movie's picture before it is uploaded: [`Canvas`] holds the
@@ -28,6 +38,8 @@
 //! display, at the picture's own resolution; the presenter then draws the
 //! whole full screen at the movie's own shape. The text and the picture are
 //! put together again only when either changes.
+
+use std::thread::JoinHandle;
 
 use claw_assets::Palette;
 use claw_frame::ViewConfig;
@@ -423,13 +435,35 @@ pub fn rgb_to_yuv(rgb: [u8; 3], bt709: bool, full_range: bool) -> [u8; 3] {
     ]
 }
 
+/// Whether the credits movie starts again after a pass ended as `end`,
+/// with decoding stopped on `error` if it did: `Ok` when it loops, `Err`
+/// with the reason when it cannot go on. A pass that showed pictures loops
+/// even when decoding stopped on an error near its end (a damaged tail),
+/// as a movie played that far counts as played to its end
+/// ([`crate::movie::MovieProgress::end`]); only a pass that showed no
+/// picture fails.
+pub fn after_pass(end: MovieEnd, error: Option<String>) -> Result<(), String> {
+    match end {
+        MovieEnd::Finished => Ok(()),
+        MovieEnd::Failed => Err(error.unwrap_or_else(|| "it showed no picture".into())),
+        // No input reaches it.
+        MovieEnd::Skipped => Err("it was skipped".into()),
+    }
+}
+
 /// The credits movie playing behind the credits (see the module
 /// documentation).
 #[derive(Debug)]
 pub struct CreditsMovie {
     playback: MoviePlayback,
+    /// The next pass, opened ahead on a helper thread once this pass
+    /// showed its first picture (`None` before, or when the helper could
+    /// not start: the next pass opens at the loop point then).
+    next: Option<JoinHandle<Option<MoviePlayback>>>,
     /// Times it started again from the beginning.
     loops: u32,
+    /// The terminal heard that a pass stopped early on an error.
+    told_damaged: bool,
     /// The newest picture, enlarged; black before the first.
     base: Canvas,
     /// The shape it shows at.
@@ -453,7 +487,9 @@ impl CreditsMovie {
         let playback = MoviePlayback::start(candidates, None)?;
         Some(CreditsMovie {
             playback,
+            next: None,
             loops: 0,
+            told_damaged: false,
             base: Canvas::black(),
             aspect: SCREEN_ASPECT,
             fresh: true,
@@ -486,34 +522,60 @@ impl CreditsMovie {
         self.playback.hold(on);
     }
 
-    /// Checks how it plays: at the end of its stream it opens the same
-    /// source again and goes on from its first picture. `Err` with the
-    /// reason when it cannot go on: decoding stopped on an error, the
-    /// stream ended before any picture, or the source would not open
-    /// again.
+    /// Checks how it plays: at the end of its stream it goes on from the
+    /// first picture of the same source opened again (opened ahead, see
+    /// the module documentation). A pass that showed pictures and then
+    /// stopped on a decoding error (a damaged tail) ends like any other and
+    /// loops ([`after_pass`]); the terminal hears of the error once. `Err` with the reason when it cannot go on: the stream
+    /// ended, on an error or not, before any picture, or the source would
+    /// not open again.
     pub fn poll(&mut self) -> Result<(), String> {
         let Some(end) = self.playback.end() else {
             return Ok(());
         };
-        if let Some(e) = self.playback.error() {
-            return Err(e);
+        let error = self.playback.error();
+        after_pass(end, error.clone())?;
+        if let Some(e) = error
+            && !self.told_damaged
+        {
+            self.told_damaged = true;
+            eprintln!(
+                "rusty-claw: the credits movie {} stopped early ({e}); it starts again from its first picture",
+                self.playback.source().describe()
+            );
         }
-        match end {
-            MovieEnd::Finished => {
-                let source = self.playback.source().clone();
-                match MoviePlayback::start(std::slice::from_ref(&source), None) {
-                    Some(p) => {
-                        self.playback = p;
-                        self.loops += 1;
-                        Ok(())
-                    }
-                    None => Err("it would not open again".into()),
-                }
+        let next = match self.next.take() {
+            // Opened ahead: ready by now, or soon.
+            Some(opening) => opening.join().ok().flatten(),
+            None => MoviePlayback::start(std::slice::from_ref(self.playback.source()), None),
+        };
+        match next {
+            Some(p) => {
+                // Freeing the ended pass's decoders takes a millisecond or
+                // two: on a helper thread (here when none starts).
+                let ended = std::mem::replace(&mut self.playback, p);
+                let _ = std::thread::Builder::new()
+                    .name("credits-movie-ended".into())
+                    .spawn(move || drop(ended));
+                self.loops += 1;
+                Ok(())
             }
-            MovieEnd::Failed => Err("it showed no picture".into()),
-            // No input reaches it.
-            MovieEnd::Skipped => Err("it was skipped".into()),
+            None => Err("it would not open again".into()),
         }
+    }
+
+    /// Opens the next pass on a helper thread, unless it is open or
+    /// opening already. Its clock starts at its first reading, so it waits,
+    /// its first pictures decoded, until the loop point.
+    fn open_next(&mut self) {
+        if self.next.is_some() {
+            return;
+        }
+        let source = self.playback.source().clone();
+        self.next = std::thread::Builder::new()
+            .name("credits-movie-next".into())
+            .spawn(move || MoviePlayback::start(std::slice::from_ref(&source), None))
+            .ok();
     }
 
     /// Takes the newest picture due, if a new one is. `Err` when its planes
@@ -526,6 +588,7 @@ impl CreditsMovie {
         self.base = canvas;
         self.aspect = self.playback.aspect();
         self.fresh = true;
+        self.open_next();
         Ok(true)
     }
 
@@ -564,7 +627,8 @@ impl CreditsMovie {
         Some(&self.shown)
     }
 
-    /// Stops it; says why when decoding stopped early.
+    /// Stops it; says why when decoding stopped early. A next pass still
+    /// opening is let go when its helper thread is done.
     pub fn stop(self) {
         self.playback.stop(None);
     }

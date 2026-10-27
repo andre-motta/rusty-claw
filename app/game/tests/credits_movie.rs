@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 
 use claw_assets::Palette;
 use claw_game::credits_movie::{
-    Canvas, CreditsMovie, TEXT_SIZE, TextMask, on_shelf, rgb_to_yuv, text_builder,
+    Canvas, CreditsMovie, TEXT_SIZE, TextMask, after_pass, on_shelf, rgb_to_yuv, text_builder,
 };
+use claw_game::movie::{MovieEnd, MovieProgress};
 use claw_game::settings::{LevelChoice, Settings};
 use claw_movie::{FileKind, MovieIndex, MovieMode, Roots, Source, locate_all};
 use claw_render::cpu::Composed;
@@ -579,6 +580,35 @@ fn a_credits_movie_that_cannot_go_on_says_why() {
 }
 
 #[test]
+fn a_pass_with_a_damaged_tail_loops_and_only_a_pass_without_pictures_fails() {
+    // How a pass ends follows from what it showed, as for every movie.
+    let pass = |shown: bool| {
+        MovieProgress {
+            shown,
+            ..MovieProgress::default()
+        }
+        .end(true)
+        .unwrap()
+    };
+    let damaged = Some("the stream is damaged".to_string());
+    // Pictures, then the end of the stream: it loops, error or not.
+    assert_eq!(pass(true), MovieEnd::Finished);
+    assert_eq!(after_pass(pass(true), None), Ok(()));
+    assert_eq!(after_pass(pass(true), damaged.clone()), Ok(()));
+    // No picture at all: it cannot go on, and says why.
+    assert_eq!(pass(false), MovieEnd::Failed);
+    assert_eq!(
+        after_pass(pass(false), damaged.clone()),
+        Err("the stream is damaged".to_string())
+    );
+    assert_eq!(
+        after_pass(pass(false), None),
+        Err("it showed no picture".to_string())
+    );
+    assert!(after_pass(MovieEnd::Skipped, None).is_err());
+}
+
+#[test]
 fn a_held_credits_movie_shows_no_new_picture_and_does_not_loop() {
     if !claw_movie::available() {
         eprintln!("skipped: built without FFmpeg");
@@ -656,4 +686,103 @@ fn the_install_credits_movie_plays_behind_the_credits() {
     // The archive's 320x240 clip, twice its size: the credits' screen.
     assert_eq!(size, Some((640, 480, 640)));
     assert!((m.aspect() - 4.0 / 3.0).abs() < 1e-3);
+}
+
+/// Median and largest of `times`, in milliseconds.
+fn spread(times: &mut [Duration]) -> (f64, f64) {
+    times.sort();
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+    (ms(times[times.len() / 2]), ms(times[times.len() - 1]))
+}
+
+/// What the credits movie's loop point would cost without opening ahead:
+/// opening the source ([`CreditsMovie::start`]), how long the first
+/// picture then takes to decode, and letting a pass go; then the loop
+/// points themselves for up to 15 s of playing ([`CreditsMovie::poll`]
+/// with the next pass opened ahead) and how long after each the new
+/// pass's first picture is ready. A measurement, run by hand in a release build:
+/// `CREDITS_CLIP=<a movie file> cargo test --release -p claw-game --test
+/// credits_movie -- --ignored --nocapture reopening`; with `CLAW_INSTALL`
+/// set, the install's credits clip is measured too.
+#[test]
+#[ignore = "a measurement, run by hand in a release build"]
+fn reopening_the_credits_movie_for_each_loop() {
+    if !claw_movie::available() {
+        eprintln!("skipped: built without FFmpeg");
+        return;
+    }
+    let mut sources = Vec::new();
+    if let Some(path) = std::env::var_os("CREDITS_CLIP").map(PathBuf::from) {
+        sources.push(Source::File {
+            path,
+            kind: FileKind::Upscaled,
+        });
+    }
+    if let Some(install) = std::env::var_os("CLAW_INSTALL").map(PathBuf::from) {
+        let roots = Roots {
+            install,
+            user_folder: None,
+            mode: MovieMode::Archive,
+        };
+        sources.extend(locate_all(MovieIndex::CREDITS, &roots));
+    }
+    if sources.is_empty() {
+        eprintln!("skipped: neither CREDITS_CLIP nor CLAW_INSTALL is set");
+        return;
+    }
+    const RUNS: usize = 20;
+    for source in &sources {
+        let (mut open, mut first, mut gone) = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..RUNS {
+            let t = Instant::now();
+            let mut m = CreditsMovie::start(std::slice::from_ref(source)).expect("it opens");
+            open.push(t.elapsed());
+            while !m.pull().expect("a good picture") {
+                assert!(t.elapsed() < Duration::from_secs(10), "no first picture");
+                std::thread::yield_now();
+            }
+            first.push(t.elapsed());
+            // Let go while it decodes (at the loop point the pass that
+            // ended has stopped decoding, so this is the most it takes).
+            let t = Instant::now();
+            drop(m);
+            gone.push(t.elapsed());
+        }
+        let mut m = CreditsMovie::start(std::slice::from_ref(source)).unwrap();
+        let (mut loops, mut shown) = (Vec::new(), Vec::new());
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(15) {
+            let before = m.loops();
+            let t = Instant::now();
+            m.poll().expect("it goes on");
+            if m.loops() > before {
+                loops.push(t.elapsed());
+                while !m.pull().expect("a good picture") {
+                    std::thread::yield_now();
+                }
+                shown.push(t.elapsed());
+            }
+            let _ = m.pull();
+            sleep(Duration::from_millis(2));
+        }
+        let (open_med, open_max) = spread(&mut open);
+        let (first_med, first_max) = spread(&mut first);
+        let (gone_med, gone_max) = spread(&mut gone);
+        eprintln!(
+            "{}: open {open_med:.2} ms (most {open_max:.2}), first picture {first_med:.2} ms \
+             (most {first_max:.2}), letting go {gone_med:.2} ms (most {gone_max:.2}), over {RUNS} runs",
+            source.describe()
+        );
+        if loops.is_empty() {
+            eprintln!("  no loop point in 15 s");
+        } else {
+            let n = loops.len();
+            let (med, max) = spread(&mut loops);
+            let (shown_med, shown_max) = spread(&mut shown);
+            eprintln!(
+                "  {n} loop points: {med:.2} ms (most {max:.2}), its first picture after \
+                 {shown_med:.2} ms (most {shown_max:.2})"
+            );
+        }
+    }
 }

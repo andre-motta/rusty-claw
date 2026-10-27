@@ -3321,6 +3321,94 @@ fn a_credits_movie_that_fails_leaves_the_parchment_and_the_credits_go_on() {
     );
 }
 
+/// How many of `sounds` are `key`.
+fn count(sounds: &[String], key: &str) -> usize {
+    sounds.iter().filter(|s| *s == key).count()
+}
+
+#[test]
+fn a_credits_movie_that_fails_before_the_text_rises_lets_the_unroll_sound_play() {
+    // After the last level, in the black: the delayed unroll sound, once.
+    let mut r = Rig::with_movies(
+        Start::Play,
+        LevelChoice::Retail(14),
+        main_menu(),
+        shelf_with_credits([]),
+    );
+    finish_the_game(&mut r);
+    assert_eq!(r.flow.credits().unwrap().phase(), CreditsPhase::Black);
+    assert!(!unrolls(&r.sounds), "{:?}", r.sounds);
+    r.update(BLACK_MS / 2.0);
+    r.flow.credits_movie_failed();
+    r.effects();
+    assert!(!r.flow.credits_movie());
+    assert_eq!(count(&r.sounds, credits::DELAYED_UNROLL_SOUND), 1);
+    assert_eq!(count(&r.sounds, credits::UNROLL_SOUND), 0);
+    // Said again, or later on: nothing more.
+    r.flow.credits_movie_failed();
+    r.effects();
+    r.update(BLACK_MS + UNROLL_MS + 1000.0);
+    assert_eq!(count(&r.sounds, credits::DELAYED_UNROLL_SOUND), 1);
+    assert_eq!(r.flow.credits().unwrap().phase(), CreditsPhase::Text);
+
+    // From the main menu, while the parchment would unroll: its unroll
+    // sound.
+    let mut r = Rig::with_movies(
+        Start::Title,
+        LevelChoice::Retail(1),
+        main_menu_with_credits(),
+        shelf_with_credits([-1]),
+    );
+    r.reach_main_menu();
+    let at = main_entries(&r)
+        .iter()
+        .position(|&c| c == MenuCommand::Unavailable(Unavailable::Credits))
+        .expect("a Credits entry");
+    let open = |r: &mut Rig| {
+        for _ in 0..at {
+            r.input(MenuInput::Down);
+        }
+        r.update(100.0);
+        r.choose();
+        r.update(FADE_MS);
+        assert_eq!(r.flow.screen(), Screen::Credits);
+        assert!(r.flow.credits_movie());
+    };
+    open(&mut r);
+    r.update(UNROLL_MS / 2.0);
+    assert_eq!(r.flow.credits().unwrap().phase(), CreditsPhase::Unroll);
+    assert!(!unrolls(&r.sounds), "{:?}", r.sounds);
+    r.flow.credits_movie_failed();
+    r.effects();
+    assert_eq!(count(&r.sounds, credits::UNROLL_SOUND), 1);
+    assert_eq!(count(&r.sounds, credits::DELAYED_UNROLL_SOUND), 0);
+
+    // Once the text rises it fails without a sound; opened again with the
+    // movie, nothing is left over from the visit before.
+    r.update(UNROLL_MS);
+    assert_eq!(count(&r.sounds, credits::UNROLL_SOUND), 1);
+    r.input(MenuInput::Back);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    r.update(FADE_MS);
+    open(&mut r);
+    r.update(UNROLL_MS + 1000.0);
+    assert_eq!(r.flow.credits().unwrap().phase(), CreditsPhase::Text);
+    r.sounds.clear();
+    r.flow.credits_movie_failed();
+    r.effects();
+    assert!(!unrolls(&r.sounds), "{:?}", r.sounds);
+    assert!(!r.flow.credits_movie());
+    r.input(MenuInput::Back);
+    r.update(FADE_MS);
+    open(&mut r);
+    r.update(UNROLL_MS);
+    r.input(MenuInput::Back);
+    assert_eq!(r.flow.screen(), Screen::MainMenu);
+    r.flow.credits_movie_failed();
+    r.effects();
+    assert!(!unrolls(&r.sounds), "{:?}", r.sounds);
+}
+
 #[test]
 fn the_credits_movie_is_not_on_the_replay_movies_page() {
     // The credits movie alone: the page stays greyed out.
