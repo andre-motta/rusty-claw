@@ -188,7 +188,6 @@ fn damaged_and_newer_saves_are_moved_aside_never_deleted() {
 
 #[cfg(unix)]
 #[test]
-#[cfg(unix)]
 fn a_save_that_cannot_be_read_is_left_where_it_is() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();

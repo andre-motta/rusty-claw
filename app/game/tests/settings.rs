@@ -378,7 +378,6 @@ fn a_file_that_does_not_parse_is_never_written() {
 
 #[cfg(unix)]
 #[test]
-#[cfg(unix)]
 fn links_and_permissions_are_kept() {
     use std::os::unix::fs::{PermissionsExt, symlink};
     let root = tempfile::tempdir().unwrap();
