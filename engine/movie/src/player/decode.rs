@@ -192,6 +192,9 @@ impl Decoder {
             (*ctx).pkt_timebase = (*st).time_base;
             // Let FFmpeg pick the number of decoding threads.
             (*ctx).thread_count = 0;
+            // The decoder itself refuses pictures larger than the player
+            // shows, before it makes room for them.
+            (*ctx).max_pixels = i64::from(crate::frame::MAX_PICTURE_SIDE).pow(2);
             let ret = ffi::avcodec_open2(ctx, codec, ptr::null_mut());
             if ret < 0 {
                 ffi::avcodec_free_context(&mut ctx);

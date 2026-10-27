@@ -134,8 +134,13 @@ impl Player {
             (
                 (w as u32, h as u32),
                 aspect,
-                Duration::try_from_secs_f64(1.0 / rate)
-                    .unwrap_or(Duration::from_nanos(1_000_000_000 / 30)),
+                // A rate outside 1 to 1000 pictures a second is not a movie's:
+                // its picture time would be the step for missing stamps.
+                if (1.0..=1000.0).contains(&rate) {
+                    Duration::from_secs_f64(1.0 / rate)
+                } else {
+                    Duration::from_nanos(1_000_000_000 / 30)
+                },
             )
         };
         let video = Decoder::open(&input, video_index)?;

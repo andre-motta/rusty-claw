@@ -239,9 +239,9 @@ Pictures show ahead of the sound by the sound output's latency.
 
 While the game's window is in the background a movie holds, its picture
 and its sound, and goes on from where it was when the window is back in
-front, as play pauses. A movie without sound has no soundtrack to
-hold it: it shows no new picture in the background and goes on at its
-own time. The main menu's idle time does not count in the background
+front, as play pauses. A movie without sound, or one already past the
+end of its sound, has no soundtrack to hold it: it shows no new picture
+in the background and goes on at its own time. The main menu's idle time does not count in the background
 either, so the intro never starts while nobody sees it.
 
 Where movies come from, best first:
