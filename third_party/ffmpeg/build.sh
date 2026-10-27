@@ -25,8 +25,9 @@
 # live next to it in the cache; the build tree is removed on success.
 # FFMPEG_JOBS sets the parallel compile jobs (default: the CPU count, at most
 # 8; inside a make or cargo job server, FFmpeg's make takes its jobs from it
-# and ninja runs half as many). RUSTY_CLAW_FFMPEG_H26X=on adds the H.264 and
-# HEVC decoders (off by default and in anything published; see README.md).
+# and ninja runs half as many, also when it builds the pinned ninja itself).
+# RUSTY_CLAW_FFMPEG_H26X=on adds the H.264 and HEVC decoders (off by default
+# and in anything published; see README.md).
 # The compilers run under `nice -n 10` where nice exists.
 #
 # AV1 is an extra. dav1d is built with meson and ninja: the system's when it
@@ -38,10 +39,14 @@
 # missing, or when getting the tools, building dav1d or building FFmpeg with
 # it fails; the build says why, and the original movies play either way. A
 # failed attempt is kept in av1-failed.txt in the cache folder together with
-# what could change its outcome (the pins, and the compilers, meson, ninja,
-# python3 and pkg-config found), and later builds go on without AV1 until
-# one of those changes or --retry-av1 tries again; a build with AV1 that is
-# already there is still used.
+# what could change its outcome (everything the build with AV1 would be
+# made of: the pins, the configure line with AV1, dav1d's meson options, and
+# the compilers, meson, ninja, python3 and pkg-config found), and later
+# builds go on without AV1 until one of those changes or --retry-av1 tries
+# again; a build with AV1 that is already there is still used. A failure of
+# FFmpeg's make or make install with dav1d is not kept, as it can be one of
+# the moment (a compiler stopped when memory ran out): that build goes on
+# without AV1 too, and the next build tries AV1 again.
 set -eu
 
 FFMPEG_VERSION=8.1.3
@@ -105,6 +110,12 @@ AV1_FLAGS="--enable-libdav1d --enable-decoder=libdav1d --enable-parser=av1 --pkg
 # build leaves their decoders out (see README.md).
 H26X_FLAGS="--enable-decoder=h264,hevc --enable-parser=h264,hevc"
 # End of the pins.
+
+# dav1d's meson options, besides its prefix and its assembly (which follows
+# nasm): a static release library without its tools, tests, examples or
+# documentation, from the release's own files only.
+DAV1D_OPTIONS="--buildtype=release --default-library=static --wrap-mode=nodownload \
+-Denable_tools=false -Denable_tests=false -Denable_examples=false -Denable_docs=false"
 
 say() { printf 'ffmpeg: %s\n' "$*"; }
 fail() { printf 'ffmpeg: %s\n' "$*" >&2; exit 1; }
@@ -247,13 +258,21 @@ else
     fi
 fi
 
-# What could change how an AV1 attempt ends: the pins it uses and the tools
-# it would use.
+# What could change how an AV1 attempt ends: everything the build with AV1
+# is made of (the record it would write: FFmpeg's, nasm's, dav1d's, meson's
+# and ninja's pins and the whole configure line with AV1; and dav1d's meson
+# options) and the tools it would use. stamp_text is defined below; this
+# runs only after it is.
 av1_key() {
+    key_av1=$av1
+    av1=yes
+    key_stamp=$(stamp_text)
+    av1=$key_av1
     {
-        printf 'dav1d %s %s\n' "$DAV1D_VERSION" "$DAV1D_SHA256"
+        printf '%s\n' "$key_stamp"
+        printf 'dav1d options %s\n' "$DAV1D_OPTIONS"
         printf 'cc %s %s\n' "${CC:-}" "$(command -v cc 2>/dev/null || true)"
-        printf 'nasm %s %s\n' "$use_nasm" "$NASM_SHA256"
+        printf 'nasm %s\n' "$use_nasm"
         printf 'pkg-config %s\n' "$pkg_config_cmd"
         if [ -n "$meson_cmd" ]; then
             printf 'meson %s %s\n' "$meson_cmd" "$meson_version"
@@ -510,11 +529,28 @@ build_dav1d() {
             say "building ninja $NINJA_VERSION"
             tar -xzf "$cache_root/downloads/ninja-$NINJA_VERSION.tar.gz" -C "$work" ||
                 { av1_why="cannot unpack ninja-$NINJA_VERSION.tar.gz"; return 1; }
+            # `configure.py --bootstrap` compiles a first ninja one file at
+            # a time, then has it rebuild itself with ninja's default job
+            # count (the CPU count plus two), which knows nothing of
+            # FFMPEG_JOBS or a job server. The rebuild, the one command it
+            # runs from a list rather than a shell line, gets -j with this
+            # build's ninja job count instead.
             (
                 cd "$work/ninja-$NINJA_VERSION" || exit 1
                 CXX="${CXX:-$cxx_cmd}"
                 export CXX
-                $nice "$python3_cmd" configure.py --bootstrap >"$work/ninja-build.log" 2>&1
+                $nice "$python3_cmd" -c '
+import runpy, subprocess, sys
+jobs = sys.argv[1]
+check_call = subprocess.check_call
+def check_call_with_jobs(args, *rest, **options):
+    if isinstance(args, list):
+        args = args + ["-j", jobs]
+    return check_call(args, *rest, **options)
+subprocess.check_call = check_call_with_jobs
+sys.argv = ["configure.py", "--bootstrap"]
+runpy.run_path("configure.py", run_name="__main__")
+' "$ninja_jobs" >"$work/ninja-build.log" 2>&1
             ) || { keep_log "$work/ninja-build.log"; av1_why="building ninja $NINJA_VERSION failed (log in $av1_log)"; return 1; }
             { mkdir -p "$ninja_dir/bin" &&
                 cp "$work/ninja-$NINJA_VERSION/ninja" "$ninja_dir/bin/ninja.part" &&
@@ -541,10 +577,9 @@ build_dav1d() {
         NINJA="$work/bin/ninja"
         export PATH NINJA
         cd "$work/dav1d-$DAV1D_VERSION" || exit 1
+        # shellcheck disable=SC2086 # the options are words without spaces
         $nice "$meson_cmd" setup "$work/dav1d-build" . --prefix="$prefix" --libdir=lib \
-            --buildtype=release --default-library=static --wrap-mode=nodownload \
-            -Denable_tools=false -Denable_tests=false -Denable_examples=false \
-            -Denable_docs=false -Denable_asm="$dav1d_asm" >"$work/dav1d.log" 2>&1 || exit 1
+            $DAV1D_OPTIONS -Denable_asm="$dav1d_asm" >"$work/dav1d.log" 2>&1 || exit 1
         $nice "$meson_cmd" compile -C "$work/dav1d-build" -j "$ninja_jobs" >>"$work/dav1d.log" 2>&1 || exit 1
         DESTDIR="$stage" "$meson_cmd" install -C "$work/dav1d-build" >>"$work/dav1d.log" 2>&1 || exit 1
     ) || { keep_log "$work/dav1d.log"; av1_why="building dav1d $DAV1D_VERSION failed (log in $av1_log)"; return 1; }
@@ -555,13 +590,22 @@ build_dav1d() {
 # AV1 is an extra: when an attempt fails, says why, keeps the reason $1 in
 # av1-failed.txt (later builds skip the attempt, see the top) and goes on
 # without AV1, in the prefix that build has; when that build is there
-# already, it is the result.
+# already, it is the result. With `transient` as $2, the failure may not
+# happen again (FFmpeg's make or make install), so nothing is kept, a
+# record of this same attempt goes, and the next build tries AV1 again.
 without_av1() {
-    if printf 'key %s\n%s\n' "$attempt_key" "$1" >"$av1_record.part" 2>/dev/null; then
-        mv "$av1_record.part" "$av1_record" || true
+    if [ "${2:-}" = transient ]; then
+        if [ "$(sed -n 1p "$av1_record" 2>/dev/null)" = "key $attempt_key" ]; then
+            rm -f "$av1_record"
+        fi
+        av1_missing="$1; the next build tries again"
+    else
+        if printf 'key %s\n%s\n' "$attempt_key" "$1" >"$av1_record.part" 2>/dev/null; then
+            mv "$av1_record.part" "$av1_record" || true
+        fi
+        av1_missing="$1; make ffmpeg tries again"
     fi
     av1=no
-    av1_missing="$1; make ffmpeg tries again"
     say "building without AV1: $av1_missing"
     rm -rf "$stage"
     choose_prefix
@@ -595,21 +639,26 @@ fi
 src="$work/ffmpeg-$FFMPEG_VERSION"
 
 # Run in build_ffmpeg's subshell: writes why the FFmpeg build failed ($1)
-# to ffmpeg-why in the build tree for build_ffmpeg, keeps the log $2 there
-# as ffmpeg-failed.log and shows the end of it.
+# to ffmpeg-why in the build tree for build_ffmpeg, with `lasting` on the
+# next line, or $3 (`transient`, for a failure that may not happen again),
+# keeps the log $2 there as ffmpeg-failed.log and shows the end of it.
 ffmpeg_failed() {
-    printf '%s\n' "$1" >"$work/ffmpeg-why"
+    printf '%s\n%s\n' "$1" "${3:-lasting}" >"$work/ffmpeg-why"
     cp "$2" "$work/ffmpeg-failed.log" 2>/dev/null || true
     tail -n 20 "$2" >&2
 }
 
 # Configures, builds and installs FFmpeg into the stage with the current
 # choices, from a fresh copy of its source. Returns 1 on failure, with the
-# reason in ffmpeg_why.
+# reason in ffmpeg_why and ffmpeg_failure `lasting` (configure, or a
+# component it left out) or `transient` (make or make install, which can
+# fail for a reason of the moment, such as a compiler stopped when memory
+# ran out).
 build_ffmpeg() {
     flags=$(configure_flags)
     say "building FFmpeg $FFMPEG_VERSION with $jobs jobs into $prefix"
     rm -f "$work/ffmpeg-why"
+    ffmpeg_failure=transient
     if ! { rm -rf "$src" && tar -xJf "$cache_root/downloads/ffmpeg-$FFMPEG_VERSION.tar.xz" -C "$work"; }; then
         ffmpeg_why="cannot unpack ffmpeg-$FFMPEG_VERSION.tar.xz"
         return 1
@@ -641,13 +690,16 @@ build_ffmpeg() {
         done
         # shellcheck disable=SC2086 # empty when make joins a job server
         $nice make $make_jobs >"$work/make.log" 2>&1 ||
-            { ffmpeg_failed "building FFmpeg failed" "$work/make.log"; exit 1; }
+            { ffmpeg_failed "building FFmpeg failed" "$work/make.log" transient; exit 1; }
         make install DESTDIR="$stage" >"$work/install.log" 2>&1 ||
-            { ffmpeg_failed "installing FFmpeg failed" "$work/install.log"; exit 1; }
+            { ffmpeg_failed "installing FFmpeg failed" "$work/install.log" transient; exit 1; }
     ); then
         return 0
     fi
-    ffmpeg_why=$(cat "$work/ffmpeg-why" 2>/dev/null || echo "the FFmpeg build failed")
+    ffmpeg_why=$(sed -n 1p "$work/ffmpeg-why" 2>/dev/null || true)
+    [ -n "$ffmpeg_why" ] || ffmpeg_why="the FFmpeg build failed"
+    ffmpeg_failure=$(sed -n 2p "$work/ffmpeg-why" 2>/dev/null || true)
+    [ "$ffmpeg_failure" = lasting ] || ffmpeg_failure=transient
     return 1
 }
 
@@ -657,8 +709,14 @@ if ! build_ffmpeg; then
     # With AV1 the failure may be dav1d's (its pkg-config file, or FFmpeg's
     # libdav1d decoder), so FFmpeg is built once more without it. When that
     # fails too, the failure was not AV1's, and no record of it is kept.
+    # Only a failure of configure is kept for later builds; one of make or
+    # make install is tried again by the next build.
     cp "$work/ffmpeg-failed.log" "$av1_log" 2>/dev/null || true
-    without_av1 "$ffmpeg_why with AV1 (log in $av1_log)"
+    if [ "$ffmpeg_failure" = lasting ]; then
+        without_av1 "$ffmpeg_why with AV1 (log in $av1_log)"
+    else
+        without_av1 "$ffmpeg_why with AV1 (log in $av1_log)" transient
+    fi
     build_ffmpeg || {
         rm -f "$av1_record" "$av1_log"
         fail "$ffmpeg_why, with AV1 and without (logs in $work)"

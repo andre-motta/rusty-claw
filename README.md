@@ -63,7 +63,8 @@ sound) and the udev development package (for gamepads), plus the Rust
 toolchain from [rustup](https://rustup.rs).
 
 ```sh
-sudo dnf install gcc make git curl vulkan-loader mesa-vulkan-drivers alsa-lib-devel systemd-devel
+sudo dnf install gcc make git curl vulkan-loader mesa-vulkan-drivers alsa-lib-devel systemd-devel \
+    gcc-c++ pkgconf-pkg-config meson ninja-build
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # then open a new shell
 git clone https://github.com/andre-motta/rusty-claw.git
 cd rusty-claw
@@ -71,9 +72,15 @@ make soundfont                                  # optional: the music's instrume
 make run-game ARGS='--install /path/to/your/install'
 ```
 
+The packages on the second line are what the movie build needs to decode
+AV1: `pkgconf-pkg-config` (pkg-config), `meson` and `ninja-build` (ninja),
+and `gcc-c++`, a C++ compiler, with which the build makes ninja itself
+when the system has none; see below.
+
 On Debian and Ubuntu the packages are `build-essential git curl
-libvulkan1 mesa-vulkan-drivers libasound2-dev libudev-dev pkg-config`
-(`pkg-config` lets the movie build decode AV1; see below).
+libvulkan1 mesa-vulkan-drivers libasound2-dev libudev-dev pkg-config meson
+ninja-build` (`pkg-config`, `meson` and `ninja-build` let the movie build
+decode AV1, and `build-essential` brings the C++ compiler; see below).
 
 Movies come with a plain `cargo build` (and with `make run-game`) on Linux
 and the Steam Deck: the first build downloads the sources of FFmpeg and of

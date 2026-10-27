@@ -49,6 +49,56 @@ pub fn windows_record(pins: &str, windows: &str, h26x: bool, av1: bool) -> Optio
     ))
 }
 
+/// Which finished Windows build cargo links, given `find(h26x, av1)`, the
+/// build windows/build.sh made with those switches if there is one: the one
+/// for the switches asked for (`h26x`, and AV1 unless `av1_off`); without
+/// `require`, when AV1 is asked for and no build has it, the one without
+/// AV1 next (cargo then warns that it decodes no AV1). When there is none,
+/// `Err` holds the cargo settings that would select a build that is there
+/// with other switches, if there is one, nearest first.
+pub fn windows_pick<T>(
+    h26x: bool,
+    av1_off: bool,
+    require: bool,
+    mut find: impl FnMut(bool, bool) -> Option<T>,
+) -> Result<T, Option<String>> {
+    let av1 = !av1_off;
+    // Without `require`, a build without AV1 is taken when AV1 is asked for.
+    let takes_no_av1 = av1 && !require;
+    if let Some(found) = find(h26x, av1) {
+        return Ok(found);
+    }
+    // (Not a let chain: build.rs is edition 2021, the test edition 2024.)
+    let stand_in = if takes_no_av1 {
+        find(h26x, false)
+    } else {
+        None
+    };
+    if let Some(found) = stand_in {
+        return Ok(found);
+    }
+    for (other_h26x, other_av1) in [(h26x, !av1), (!h26x, av1), (!h26x, !av1)] {
+        if (other_h26x, other_av1) == (h26x, false) && takes_no_av1 {
+            continue;
+        }
+        if find(other_h26x, other_av1).is_none() {
+            continue;
+        }
+        let mut settings = Vec::new();
+        if other_h26x != h26x {
+            let on = if other_h26x { "on" } else { "off" };
+            settings.push(format!("RUSTY_CLAW_FFMPEG_H26X={on}"));
+        }
+        // A build without AV1 needs no switch where one stands in anyway.
+        if other_av1 != av1 && (other_av1 || !takes_no_av1) {
+            let value = if other_av1 { "auto" } else { "off" };
+            settings.push(format!("RUSTY_CLAW_FFMPEG_AV1={value}"));
+        }
+        return Err(Some(settings.join(" and ")));
+    }
+    Err(None)
+}
+
 /// The value of the shell assignment `NAME=...` at the start of a line of
 /// `text`, as sh reads it: a double-quoted value may span lines joined by
 /// a backslash at their end, and `$NAME` of an earlier assignment is
@@ -96,4 +146,81 @@ pub fn shell_value(text: &str, name: &str) -> Option<String> {
     }
     out.push_str(rest);
     Some(out)
+}
+
+// Runs with the test that includes this file as a module
+// (engine/movie/tests/windows_record.rs); build.rs never builds it.
+#[cfg(test)]
+mod pick_tests {
+    use super::windows_pick;
+
+    /// windows_pick over the builds `there`, as (h26x, av1) switches.
+    fn pick(
+        there: &[(bool, bool)],
+        h26x: bool,
+        av1_off: bool,
+        require: bool,
+    ) -> Result<(bool, bool), Option<String>> {
+        windows_pick(h26x, av1_off, require, |h, a| {
+            there.contains(&(h, a)).then_some((h, a))
+        })
+    }
+
+    #[test]
+    fn the_build_for_the_switches_comes_first() {
+        let all = [(false, true), (false, false), (true, true), (true, false)];
+        for h26x in [false, true] {
+            for av1_off in [false, true] {
+                for require in [false, true] {
+                    assert_eq!(pick(&all, h26x, av1_off, require), Ok((h26x, !av1_off)));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn without_require_a_build_without_av1_stands_in() {
+        assert_eq!(
+            pick(&[(false, false)], false, false, false),
+            Ok((false, false))
+        );
+        assert_eq!(
+            pick(&[(true, false)], true, false, false),
+            Ok((true, false))
+        );
+        // Under require only the exact build counts, and the setting that
+        // selects the one there is named.
+        assert_eq!(
+            pick(&[(false, false)], false, false, true),
+            Err(Some("RUSTY_CLAW_FFMPEG_AV1=off".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_build_with_other_switches_is_named() {
+        // Asked without AV1, a build with AV1 is there.
+        assert_eq!(
+            pick(&[(false, true)], false, true, false),
+            Err(Some("RUSTY_CLAW_FFMPEG_AV1=auto".to_string()))
+        );
+        // Asked for H.264, only builds without it are there: the switch alone
+        // selects one, as a build without AV1 stands in without require.
+        assert_eq!(
+            pick(&[(false, false)], true, false, false),
+            Err(Some("RUSTY_CLAW_FFMPEG_H26X=off".to_string()))
+        );
+        assert_eq!(
+            pick(&[(false, false)], true, false, true),
+            Err(Some(
+                "RUSTY_CLAW_FFMPEG_H26X=off and RUSTY_CLAW_FFMPEG_AV1=off".to_string()
+            ))
+        );
+        assert_eq!(
+            pick(&[(true, true)], false, true, false),
+            Err(Some(
+                "RUSTY_CLAW_FFMPEG_H26X=on and RUSTY_CLAW_FFMPEG_AV1=auto".to_string()
+            ))
+        );
+        assert_eq!(pick(&[], false, false, false), Err(None));
+    }
 }

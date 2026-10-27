@@ -51,7 +51,13 @@ h26x_note := , with the H.264 and HEVC decoders (RUSTY_CLAW_FFMPEG_H26X=on)
 endif
 ffmpeg_record = $(wildcard $(ffmpeg_prefix)/share/rusty-claw/ffmpeg-build.txt)
 ffmpeg_av1 = $(shell grep -q '^dav1d none$$' '$(ffmpeg_record)' || echo yes)
-av1_note = $(if $(ffmpeg_av1),$(comma) with AV1,$(comma) without AV1 (upscaled AV1 movies will not play; cargo says why))
+# With RUSTY_CLAW_FFMPEG_AV1=off, cargo does not warn about the missing AV1.
+ifeq ($(strip $(RUSTY_CLAW_FFMPEG_AV1)),off)
+no_av1_note := $(comma) without AV1 (RUSTY_CLAW_FFMPEG_AV1=off)
+else
+no_av1_note := $(comma) without AV1 (upscaled AV1 movies will not play; cargo says why)
+endif
+av1_note = $(if $(ffmpeg_av1),$(comma) with AV1,$(no_av1_note))
 ifeq ($(strip $(RUSTY_CLAW_FFMPEG)),off)
 movie_note = @echo "movies: off, RUSTY_CLAW_FFMPEG=off"
 else

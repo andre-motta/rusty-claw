@@ -10,7 +10,9 @@
 # MSVC builds use. RUSTY_CLAW_FFMPEG_H26X=on adds the H.264 and HEVC
 # decoders, as on Linux, and RUSTY_CLAW_FFMPEG_AV1=off leaves dav1d out
 # (then meson, ninja and pkg-config are not needed); set them for the cargo
-# build too, or cargo does not find this build. dav1d is built with MSYS2's
+# build too (the script prints how): cargo does not find a build with the
+# H.264 switch otherwise, and takes one without AV1 only when it finds none
+# with AV1, with a warning. dav1d is built with MSYS2's
 # meson and ninja: the pinned meson and ninja of ../build.sh are for Linux
 # systems without them.
 #
@@ -141,17 +143,44 @@ case "$prefix" in
     *" "*) fail "the prefix '$prefix' has a space, which FFmpeg's build cannot take; set FFMPEG_PREFIX to a folder without one, for example C:/rusty-claw/ffmpeg" ;;
 esac
 
+# The variables cargo needs for the switches of this build, one per line as
+# NAME=VALUE: RUSTY_CLAW_FFMPEG_AV1=off for a build without AV1, and
+# RUSTY_CLAW_FFMPEG_H26X=on for one with the H.264 and HEVC decoders.
+cargo_switches() {
+    if [ "$av1" = no ]; then echo RUSTY_CLAW_FFMPEG_AV1=off; fi
+    if [ "$h26x" = yes ]; then echo RUSTY_CLAW_FFMPEG_H26X=on; fi
+}
+
+# Says, for cmd and PowerShell, how to set the variables cargo_switches
+# names in the Developer prompt.
+say_switches() {
+    for switch in $(cargo_switches); do
+        say "  cmd:        set $switch"
+        say "  PowerShell: \$env:${switch%%=*} = '${switch#*=}'"
+    done
+}
+
 print_next() {
     win=$(windows_path "$prefix")
     say "FFmpeg $FFMPEG_VERSION for MSVC is in $win"
     if [ -z "${FFMPEG_PREFIX:-}" ]; then
-        say "cargo finds it there: in the Developer prompt, cargo build --release -p claw-game"
+        if [ -z "$(cargo_switches)" ]; then
+            say "cargo finds it there: in the Developer prompt, cargo build --release -p claw-game"
+            return 0
+        fi
+        say "cargo finds it there with the same switches; in the Developer prompt you build from:"
+        say_switches
+        say "then cargo build --release -p claw-game"
         return 0
     fi
     say "point cargo at it, in the Developer prompt you build from:"
     say "  cmd:        set FFMPEG_PREFIX=$win"
     say "  PowerShell: \$env:FFMPEG_PREFIX = '$win'"
     say "  for good:   setx FFMPEG_PREFIX \"$win\"   (then open a new prompt)"
+    if [ -n "$(cargo_switches)" ]; then
+        say "and set the same switches for it:"
+        say_switches
+    fi
 }
 
 up_to_date() { [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(stamp_text)" ]; }
@@ -256,7 +285,17 @@ if [ "$av1" = yes ]; then
             { tail -n 30 "$work/dav1d-make.log" >&2; exit 1; }
         meson install -C "$work/dav1d-build" >"$work/dav1d-install.log" 2>&1 ||
             { tail -n 20 "$work/dav1d-install.log" >&2; exit 1; }
-    ) || fail "dav1d build failed (logs in $work); RUSTY_CLAW_FFMPEG_AV1=off builds FFmpeg without AV1"
+    ) || {
+        # What the build without AV1 then needs, here and for cargo.
+        rerun="RUSTY_CLAW_FFMPEG_AV1=off"
+        if [ "$h26x" = yes ]; then rerun="$rerun RUSTY_CLAW_FFMPEG_H26X=on"; fi
+        say "dav1d build failed (logs in $work); to build FFmpeg without AV1, run"
+        say "  $rerun sh third_party/ffmpeg/windows/build.sh"
+        say "and before cargo, in the Developer prompt, set the same:"
+        av1=no
+        say_switches
+        fail "dav1d build failed (logs in $work); RUSTY_CLAW_FFMPEG_AV1=off builds FFmpeg without AV1"
+    }
     if [ -f "$dav1d_dir/lib/libdav1d.a" ]; then mv "$dav1d_dir/lib/libdav1d.a" "$dav1d_dir/lib/dav1d.lib"; fi
     [ -f "$dav1d_dir/lib/dav1d.lib" ] || fail "the dav1d build made no library (logs in $work)"
     PKG_CONFIG_LIBDIR="$dav1d_dir/lib/pkgconfig"

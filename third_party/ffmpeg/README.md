@@ -30,17 +30,18 @@ the system has them, `build.sh` uses them; when it lacks either, it
 downloads the pinned release of meson (run as `python3 meson.py`, which
 needs `python3` 3.7 or newer) or the pinned source of ninja (built with
 `python3 configure.py --bootstrap`, which needs `python3` and a C++
-compiler, `c++` or `$CXX`) into `~/.cache/rusty-claw/ffmpeg`, checks them
-against their SHA-256 like every other download and keeps them there for
-later builds. Nothing is installed into the system, and nothing comes from
-PyPI.
+compiler, `c++` or `$CXX`, with as many jobs as the build's own ninja
+runs) into `~/.cache/rusty-claw/ffmpeg`, checks them against their SHA-256
+like every other download and keeps them there for later builds. Nothing
+is installed into the system, and nothing comes from PyPI.
 
 FFmpeg is built without AV1, into a prefix of its own, when any of that is
 missing, when `RUSTY_CLAW_FFMPEG_AV1=off`, when downloading or building
-meson, ninja or dav1d fails, or when FFmpeg itself fails to configure or
-build with dav1d (it is then built once more without it; when that fails
-too, the build stops, since AV1 was not the cause). The original movies
-play either way; only upscaled AV1 copies need AV1. The build says why:
+meson, ninja or dav1d fails, or when FFmpeg itself fails to configure,
+build or install with dav1d (it is then built once more without it; when
+that fails too, the build stops, since AV1 was not the cause). The
+original movies play either way; only upscaled AV1 copies need AV1. The
+build says why:
 `build.sh` in its output, and cargo in a warning, for example
 
 ```
@@ -49,15 +50,23 @@ warning: rusty_ffmpeg@0.17.0+ffmpeg.8.1: this FFmpeg decodes no AV1, so upscaled
 
 A failed attempt is kept in `~/.cache/rusty-claw/ffmpeg/av1-failed.txt`
 (with the build log, when there is one, in `av1-failed.log`) together with
-what could change how it ends: the pins, and the compilers, meson, ninja,
+what could change how it ends: everything the build with AV1 is made of
+(FFmpeg's, nasm's, dav1d's, meson's and ninja's pins, the whole configure
+line with AV1 and dav1d's meson options) and the compilers, meson, ninja,
 python3 and pkg-config found. Later builds go on without AV1, without
 trying again, until one of those changes (a build with AV1 for the same
 pins and settings that is already there is still used); `make ffmpeg`
-always tries again (`sh third_party/ffmpeg/build.sh --retry-av1`). After
-installing what was missing, run `make ffmpeg`, and the next cargo build
-links the build with AV1. With `FFMPEG_PREFIX`, `make ffmpeg` replaces the
-build there without AV1 by the one with AV1 once that is built, and leaves
-it as it is when the attempt fails again. (Older checkouts installed meson
+always tries again (`sh third_party/ffmpeg/build.sh --retry-av1`). Only
+failures that would happen again are kept: getting or building meson,
+ninja or dav1d, and FFmpeg's configure with dav1d. When FFmpeg's `make` or
+`make install` fails with dav1d, which can be a failure of the moment (a
+compiler stopped when memory ran out), that build goes on without AV1 and
+cargo links it, but nothing is kept, and the next build that builds
+FFmpeg tries AV1 again. After installing what was missing, run `make
+ffmpeg`, and the next cargo build links the build with AV1. With
+`FFMPEG_PREFIX`, `make ffmpeg` replaces the build there without AV1 by the
+one with AV1 once that is built, and leaves it as it is when the attempt
+fails again. (Older checkouts installed meson
 and ninja into a `tools` folder in `~/.cache/rusty-claw/ffmpeg`; nothing
 uses it any more, and it can be deleted.)
 
@@ -134,7 +143,8 @@ Settings, all optional:
   binding;
 - `FFMPEG_JOBS=N` sets the parallel compile jobs (by default the CPU
   count, at most 8; when cargo builds FFmpeg, FFmpeg's make takes its jobs
-  from cargo's job server instead, and dav1d's ninja runs half of them);
+  from cargo's job server instead, and ninja runs half of them, for dav1d
+  and when it builds the pinned ninja);
 - `RUSTY_CLAW_FFMPEG_H26X=on` adds the H.264 and HEVC decoders (below).
 
 ## H.264 and HEVC (off by default)
@@ -169,7 +179,9 @@ The `rusty_ffmpeg` build script decides, on every platform:
    compiler, `make`, `curl` or `wget`, `tar` and `xz`), it runs `build.sh`,
    prints a cargo warning that it did, and links the build it made: when
    AV1 could not be had, that is the build without AV1, in its own prefix
-   (`build.sh --prefix` names it afterwards).
+   (`build.sh --prefix` names it afterwards, or, after a failure of
+   FFmpeg's make with dav1d that is not kept, `RUSTY_CLAW_FFMPEG_AV1=off
+   build.sh --prefix` does).
    A linked build without AV1 gets one more warning, with the reason, each
    time the build script runs (an error with `RUSTY_CLAW_FFMPEG=require`).
    The H.264 and HEVC decoders, and AV1, are read from the linked build's
@@ -312,7 +324,10 @@ through MSYS2's meson and ninja (the pinned meson and ninja of `build.sh`
 are for Linux systems without them). A dav1d build that fails stops it,
 with the reason; `RUSTY_CLAW_FFMPEG_AV1=off` then builds FFmpeg without
 AV1 (and without needing meson, ninja or pkg-config), into a folder of its
-own; set it for cargo too. Only the platform parts of the configure line differ
+own. Cargo takes that build when it finds none with AV1, and warns that it
+decodes no AV1; with `RUSTY_CLAW_FFMPEG_AV1=off` set for cargo too, it
+takes it without the warning (and under `RUSTY_CLAW_FFMPEG=require`, it
+takes it only then). Only the platform parts of the configure line differ
 (`sh third_party/ffmpeg/windows/build.sh --configure` prints it):
 Microsoft's compiler (`--toolchain=msvc`), Windows threads instead of POSIX
 threads, and the DLL C runtime (`-MD`) that Rust uses. FFmpeg's own build
@@ -362,7 +377,11 @@ To build FFmpeg (once per FFmpeg version; it takes several minutes):
 
    With `RUSTY_CLAW_FFMPEG_H26X=on sh third_party/ffmpeg/windows/build.sh`
    it adds the H.264 and HEVC decoders (see above; then set the same
-   variable for cargo in step 7).
+   variable for cargo in step 7). When the dav1d build fails, it stops and
+   says so; `RUSTY_CLAW_FFMPEG_AV1=off sh third_party/ffmpeg/windows/build.sh`
+   then builds FFmpeg without AV1 (then set `RUSTY_CLAW_FFMPEG_AV1=off` for
+   cargo in step 7 as well). The script ends by printing the `set` lines
+   cargo needs for the switches it was run with.
    It downloads FFmpeg, dav1d and nasm into `%LOCALAPPDATA%\rusty-claw\ffmpeg`,
    checks their SHA-256, builds nasm and dav1d, then builds FFmpeg into
    `%LOCALAPPDATA%\rusty-claw\ffmpeg\<version>-<hash>-msvc`, and ends by
@@ -379,10 +398,13 @@ To build the game:
    whose record is exactly the one `windows/build.sh` writes for the
    current pins and switches (`sh third_party/ffmpeg/windows/build.sh
    --stamp` prints it), so a build from older pins, or with other
-   decoders, is never used. The build script works that record out itself
+   decoders, is never used, except that a build without AV1 stands in
+   when no build has AV1 (not under `RUSTY_CLAW_FFMPEG=require`). The
+   build script works that record out itself
    (`rusty_ffmpeg/windows_record.rs`), and
    `engine/movie/tests/windows_record.rs` checks, on Linux too, that it
-   matches what `--stamp` prints with every switch. If
+   matches what `--stamp` prints with every switch (and runs the tests of
+   the choice between builds in `windows_record.rs`). If
    you built into another folder (`FFMPEG_PREFIX` in step 4), tell cargo
    too, in the Developer prompt, with the folder the script printed:
 
@@ -398,6 +420,20 @@ To build the game:
    cargo build --release -p claw-game
    ```
 
+   If you ran step 4 with switches, set the same ones first (step 4 printed
+   them), for example:
+
+   ```bat
+   set RUSTY_CLAW_FFMPEG_AV1=off
+   set RUSTY_CLAW_FFMPEG_H26X=on
+   ```
+
+   Cargo does not find a build made with `RUSTY_CLAW_FFMPEG_H26X=on`
+   without it. A build made with `RUSTY_CLAW_FFMPEG_AV1=off` is found
+   without the variable when no build has AV1, with a warning that it
+   decodes no AV1; the variable takes it without one. When cargo finds no
+   build for the current switches but one with others, its warning names
+   the `set` line that selects it.
    With `set RUSTY_CLAW_FFMPEG=require` first, a build that finds no FFmpeg
    stops with the reason instead of building without movies.
    The result is `target\release\rusty-claw.exe`, one file.
