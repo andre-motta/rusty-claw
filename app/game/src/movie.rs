@@ -195,9 +195,11 @@ pub fn shelf(roots: &Roots) -> MovieShelf {
 
 /// The one line a build without the movie player prints at start-up (and
 /// the error of `--movie` in such a build).
-pub const NO_PLAYER: &str = "this build plays no movies: build FFmpeg and the game with the \
-                             `movies` feature, see third_party/ffmpeg/README.md (on Linux, \
-                             `make ffmpeg`, then `make run-game`)";
+pub const NO_PLAYER: &str = "this build plays no movies, as it was built without FFmpeg: see \
+                             third_party/ffmpeg/README.md (on Linux, `make ffmpeg` builds \
+                             FFmpeg or says what it lacks, then build again; on Windows, run \
+                             windows/build.sh first; the old `movies` feature is no longer \
+                             needed)";
 
 /// How long a movie that goes on after a hold waits for its soundtrack to
 /// move before it reads its clock again (see [`MoviePlayback::hold`]).

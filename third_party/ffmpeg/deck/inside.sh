@@ -42,8 +42,8 @@ rustup toolchain install "$channel" --profile minimal >/dev/null
 # compiler and glibc, in this cache rather than the host's.
 nice -n 10 sh /src/third_party/ffmpeg/build.sh
 
-# The game, with movies.
-nice -n 10 cargo build --release --locked -p claw-game --features movies
+# The game, with movies: a build without FFmpeg is an error here.
+RUSTY_CLAW_FFMPEG=require nice -n 10 cargo build --release --locked -p claw-game
 
 bin="$CARGO_TARGET_DIR/release/rusty-claw"
 if ldd "$bin" | grep -E 'libav|libsw'; then

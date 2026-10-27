@@ -1,4 +1,4 @@
-//! The player of a build without the `ffmpeg` feature: it opens nothing.
+//! The player of a build without FFmpeg: it opens nothing.
 
 use std::convert::Infallible;
 use std::time::Duration;

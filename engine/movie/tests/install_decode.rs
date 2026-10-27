@@ -1,6 +1,6 @@
 //! The install's logo movie decodes in full: every picture, with sound.
 //! Reads the install named by `CLAW_INSTALL` and skips without it.
-#![cfg(feature = "ffmpeg")]
+#![cfg(claw_ffmpeg)]
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

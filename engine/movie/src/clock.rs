@@ -20,8 +20,8 @@
 //! does not pass on, and one period is usually less than a picture of a 30 pictures
 //! a second movie.
 
-// Only the player, built with the `ffmpeg` feature, feeds a soundtrack.
-#![cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
+// Only the player, built where FFmpeg is linked, feeds a soundtrack.
+#![cfg_attr(not(claw_ffmpeg), allow(dead_code))]
 
 use std::cell::Cell;
 use std::sync::Arc;

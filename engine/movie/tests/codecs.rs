@@ -22,7 +22,7 @@
 //! the tests check the pictures only. A clip whose encoder the system lacks
 //! is skipped with the reason printed. Run with `--nocapture` to see the
 //! table.
-#![cfg(feature = "ffmpeg")]
+#![cfg(claw_ffmpeg)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

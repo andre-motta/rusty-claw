@@ -1,6 +1,6 @@
 [package]
 name = "claw-movie"
-description = "The game's movies: finding them and, with the ffmpeg feature, decoding them through a pinned FFmpeg build."
+description = "The game's movies: finding them and, where FFmpeg is linked, decoding them through a pinned FFmpeg build."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,14 +8,15 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-# Off by default: it links the static FFmpeg that `make ffmpeg` builds, and
-# the Makefile turns it on when that build exists (third_party/ffmpeg).
-ffmpeg = ["dep:rusty_ffmpeg"]
+# Kept for old commands and does nothing: FFmpeg is linked whenever the
+# rusty_ffmpeg build script finds or builds it (third_party/ffmpeg), and
+# build.rs then sets the `claw_ffmpeg` cfg.
+ffmpeg = []
 
 [dependencies]
 claw-audio.workspace = true
 rtrb = "0.4"
-rusty_ffmpeg = { workspace = true, optional = true }
+rusty_ffmpeg.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -17,13 +17,13 @@ SOUNDFONT_SHA256 := 9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a515268
 SOUNDFONT_FILE := GeneralUser-GS.sf2
 SOUNDFONT_DIR ?= $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/rusty-claw/soundfonts
 
-# The pinned FFmpeg the movie player links against: `make ffmpeg` builds it
-# from source into your cache (third_party/ffmpeg/build.sh; see its README),
-# and FFMPEG_PREFIX, an absolute path, overrides where it lives (empty is the
-# same as unset). When that prefix holds a finished build, run-game, bench,
-# check, check-movie, check-game and test-install build with movies (the
-# claw-movie/ffmpeg and claw-game/movies features); otherwise they build
-# without them. Each says which.
+# The pinned FFmpeg the movie player links against: cargo itself builds it
+# from source into your cache the first time it builds the game, where it
+# can (third_party/ffmpeg/build.sh; see its README), and `make ffmpeg` builds
+# it beforehand. FFMPEG_PREFIX, an absolute path, overrides where it lives
+# (empty is the same as unset); RUSTY_CLAW_FFMPEG=off builds without it and
+# RUSTY_CLAW_FFMPEG=require fails without it. run-game, bench, check,
+# check-movie, check-game and test-install say which way movies go.
 #
 # FFMPEG_PREFIX reaches cargo only when you set it: unset, the FFmpeg binding's
 # build script asks build.sh for the same default prefix, so `make` and plain
@@ -38,13 +38,12 @@ endif
 export FFMPEG_PREFIX
 ffmpeg_prefix := $(FFMPEG_PREFIX)
 endif
-ifneq ($(wildcard $(ffmpeg_prefix)/share/rusty-claw/ffmpeg-build.txt),)
+ifeq ($(strip $(RUSTY_CLAW_FFMPEG)),off)
+movie_note = @echo "movies: off, RUSTY_CLAW_FFMPEG=off"
+else ifneq ($(wildcard $(ffmpeg_prefix)/share/rusty-claw/ffmpeg-build.txt),)
 movie_note = @echo "movies: on, with FFmpeg from $(ffmpeg_prefix)"
-movie_features_all := --features claw-movie/ffmpeg,claw-game/movies
-movie_feature_movie := --features ffmpeg
-movie_feature_game := --features movies
 else
-movie_note = @echo "movies: off, no FFmpeg build in $(ffmpeg_prefix) (\`make ffmpeg\` builds one)"
+movie_note = @echo "movies: on once cargo has built FFmpeg into $(ffmpeg_prefix) (once, about a minute; if it cannot, cargo warns and builds without movies)"
 endif
 
 # Modules whose `make test-install` runs only their install tests
@@ -75,14 +74,14 @@ help:
 	@echo "                               with --bench-route FILE.csv --headless"
 	@echo "make replay ARGS=...           run the replay tool"
 	@echo "make soundfont                 fetch the music SoundFont into your data directory"
-	@echo "make ffmpeg                    build the pinned FFmpeg for movies into your cache (once;"
-	@echo "                               run-game, bench, check and test-install then build with movies)"
+	@echo "make ffmpeg                    build the pinned FFmpeg for movies into your cache now (the"
+	@echo "                               first cargo build of the game does it too, where it can)"
 
 check:
 	$(movie_note)
 	$(CARGO) fmt --all --check
-	$(CARGO) clippy --workspace --all-targets --locked $(movie_features_all) -- -D warnings
-	$(CARGO) test --workspace --locked $(movie_features_all)
+	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings
+	$(CARGO) test --workspace --locked
 
 fmt:
 	$(CARGO) fmt --all
@@ -91,8 +90,8 @@ check-%:
 	@dir="$(call module_dir,$*)"; \
 	if [ -z "$$dir" ]; then echo "unknown module '$*'" >&2; exit 2; fi; \
 	$(if $(filter movie game,$*),$(subst @,,$(movie_note));) \
-	echo "$(CARGO) test --locked --manifest-path $$dir/Cargo.toml $(movie_feature_$*)"; \
-	$(CARGO) test --locked --manifest-path $$dir/Cargo.toml $(movie_feature_$*)
+	echo "$(CARGO) test --locked --manifest-path $$dir/Cargo.toml"; \
+	$(CARGO) test --locked --manifest-path $$dir/Cargo.toml
 
 test-install:
 	@if [ -z "$(CLAW_INSTALL)" ]; then echo "CLAW_INSTALL is not set; point it at your own install" >&2; exit 2; fi
@@ -103,8 +102,8 @@ test-install:
 	$(if $(filter movie game,$(MODULE)),$(subst @,,$(movie_note));) \
 	tests=--tests; \
 	$(if $(filter $(INSTALL_TESTS_ONLY),$(MODULE)),tests=$$(echo $$(for f in $$dir/tests/install_*.rs; do echo "--test $$(basename $$f .rs)"; done));) \
-	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml $$tests $(movie_feature_$(MODULE))"; \
-	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml $$tests $(movie_feature_$(MODULE))
+	echo "$(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml $$tests"; \
+	CLAW_INSTALL="$(CLAW_INSTALL)" $(CARGO) test --release --locked --manifest-path $$dir/Cargo.toml $$tests
 
 # Replays $(CLAW_REFERENCE)/$(REF)/route.csv with the tuning, random state
 # and start point (teleport) its meta.toml names for each clock (or only
@@ -163,13 +162,12 @@ run-viewer:
 
 run-game:
 	$(movie_note)
-	$(CARGO) run --release --locked -p claw-game --bin rusty-claw $(movie_feature_game) -- $(ARGS)
+	$(CARGO) run --release --locked -p claw-game --bin rusty-claw -- $(ARGS)
 
-# The same features as run-game, so the two share one release build (a
-# benchmark never plays a movie).
+# The same build as run-game (a benchmark never plays a movie).
 bench:
 	$(movie_note)
-	$(CARGO) run --release --locked -p claw-game --bin rusty-claw $(movie_feature_game) -- $(ARGS)
+	$(CARGO) run --release --locked -p claw-game --bin rusty-claw -- $(ARGS)
 
 replay:
 	$(CARGO) run --release --locked -p claw-replay -- $(ARGS)

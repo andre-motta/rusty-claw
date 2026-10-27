@@ -21,7 +21,7 @@ if printf '%s\n' "$dlls" | grep -i -q -E '^(avcodec|avformat|avutil|swscale|swre
     exit 1
 fi
 if ! grep -a -q 'Lavc%d' "$exe"; then
-    echo "FAIL: $exe does not contain FFmpeg; was it built with --features claw-game/movies?" >&2
+    echo "FAIL: $exe does not contain FFmpeg; was FFMPEG_PREFIX set, or windows/build.sh run, before it was built (see cargo's warning)?" >&2
     exit 1
 fi
 echo "ok: FFmpeg is linked into $exe and no FFmpeg DLL is needed"

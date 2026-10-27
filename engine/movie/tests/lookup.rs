@@ -1,6 +1,6 @@
 //! Where each movie is looked for, on folders made here: the movie folder,
 //! the install's files, its `Movies` folder and its archives, in every
-//! mode, with names in any case. With the `ffmpeg` feature, a small
+//! mode, with names in any case. In a build with FFmpeg, a small
 //! MPEG program stream made by the `ffmpeg` command (skipped without it)
 //! plays from a `Movies` folder.
 
@@ -324,7 +324,7 @@ fn a_malformed_or_short_archive_offers_no_clip() {
     assert!(locate_all(MovieIndex::LOGO, &roots).is_empty());
 }
 
-#[cfg(feature = "ffmpeg")]
+#[cfg(claw_ffmpeg)]
 mod playing {
     use std::process::{Command, Stdio};
     use std::time::Duration;

@@ -6,6 +6,8 @@
 #   sh third_party/ffmpeg/build.sh            build, or reuse a finished build
 #   sh third_party/ffmpeg/build.sh --prefix   print the install prefix only
 #
+# `make ffmpeg` runs it, and so does the first `cargo build` of the game when
+# the prefix holds no build yet (the rusty_ffmpeg build script).
 # The prefix is ${XDG_CACHE_HOME:-~/.cache}/rusty-claw/ffmpeg/<version>-<hash>,
 # where the hash covers the pins and the configure line, so a change to either
 # builds into a new prefix and an unchanged pin reuses the old one in seconds.
@@ -87,7 +89,14 @@ esac
 
 up_to_date() { [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$(stamp_text)" ]; }
 
+# Each finished or found build rewrites last-build.txt in the cache folder:
+# a cargo build that found no FFmpeg watches it, to link the build next time.
+signal() {
+    { mkdir -p "$cache_root" && printf '%s\n' "$prefix" >"$cache_root/last-build.txt"; } 2>/dev/null || true
+}
+
 if up_to_date; then
+    signal
     say "FFmpeg $FFMPEG_VERSION is already built in $prefix"
     exit 0
 fi
@@ -101,6 +110,7 @@ if command -v flock >/dev/null 2>&1; then
     exec 9>"$cache_root/.lock"
     flock 9
     if up_to_date; then
+        signal
         say "FFmpeg $FFMPEG_VERSION is already built in $prefix"
         exit 0
     fi
@@ -123,7 +133,11 @@ fetch() {
         return 0
     fi
     say "fetching $1"
-    curl -fsSL --retry 2 -o "$dest.part" "$1" || { rm -f "$dest.part"; fail "download failed: $1"; }
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 2 -o "$dest.part" "$1" || { rm -f "$dest.part"; fail "download failed: $1"; }
+    else
+        wget -q --tries=3 -O "$dest.part" "$1" || { rm -f "$dest.part"; fail "download failed: $1"; }
+    fi
     got=$(sha256_of "$dest.part")
     if [ "$got" != "$2" ]; then
         rm -f "$dest.part"
@@ -196,4 +210,5 @@ stamp_text >"$stage$prefix/share/rusty-claw/ffmpeg-build.txt"
 mkdir -p "$(dirname "$prefix")"
 mv "$stage$prefix" "$prefix"
 rm -rf "$work"
+signal
 say "FFmpeg $FFMPEG_VERSION is built in $prefix"

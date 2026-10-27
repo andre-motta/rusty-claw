@@ -1,7 +1,7 @@
 //! The linked FFmpeg is the pinned LGPL build with exactly the components the
 //! movies need: every decoder, demuxer and parser on the list is there and
 //! nothing else is (no other decoder, no encoder, muxer or network protocol).
-#![cfg(feature = "ffmpeg")]
+#![cfg(claw_ffmpeg)]
 
 use std::collections::BTreeSet;
 use std::ffi::{CStr, c_char, c_int, c_void};
@@ -141,7 +141,7 @@ fn only_the_file_protocol_reads() {
 
 #[test]
 fn it_is_the_pinned_lgpl_build() {
-    let version = claw_movie::ffmpeg_version().expect("built with the ffmpeg feature");
+    let version = claw_movie::ffmpeg_version().expect("built with FFmpeg");
     assert!(version.starts_with("8.1."), "FFmpeg {version}");
     assert!(claw_movie::available());
     // SAFETY: these return static NUL-terminated strings.

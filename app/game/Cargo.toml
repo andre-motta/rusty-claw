@@ -16,8 +16,9 @@ name = "rusty-claw"
 path = "src/main.rs"
 
 [features]
-# Plays the game's movies through the pinned FFmpeg (`make ffmpeg`); off by
-# default, and the Makefile turns it on when that build exists.
+# Kept for old commands and does nothing: the game plays movies whenever the
+# build links FFmpeg, which a plain `cargo build` builds where it can
+# (third_party/ffmpeg/README.md).
 movies = ["claw-movie/ffmpeg"]
 
 [dependencies]

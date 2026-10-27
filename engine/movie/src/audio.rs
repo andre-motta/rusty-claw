@@ -9,8 +9,8 @@
 //! follows by linear interpolation; the clock still counts the movie's own
 //! frames.
 
-// Only the player, built with the `ffmpeg` feature, feeds a soundtrack.
-#![cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
+// Only the player, built where FFmpeg is linked, feeds a soundtrack.
+#![cfg_attr(not(claw_ffmpeg), allow(dead_code))]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
