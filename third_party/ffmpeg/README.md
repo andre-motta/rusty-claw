@@ -62,7 +62,9 @@ ninja or dav1d, and FFmpeg's configure with dav1d. When FFmpeg's `make` or
 `make install` fails with dav1d, which can be a failure of the moment (a
 compiler stopped when memory ran out), that build goes on without AV1 and
 cargo links it, but nothing is kept, and the next build that builds
-FFmpeg tries AV1 again. After installing what was missing, run `make
+FFmpeg tries AV1 again (a `make` failure that repeats costs that attempt
+on each such build, until `make ffmpeg` gets through or
+`RUSTY_CLAW_FFMPEG_AV1=off` is set). After installing what was missing, run `make
 ffmpeg`, and the next cargo build links the build with AV1. With
 `FFMPEG_PREFIX`, `make ffmpeg` replaces the build there without AV1 by the
 one with AV1 once that is built, and leaves it as it is when the attempt

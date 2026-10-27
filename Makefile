@@ -38,7 +38,12 @@ SOUNDFONT_DIR ?= $(or $(XDG_DATA_HOME),$(HOME)/.local/share)/rusty-claw/soundfon
 comma := ,
 ifeq ($(strip $(FFMPEG_PREFIX)),)
 unexport FFMPEG_PREFIX
-ffmpeg_prefix = $(eval ffmpeg_prefix := $$(shell sh third_party/ffmpeg/build.sh --prefix))$(ffmpeg_prefix)
+# After a failure of the moment with AV1, cargo links the build without AV1
+# while build.sh still names the one with it, so the note does the same.
+ffmpeg_av1_prefix = $(eval ffmpeg_av1_prefix := $$(shell sh third_party/ffmpeg/build.sh --prefix))$(ffmpeg_av1_prefix)
+ffmpeg_plain_prefix = $(eval ffmpeg_plain_prefix := $$(shell RUSTY_CLAW_FFMPEG_AV1=off sh third_party/ffmpeg/build.sh --prefix))$(ffmpeg_plain_prefix)
+ffmpeg_built = $(wildcard $(1)/share/rusty-claw/ffmpeg-build.txt)
+ffmpeg_prefix = $(eval ffmpeg_prefix := $$(if $$(call ffmpeg_built,$$(ffmpeg_av1_prefix)),$$(ffmpeg_av1_prefix),$$(if $$(call ffmpeg_built,$$(ffmpeg_plain_prefix)),$$(ffmpeg_plain_prefix),$$(ffmpeg_av1_prefix))))$(ffmpeg_prefix)
 else
 ifeq ($(filter /%,$(firstword $(FFMPEG_PREFIX))),)
 $(error FFMPEG_PREFIX must be an absolute path, not '$(FFMPEG_PREFIX)')
