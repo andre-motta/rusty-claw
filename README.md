@@ -127,7 +127,9 @@ Escape, Enter, a game key or a click returns to the main menu, whose
 Credits entry shows them again. When the game is built
 with FFmpeg it also plays the game's movies (see [Movies](#movies)).
 
-The game pauses when its window loses focus.
+The game keeps running when its window loses focus (Claw takes no input
+there); `pause_in_background = on` in the config file pauses it instead,
+as the original does.
 
 ### Keyboard
 
@@ -270,12 +272,14 @@ scaling, or the keys you bound to them) work during a movie and never
 skip it. Keys pressed during a movie do nothing on the screen after it.
 Pictures show ahead of the sound by the sound output's latency.
 
-While the game's window is in the background a movie holds, its picture
-and its sound, and goes on from where it was when the window is back in
-front, as play pauses. A movie without sound, or one already past the
-end of its sound, has no soundtrack to hold it: it shows no new picture
-in the background and goes on at its own time. The main menu's idle time does not count in the background
-either, so the intro never starts while nobody sees it.
+Movies, like play, keep going while the game's window is in the
+background. With `pause_in_background = on`, a movie holds there instead,
+its picture and its sound, and goes on from where it was when the window
+is back in front, as play pauses. A movie without sound, or one already
+past the end of its sound, has no soundtrack to hold it: it shows no new
+picture in the background and goes on at its own time. The main menu's
+idle time does not count in the background either, so the intro never
+starts while nobody sees it.
 
 Where movies come from, best first:
 
@@ -359,6 +363,7 @@ voice = on                 # Claw's and the enemies' speech
 ambient = on               # ambient sounds
 soundfont = "/path/to/a/soundfont.sf2"
 gamepad = on               # on or off
+pause_in_background = off  # on: play and movies hold while the window is in the background
 pad_dead_zone = 0.34       # stick dead zone, 0.05 to 0.95
 movies = upscaled          # original, archive or off (see Movies)
 skip_logo = off            # on: no logo movie at start-up unless the intro plays

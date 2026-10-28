@@ -51,8 +51,9 @@
 //! movies are off (`--no-movies`, `movies = off`). A playing movie takes
 //! every input but the keys of the window's own commands (fullscreen,
 //! window size, aspect, scaling), which run them; the screen after it sees
-//! none of them. In the background (once the window has had the focus) a
-//! playing movie holds and the main menu's idle time stands still ([`MoviePlayback::hold`],
+//! none of them. With `pause_in_background = on`, in the background (once
+//! the window has had the focus) a playing movie holds and the main menu's
+//! idle time stands still ([`MoviePlayback::hold`],
 //! [`Flow::set_background`]). A `--movie` run whose movie did not play or
 //! could not be shown ends with an error.
 //!
@@ -1877,9 +1878,10 @@ impl App {
         self.pause_changed(change);
     }
 
-    /// True when the window is in the background (a benchmark never is).
+    /// True when the window is in the background and the game holds there
+    /// (`pause_in_background`; a benchmark never is).
     fn in_background(&self) -> bool {
-        !self.focused && self.bench.is_none()
+        !self.focused && self.settings.pause_in_background && self.bench.is_none()
     }
 
     /// Restarts the frame clock when the level in play runs again.

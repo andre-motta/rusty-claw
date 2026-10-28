@@ -34,6 +34,7 @@
 //! ambient = on              # ambient sounds
 //! soundfont = "/path/to/a/soundfont.sf2"
 //! gamepad = on              # on or off
+//! pause_in_background = off  # on: play and movies hold while the window is in the background
 //! pad_dead_zone = 0.34      # stick dead zone, 0.05 to 0.95
 //! movies = upscaled         # original, archive or off
 //! skip_logo = off           # on: no logo movie at start-up unless the intro plays
@@ -659,6 +660,9 @@ pub struct Settings {
     /// Show a looping movie behind the credits when there is one
     /// (`credits_movie`, on by default).
     pub credits_movie: bool,
+    /// Hold play, movies and the main menu's idle time while the window is
+    /// in the background (`pause_in_background`, off by default).
+    pub pause_in_background: bool,
 }
 
 /// Default radial dead zone of the sticks, as a fraction of a full
@@ -737,6 +741,7 @@ impl Settings {
             movie_folder: None,
             intro_seen: false,
             credits_movie: true,
+            pause_in_background: false,
         }
     }
 
@@ -1089,6 +1094,7 @@ impl Settings {
             "movie_folder" => path(&self.movie_folder)?,
             "intro_seen" => if self.intro_seen { "yes" } else { "no" }.to_string(),
             "credits_movie" => on_off(self.credits_movie),
+            "pause_in_background" => on_off(self.pause_in_background),
             k => {
                 if let Some(a) = k.strip_prefix("key_").and_then(Action::from_name) {
                     self.keymap.config_value(a)
@@ -1333,7 +1339,7 @@ pub struct ConfigFile {
 
 /// Keys a config file may hold, besides the `key_<action>` and
 /// `pad_<action>` bindings.
-pub const CONFIG_KEYS: [&str; 33] = [
+pub const CONFIG_KEYS: [&str; 34] = [
     "install",
     "level",
     "custom",
@@ -1367,6 +1373,7 @@ pub const CONFIG_KEYS: [&str; 33] = [
     "movie_folder",
     "intro_seen",
     "credits_movie",
+    "pause_in_background",
 ];
 
 /// True when a config file may hold `key`.
@@ -1503,6 +1510,7 @@ impl ConfigFile {
                 }
                 "intro_seen" => s.intro_seen = parse_yes_no(v).map_err(|e| err(key, e))?,
                 "credits_movie" => s.credits_movie = flag(key, v)?,
+                "pause_in_background" => s.pause_in_background = flag(key, v)?,
                 "pad_dead_zone" => {
                     s.pad.dead_zone = match v.parse::<f32>() {
                         Ok(z) if PAD_DEAD_ZONE_RANGE.contains(&z) => z,
@@ -2176,6 +2184,20 @@ mod tests {
         let file = ConfigFile::parse("install = /i\nfps_cap = 0\n", "cfg").unwrap();
         assert!(Settings::resolve(&Args::default(), Some(&file)).is_err());
         let file = ConfigFile::parse("install = /i\nfps_cap = fast\n", "cfg").unwrap();
+        assert!(Settings::resolve(&Args::default(), Some(&file)).is_err());
+    }
+
+    #[test]
+    fn pause_in_background_is_off_by_default_and_read_from_the_file() {
+        let s = Settings::resolve(&args("--install /i"), None).unwrap();
+        assert!(!s.pause_in_background);
+        let file = ConfigFile::parse("install = /i\npause_in_background = on\n", "cfg").unwrap();
+        assert!(
+            Settings::resolve(&Args::default(), Some(&file))
+                .unwrap()
+                .pause_in_background
+        );
+        let file = ConfigFile::parse("install = /i\npause_in_background = maybe\n", "cfg").unwrap();
         assert!(Settings::resolve(&Args::default(), Some(&file)).is_err());
     }
 
