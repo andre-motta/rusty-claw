@@ -538,5 +538,8 @@ On the Deck:
 3. For Game Mode, add `rusty-claw` with "Add a Non-Steam Game to My Library"
    and set its launch options to `--install /home/deck/Games/Claw`.
 
-Status: the recipe is reviewed (`bash -n`, shellcheck); the container build
-and a run on a Deck are still to be done.
+Status: the container build works (2026-10-27: FFmpeg with AV1, glibc
+floor 2.30, no FFmpeg or dav1d library loaded). Inside the SDK image the
+binary finds every library it links, and it plays the logo and an AV1 clip
+on a desktop; a run on a Deck is still to be done (the image has no GPU
+driver of its own, which Steam brings on the Deck).
